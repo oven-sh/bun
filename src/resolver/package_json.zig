@@ -1135,6 +1135,7 @@ pub const ExportsMap = struct {
                         map_data_ranges[i] = key_range;
                         map_data_entries[i] = this.visit(prop.value.?);
 
+                        // safe to use "/" on windows. exports in package.json does not use "\\"
                         if (strings.endsWithComptime(key, "/") or strings.containsChar(key, '*')) {
                             expansion_keys[expansion_key_i] = Entry.Data.Map.MapEntry{
                                 .value = map_data_entries[i],

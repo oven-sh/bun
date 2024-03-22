@@ -200,6 +200,9 @@ var access = function access(...args) {
   open = function open(...args) {
     callbackify(fs.open, args);
   },
+  fdatasync = function fdatasync(...args) {
+    callbackify(fs.fdatasync, args);
+  },
   read = function read(fd, buffer, offsetOrOptions, length, position, callback) {
     let offset = offsetOrOptions;
     let params = null;
@@ -310,6 +313,7 @@ var access = function access(...args) {
   writeSync = fs.writeSync.bind(fs),
   readdirSync = fs.readdirSync.bind(fs),
   readFileSync = fs.readFileSync.bind(fs),
+  fdatasyncSync = fs.fdatasyncSync.bind(fs),
   writeFileSync = fs.writeFileSync.bind(fs),
   readlinkSync = fs.readlinkSync.bind(fs),
   realpathSync = fs.realpathSync.bind(fs),
@@ -364,6 +368,8 @@ var access = function access(...args) {
 
 // TODO: make symbols a separate export somewhere
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+
+exists[kCustomPromisifiedSymbol] = path => new Promise(resolve => exists(path, resolve));
 
 read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
   const { isArrayBufferView } = require("node:util/types");
@@ -525,7 +531,11 @@ ReadStream = (function (InternalReadStream) {
 })(
   class ReadStream extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
     constructor(pathOrFd, options = defaultReadStreamOptions) {
-      if (options && (typeof options !== "object") & (typeof options !== "string")) {
+      if (typeof options === "string") {
+        options = { encoding: options };
+      }
+
+      if (!$isObject(options) && !$isCallable(options)) {
         throw new TypeError("Expected options to be an object or a string");
       }
 
@@ -542,10 +552,6 @@ ReadStream = (function (InternalReadStream) {
         highWaterMark = defaultReadStreamOptions.highWaterMark,
         fd = defaultReadStreamOptions.fd,
       } = options;
-
-      if (typeof options === "string") {
-        encoding = options;
-      }
 
       if (pathOrFd?.constructor?.name === "URL") {
         pathOrFd = Bun.fileURLToPath(pathOrFd);
@@ -590,12 +596,11 @@ ReadStream = (function (InternalReadStream) {
       // Get the stream controller
       // We need the pointer to the underlying stream controller for the NativeReadable
       var stream = fileRef.stream();
-      var native = $direct(stream);
-      if (!native) {
+      var ptr = stream.$bunNativePtr;
+      if (!ptr) {
         $debug("no native readable stream");
         throw new Error("no native readable stream");
       }
-      var { stream: ptr } = native;
 
       super(ptr, {
         ...options,
@@ -1329,6 +1334,8 @@ export default {
   writeSync,
   writev,
   writevSync,
+  fdatasync,
+  fdatasyncSync,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,

@@ -197,8 +197,9 @@ void us_loop_free(struct us_loop_t *loop) {
 
 void us_loop_run(struct us_loop_t *loop) {
   us_loop_integrate(loop);
+  uv_update_time(loop->uv_loop);
 
-  uv_run(loop->uv_loop, UV_RUN_NOWAIT);
+  uv_run(loop->uv_loop, UV_RUN_ONCE);
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
@@ -224,7 +225,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
 // timer
 struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough,
                                    unsigned int ext_size) {
-  struct us_internal_callback_t *cb = malloc(
+  struct us_internal_callback_t *cb = us_calloc(1, 
       sizeof(struct us_internal_callback_t) + sizeof(uv_timer_t) + ext_size);
 
   cb->loop = loop;
@@ -287,7 +288,7 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
                                                    int fallthrough,
                                                    unsigned int ext_size) {
-  struct us_internal_callback_t *cb = malloc(
+  struct us_internal_callback_t *cb = us_calloc(1,
       sizeof(struct us_internal_callback_t) + sizeof(uv_async_t) + ext_size);
 
   cb->loop = loop;
@@ -327,11 +328,11 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
   uv_async_send(uv_async);
 }
 
-int us_socket_get_error(int ssl, struct us_socket_t* s)
-{
+int us_socket_get_error(int ssl, struct us_socket_t *s) {
   int error = 0;
   socklen_t len = sizeof(error);
-  if (getsockopt(us_poll_fd((struct us_poll_t*)s), SOL_SOCKET, SO_ERROR, (char*)&error, &len) == -1) {
+  if (getsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_ERROR,
+                 (char *)&error, &len) == -1) {
     return errno;
   }
   return error;

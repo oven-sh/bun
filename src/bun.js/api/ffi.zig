@@ -307,9 +307,9 @@ pub const FFI = struct {
                 break :brk std.DynLib.open(backup_name) catch {
                     // Then, if that fails, report an error.
                     const system_error = JSC.SystemError{
-                        .code = bun.String.create(@tagName(JSC.Node.ErrorCode.ERR_DLOPEN_FAILED)),
-                        .message = bun.String.create("Failed to open library. This is usually caused by a missing library or an invalid library path."),
-                        .syscall = bun.String.create("dlopen"),
+                        .code = bun.String.createUTF8(@tagName(JSC.Node.ErrorCode.ERR_DLOPEN_FAILED)),
+                        .message = bun.String.createUTF8("Failed to open library. This is usually caused by a missing library or an invalid library path."),
+                        .syscall = bun.String.createUTF8("dlopen"),
                     };
                     return system_error.toErrorInstance(global);
                 };
@@ -711,15 +711,15 @@ pub const FFI = struct {
         const FFI_HEADER: string = @embedFile("./FFI.h");
         pub inline fn ffiHeader() string {
             if (comptime Environment.isDebug) {
-                const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
-                var env = std.process.getEnvMap(default_allocator) catch unreachable;
-
+                const dirpath = comptime bun.Environment.base_path ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
+                var buf: bun.PathBuffer = undefined;
+                const user = bun.getUserName(&buf) orelse "";
                 const dir = std.mem.replaceOwned(
                     u8,
                     default_allocator,
                     dirpath,
                     "jarred",
-                    env.get("USER").?,
+                    user,
                 ) catch unreachable;
                 const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "FFI.h" }) catch unreachable;
                 const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/bun.js/api/FFI.h.");

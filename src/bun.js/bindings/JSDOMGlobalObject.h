@@ -2,6 +2,10 @@
 
 #include "root.h"
 
+namespace Zig {
+class GlobalObject;
+}
+
 #include "DOMWrapperWorld.h"
 
 #include <JavaScriptCore/HeapInlines.h>

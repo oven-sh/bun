@@ -387,3 +387,17 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
 
     return length;
 }
+
+void us_socket_ref(struct us_socket_t *s) {
+#ifdef LIBUS_USE_LIBUV
+    uv_ref((uv_handle_t*)s->p.uv_p);
+#endif
+    // do nothing if not using libuv
+}
+
+void us_socket_unref(struct us_socket_t *s) {
+#ifdef LIBUS_USE_LIBUV
+    uv_unref((uv_handle_t*)s->p.uv_p);
+#endif
+    // do nothing if not using libuv
+}

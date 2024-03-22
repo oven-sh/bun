@@ -1,6 +1,7 @@
-pub usingnamespace @import("src/main.zig");
+pub usingnamespace @import("./src/main.zig");
 
-pub const bun = @import("src/bun.zig");
+/// These functions are used throughout Bun's codebase.
+pub const bun = @import("./src/bun.zig");
 
 pub const content = struct {
     pub const error_js_path = "packages/bun-error/dist/index.js";

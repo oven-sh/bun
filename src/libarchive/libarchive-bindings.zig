@@ -1,5 +1,5 @@
 const bun = @import("root").bun;
-pub const wchar_t = c_int;
+pub const wchar_t = u16;
 pub const la_int64_t = i64;
 pub const la_ssize_t = isize;
 pub const struct_archive = opaque {};

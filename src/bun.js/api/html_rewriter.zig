@@ -469,13 +469,6 @@ pub const HTMLRewriter = struct {
                         };
                         return err.toErrorInstance(sink.global);
                     },
-                    error.InvalidStream => {
-                        var err = JSC.SystemError{
-                            .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
-                            .message = bun.String.static("Invalid stream"),
-                        };
-                        return err.toErrorInstance(sink.global);
-                    },
                     else => {
                         var err = JSC.SystemError{
                             .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
@@ -505,6 +498,7 @@ pub const HTMLRewriter = struct {
                 if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
                     sink.response.body.value.Locked.promise == null)
                 {
+                    sink.response.body.value.Locked.readable.deinit();
                     sink.response.body.value = .{ .Empty = {} };
                     // is there a pending promise?
                     // we will need to reject it
@@ -1752,7 +1746,7 @@ pub const Element = struct {
     ) callconv(.C) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
-        var str = bun.String.create(std.mem.span(this.element.?.namespaceURI()));
+        var str = bun.String.createUTF8(std.mem.span(this.element.?.namespaceURI()));
         defer str.deref();
         return str.toJS(globalObject);
     }

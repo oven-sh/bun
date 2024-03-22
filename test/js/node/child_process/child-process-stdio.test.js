@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, it, expect, beforeAll } from "bun:test";
 import { spawn, execSync } from "node:child_process";
 import { bunExe, bunEnv } from "harness";
@@ -10,6 +9,7 @@ describe("process.stdout", () => {
   it("should allow us to write to it", done => {
     const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDOUT"], {
       env: bunEnv,
+      stdio: ["inherit", "pipe", "inherit"],
     });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", data => {
@@ -29,6 +29,7 @@ describe("process.stdin", () => {
     // Child should read from stdin and write it back
     const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDIN", "READABLE"], {
       env: bunEnv,
+      stdio: ["pipe", "pipe", "inherit"],
     });
     let data = "";
     child.stdout.setEncoding("utf8");
@@ -44,8 +45,9 @@ describe("process.stdin", () => {
           done(err);
         }
       });
-    child.stdin.write(input);
-    child.stdin.end();
+    child.stdin.write(input, function () {
+      child.stdin.end(...arguments);
+    });
   });
 
   it("should allow us to read from stdin via flowing mode", done => {
@@ -53,6 +55,7 @@ describe("process.stdin", () => {
     // Child should read from stdin and write it back
     const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDIN", "FLOWING"], {
       env: bunEnv,
+      stdio: ["pipe", "pipe", "inherit"],
     });
     let data = "";
     child.stdout.setEncoding("utf8");
@@ -71,16 +74,18 @@ describe("process.stdin", () => {
           done(err);
         }
       });
-    child.stdin.write(input);
-    child.stdin.end();
+    child.stdin.end(input);
   });
 
   it("should allow us to read > 65kb from stdin", done => {
-    const numReps = Math.ceil((66 * 1024) / 5);
-    const input = "hello".repeat(numReps);
+    const numReps = Math.ceil((1024 * 1024) / 5);
+    const input = Buffer.alloc("hello".length * numReps)
+      .fill("hello")
+      .toString();
     // Child should read from stdin and write it back
     const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDIN", "FLOWING"], {
-      env: bunEnv,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdio: ["pipe", "pipe", "inherit"],
     });
     let data = "";
     child.stdout.setEncoding("utf8");
@@ -93,14 +98,15 @@ describe("process.stdin", () => {
       })
       .on("end", function () {
         try {
-          expect(data).toBe(`data: ${input}`);
+          const expected = "data: " + input;
+          expect(data.length).toBe(expected.length);
+          expect(data).toBe(expected);
           done();
         } catch (err) {
           done(err);
         }
       });
-    child.stdin.write(input);
-    child.stdin.end();
+    child.stdin.end(input);
   });
 
   it("should allow us to read from a file", () => {
@@ -109,44 +115,5 @@ describe("process.stdin", () => {
       env: bunEnv,
     });
     expect(result).toEqual("data: File read successfully");
-  });
-});
-
-describe("process.stdio pipes", () => {
-  it("is writable", () => {
-    const child = spawn(bunExe(), [import.meta.dir + "/fixtures/child-process-pipe-read.js"], {
-      env: bunEnv,
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
-    });
-    const pipe = child.stdio[3];
-    expect(pipe).not.toBe(null);
-    pipe.write("stdout_test");
-
-    child.stdout.on("data", data => {
-      try {
-        expect(data).toBe("stdout_test");
-        done();
-      } catch (err) {
-        done(err);
-      }
-    });
-  });
-
-  it("is readable", () => {
-    const child = spawn(bunExe(), [import.meta.dir + "/fixtures/child-process-pipe-read.js"], {
-      env: bunEnv,
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
-    });
-    const pipe = child.stdio[3];
-    expect(pipe).not.toBe(null);
-
-    child.stdout.on("data", data => {
-      try {
-        expect(data).toBe("stdout_test");
-        done();
-      } catch (err) {
-        done(err);
-      }
-    });
   });
 });

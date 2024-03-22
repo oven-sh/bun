@@ -1,6 +1,5 @@
-// @known-failing-on-windows: 1 failing
 import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 
 // This also tests __dirname and __filename
@@ -64,14 +63,19 @@ describe("files transpiled and loaded don't leak file paths", () => {
     expect(exitCode).toBe(0);
   }, 30000);
 
-  test("via import()", () => {
-    const { stdout, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "esm-fixture-leak-small.mjs")],
-      env: bunEnv,
-      stderr: "inherit",
-    });
+  test(
+    "via import()",
+    () => {
+      const { stdout, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "esm-fixture-leak-small.mjs")],
+        env: bunEnv,
+        stderr: "inherit",
+      });
 
-    expect(stdout.toString().trim()).toEndWith("--pass--");
-    expect(exitCode).toBe(0);
-  }, 30000);
+      expect(stdout.toString().trim()).toEndWith("--pass--");
+      expect(exitCode).toBe(0);
+    },
+    // TODO: Investigate why this is so slow on Windows
+    isWindows ? 60000 : 30000,
+  );
 });

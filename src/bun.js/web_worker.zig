@@ -221,7 +221,7 @@ pub const WebWorker = struct {
         const Writer = @TypeOf(writer);
         // we buffer this because it'll almost always be < 4096
         // when it's under 4096, we want to avoid the dynamic allocation
-        bun.JSC.ConsoleObject.format(
+        bun.JSC.ConsoleObject.format2(
             .Debug,
             globalObject,
             &[_]JSC.JSValue{error_instance},
@@ -240,7 +240,7 @@ pub const WebWorker = struct {
             @panic("OOM");
         };
         JSC.markBinding(@src());
-        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.create(array.toOwnedSliceLeaky()), error_instance);
+        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.toOwnedSliceLeaky()), error_instance);
         if (vm.worker) |worker_| {
             worker.requested_terminate = true;
             worker.parent_poll_ref.unrefConcurrently(worker.parent);
@@ -259,6 +259,8 @@ pub const WebWorker = struct {
     }
 
     fn spin(this: *WebWorker) void {
+        log("[{d}] spin start", .{this.execution_context_id});
+
         var vm = this.vm.?;
         std.debug.assert(this.status.load(.Acquire) == .start);
         this.setStatus(.starting);
@@ -280,7 +282,7 @@ pub const WebWorker = struct {
         _ = promise.result(vm.global.vm());
 
         this.flushLogs();
-        JSC.markBinding(@src());
+        log("[{d}] event loop start", .{this.execution_context_id});
         WebWorker__dispatchOnline(this.cpp_worker, vm.global);
         this.setStatus(.running);
 
@@ -303,6 +305,8 @@ pub const WebWorker = struct {
             if (this.requested_terminate) break;
         }
 
+        log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.requested_terminate) "(terminated)" else "(event loop dead)" });
+
         // Only call "beforeExit" if we weren't from a .terminate
         if (!this.requested_terminate) {
             // TODO: is this able to allow the event loop to continue?
@@ -311,6 +315,7 @@ pub const WebWorker = struct {
 
         this.flushLogs();
         this.exitAndDeinit();
+        log("[{d}] spin done", .{this.execution_context_id});
     }
 
     /// This is worker.ref()/.unref() from JS (Caller thread)
@@ -357,6 +362,7 @@ pub const WebWorker = struct {
         var vm_to_deinit: ?*JSC.VirtualMachine = null;
         if (this.vm) |vm| {
             this.vm = null;
+            vm.is_shutting_down = true;
             vm.onExit();
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;

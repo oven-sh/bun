@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { it, expect, describe } from "bun:test";
 import util from "util";
 
@@ -44,8 +43,42 @@ it("getters", () => {
     },
   };
 
-  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter]," + "\n" + "}");
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
   expect(called).toBe(false);
+});
+
+it("setters", () => {
+  const obj = {
+    set foo(x) {},
+  };
+
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Setter]," + "\n" + "}");
+  var called = false;
+  const objWithThrowingGetter = {
+    get foo() {
+      called = true;
+      throw new Error("Test failed!");
+    },
+    set foo(v) {
+      called = true;
+      throw new Error("Test failed!");
+    },
+  };
+
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
+  expect(called).toBe(false);
+});
+
+it("getter/setters", () => {
+  const obj = {
+    get foo() {
+      return 42;
+    },
+
+    set foo(x) {},
+  };
+
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
 });
 
 it("Timeout", () => {

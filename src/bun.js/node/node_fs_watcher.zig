@@ -6,8 +6,6 @@ const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.Encoder;
 const Mutex = @import("../../lock.zig").Lock;
 
-const PathWatcher = @import("./path_watcher.zig");
-
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
 const PathLike = JSC.Node.PathLike;
@@ -18,6 +16,7 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Environment = bun.Environment;
 const Async = bun.Async;
 
+const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
 pub const FSWatcher = struct {
     ctx: *VirtualMachine,
     verbose: bool = false,
@@ -556,19 +555,25 @@ pub const FSWatcher = struct {
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
         }
+
         var parts = [_]string{
             slice,
         };
 
+        const cwd = try bun.getcwd(&buf);
+        buf[cwd.len] = std.fs.path.sep;
+
+        var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
         const file_path = Path.joinAbsStringBuf(
-            Fs.FileSystem.instance.top_level_dir,
-            &buf,
+            buf[0 .. cwd.len + 1],
+            &joined_buf,
             &parts,
             .auto,
         );
 
-        buf[file_path.len] = 0;
-        const file_path_z = buf[0..file_path.len :0];
+        joined_buf[file_path.len] = 0;
+        const file_path_z = joined_buf[0..file_path.len :0];
+
         const vm = args.global_this.bunVM();
 
         var ctx = FSWatcher.new(.{

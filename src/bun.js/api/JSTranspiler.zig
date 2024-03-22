@@ -1196,7 +1196,7 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     });
     var i: usize = 0;
     while (named_exports_iter.next()) |entry| {
-        names[i] = bun.String.create(entry.key_ptr.*);
+        names[i] = bun.String.createUTF8(entry.key_ptr.*);
         i += 1;
     }
     return bun.String.toJSArray(global, names);

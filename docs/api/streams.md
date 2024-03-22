@@ -56,6 +56,45 @@ const stream = new ReadableStream({
 
 When using a direct `ReadableStream`, all chunk queueing is handled by the destination. The consumer of the stream receives exactly what is passed to `controller.write()`, without any encoding or modification.
 
+## Async generator streams
+
+Bun also supports async generator functions as a source for `Response` and `Request`. This is an easy way to create a `ReadableStream` that fetches data from an asynchronous source.
+
+```ts
+const response = new Response(async function* () {
+  yield "hello";
+  yield "world";
+}());
+
+await response.text(); // "helloworld"
+```
+
+You can also use `[Symbol.asyncIterator]` directly.
+
+```ts
+const response = new Response({
+  [Symbol.asyncIterator]: async function* () {
+    yield "hello";
+    yield "world";
+  },
+});
+
+await response.text(); // "helloworld"
+```
+
+If you need more granular control over the stream, `yield` will return the direct ReadableStream controller.
+
+```ts
+const response = new Response({
+  [Symbol.asyncIterator]: async function* () {
+    const controller = yield "hello";
+    await controller.end();
+  },
+});
+
+await response.text(); // "hello"
+```
+
 ## `Bun.ArrayBufferSink`
 
 The `Bun.ArrayBufferSink` class is a fast incremental writer for constructing an `ArrayBuffer` of unknown size.

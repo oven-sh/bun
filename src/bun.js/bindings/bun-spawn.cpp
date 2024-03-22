@@ -12,12 +12,13 @@
 #include <sys/syscall.h>
 #include <sys/resource.h>
 
-static int close_range(unsigned int first)
-{
-    return syscall(__NR_close_range, first, ~0U, 0);
-}
-
 extern char** environ;
+
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 
 enum FileActionType : uint8_t {
     None,
@@ -47,6 +48,7 @@ typedef struct bun_spawn_request_t {
 
 extern "C" ssize_t posix_spawn_bun(
     int* pid,
+    const char* path,
     const bun_spawn_request_t* request,
     char* const argv[],
     char* const envp[])
@@ -57,7 +59,6 @@ extern "C" ssize_t posix_spawn_bun(
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
-    const char* path = argv[0];
     pid_t child = vfork();
 
     const auto parentFailed = [&]() -> ssize_t {
@@ -70,7 +71,7 @@ extern "C" ssize_t posix_spawn_bun(
     const auto childFailed = [&]() -> ssize_t {
         res = errno;
         status = res;
-        close_range(0);
+        bun_close_range(0, ~0U, 0);
         _exit(127);
 
         // should never be reached
@@ -151,8 +152,12 @@ extern "C" ssize_t posix_spawn_bun(
         if (!envp)
             envp = environ;
 
-        close_range(current_max_fd + 1);
-        execve(path, argv, envp);
+        if (bun_close_range(current_max_fd + 1, ~0U, CLOSE_RANGE_CLOEXEC) != 0) {
+            bun_close_range(current_max_fd + 1, ~0U, 0);
+        }
+        if (execve(path, argv, envp) == -1) {
+            return childFailed();
+        }
         _exit(127);
 
         // should never be reached.

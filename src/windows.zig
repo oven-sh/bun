@@ -3,7 +3,9 @@ const windows = std.os.windows;
 const win32 = windows;
 pub const PATH_MAX_WIDE = windows.PATH_MAX_WIDE;
 pub const MAX_PATH = windows.MAX_PATH;
+pub const WORD = windows.WORD;
 pub const DWORD = windows.DWORD;
+pub const CHAR = windows.CHAR;
 pub const BOOL = windows.BOOL;
 pub const LPVOID = windows.LPVOID;
 pub const LPCVOID = windows.LPCVOID;
@@ -12,12 +14,16 @@ pub const LPCWSTR = windows.LPCWSTR;
 pub const LPSTR = windows.LPSTR;
 pub const WCHAR = windows.WCHAR;
 pub const LPCSTR = windows.LPCSTR;
+pub const PWSTR = windows.PWSTR;
 pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;
+pub const COORD = windows.COORD;
 pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
 pub const FILE_BEGIN = windows.FILE_BEGIN;
+pub const FILE_END = windows.FILE_END;
 pub const FILE_CURRENT = windows.FILE_CURRENT;
 pub const ULONG = windows.ULONG;
+pub const UINT = windows.UINT;
 pub const LARGE_INTEGER = windows.LARGE_INTEGER;
 pub const UNICODE_STRING = windows.UNICODE_STRING;
 pub const NTSTATUS = windows.NTSTATUS;
@@ -61,8 +67,22 @@ pub const advapi32 = windows.advapi32;
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
+pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
+pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
+
 const std = @import("std");
+const Environment = bun.Environment;
+
+pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
+pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
+
 pub const HANDLE = win32.HANDLE;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
+pub extern "kernel32" fn GetFileInformationByHandle(
+    hFile: HANDLE,
+    lpFileInformation: *windows.BY_HANDLE_FILE_INFORMATION,
+) callconv(windows.WINAPI) BOOL;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilevaliddata
 pub extern "kernel32" fn SetFileValidData(
@@ -74,6 +94,17 @@ pub extern fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
 ) [*]win32.LPWSTR;
+
+pub extern fn GetFileType(
+    hFile: win32.HANDLE,
+) callconv(windows.WINAPI) win32.DWORD;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype#return-value
+pub const FILE_TYPE_UNKNOWN = 0x0000;
+pub const FILE_TYPE_DISK = 0x0001;
+pub const FILE_TYPE_CHAR = 0x0002;
+pub const FILE_TYPE_PIPE = 0x0003;
+pub const FILE_TYPE_REMOTE = 0x8000;
 
 pub const LPDWORD = *win32.DWORD;
 
@@ -2915,6 +2946,10 @@ pub const Win32Error = enum(u16) {
         return @enumFromInt(@intFromEnum(bun.windows.kernel32.GetLastError()));
     }
 
+    pub fn int(this: Win32Error) u16 {
+        return @intFromEnum(this);
+    }
+
     pub fn unwrap(this: @This()) !void {
         if (this == .SUCCESS) return;
         if (this.toSystemErrno()) |err| {
@@ -2950,6 +2985,8 @@ pub extern fn LoadLibraryA(
     [*:0]const u8,
 ) ?*anyopaque;
 
+pub extern fn LoadLibraryExW([*:0]const u16, ?HANDLE, DWORD) ?*anyopaque;
+
 pub extern "kernel32" fn CreateHardLinkW(
     newFileName: LPCWSTR,
     existingFileName: LPCWSTR,
@@ -2970,22 +3007,312 @@ pub extern "kernel32" fn SetFileInformationByHandle(
 ) BOOL;
 
 pub fn getLastErrno() bun.C.E {
-    return switch (bun.windows.kernel32.GetLastError()) {
+    return (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
+}
+
+pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
+    return switch (err) {
         .SUCCESS => .SUCCESS,
-        .FILE_NOT_FOUND => .NOENT,
-        .PATH_NOT_FOUND => .NOENT,
-        .TOO_MANY_OPEN_FILES => .NOMEM,
         .ACCESS_DENIED => .PERM,
         .INVALID_HANDLE => .BADF,
-        .NOT_ENOUGH_MEMORY => .NOMEM,
-        .OUTOFMEMORY => .NOMEM,
         .INVALID_PARAMETER => .INVAL,
+        .OBJECT_NAME_COLLISION => .EXIST,
+        .FILE_IS_A_DIRECTORY => .ISDIR,
+        .OBJECT_PATH_NOT_FOUND => .NOENT,
+        .OBJECT_NAME_NOT_FOUND => .NOENT,
+        .NOT_A_DIRECTORY => .NOTDIR,
+        .RETRY => .AGAIN,
+        .FILE_TOO_LARGE => .@"2BIG",
+        .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
+            bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
+            break :brk .INVAL;
+        } else .INVAL,
 
         else => |t| {
-            if (bun.Environment.isDebug) {
-                bun.Output.warn("Called getLastErrno with {s} which does not have a mapping to errno", .{@tagName(t)});
-            }
+            // if (bun.Environment.isDebug) {
+            bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
+            // }
             return .UNKNOWN;
         },
     };
+}
+
+pub extern "kernel32" fn GetHostNameW(
+    lpBuffer: PWSTR,
+    nSize: c_int,
+) callconv(windows.WINAPI) BOOL;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
+pub extern "kernel32" fn GetTempPathW(
+    nBufferLength: DWORD, // [in]
+    lpBuffer: LPCWSTR, // [out]
+) DWORD;
+
+pub extern "kernel32" fn CreateJobObjectA(
+    lpJobAttributes: ?*anyopaque, // [in, optional]
+    lpName: ?LPCSTR, // [in, optional]
+) callconv(windows.WINAPI) HANDLE;
+
+pub extern "kernel32" fn AssignProcessToJobObject(
+    hJob: HANDLE, // [in]
+    hProcess: HANDLE, // [in]
+) callconv(windows.WINAPI) BOOL;
+
+pub extern "kernel32" fn ResumeThread(
+    hJob: HANDLE, // [in]
+) callconv(windows.WINAPI) DWORD;
+
+pub const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
+    CompletionKey: windows.PVOID,
+    CompletionPort: HANDLE,
+};
+
+pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
+
+pub extern "kernel32" fn SetInformationJobObject(
+    hJob: HANDLE,
+    JobObjectInformationClass: DWORD,
+    lpJobObjectInformation: LPVOID,
+    cbJobObjectInformationLength: DWORD,
+) callconv(windows.WINAPI) BOOL;
+
+// Found experimentally:
+// #include <stdio.h>
+// #include <windows.h>
+//
+// int main() {
+//         printf("%ld\n", JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO);
+//         printf("%ld\n", JOB_OBJECT_MSG_EXIT_PROCESS);
+// }
+//
+// Output:
+// 4
+// 7
+pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
+pub const JOB_OBJECT_MSG_EXIT_PROCESS = 7;
+
+pub extern "kernel32" fn OpenProcess(
+    dwDesiredAccess: DWORD,
+    bInheritHandle: BOOL,
+    dwProcessId: DWORD,
+) callconv(windows.WINAPI) ?HANDLE;
+
+// https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
+pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
+
+pub fn exePathW() [:0]const u16 {
+    const image_path_unicode_string = &std.os.windows.peb().ProcessParameters.ImagePathName;
+    return image_path_unicode_string.Buffer[0 .. image_path_unicode_string.Length / 2 :0];
+}
+
+pub const KEY_EVENT_RECORD = extern struct {
+    bKeyDown: BOOL,
+    wRepeatCount: WORD,
+    wVirtualKeyCode: WORD,
+    wVirtualScanCode: WORD,
+    uChar: extern union {
+        UnicodeChar: WCHAR,
+        AsciiChar: CHAR,
+    },
+    dwControlKeyState: DWORD,
+};
+
+pub const MOUSE_EVENT_RECORD = extern struct {
+    dwMousePosition: COORD,
+    dwButtonState: COORD,
+    dwControlKeyState: DWORD,
+    dwEventFlags: DWORD,
+};
+
+pub const WINDOW_BUFFER_SIZE_EVENT = extern struct {
+    dwSize: COORD,
+};
+
+pub const MENU_EVENT_RECORD = extern struct {
+    dwCommandId: UINT,
+};
+
+pub const FOCUS_EVENT_RECORD = extern struct {
+    bSetFocus: BOOL,
+};
+
+pub const INPUT_RECORD = extern struct {
+    EventType: WORD,
+    Event: extern union {
+        KeyEvent: KEY_EVENT_RECORD,
+        MouseEvent: MOUSE_EVENT_RECORD,
+        WindowBufferSizeEvent: WINDOW_BUFFER_SIZE_EVENT,
+        MenuEvent: MENU_EVENT_RECORD,
+        FocusEvent: FOCUS_EVENT_RECORD,
+    },
+};
+
+fn Bun__UVSignalHandle__init(
+    global: *bun.JSC.JSGlobalObject,
+    signal_num: i32,
+    callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
+) callconv(.C) ?*libuv.uv_signal_t {
+    const signal = bun.new(libuv.uv_signal_t, undefined);
+
+    var rc = libuv.uv_signal_init(global.bunVM().uvLoop(), signal);
+    if (rc.errno()) |_| {
+        bun.destroy(signal);
+        return null;
+    }
+
+    rc = libuv.uv_signal_start(signal, callback, signal_num);
+    if (rc.errno()) |_| {
+        libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
+        return null;
+    }
+
+    libuv.uv_unref(@ptrCast(signal));
+
+    return signal;
+}
+
+fn freeWithDefaultAllocator(signal: *anyopaque) callconv(.C) void {
+    bun.destroy(@as(*libuv.uv_signal_t, @alignCast(@ptrCast(signal))));
+}
+
+fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.C) void {
+    _ = libuv.uv_signal_stop(signal);
+    libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
+}
+
+comptime {
+    if (Environment.isWindows) {
+        @export(Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
+        @export(Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
+    }
+}
+
+extern fn GetUserNameW(
+    lpBuffer: bun.windows.LPWSTR,
+    pcbBuffer: bun.windows.LPDWORD,
+) bun.windows.BOOL;
+
+/// Is not the actual UID of the user, but just a hash of username.
+pub fn userUniqueId() u32 {
+    // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/165836c1-89d7-4abb-840d-80cf2510aa3e
+    // UNLEN + 1
+    var buf: [257]u16 = undefined;
+    var size: u32 = buf.len;
+    if (GetUserNameW(@ptrCast(&buf), &size) == 0) {
+        if (Environment.isDebug) std.debug.panic("GetUserNameW failed: {}", .{bun.windows.GetLastError()});
+        return 0;
+    }
+    const name = buf[0..size];
+    bun.Output.scoped(.windowsUserUniqueId, false)("username: {}", .{bun.fmt.utf16(name)});
+    return bun.hash32(std.mem.sliceAsBytes(name));
+}
+
+pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
+    return switch (err) {
+        // TODO: use `inline else` if https://github.com/ziglang/zig/issues/12250 is accepted
+        .WSA_INVALID_HANDLE => error.WSA_INVALID_HANDLE,
+        .WSA_NOT_ENOUGH_MEMORY => error.WSA_NOT_ENOUGH_MEMORY,
+        .WSA_INVALID_PARAMETER => error.WSA_INVALID_PARAMETER,
+        .WSA_OPERATION_ABORTED => error.WSA_OPERATION_ABORTED,
+        .WSA_IO_INCOMPLETE => error.WSA_IO_INCOMPLETE,
+        .WSA_IO_PENDING => error.WSA_IO_PENDING,
+        .WSAEINTR => error.WSAEINTR,
+        .WSAEBADF => error.WSAEBADF,
+        .WSAEACCES => error.WSAEACCES,
+        .WSAEFAULT => error.WSAEFAULT,
+        .WSAEINVAL => error.WSAEINVAL,
+        .WSAEMFILE => error.WSAEMFILE,
+        .WSAEWOULDBLOCK => error.WSAEWOULDBLOCK,
+        .WSAEINPROGRESS => error.WSAEINPROGRESS,
+        .WSAEALREADY => error.WSAEALREADY,
+        .WSAENOTSOCK => error.WSAENOTSOCK,
+        .WSAEDESTADDRREQ => error.WSAEDESTADDRREQ,
+        .WSAEMSGSIZE => error.WSAEMSGSIZE,
+        .WSAEPROTOTYPE => error.WSAEPROTOTYPE,
+        .WSAENOPROTOOPT => error.WSAENOPROTOOPT,
+        .WSAEPROTONOSUPPORT => error.WSAEPROTONOSUPPORT,
+        .WSAESOCKTNOSUPPORT => error.WSAESOCKTNOSUPPORT,
+        .WSAEOPNOTSUPP => error.WSAEOPNOTSUPP,
+        .WSAEPFNOSUPPORT => error.WSAEPFNOSUPPORT,
+        .WSAEAFNOSUPPORT => error.WSAEAFNOSUPPORT,
+        .WSAEADDRINUSE => error.WSAEADDRINUSE,
+        .WSAEADDRNOTAVAIL => error.WSAEADDRNOTAVAIL,
+        .WSAENETDOWN => error.WSAENETDOWN,
+        .WSAENETUNREACH => error.WSAENETUNREACH,
+        .WSAENETRESET => error.WSAENETRESET,
+        .WSAECONNABORTED => error.WSAECONNABORTED,
+        .WSAECONNRESET => error.WSAECONNRESET,
+        .WSAENOBUFS => error.WSAENOBUFS,
+        .WSAEISCONN => error.WSAEISCONN,
+        .WSAENOTCONN => error.WSAENOTCONN,
+        .WSAESHUTDOWN => error.WSAESHUTDOWN,
+        .WSAETOOMANYREFS => error.WSAETOOMANYREFS,
+        .WSAETIMEDOUT => error.WSAETIMEDOUT,
+        .WSAECONNREFUSED => error.WSAECONNREFUSED,
+        .WSAELOOP => error.WSAELOOP,
+        .WSAENAMETOOLONG => error.WSAENAMETOOLONG,
+        .WSAEHOSTDOWN => error.WSAEHOSTDOWN,
+        .WSAEHOSTUNREACH => error.WSAEHOSTUNREACH,
+        .WSAENOTEMPTY => error.WSAENOTEMPTY,
+        .WSAEPROCLIM => error.WSAEPROCLIM,
+        .WSAEUSERS => error.WSAEUSERS,
+        .WSAEDQUOT => error.WSAEDQUOT,
+        .WSAESTALE => error.WSAESTALE,
+        .WSAEREMOTE => error.WSAEREMOTE,
+        .WSASYSNOTREADY => error.WSASYSNOTREADY,
+        .WSAVERNOTSUPPORTED => error.WSAVERNOTSUPPORTED,
+        .WSANOTINITIALISED => error.WSANOTINITIALISED,
+        .WSAEDISCON => error.WSAEDISCON,
+        .WSAENOMORE => error.WSAENOMORE,
+        .WSAECANCELLED => error.WSAECANCELLED,
+        .WSAEINVALIDPROCTABLE => error.WSAEINVALIDPROCTABLE,
+        .WSAEINVALIDPROVIDER => error.WSAEINVALIDPROVIDER,
+        .WSAEPROVIDERFAILEDINIT => error.WSAEPROVIDERFAILEDINIT,
+        .WSASYSCALLFAILURE => error.WSASYSCALLFAILURE,
+        .WSASERVICE_NOT_FOUND => error.WSASERVICE_NOT_FOUND,
+        .WSATYPE_NOT_FOUND => error.WSATYPE_NOT_FOUND,
+        .WSA_E_NO_MORE => error.WSA_E_NO_MORE,
+        .WSA_E_CANCELLED => error.WSA_E_CANCELLED,
+        .WSAEREFUSED => error.WSAEREFUSED,
+        .WSAHOST_NOT_FOUND => error.WSAHOST_NOT_FOUND,
+        .WSATRY_AGAIN => error.WSATRY_AGAIN,
+        .WSANO_RECOVERY => error.WSANO_RECOVERY,
+        .WSANO_DATA => error.WSANO_DATA,
+        .WSA_QOS_RECEIVERS => error.WSA_QOS_RECEIVERS,
+        .WSA_QOS_SENDERS => error.WSA_QOS_SENDERS,
+        .WSA_QOS_NO_SENDERS => error.WSA_QOS_NO_SENDERS,
+        .WSA_QOS_NO_RECEIVERS => error.WSA_QOS_NO_RECEIVERS,
+        .WSA_QOS_REQUEST_CONFIRMED => error.WSA_QOS_REQUEST_CONFIRMED,
+        .WSA_QOS_ADMISSION_FAILURE => error.WSA_QOS_ADMISSION_FAILURE,
+        .WSA_QOS_POLICY_FAILURE => error.WSA_QOS_POLICY_FAILURE,
+        .WSA_QOS_BAD_STYLE => error.WSA_QOS_BAD_STYLE,
+        .WSA_QOS_BAD_OBJECT => error.WSA_QOS_BAD_OBJECT,
+        .WSA_QOS_TRAFFIC_CTRL_ERROR => error.WSA_QOS_TRAFFIC_CTRL_ERROR,
+        .WSA_QOS_GENERIC_ERROR => error.WSA_QOS_GENERIC_ERROR,
+        .WSA_QOS_ESERVICETYPE => error.WSA_QOS_ESERVICETYPE,
+        .WSA_QOS_EFLOWSPEC => error.WSA_QOS_EFLOWSPEC,
+        .WSA_QOS_EPROVSPECBUF => error.WSA_QOS_EPROVSPECBUF,
+        .WSA_QOS_EFILTERSTYLE => error.WSA_QOS_EFILTERSTYLE,
+        .WSA_QOS_EFILTERTYPE => error.WSA_QOS_EFILTERTYPE,
+        .WSA_QOS_EFILTERCOUNT => error.WSA_QOS_EFILTERCOUNT,
+        .WSA_QOS_EOBJLENGTH => error.WSA_QOS_EOBJLENGTH,
+        .WSA_QOS_EFLOWCOUNT => error.WSA_QOS_EFLOWCOUNT,
+        .WSA_QOS_EUNKOWNPSOBJ => error.WSA_QOS_EUNKOWNPSOBJ,
+        .WSA_QOS_EPOLICYOBJ => error.WSA_QOS_EPOLICYOBJ,
+        .WSA_QOS_EFLOWDESC => error.WSA_QOS_EFLOWDESC,
+        .WSA_QOS_EPSFLOWSPEC => error.WSA_QOS_EPSFLOWSPEC,
+        .WSA_QOS_EPSFILTERSPEC => error.WSA_QOS_EPSFILTERSPEC,
+        .WSA_QOS_ESDMODEOBJ => error.WSA_QOS_ESDMODEOBJ,
+        .WSA_QOS_ESHAPERATEOBJ => error.WSA_QOS_ESHAPERATEOBJ,
+        .WSA_QOS_RESERVED_PETYPE => error.WSA_QOS_RESERVED_PETYPE,
+        _ => |t| {
+            if (Environment.isDebug) {
+                bun.Output.debugWarn("Unknown WinSockError: {d}", .{@intFromEnum(t)});
+            }
+        },
+    };
+}
+
+pub fn WSAGetLastError() !void {
+    return winSockErrorToZigError(std.os.windows.ws2_32.WSAGetLastError());
 }

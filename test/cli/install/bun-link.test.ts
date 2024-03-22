@@ -1,9 +1,8 @@
-// @known-failing-on-windows: 1 failing
 import { spawn, file } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
 import { access, mkdtemp, readlink, realpath, rm, writeFile, mkdir } from "fs/promises";
-import { basename, join } from "path";
+import { basename, join, sep, dirname } from "path";
 import { tmpdir } from "os";
 import {
   dummyAfterAll,
@@ -18,6 +17,11 @@ beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 
 let link_dir: string;
+
+expect.extend({
+  toBeValidBin,
+  toHaveBins,
+});
 
 beforeEach(async () => {
   link_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-link.test"));
@@ -56,7 +60,7 @@ it("should link and unlink workspace package", async () => {
   var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -68,8 +72,8 @@ it("should link and unlink workspace package", async () => {
   var out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + boba@workspace:packages/boba",
-    " + moo@workspace:packages/moo",
+    ` + boba@workspace:packages/boba`,
+    ` + moo@workspace:packages/moo`,
     "",
     " 2 packages installed",
   ]);
@@ -78,7 +82,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link"],
     cwd: join(link_dir, "packages", "moo"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -94,7 +98,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link", "moo"],
     cwd: join(link_dir, "packages", "boba"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -119,7 +123,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: join(link_dir, "packages", "moo"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -136,7 +140,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -152,7 +156,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link", "foo"],
     cwd: join(link_dir, "packages", "boba"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -178,7 +182,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -216,7 +220,7 @@ it("should link package", async () => {
   } = spawn({
     cmd: [bunExe(), "link"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -235,7 +239,7 @@ it("should link package", async () => {
   } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -260,7 +264,7 @@ it("should link package", async () => {
   } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -279,7 +283,7 @@ it("should link package", async () => {
   } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -316,7 +320,7 @@ it("should link scoped package", async () => {
   } = spawn({
     cmd: [bunExe(), "link"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -335,7 +339,7 @@ it("should link scoped package", async () => {
   } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -360,7 +364,7 @@ it("should link scoped package", async () => {
   } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -379,7 +383,7 @@ it("should link scoped package", async () => {
   } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -393,7 +397,6 @@ it("should link scoped package", async () => {
 });
 
 it("should link dependency without crashing", async () => {
-  console.log(link_dir);
   const link_name = basename(link_dir).slice("bun-link.".length) + "-really-long-name";
   await writeFile(
     join(link_dir, "package.json"),
@@ -424,7 +427,7 @@ it("should link dependency without crashing", async () => {
   } = spawn({
     cmd: [bunExe(), "link"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -443,7 +446,7 @@ it("should link dependency without crashing", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -461,10 +464,8 @@ it("should link dependency without crashing", async () => {
   ]);
   expect(await exited2).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", link_name].sort());
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([link_name]);
-  expect(await readlink(join(package_dir, "node_modules", ".bin", link_name))).toBe(
-    join("..", link_name, `${link_name}.js`),
-  );
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([link_name]);
+  expect(join(package_dir, "node_modules", ".bin", link_name)).toBeValidBin(join("..", link_name, `${link_name}.js`));
   expect(await readdirSorted(join(package_dir, "node_modules", link_name))).toEqual(
     ["package.json", `${link_name}.js`].sort(),
   );
@@ -477,7 +478,7 @@ it("should link dependency without crashing", async () => {
   } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -496,7 +497,7 @@ it("should link dependency without crashing", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,

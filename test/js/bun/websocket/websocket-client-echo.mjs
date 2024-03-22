@@ -16,11 +16,14 @@ ws.on("open", () => {
   console.error("Connected", ws.url);
 });
 
+const logMessages = process.env.LOG_MESSAGES === "1";
 ws.on("message", (data, isBinary) => {
-  if (isBinary) {
-    console.error("Received binary message:", data);
-  } else {
-    console.error("Received text message:", data);
+  if (logMessages) {
+    if (isBinary) {
+      console.error("Received binary message:", data);
+    } else {
+      console.error("Received text message:", data);
+    }
   }
   ws.send(data, { binary: isBinary });
 

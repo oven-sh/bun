@@ -9,6 +9,7 @@ on:
     branches:
       - main
     paths:
+      - ".github/workflows/bun-linux-build.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -21,6 +22,7 @@ on:
     branches:
       - main
     paths:
+      - ".github/workflows/bun-linux-build.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -47,7 +49,7 @@ jobs:
             tag: linux-x64
             arch: x86_64
             build_arch: amd64
-            runner: big-ubuntu
+            runner: namespace-profile-bun-linux-x64
             build_machine_arch: x86_64
             assertions: "OFF"
             zig_optimize: "ReleaseFast"
@@ -56,7 +58,7 @@ jobs:
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
-            runner: big-ubuntu
+            runner: namespace-profile-bun-linux-x64
             build_machine_arch: x86_64
             assertions: "OFF"
             zig_optimize: "ReleaseFast"
@@ -86,28 +88,20 @@ jobs:
           submodules: recursive
           ref: ${{github.sha}}
           clean: true
-      - uses: docker/setup-buildx-action@v2
-        id: buildx
-        with:
-          install: true
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/release
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: |
-          mkdir -p /tmp/.buildx-cache-${{matrix.tag}}
       - name: Build and push
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: false
-          cache-from: type=local,src=/tmp/.buildx-cache-${{matrix.tag}}
-          cache-to: type=local,dest=/tmp/.buildx-cache-${{matrix.tag}}
           build-args: |
             ARCH=${{matrix.arch}}
             BUILDARCH=${{matrix.build_arch}}
@@ -116,12 +110,6 @@ jobs:
             GIT_SHA=${{github.sha}}
             ASSERTIONS=${{matrix.assertions}}
             ZIG_OPTIMIZE=${{matrix.zig_optimize}}
-            SCCACHE_BUCKET=bun
-            SCCACHE_REGION=auto
-            SCCACHE_S3_USE_SSL=true
-            SCCACHE_ENDPOINT=${{ secrets.CACHE_S3_ENDPOINT }}
-            AWS_ACCESS_KEY_ID=${{ secrets.CACHE_S3_ACCESS_KEY_ID }}
-            AWS_SECRET_ACCESS_KEY=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }}
           platforms: linux/${{matrix.build_arch}}
           target: ${{matrix.target}}
           outputs: type=local,dest=${{runner.temp}}/release
@@ -154,22 +142,16 @@ jobs:
 
           zip -r bun-${{matrix.tag}}-profile.zip bun-${{matrix.tag}}-profile
           zip -r bun-${{matrix.tag}}.zip bun-${{matrix.tag}}
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: bun-${{matrix.tag}}-profile
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip
-      - uses: actions/upload-artifact@v3
+          if-no-files-found: "error"
+      - uses: actions/upload-artifact@v4
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-      - uses: actions/upload-artifact@v3
-        with:
-          name: bun-obj-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-obj
-      - uses: actions/upload-artifact@v3
-        with:
-          name: ${{matrix.tag}}-dependencies
-          path: ${{runner.temp}}/release/bun-dependencies
+          if-no-files-found: "error"
       - name: Release
         id: release
         uses: ncipollo/release-action@v1
@@ -208,7 +190,7 @@ jobs:
             [Commit ${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})
   linux-test:
     name: Tests ${{matrix.tag}}
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-bun-linux-x64
     needs: [linux]
     if: github.event_name == 'pull_request'
     timeout-minutes: 20
@@ -234,7 +216,7 @@ jobs:
           clean: true
       - id: download
         name: Download
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release
@@ -275,19 +257,18 @@ jobs:
         name: Test (node runner)
         env:
           SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
+          TMPDIR: ${{runner.temp}}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
-          ulimit -c unlimited
-          ulimit -c
-
           node packages/bun-internal-test/src/runner.node.mjs || true
-      - uses: actions/upload-artifact@v3
-        if: steps.test.outputs.failing_tests != ''
-        with:
-          name: cores
-          path: /cores
+      # - uses: actions/upload-artifact@v4
+      #   if: steps.test.outputs.failing_tests != ''
+      #   with:
+      #     name: cores
+      #     path: /cores
+      #     if-no-files-found: "error"
       - uses: sarisia/actions-status-discord@v1
         if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         with:

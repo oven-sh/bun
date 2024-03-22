@@ -1761,7 +1761,7 @@ function formatError(err, constructor, tag, ctx, keys) {
           if (workingDirectory !== undefined) {
             let newLine = markCwd(ctx, line, workingDirectory);
             if (newLine === line) {
-              esmWorkingDirectory ??= pathToFileURL(workingDirectory);
+              esmWorkingDirectory ??= pathToFileURL(workingDirectory).href;
               newLine = markCwd(ctx, line, esmWorkingDirectory);
             }
             line = newLine;

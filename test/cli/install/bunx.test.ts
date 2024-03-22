@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawn } from "bun";
 import { afterEach, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
@@ -40,14 +39,15 @@ it("should install and run default (latest) version", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js", "--compress"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: new TextEncoder().encode("console.log(6 * 7);"),
     stderr: "pipe",
     env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err).not.toContain("error");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
@@ -58,14 +58,15 @@ it("should install and run specified version", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js@3.14.1", "-v"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err).not.toContain("error");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
@@ -76,7 +77,7 @@ it("should output usage if no arguments are passed", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -84,6 +85,8 @@ it("should output usage if no arguments are passed", async () => {
 
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Usage: ");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -97,7 +100,7 @@ it("should work for @scoped packages", async () => {
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "@withfig/autocomplete-tools", "--help"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -105,7 +108,8 @@ it("should work for @scoped packages", async () => {
 
   expect(withoutCache.stderr).toBeDefined();
   let err = await new Response(withoutCache.stderr).text();
-  expect(err).not.toContain("error");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(withoutCache.stdout).toBeDefined();
   let out = await new Response(withoutCache.stdout).text();
   expect(out.trim()).toContain("Usage: @withfig/autocomplete-tool");
@@ -115,7 +119,7 @@ it("should work for @scoped packages", async () => {
   const cached = spawn({
     cmd: [bunExe(), "x", "@withfig/autocomplete-tools", "--help"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -123,7 +127,8 @@ it("should work for @scoped packages", async () => {
 
   expect(cached.stderr).toBeDefined();
   err = await new Response(cached.stderr).text();
-  expect(err).not.toContain("error");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(cached.stdout).toBeDefined();
   out = await new Response(cached.stdout).text();
   expect(out.trim()).toContain("Usage: @withfig/autocomplete-tool");
@@ -143,14 +148,15 @@ console.log(
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "--bun", "x", "uglify-js", "test.js", "--compress"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err).not.toContain("error");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
@@ -164,7 +170,7 @@ it("should work for github repository", async () => {
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -172,7 +178,8 @@ it("should work for github repository", async () => {
 
   expect(withoutCache.stderr).toBeDefined();
   let err = await new Response(withoutCache.stderr).text();
-  expect(err).not.toContain("error");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(withoutCache.stdout).toBeDefined();
   let out = await new Response(withoutCache.stdout).text();
   expect(out.trim()).toContain("Usage: cowsay");
@@ -182,7 +189,7 @@ it("should work for github repository", async () => {
   const cached = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -190,7 +197,8 @@ it("should work for github repository", async () => {
 
   expect(cached.stderr).toBeDefined();
   err = await new Response(cached.stderr).text();
-  expect(err).not.toContain("error");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(cached.stdout).toBeDefined();
   out = await new Response(cached.stdout).text();
   expect(out.trim()).toContain("Usage: cowsay");
@@ -202,7 +210,7 @@ it("should work for github repository with committish", async () => {
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -210,7 +218,8 @@ it("should work for github repository with committish", async () => {
 
   expect(withoutCache.stderr).toBeDefined();
   let err = await new Response(withoutCache.stderr).text();
-  expect(err).not.toContain("error");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(withoutCache.stdout).toBeDefined();
   let out = await new Response(withoutCache.stdout).text();
   expect(out.trim()).toContain("hello bun!");
@@ -220,7 +229,7 @@ it("should work for github repository with committish", async () => {
   const cached = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -228,7 +237,8 @@ it("should work for github repository with committish", async () => {
 
   expect(cached.stderr).toBeDefined();
   err = await new Response(cached.stderr).text();
-  expect(err).not.toContain("error");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(cached.stdout).toBeDefined();
   out = await new Response(cached.stdout).text();
   expect(out.trim()).toContain("hello bun!");

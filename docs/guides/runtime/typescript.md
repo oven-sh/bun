@@ -15,13 +15,13 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
 ```jsonc
 {
   "compilerOptions": {
-    // enable latest features
-    "lib": ["ESNext"],
+    // Enable latest features
+    "lib": ["ESNext","DOM"],
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",
-    "jsx": "react-jsx", // support JSX
-    "allowJs": true, // allow importing `.js` from `.ts`
+    "jsx": "react-jsx",
+    "allowJs": true,
 
     // Bundler mode
     "moduleResolution": "bundler",
@@ -32,12 +32,11 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
     // Best practices
     "strict": true,
     "skipLibCheck": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
 
     // Some stricter flags
-    "useUnknownInCatchVariables": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noPropertyAccessFromIndexSignature": true
   }
 }

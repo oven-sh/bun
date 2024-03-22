@@ -1,6 +1,7 @@
 const BoringSSL = @import("root").bun.BoringSSL;
 const std = @import("std");
-pub const bun = @import("./bun.zig");
+
+pub const bun = if (@import("build_options").project.len == 0) @import("./bun.zig") else @import("root").bun;
 
 fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, comptime Full: anytype, comptime Init: anytype, comptime Update: anytype, comptime Final: anytype) type {
     return struct {
@@ -49,7 +50,7 @@ fn NewEVP(
         pub fn init() @This() {
             BoringSSL.load();
 
-            const md = @call(.auto, @field(BoringSSL, MDName), .{});
+            const md = @field(BoringSSL, MDName)();
             var this = @This(){};
 
             BoringSSL.EVP_MD_CTX_init(&this.ctx);
@@ -60,7 +61,7 @@ fn NewEVP(
         }
 
         pub fn hash(bytes: []const u8, out: *Digest, engine: *BoringSSL.ENGINE) void {
-            const md = @call(.auto, @field(BoringSSL, MDName), .{});
+            const md = @field(BoringSSL, MDName)();
 
             std.debug.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);
         }

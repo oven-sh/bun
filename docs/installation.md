@@ -22,8 +22,7 @@ $ npm install -g bun # the last `npm` command you'll ever need
 ```
 
 ```bash#Homebrew
-$ brew tap oven-sh/bun # for macOS and Linux
-$ brew install bun
+$ brew install oven-sh/bun/bun # for macOS and Linux
 ```
 
 ```bash#Docker
@@ -38,6 +37,10 @@ $ proto install bun
 {% /codetabs %}
 
 ### Windows
+
+{% callout %}
+Bun requires a minimum of Windows 10 version 1809
+{% /callout %}
 
 Bun provides a _limited, experimental_ native build for Windows. It is recommended to use Bun within [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the above instructions. To help catch bugs, the experimental build enables many debugging assertions, which will make the binary slower than what the stable version will be.
 
@@ -227,6 +230,10 @@ If you need to remove Bun from your system, use the following commands.
 
 ```bash#macOS/Linux_(curl)
 $ rm -rf ~/.bun # for macOS, Linux, and WSL
+```
+
+```bash#Windows
+$ Remove-Item ~\.bun -Recurse
 ```
 
 ```bash#NPM

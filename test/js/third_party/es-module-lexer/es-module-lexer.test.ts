@@ -1,6 +1,5 @@
-// @known-failing-on-windows: 1 failing
 import { test, expect } from "bun:test";
-import { spawnSync } from "bun";
+import { spawn } from "bun";
 import { bunEnv, bunExe } from "../../../harness";
 import { join } from "path";
 
@@ -12,13 +11,13 @@ import { join } from "path";
 //
 // At the time of writing, this includes WebAssembly compilation and Atomics
 // It excludes FinalizationRegistry since that doesn't need to keep the process alive.
-test("es-module-lexer consistently loads", () => {
+test("es-module-lexer consistently loads", async () => {
   for (let i = 0; i < 10; i++) {
-    const { stdout, exitCode } = spawnSync({
+    const { stdout, exited } = spawn({
       cmd: [bunExe(), join(import.meta.dir, "index.ts")],
       env: bunEnv,
     });
-    expect(JSON.parse(stdout?.toString())).toEqual({
+    expect(await new Response(stdout).json()).toEqual({
       imports: [
         {
           n: "b",
@@ -41,6 +40,6 @@ test("es-module-lexer consistently loads", () => {
         },
       ],
     });
-    expect(exitCode).toBe(42);
+    expect(await exited).toBe(42);
   }
 });

@@ -33,23 +33,14 @@ export class PublishCommand extends BuildCommand {
     const { layer, region, arch, output, public: isPublic } = flags;
     if (region.includes("*")) {
       // prettier-ignore
-      const result = this.#aws([
-        "ec2",
-        "describe-regions",
-        "--query", "Regions[].RegionName",
-        "--output", "json"
-      ]);
+      const result = this.#aws(["ec2", "describe-regions", "--query", "Regions[].RegionName", "--output", "json"]);
       region.length = 0;
       for (const name of JSON.parse(result)) {
         region.push(name);
       }
     } else if (!region.length) {
       // prettier-ignore
-      region.push(this.#aws([
-        "configure",
-        "get",
-        "region"
-      ]));
+      region.push(this.#aws(["configure", "get", "region"]));
     }
     this.log("Publishing...");
     for (const regionName of region) {
@@ -58,14 +49,23 @@ export class PublishCommand extends BuildCommand {
         const result = this.#aws([
           "lambda",
           "publish-layer-version",
-          "--layer-name", layerName,
-          "--region", regionName,
-          "--description", "Bun is an incredibly fast JavaScript runtime, bundler, transpiler, and package manager.",
-          "--license-info", "MIT",
-          "--compatible-architectures", arch === "x64" ? "x86_64" : "arm64",
-          "--compatible-runtimes", "provided.al2", "provided",
-          "--zip-file", `fileb://${output}`,
-          "--output", "json",
+          "--layer-name",
+          layerName,
+          "--region",
+          regionName,
+          "--description",
+          "Bun is an incredibly fast JavaScript runtime, bundler, transpiler, and package manager.",
+          "--license-info",
+          "MIT",
+          "--compatible-architectures",
+          arch === "x64" ? "x86_64" : "arm64",
+          "--compatible-runtimes",
+          "provided.al2",
+          "provided",
+          "--zip-file",
+          `fileb://${output}`,
+          "--output",
+          "json",
         ]);
         const { LayerVersionArn } = JSON.parse(result);
         this.log("Published", LayerVersionArn);
@@ -74,12 +74,18 @@ export class PublishCommand extends BuildCommand {
           this.#aws([
             "lambda",
             "add-layer-version-permission",
-            "--layer-name", layerName,
-            "--region", regionName,
-            "--version-number", LayerVersionArn.split(":").pop(),
-            "--statement-id", `${layerName}-public`,
-            "--action", "lambda:GetLayerVersion",
-            "--principal", "*",
+            "--layer-name",
+            layerName,
+            "--region",
+            regionName,
+            "--version-number",
+            LayerVersionArn.split(":").pop(),
+            "--statement-id",
+            `${layerName}-public`,
+            "--action",
+            "lambda:GetLayerVersion",
+            "--principal",
+            "*",
           ]);
         }
       }

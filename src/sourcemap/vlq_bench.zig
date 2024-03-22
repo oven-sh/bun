@@ -203,10 +203,10 @@ pub fn main() anyerror!void {
         std.debug.print("[{d}]        ILEB128 decode: {} in {}\n", .{ how_many, std.fmt.fmtIntSizeDec(byte_size), std.fmt.fmtDuration(elapsed) });
     }
 
-    std.debug.print("\nNumbers between 0 - 8096:\n\n", .{});
+    std.debug.print("\nNumbers between 0 - 8192:\n\n", .{});
 
     for (numbers, 0..) |_, i| {
-        numbers[i] = rand.random().intRangeAtMost(i32, 0, 8096);
+        numbers[i] = rand.random().intRangeAtMost(i32, 0, 8192);
     }
 
     {

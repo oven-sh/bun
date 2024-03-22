@@ -1,10 +1,7 @@
-// @known-failing-on-windows: 1 failing
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import fs, { chmodSync, unlinkSync } from "fs";
 import { gc, withoutAggressiveGC } from "harness";
 import { mkfifo } from "mkfifo";
-
-gc;
 
 describe("FormData", () => {
   it("should be able to append a string", () => {

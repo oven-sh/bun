@@ -741,10 +741,14 @@ export { Url as Url };
 
 export var pathToFileURL;
 export var fileURLToPath;
+export var domainToASCII;
+export var domainToUnicode;
 
 if (lazy) {
   pathToFileURL = lazy("pathToFileURL");
   fileURLToPath = lazy("fileURLToPath");
+  domainToASCII = lazy("domainToASCII");
+  domainToUnicode = lazy("domainToUnicode");
 }
 
 export default {
@@ -755,6 +759,8 @@ export default {
   Url: Url,
   pathToFileURL: pathToFileURL,
   fileURLToPath: fileURLToPath,
+  domainToASCII,
+  domainToUnicode,
   URL,
   URLSearchParams,
 };

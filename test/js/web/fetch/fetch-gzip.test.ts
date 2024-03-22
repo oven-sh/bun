@@ -1,5 +1,4 @@
-// @known-failing-on-windows: 1 failing
-import { concatArrayBuffers, Socket, TCPSocketListener } from "bun";
+import { Socket } from "bun";
 import { it, expect } from "bun:test";
 import { gcTick } from "harness";
 

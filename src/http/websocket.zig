@@ -147,7 +147,7 @@ pub const Websocket = struct {
     stream: std.net.Stream,
 
     err: ?anyerror = null,
-    buf: [8096]u8 = undefined,
+    buf: [8192]u8 = undefined,
     read_stream: ReadStream,
     reader: ReadStream.Reader,
     flags: u32 = 0,

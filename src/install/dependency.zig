@@ -26,9 +26,9 @@ const URI = union(Tag) {
         }
 
         if (@as(Tag, lhs) == .local) {
-            return strings.eql(lhs.local.slice(lhs_buf), rhs.local.slice(rhs_buf));
+            return strings.eqlLong(lhs.local.slice(lhs_buf), rhs.local.slice(rhs_buf), true);
         } else {
-            return strings.eql(lhs.remote.slice(lhs_buf), rhs.remote.slice(rhs_buf));
+            return strings.eqlLong(lhs.remote.slice(lhs_buf), rhs.remote.slice(rhs_buf), true);
         }
     }
 
@@ -241,7 +241,7 @@ pub inline fn isGitHubTarballPath(dependency: string) bool {
     while (parts.next()) |part| {
         n_parts += 1;
         if (n_parts == 3) {
-            return strings.eql(part, "tarball");
+            return strings.eqlComptime(part, "tarball");
         }
     }
 
@@ -252,6 +252,11 @@ pub inline fn isGitHubTarballPath(dependency: string) bool {
 // before I add that.
 pub inline fn isTarball(dependency: string) bool {
     return strings.endsWithComptime(dependency, ".tgz") or strings.endsWithComptime(dependency, ".tar.gz");
+}
+
+/// the input is assumed to be either a remote or local tarball
+pub inline fn isRemoteTarball(dependency: string) bool {
+    return strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://");
 }
 
 pub const Version = struct {
@@ -338,7 +343,7 @@ pub const Version = struct {
         return switch (lhs.tag) {
             // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
             // semver ranges involve a ton of pointer chasing
-            .npm => strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)) or
+            .npm => strings.eqlLong(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf), true) or
                 lhs.value.npm.eql(rhs.value.npm, lhs_buf, rhs_buf),
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
             .git => lhs.value.git.eql(&rhs.value.git, lhs_buf, rhs_buf),
@@ -930,7 +935,7 @@ pub fn parseWithTag(
             };
         },
         .tarball => {
-            if (strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://")) {
+            if (isRemoteTarball(dependency)) {
                 return .{
                     .tag = .tarball,
                     .literal = sliced.value(),
@@ -962,12 +967,17 @@ pub fn parseWithTag(
         .folder => {
             if (strings.indexOfChar(dependency, ':')) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
-                    if (dependency.len <= protocol) {
-                        if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"file\" dependency missing a path", .{}) catch unreachable;
-                        return null;
-                    }
+                    const folder = brk: {
+                        if (dependency[protocol + 1] == '/') {
+                            if (dependency.len >= protocol + 2 and dependency[protocol + 2] == '/') {
+                                break :brk dependency[protocol + 3 ..];
+                            }
+                            break :brk dependency[protocol + 2 ..];
+                        }
+                        break :brk dependency[protocol + 1 ..];
+                    };
 
-                    return .{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(dependency[protocol + 1 ..]).value() }, .tag = .folder };
+                    return .{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(folder).value() }, .tag = .folder };
                 }
 
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;

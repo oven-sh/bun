@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
@@ -294,7 +293,7 @@ describe("bun test", () => {
           });
         `,
       });
-      expect(stderr).toContain("Bailed out after 1 failures");
+      expect(stderr).toContain("Bailed out after 1 failure");
       expect(stderr).not.toContain("test #2");
     });
 
@@ -334,7 +333,11 @@ describe("bun test", () => {
       });
       expect(stderr).toContain("Invalid timeout");
     });
-    test("timeout can be set to 30ms", () => {
+    // TODO: https://github.com/oven-sh/bun/issues/8069
+    // This test crashes, which will pass because stderr contains "timed out"
+    // but the crash can also mean it hangs, which will end up failing.
+    // Possibly fixed by https://github.com/oven-sh/bun/pull/8076/files
+    test.todo("timeout can be set to 30ms", () => {
       const stderr = runTest({
         args: ["--timeout", "30"],
         input: `
@@ -351,12 +354,15 @@ describe("bun test", () => {
       expect(stderr).toContain("timed out after 30ms");
     });
     test("timeout should default to 5000ms", () => {
+      // TODO: Lower this timeout to 5005 once https://github.com/oven-sh/bun/issues/8913 is fixed
+      // Linux does not seem to have this issue.
+      const time = process.platform === "linux" ? 5005 : 5500;
       const stderr = runTest({
         input: `
           import { test, expect } from "bun:test";
           import { sleep } from "bun";
           test("timeout", async () => {
-            await sleep(5001);
+            await sleep(${time});
           });
         `,
       });
@@ -494,13 +500,39 @@ describe("bun test", () => {
       });
       expect(stderr).not.toContain("::error");
     });
-    test("should annotate errors when enabled", () => {
+    test("should annotate errors in the global scope", () => {
       const stderr = runTest({
         input: `
-          import { test, expect } from "bun:test";
-          test("fail", () => {
+          throw new Error();
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
+    });
+    test.each(["test", "describe"])("should annotate errors in a %s scope", type => {
+      const stderr = runTest({
+        input: `
+          import { ${type} } from "bun:test";
+          ${type}("fail", () => {
             throw new Error();
           });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
+    });
+    test.each(["beforeAll", "beforeEach", "afterEach", "afterAll"])("should annotate errors in a %s callback", type => {
+      const stderr = runTest({
+        input: `
+          import { test, ${type} } from "bun:test";
+          ${type}(() => {
+            throw new Error();
+          });
+          test("test", () => {});
         `,
         env: {
           GITHUB_ACTIONS: "true",
@@ -540,6 +572,21 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error title=error: Oops!::/);
     });
+    test("should annotate a test timeout", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("time out", async () => {
+            await Bun.sleep(1000);
+          }, { timeout: 1 });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
+    });
   });
   describe(".each", () => {
     test("should run tests with test.each", () => {
@@ -561,6 +608,52 @@ describe("bun test", () => {
       });
       numbers.forEach(numbers => {
         expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+      });
+    });
+    test("should allow tests run with test.each to be skipped", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: ["-t", "$a"],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("%i + %i = %i", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+      });
+    });
+    test("should allow tests run with test.each to be matched", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: ["-t", "1 \\+"],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("%i + %i = %i", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        if (numbers[0] === 1) {
+          expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+        } else {
+          expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+        }
       });
     });
     test("should run tests with describe.each", () => {

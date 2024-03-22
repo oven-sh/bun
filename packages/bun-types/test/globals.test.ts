@@ -32,9 +32,7 @@ expectType<Uint8Array>(
     windowBits: 15,
   }),
 );
-expectType<Uint8Array>(
-  Bun.gzipSync(new Uint8Array(128), { level: 9, memLevel: 6, windowBits: 27 }),
-);
+expectType<Uint8Array>(Bun.gzipSync(new Uint8Array(128), { level: 9, memLevel: 6, windowBits: 27 }));
 expectType<Uint8Array>(Bun.inflateSync(new Uint8Array(64))); // Pretend this is DEFLATE compressed data
 expectType<Uint8Array>(Bun.gunzipSync(new Uint8Array(64))); // Pretend this is GZIP compressed data
 expectAssignable<ZlibCompressionOptions>({ windowBits: -11 });
@@ -46,9 +44,7 @@ expectType<URL>(Bun.pathToFileURL("/foo/bar.txt"));
 expectType<string>(Bun.fileURLToPath(new URL("file:///foo/bar.txt")));
 
 // Testing ../fs.d.ts
-expectType<string>(
-  fs.readFileSync("./index.d.ts", { encoding: "utf-8" }).toString(),
-);
+expectType<string>(fs.readFileSync("./index.d.ts", { encoding: "utf-8" }).toString());
 expectType<boolean>(fs.existsSync("./index.d.ts"));
 // tslint:disable-next-line:no-void-expression
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
@@ -61,9 +57,7 @@ expectType<void>(fs.appendFileSync("./index.d.ts", "test"));
 expectType<void>(fs.mkdirSync("./index.d.ts"));
 
 // Testing ^promises.d.ts
-expectType<string>(
-  (await fsPromises.readFile("./index.d.ts", { encoding: "utf-8" })).toString(),
-);
+expectType<string>((await fsPromises.readFile("./index.d.ts", { encoding: "utf-8" })).toString());
 expectType<Promise<void>>(fsPromises.access("./index.d.ts"));
 expectType<Promise<void>>(fsPromises.appendFile("./index.d.ts", "test"));
 expectType<Promise<void>>(fsPromises.mkdir("./index.d.ts"));

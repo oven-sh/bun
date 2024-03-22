@@ -397,7 +397,7 @@ pub const Binding = struct {
                         if (b.has_spread and i == exprs.len - 1) {
                             break :convert Expr.init(E.Spread, E.Spread{ .value = expr }, expr.loc);
                         } else if (item.default_value) |default| {
-                            break :convert Expr.assign(expr, default, wrapper.allocator);
+                            break :convert Expr.assign(expr, default);
                         } else {
                             break :convert expr;
                         }
@@ -1458,6 +1458,22 @@ pub const E = struct {
 
             return array;
         }
+
+        /// Assumes each item in the array is a string
+        pub fn alphabetizeStrings(this: *Array) void {
+            if (comptime Environment.allow_assert) {
+                for (this.items.slice()) |item| {
+                    std.debug.assert(item.data == .e_string);
+                }
+            }
+            std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
+        }
+
+        const Sorter = struct {
+            pub fn isLessThan(ctx: void, lhs: Expr, rhs: Expr) bool {
+                return strings.cmpStringsAsc(ctx, lhs.data.e_string.data, rhs.data.e_string.data);
+            }
+        };
     };
 
     pub const Unary = struct {
@@ -2070,7 +2086,13 @@ pub const E = struct {
             return null;
         }
 
+        /// Assumes each key in the property is a string
         pub fn alphabetizeProperties(this: *Object) void {
+            if (comptime Environment.allow_assert) {
+                for (this.properties.slice()) |prop| {
+                    std.debug.assert(prop.key.?.data == .e_string);
+                }
+            }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 
@@ -2266,11 +2288,11 @@ pub const E = struct {
 
             if (s.isUTF8()) {
                 if (comptime !Environment.isNative) {
-                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false) catch return 0) orelse return s.data.len;
+                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false, false) catch return 0) orelse return s.data.len;
                     defer bun.default_allocator.free(allocated);
                     return @as(u32, @truncate(allocated.len));
                 }
-                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8.le(s.data)));
+                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8(s.data)));
             }
 
             return @as(u32, @truncate(s.slice16().len));
@@ -2654,11 +2676,11 @@ pub const Stmt = struct {
 
     pub const Batcher = bun.Batcher(Stmt);
 
-    pub fn assign(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
+    pub fn assign(a: Expr, b: Expr) Stmt {
         return Stmt.alloc(
             S.SExpr,
             S.SExpr{
-                .value = Expr.assign(a, b, allocator),
+                .value = Expr.assign(a, b),
             },
             a.loc,
         );
@@ -3037,6 +3059,8 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub const empty = Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = logger.Loc.Empty };
 
     pub fn isAnonymousNamed(expr: Expr) bool {
         return switch (expr.data) {
@@ -4656,7 +4680,7 @@ pub const Expr = struct {
         return false;
     }
 
-    pub fn assign(a: Expr, b: Expr, _: std.mem.Allocator) Expr {
+    pub fn assign(a: Expr, b: Expr) Expr {
         return init(E.Binary, E.Binary{
             .op = .bin_assign,
             .left = a,
@@ -5143,6 +5167,10 @@ pub const Expr = struct {
         pub const Equality = struct {
             equal: bool = false,
             ok: bool = false,
+
+            pub const @"true" = Equality{ .ok = true, .equal = true };
+            pub const @"false" = Equality{ .ok = true, .equal = false };
+            pub const unknown = Equality{ .ok = false };
         };
 
         // Returns "equal, ok". If "ok" is false, then nothing is known about the two
@@ -5155,7 +5183,6 @@ pub const Expr = struct {
             comptime kind: enum { loose, strict },
         ) Equality {
             // https://dorey.github.io/JavaScript-Equality-Table/
-            var equality = Equality{};
             switch (left) {
                 .e_null, .e_undefined => {
                     const ok = switch (@as(Expr.Tag, right)) {
@@ -5181,14 +5208,16 @@ pub const Expr = struct {
                 .e_boolean => |l| {
                     switch (right) {
                         .e_boolean => {
-                            equality.ok = true;
-                            equality.equal = l.value == right.e_boolean.value;
+                            return .{
+                                .ok = true,
+                                .equal = l.value == right.e_boolean.value,
+                            };
                         },
                         .e_number => |num| {
                             if (comptime kind == .strict) {
                                 // "true === 1" is false
                                 // "false === 0" is false
-                                return .{ .ok = true, .equal = false };
+                                return Equality.false;
                             }
 
                             return .{
@@ -5200,7 +5229,7 @@ pub const Expr = struct {
                             };
                         },
                         .e_null, .e_undefined => {
-                            return .{ .ok = true, .equal = false };
+                            return Equality.false;
                         },
                         else => {},
                     }
@@ -5228,53 +5257,60 @@ pub const Expr = struct {
 
                             // "1 === true" is false
                             // "0 === false" is false
-                            return .{ .ok = true, .equal = false };
+                            return Equality.false;
                         },
                         .e_null, .e_undefined => {
                             // "(not null or undefined) == undefined" is false
-                            return .{ .ok = true, .equal = false };
+                            return Equality.false;
                         },
                         else => {},
                     }
                 },
                 .e_big_int => |l| {
                     if (right == .e_big_int) {
-                        equality.ok = true;
-                        equality.equal = strings.eql(l.value, l.value);
+                        if (strings.eqlLong(l.value, right.e_big_int.value, true)) {
+                            return Equality.true;
+                        }
+
+                        // 0x0000n == 0n is true
+                        return .{ .ok = false };
                     } else {
-                        equality.ok = switch (right) {
-                            .e_null, .e_undefined => true,
-                            else => false,
+                        return .{
+                            .ok = switch (right) {
+                                .e_null, .e_undefined => true,
+                                else => false,
+                            },
+                            .equal = false,
                         };
-                        equality.equal = false;
                     }
                 },
                 .e_string => |l| {
                     switch (right) {
                         .e_string => |r| {
-                            equality.ok = true;
                             r.resolveRopeIfNeeded(allocator);
                             l.resolveRopeIfNeeded(allocator);
-                            equality.equal = r.eql(E.String, l);
+                            return .{
+                                .ok = true,
+                                .equal = r.eql(E.String, l),
+                            };
                         },
                         .e_null, .e_undefined => {
-                            equality.ok = true;
-                            equality.equal = false;
+                            return Equality.false;
                         },
                         .e_number => |r| {
                             if (comptime kind == .loose) {
-                                if (r.value == 0 or r.value == 1) {
-                                    equality.ok = true;
-                                    equality.equal = if (r.value == 0)
-                                        l.eqlComptime("0")
-                                    else if (r.value == 1)
-                                        l.eqlComptime("1")
-                                    else
-                                        unreachable;
+                                if (r.value == 0 and (l.isBlank() or l.eqlComptime("0"))) {
+                                    return Equality.true;
                                 }
+
+                                if (r.value == 1 and l.eqlComptime("1")) {
+                                    return Equality.true;
+                                }
+
+                                // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
+                                return Equality.unknown;
                             } else {
-                                equality.ok = true;
-                                equality.equal = false;
+                                return Equality.false;
                             }
                         },
 
@@ -5284,7 +5320,7 @@ pub const Expr = struct {
                 else => {},
             }
 
-            return equality;
+            return Equality.unknown;
         }
 
         pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
@@ -6387,7 +6423,7 @@ pub const DeclaredSymbol = struct {
         // TODO: SIMD
         for (is_top_level, refs) |top, ref| {
             if (top) {
-                @call(.always_inline, Fn, .{ ctx, ref });
+                @call(bun.callmod_inline, Fn, .{ ctx, ref });
             }
         }
     }
@@ -6595,7 +6631,7 @@ pub const Scope = struct {
         loc: logger.Loc,
 
         pub fn eql(a: Member, b: Member) bool {
-            return @call(.always_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
+            return @call(bun.callmod_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
         }
     };
 
@@ -6807,7 +6843,7 @@ pub const Macro = struct {
                                 source,
                                 import_range,
                                 log.msgs.allocator,
-                                "Macro \"{any}\" not found",
+                                "Macro \"{s}\" not found",
                                 .{import_record_path},
                                 .stmt,
                                 err,
@@ -7037,8 +7073,8 @@ pub const Macro = struct {
                             this.source,
                             this.caller.loc,
                             this.allocator,
-                            "cannot coerce {s} to Bun's AST. Please return a simpler type",
-                            .{@tagName(value.jsType())},
+                            "cannot coerce {s} ({s}) to Bun's AST. Please return a simpler type",
+                            .{ value.getClassInfoName() orelse "unknown", @tagName(value.jsType()) },
                         ) catch unreachable;
                         break :brk error.MacroFailed;
                     },
@@ -7378,9 +7414,7 @@ pub const Macro = struct {
 };
 
 pub const ASTMemoryAllocator = struct {
-    stack_allocator: std.heap.StackFallbackAllocator(
-        if (std.mem.page_size > 8096) 8096 else std.mem.page_size,
-    ) = undefined,
+    stack_allocator: std.heap.StackFallbackAllocator(@min(8192, std.mem.page_size)) = undefined,
     bump_allocator: std.mem.Allocator = undefined,
     allocator: std.mem.Allocator,
     previous: ?*ASTMemoryAllocator = null,

@@ -2,32 +2,23 @@
 import { ArrayBufferSink } from "bun";
 import { describe, expect, it } from "bun:test";
 import { mkfifo } from "mkfifo";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("FileSink", () => {
-  const fixtures = [
-    [
-      ["abcdefghijklmnopqrstuvwxyz"],
-      new TextEncoder().encode("abcdefghijklmnopqrstuvwxyz"),
-      "abcdefghijklmnopqrstuvwxyz",
-    ],
+  const fixturesInput = [
+    [["abcdefghijklmnopqrstuvwxyz"], "abcdefghijklmnopqrstuvwxyz"],
     [
       ["abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"],
-      new TextEncoder().encode("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"),
       "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
     ],
-    [
-      ["😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"],
-      new TextEncoder().encode("😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"),
-      "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
-    ],
+    [["😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"], "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"],
     [
       ["abcdefghijklmnopqrstuvwxyz", "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"],
-      new TextEncoder().encode("abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"),
       "abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
     [
       ["abcdefghijklmnopqrstuvwxyz", "😋", " Get Emoji — All Emojis", " to ✂️ Copy and 📋 Paste 👌"],
-      new TextEncoder().encode("abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"),
       "(rope) " + "abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
     [
@@ -37,13 +28,24 @@ describe("FileSink", () => {
         " Get Emoji — All Emojis",
         " to ✂️ Copy and 📋 Paste 👌",
       ],
-      new TextEncoder().encode("abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"),
       "(array) " + "abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
   ] as const;
 
+  const fixtures = fixturesInput.map(([input, label]) => {
+    let expected;
+
+    if (Array.isArray(input)) {
+      expected = Buffer.concat(input.map(str => Buffer.from(str)));
+    } else {
+      expected = Buffer.from(input as any);
+    }
+
+    return [input, expected, label] as const;
+  });
+
   function getPath(label: string) {
-    const path = `/tmp/bun-test-${Bun.hash(label).toString(10)}.txt`;
+    const path = join(tmpdir(), `bun-test-${Bun.hash(label).toString(10)}.${(Math.random() * 1_000_000) | 0}.txt`);
     try {
       require("fs").unlinkSync(path);
     } catch (e) {}
@@ -53,27 +55,31 @@ describe("FileSink", () => {
   var activeFIFO: Promise<string>;
   var decoder = new TextDecoder();
 
-  function getFd(label: string) {
-    const path = `/tmp/bun-test-${Bun.hash(label).toString(10)}.txt`;
+  function getFd(label: string, byteLength = 0) {
+    const path = join(tmpdir(), `bun-test-${Bun.hash(label).toString(10)}.${(Math.random() * 1_000_000) | 0}.txt`);
     try {
       require("fs").unlinkSync(path);
     } catch (e) {}
     mkfifo(path, 0o666);
-    activeFIFO = (async function (stream: ReadableStream<Uint8Array>) {
+    activeFIFO = (async function (stream: ReadableStream<Uint8Array>, byteLength = 0) {
       var chunks: Uint8Array[] = [];
+      const original = byteLength;
+      var got = 0;
       for await (const chunk of stream) {
         chunks.push(chunk);
+        got += chunk.byteLength;
       }
+      if (got !== original) throw new Error(`Expected ${original} bytes, got ${got} (${label})`);
       return Buffer.concat(chunks).toString();
       // test it on a small chunk size
-    })(Bun.file(path).stream(64));
+    })(Bun.file(path).stream(64), byteLength);
     return path;
   }
 
   for (let isPipe of [true, false] as const) {
     describe(isPipe ? "pipe" : "file", () => {
-      for (const [input, expected, label] of fixtures) {
-        var getPathOrFd = () => (isPipe ? getFd(label) : getPath(label));
+      fixtures.forEach(([input, expected, label]) => {
+        const getPathOrFd = () => (isPipe ? getFd(label, expected.byteLength) : getPath(label));
 
         it(`${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
@@ -136,7 +142,7 @@ describe("FileSink", () => {
             expect(output).toBe(decoder.decode(expected));
           }
         });
-      }
+      });
     });
   }
 });

@@ -25,6 +25,7 @@
 namespace WebCore {
 
 class JSReadableStream : public JSDOMObject {
+
 public:
     using Base = JSDOMObject;
     static JSReadableStream* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject)
@@ -54,7 +55,32 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
+    int nativeType() const { return this->m_nativeType; }
+    bool disturbed() const { return this->m_disturbed; }
+    JSC::JSValue nativePtr()
+    {
+        return this->m_nativePtr.get();
+    }
+
+    void setNativePtr(JSC::VM&, JSC::JSValue value);
+
+    void setNativeType(int value)
+    {
+        this->m_nativeType = value;
+    }
+
+    void setDisturbed(bool value)
+    {
+        this->m_disturbed = value;
+    }
+
+    DECLARE_VISIT_CHILDREN;
+
 protected:
+    mutable JSC::WriteBarrier<JSC::Unknown> m_nativePtr;
+    int m_nativeType { 0 };
+    bool m_disturbed = false;
+
     JSReadableStream(JSC::Structure*, JSDOMGlobalObject&);
 
     void finishCreation(JSC::VM&);

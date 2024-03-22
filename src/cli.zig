@@ -1218,7 +1218,7 @@ pub const Command = struct {
     };
 
     pub fn isBunX(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "bunx") or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug"));
+        return strings.endsWithComptime(argv0, "bunx" ++ bun.exe_suffix);
     }
 
     pub fn isNode(argv0: []const u8) bool {

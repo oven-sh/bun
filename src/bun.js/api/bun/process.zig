@@ -1253,7 +1253,6 @@ pub fn spawnProcessPosix(
                         to_close_on_error.append(fd) catch {};
                         to_set_cloexec.append(fd) catch {};
                         try actions.dup2(fd, fileno);
-                        try actions.close(fd);
                         stdio.* = fd;
                         spawned.memfds[i] = true;
                         continue;

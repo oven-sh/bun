@@ -2367,7 +2367,7 @@ pub const File = struct {
         bytes: std.ArrayList(u8) = std.ArrayList(u8).init(default_allocator),
         err: ?Error = null,
     };
-    pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
+    pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8)) Maybe(usize) {
         const size = switch (this.getEndPos()) {
             .err => |err| {
                 return .{ .err = err };
@@ -2375,27 +2375,36 @@ pub const File = struct {
             .result => |s| s,
         };
 
-        var list = std.ArrayList(u8).initCapacity(allocator, size + 16) catch bun.outOfMemory();
+        list.ensureUnusedCapacity(size + 16) catch bun.outOfMemory();
+
+        var total: i64 = 0;
         while (true) {
-            switch (bun.sys.read(this.handle, list.unusedCapacitySlice())) {
+            if (list.unusedCapacitySlice().len == 0) {
+                list.ensureUnusedCapacity(16) catch bun.outOfMemory();
+            }
+
+            switch (bun.sys.pread(this.handle, list.unusedCapacitySlice(), total)) {
                 .err => |err| {
-                    return .{ .err = err, .bytes = list };
+                    return .{ .err = err };
                 },
                 .result => |bytes_read| {
-                    list.items.len += bytes_read;
-
-                    if (list.capacity <= list.items.len + 10) {
-                        list.ensureUnusedCapacity(1024) catch bun.outOfMemory();
-                    }
-
                     if (bytes_read == 0) {
                         break;
                     }
-                    continue;
+
+                    list.items.len += bytes_read;
+                    total += @intCast(bytes_read);
                 },
             }
         }
 
-        return .{ .bytes = list };
+        return .{ .result = @intCast(total) };
+    }
+    pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
+        var list = std.ArrayList(u8).init(allocator);
+        return switch (readToEndWithArrayList(this, &list)) {
+            .err => |err| .{ .err = err, .bytes = list },
+            .result => .{ .err = null, .bytes = list },
+        };
     }
 };

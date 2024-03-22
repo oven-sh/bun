@@ -183,6 +183,7 @@ pub const LifecycleScriptSubprocess = struct {
                     this.remaining_fds += 1;
                     try this.stdout.start(stdout, true).unwrap();
                 } else {
+                    this.stdout.setParent(this);
                     this.stdout.startMemfd(stdout);
                 }
             }
@@ -192,6 +193,7 @@ pub const LifecycleScriptSubprocess = struct {
                     this.remaining_fds += 1;
                     try this.stderr.start(stderr, true).unwrap();
                 } else {
+                    this.stderr.setParent(this);
                     this.stderr.startMemfd(stderr);
                 }
             }
@@ -228,7 +230,15 @@ pub const LifecycleScriptSubprocess = struct {
     pub fn printOutput(this: *LifecycleScriptSubprocess) void {
         if (!this.manager.options.log_level.isVerbose()) {
             var stdout = this.stdout.finalBuffer();
+
+            // Reuse the memory
+            if (stdout.items.len == 0 and stdout.capacity > 0 and this.stderr.buffer().capacity == 0) {
+                this.stderr.buffer().* = stdout.*;
+                stdout.* = std.ArrayList(u8).init(bun.default_allocator);
+            }
+
             var stderr = this.stderr.finalBuffer();
+
             if (stdout.items.len +| stderr.items.len == 0) {
                 return;
             }

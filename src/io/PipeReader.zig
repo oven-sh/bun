@@ -755,34 +755,11 @@ const PosixBufferedReader = struct {
 
     pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         if (this.flags.memfd and this.handle == .fd) {
-            var buf = this.buffer();
-            defer {
-                this.handle.close(null, {});
-                std.debug.assert(this.handle == .closed);
-            }
-
-            var file = bun.sys.File{
-                .handle = this.handle.fd,
+            defer this.handle.close(null, {});
+            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer()).unwrap() catch |err| {
+                bun.Output.debugWarn("error reading from memfd\n{}", .{err});
+                return this.buffer();
             };
-            buf.clearRetainingCapacity();
-            const size = (file.getEndPos().unwrap() catch 0);
-
-            if (buf.capacity < size) {
-                buf.ensureTotalCapacityPrecise(size) catch return buf;
-            }
-
-            var remaining = buf.unusedCapacitySlice();
-            var total: usize = 0;
-            while (remaining.len > 0) {
-                const read = file.read(remaining).unwrap() catch 0;
-                total += read;
-                if (read == 0) {
-                    break;
-                }
-                remaining = remaining[read..];
-            }
-
-            buf.items.len = total;
         }
 
         return this.buffer();

@@ -11,6 +11,11 @@ import type { Matchers } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
 
+const exe_extension = (() => {
+  if (process.platform === "win32") return ".exe";
+  return "";
+})();
+
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 function dedent(str: string | TemplateStringsArray, ...args: any[]) {
   // https://github.com/tc39/proposal-string-cooked#motivation
@@ -1260,7 +1265,7 @@ for (const [key, blob] of build.outputs) {
           cmd: [
             ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
             ...(run.bunArgs ?? []),
-            file,
+            file + exe_extension,
             ...(run.args ?? []),
           ] as [string, ...string[]],
           env: {

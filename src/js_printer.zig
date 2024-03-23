@@ -6036,7 +6036,8 @@ pub fn printWithWriterAndPlatform(
     comptime generate_source_maps: bool,
 ) PrintResult {
     const PrinterType = NewPrinter(
-        false,
+        // if it's bun, it is also ascii_only
+        is_bun_platform,
         Writer,
         false,
         is_bun_platform,

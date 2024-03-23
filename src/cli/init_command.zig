@@ -25,6 +25,14 @@ const JSPrinter = bun.js_printer;
 fn exists(path: anytype) bool {
     return bun.sys.exists(path);
 }
+
+fn openFileForAppendZ(cwd: std.fs.Dir, sub_path: [*:0]const u8, flags: std.fs.File.OpenFlags) !std.fs.File {
+    var file = try cwd.openFileZ(sub_path, flags);
+    const stat = try file.stat();
+    try file.seekTo(stat.size);
+    return file;
+}
+
 pub const InitCommand = struct {
     fn prompt(
         alloc: std.mem.Allocator,
@@ -51,6 +59,8 @@ pub const InitCommand = struct {
     }
 
     const default_gitignore = @embedFile("gitignore-for-init");
+    const default_gitattributes = @embedFile("gitattributes-for-init");
+    const default_gitconfig = @embedFile("gitconfig-for-init");
     const default_tsconfig = @embedFile("tsconfig-for-init.json");
     const README = @embedFile("README-for-init.md");
 
@@ -253,6 +263,8 @@ pub const InitCommand = struct {
 
         const Steps = struct {
             write_gitignore: bool = true,
+            write_gitattributes: bool = true,
+            write_gitconfig: bool = true,
             write_package_json: bool = true,
             write_tsconfig: bool = true,
             write_readme: bool = true,
@@ -264,17 +276,7 @@ pub const InitCommand = struct {
 
         steps.write_readme = !exists("README.md") and !exists("README") and !exists("README.txt") and !exists("README.mdx");
 
-        steps.write_tsconfig = brk: {
-            if (exists("tsconfig.json")) {
-                break :brk false;
-            }
-
-            if (exists("jsconfig.json")) {
-                break :brk false;
-            }
-
-            break :brk true;
-        };
+        steps.write_tsconfig = !exists("tsconfig.json") and !exists("jsconfig.json");
 
         {
             try fields.object.putString(alloc, "name", fields.name);
@@ -331,7 +333,7 @@ pub const InitCommand = struct {
 
         write_package_json: {
             if (package_json_file == null) {
-                package_json_file = try std.fs.cwd().createFileZ("package.json", .{});
+                package_json_file = try destination_dir.createFileZ("package.json", .{});
             }
             const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
@@ -355,14 +357,13 @@ pub const InitCommand = struct {
         }
 
         if (fields.entry_point.len > 0 and !exists(fields.entry_point)) {
-            const cwd = std.fs.cwd();
             if (std.fs.path.dirname(fields.entry_point)) |dirname| {
                 if (!strings.eqlComptime(dirname, ".")) {
-                    cwd.makePath(dirname) catch {};
+                    destination_dir.makePath(dirname) catch {};
                 }
             }
 
-            var entry = try cwd.createFile(fields.entry_point, .{ .truncate = true });
+            var entry = try destination_dir.createFile(fields.entry_point, .{ .truncate = true });
             entry.writeAll("console.log(\"Hello via Bun!\");") catch {};
             entry.close();
             Output.prettyln(" + <r><d>{s}<r>", .{fields.entry_point});
@@ -371,10 +372,42 @@ pub const InitCommand = struct {
 
         if (steps.write_gitignore) {
             brk: {
-                var file = std.fs.cwd().createFileZ(".gitignore", .{ .truncate = true }) catch break :brk;
+                var file = destination_dir.createFileZ(".gitignore", .{ .truncate = true }) catch break :brk;
                 defer file.close();
                 file.writeAll(default_gitignore) catch break :brk;
                 Output.prettyln(" + <r><d>.gitignore<r>", .{});
+                Output.flush();
+            }
+        }
+
+        if (steps.write_gitattributes) {
+            brk: {
+                const filename = ".gitattributes";
+                var file = if (exists(filename))
+                    openFileForAppendZ(destination_dir, filename, .{ .mode = .write_only }) catch break :brk
+                else
+                    destination_dir.createFileZ(filename, .{ .truncate = true }) catch break :brk;
+
+                file.writeAll(default_gitattributes) catch break :brk;
+                Output.prettyln(" + <r><d>{s}<r>", .{filename});
+                Output.flush();
+            }
+        }
+
+        if (steps.write_gitconfig) {
+            brk: {
+                if (!exists(".git")) {
+                    destination_dir.makeDirZ(".git") catch break :brk;
+                }
+                const filename = ".git/config";
+                var file = if (exists(filename))
+                    openFileForAppendZ(destination_dir, filename, .{ .mode = .write_only }) catch break :brk
+                else
+                    destination_dir.createFileZ(filename, .{ .truncate = true }) catch break :brk;
+                defer file.close();
+
+                file.writeAll(default_gitconfig) catch break :brk;
+                Output.prettyln(" + <r><d>{s}<r>", .{filename});
                 Output.flush();
             }
         }
@@ -387,7 +420,7 @@ pub const InitCommand = struct {
                     "tsconfig.json"
                 else
                     "jsconfig.json";
-                var file = std.fs.cwd().createFileZ(filename, .{ .truncate = true }) catch break :brk;
+                var file = destination_dir.createFileZ(filename, .{ .truncate = true }) catch break :brk;
                 defer file.close();
                 file.writeAll(default_tsconfig) catch break :brk;
                 Output.prettyln(" + <r><d>{s}<r><d> (for editor auto-complete)<r>", .{filename});
@@ -398,7 +431,7 @@ pub const InitCommand = struct {
         if (steps.write_readme) {
             brk: {
                 const filename = "README.md";
-                var file = std.fs.cwd().createFileZ(filename, .{ .truncate = true }) catch break :brk;
+                var file = destination_dir.createFileZ(filename, .{ .truncate = true }) catch break :brk;
                 defer file.close();
                 file.writer().print(README, .{
                     .name = fields.name,

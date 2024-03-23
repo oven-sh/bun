@@ -1,7 +1,9 @@
 import fs from "fs";
-import path from "path";
 import os from "os";
-import { bunExe, bunEnv } from "harness";
+import path from "path";
+import { bunEnv, bunExe } from "harness";
+
+const SRC_CLI_DIR = path.join(__dirname, "..", "..", "..", "src", "cli");
 
 test("bun init works", () => {
   const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X")));
@@ -13,6 +15,7 @@ test("bun init works", () => {
     env: bunEnv,
   });
 
+  // @ts-expect-error
   expect(out.signal).toBe(undefined);
   expect(out.exitCode).toBe(0);
 
@@ -35,6 +38,8 @@ test("bun init works", () => {
 
   expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
   expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, ".gitattributes"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, ".git", "config"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
 }, 30_000);
@@ -49,6 +54,7 @@ test("bun init with piped cli", () => {
     env: bunEnv,
   });
 
+  // @ts-expect-error
   expect(out.signal).toBe(undefined);
   expect(out.exitCode).toBe(0);
 
@@ -71,6 +77,63 @@ test("bun init with piped cli", () => {
 
   expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
   expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, ".gitattributes"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, ".git", "config"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+}, 30_000);
+
+test("bun init without existing .gitattributes & .git/config", () => {
+  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X")));
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: bunEnv,
+  });
+
+  // @ts-expect-error
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  const expectedGitConfig = fs.readFileSync(path.join(SRC_CLI_DIR, "gitconfig-for-init"), "utf8");
+  const gitConfig = fs.readFileSync(path.join(temp, ".git", "config"), "utf8");
+  expect(gitConfig).toEqual(expectedGitConfig);
+
+  const expectedGitAttributes = fs.readFileSync(path.join(SRC_CLI_DIR, "gitattributes-for-init"), "utf8");
+  const gitAttributes = fs.readFileSync(path.join(temp, ".gitattributes"), "utf8");
+  expect(gitAttributes).toEqual(expectedGitAttributes);
+}, 30_000);
+
+test("bun init with existing .gitattributes & .git/config", () => {
+  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X")));
+
+  const gitConfigContent = `[user]
+name = Test User
+`;
+  const gitAttributesContent = "* text=auto\n";
+
+  fs.mkdirSync(path.join(temp, ".git"));
+  fs.writeFileSync(path.join(temp, ".git", "config"), gitConfigContent);
+  fs.writeFileSync(path.join(temp, ".gitattributes"), gitAttributesContent);
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: bunEnv,
+  });
+
+  // @ts-expect-error
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  const expectedGitConfig = fs.readFileSync(path.join(SRC_CLI_DIR, "gitconfig-for-init"), "utf8");
+  const gitConfig = fs.readFileSync(path.join(temp, ".git", "config"), "utf8");
+  expect(gitConfig).toEqual(`${gitConfigContent}${expectedGitConfig}`);
+
+  const expectedGitAttributes = fs.readFileSync(path.join(SRC_CLI_DIR, "gitattributes-for-init"), "utf8");
+  const gitAttributes = fs.readFileSync(path.join(temp, ".gitattributes"), "utf8");
+  expect(gitAttributes).toEqual(`${gitAttributesContent}${expectedGitAttributes}`);
 }, 30_000);

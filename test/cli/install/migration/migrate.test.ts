@@ -90,3 +90,21 @@ test("migrate from npm lockfile that is missing `resolved` properties", async ()
   expect(await Bun.file(join(testDir, "node_modules/lodash/package.json")).json()).toHaveProperty("version", "4.17.21");
   expect(exitCode).toBe(0);
 });
+
+test("migrate from npm lockfile with overrides", async () => {
+  const testDir = join(tmpdir(), "migrate-" + Math.random().toString(36).slice(2));
+
+  fs.cpSync(join(import.meta.dir, "lockfile-with-overrides"), testDir, { recursive: true });
+
+  const { exitCode: exitCodeMigrate } = Bun.spawnSync([bunExe(), "pm", "migrate"], {
+    env: bunEnv,
+    cwd: testDir,
+  });
+  expect(exitCodeMigrate).toBe(0);
+
+  const { exitCode: exitCodeInstall } = Bun.spawnSync([bunExe(), "install", "--frozen-lockfile"], {
+    env: bunEnv,
+    cwd: testDir,
+  });
+  expect(exitCodeInstall).toBe(0);
+});

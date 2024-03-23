@@ -194,6 +194,11 @@ export default [
         cache: true,
       },
 
+      address: {
+        getter: "getAddress",
+        cache: true,
+      },
+
       data: {
         getter: "getData",
         setter: "setData",

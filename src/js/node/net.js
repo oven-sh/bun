@@ -781,34 +781,8 @@ class Server extends EventEmitter {
   }
 
   address() {
-    const server = this.#server;
-    if (server) {
-      const unix = server.unix;
-      if (unix) {
-        return unix;
-      }
-
-      //TODO: fix adress when host is passed
-      let address = server.hostname;
-      const type = isIP(address);
-      const port = server.port;
-      if (typeof port === "number") {
-        return {
-          port,
-          address,
-          family: type ? `IPv${type}` : undefined,
-        };
-      }
-      if (type) {
-        return {
-          address,
-          family: type ? `IPv${type}` : undefined,
-        };
-      }
-
-      return address;
-    }
-    return null;
+    if (!this.#server) return null;
+    return this.#server.address;
   }
 
   getConnections(callback) {

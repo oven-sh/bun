@@ -197,7 +197,7 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
 
 static EncodedJSValue UINT32_TO_JSVALUE(uint32_t val) {
   EncodedJSValue res;
-  if(val <= MAX_INT32) {
+  if(val < MAX_INT32) {
     res.asInt64 = NumberTag | val;
     return res;
   } else {
@@ -220,6 +220,9 @@ static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) {
 
 
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) {
+  if (JSVALUE_IS_INT32(val)) {
+    return JSVALUE_TO_INT32(val);
+  }
   val.asInt64 -= DoubleEncodeOffset;
   return val.asDouble;
 }

@@ -249,17 +249,7 @@ ffiWrappers[FFIType.uint16_t] = `{
 }`;
 
 ffiWrappers[FFIType.double] = `{
-  if (typeof val === "bigint") {
-    if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
-      return Math.abs(Number(val).valueOf()) + 0.00000000000001 - 0.00000000000001;
-    }
-  }
-
-  if (!val) {
-    return 0 + 0.00000000000001 - 0.00000000000001;
-  }
-
-  return val + 0.00000000000001 - 0.00000000000001;
+  return (typeof val === "bigint" ? Number(val) : val);
 }`;
 
 ffiWrappers[FFIType.float] = ffiWrappers[10] = `{

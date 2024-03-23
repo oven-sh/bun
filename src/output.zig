@@ -161,8 +161,11 @@ pub const Source = struct {
                 }
             }
 
-            _ = w.kernel32.SetConsoleOutputCP(console_output_codepage);
-            _ = SetConsoleCP(console_codepage);
+            if (console_output_codepage != 0)
+                _ = w.kernel32.SetConsoleOutputCP(console_output_codepage);
+
+            if (console_codepage != 0)
+                _ = SetConsoleCP(console_codepage);
         }
 
         pub fn init() void {

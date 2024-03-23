@@ -150,14 +150,14 @@ pub const Source = struct {
 
         pub fn restore() void {
             const peb = std.os.windows.peb();
-            var stdout = peb.ProcessParameters.hStdOutput;
-            var stderr = peb.ProcessParameters.hStdError;
-            var stdin = peb.ProcessParameters.hStdInput;
+            const stdout = peb.ProcessParameters.hStdOutput;
+            const stderr = peb.ProcessParameters.hStdError;
+            const stdin = peb.ProcessParameters.hStdInput;
 
             const handles = &.{ &stdin, &stdout, &stderr };
-            for (console_mode, handles) |mode, handle| {
+            inline for (console_mode, handles) |mode, handle| {
                 if (mode) |m| {
-                    _ = SetConsoleMode(handle, m);
+                    _ = SetConsoleMode(handle.*, m);
                 }
             }
 

@@ -2809,8 +2809,6 @@ pub fn linuxKernelVersion() Semver.Version {
     return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
 }
 
-pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");
-
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
 
 pub const spawnSync = @This().spawn.sync.spawn;

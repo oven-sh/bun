@@ -2184,7 +2184,7 @@ test("missing package on reinstall, some with binaries", async () => {
 
 for (const forceWaiterThread of [
   false,
-  // true,
+  true,
 ]) {
   const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
   describe("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {

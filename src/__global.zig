@@ -117,7 +117,7 @@ pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
         }
     }
 
-    Output.Stdio.restore();
+    Output.Source.Stdio.restore();
 
     // TODO(@paperdave): report a bug that this intcast shouldnt be needed. signals are i32 not u32
     // after that is fixed we can make this function take i32

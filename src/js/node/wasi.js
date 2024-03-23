@@ -6,8 +6,6 @@
 //
 // Eventually we will implement this in native code, but this is just a quick hack to get WASI working.
 
-/** **/
-// constants is injected into the top of this file
 const nodeFsConstants = $processBindingConstants.fs;
 
 var __getOwnPropNames = Object.getOwnPropertyNames;

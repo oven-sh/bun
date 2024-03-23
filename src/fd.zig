@@ -34,15 +34,13 @@ fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
 
 pub fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
     const out = libuv.uv_get_osfhandle(in);
-    // TODO: this is causing a dead lock because is also used on fd format
-    // log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
     return out;
 }
 
-pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
+pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) error{SystemFdQuotaExceeded}!c_int {
     const out = libuv.uv_open_osfhandle(in);
-    // TODO: this is causing a dead lock because is also used on fd format
-    // log("uv_open_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
+    std.debug.assert(out >= -1);
+    if (out == -1) return error.SystemFdQuotaExceeded;
     return out;
 }
 
@@ -200,12 +198,15 @@ pub const FDImpl = packed struct {
         return this.closeAllowingStdoutAndStderr();
     }
 
-    pub fn makeLibUVOwned(this: FDImpl) FDImpl {
+    /// Assumes given a valid file descriptor
+    /// If error, the handle has not been closed
+    pub fn makeLibUVOwned(this: FDImpl) !FDImpl {
+        this.assertValid();
         return switch (env.os) {
             else => this,
             .windows => switch (this.kind) {
                 .system => fd: {
-                    break :fd FDImpl.fromUV(uv_open_osfhandle(numberToHandle(this.value.as_system)));
+                    break :fd FDImpl.fromUV(try uv_open_osfhandle(numberToHandle(this.value.as_system)));
                 },
                 .uv => this,
             },
@@ -321,9 +322,18 @@ pub const FDImpl = packed struct {
         return FDImpl.fromUV(fd);
     }
 
-    /// After calling, the input file descriptor is no longer valid and must not be used
-    pub fn toJS(value: FDImpl, _: *JSC.JSGlobalObject) JSValue {
-        return JSValue.jsNumberFromInt32(value.makeLibUVOwned().uv());
+    /// After calling, the input file descriptor is no longer valid and must not be used.
+    /// If an error is thrown, the file descriptor is cleaned up for you.
+    pub fn toJS(value: FDImpl, global: *JSC.JSGlobalObject) JSValue {
+        const fd = value.makeLibUVOwned() catch {
+            _ = value.close();
+            global.throwValue((JSC.SystemError{
+                .message = bun.String.static("EMFILE, too many open files"),
+                .code = bun.String.static("EMFILE"),
+            }).toErrorInstance(global));
+            return .zero;
+        };
+        return JSValue.jsNumberFromInt32(fd.uv());
     }
 
     pub fn format(this: FDImpl, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

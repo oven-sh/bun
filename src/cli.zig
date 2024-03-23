@@ -1895,7 +1895,7 @@ pub const Command = struct {
                     const file_pathZ = script_name_buf[0..file_path.len :0];
                     break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                 }
-            }) catch return false).handle);
+            }) catch return false).handle) catch return false;
             defer _ = bun.sys.close(file);
 
             switch (bun.sys.fstat(file)) {

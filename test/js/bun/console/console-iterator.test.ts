@@ -52,8 +52,7 @@ describe("should work for streaming input", () => {
       stdin.flush();
       await new Promise(resolve => setTimeout(resolve, 1));
       stdin.write(input.slice((input.length / 2) | 0));
-      stdin.flush();
-      stdin.end();
+      await stdin.end();
 
       expect(await new Response(stdout).text()).toBe(input.replaceAll("\n", ""));
       proc.kill(0);
@@ -71,8 +70,7 @@ it("can use the console iterator more than once", async () => {
   });
   const { stdout, stdin } = proc;
   stdin.write("hello\nworld\nbreak\nanother\nbreak\n");
-  stdin.flush();
-  stdin.end();
+  await stdin.end();
 
   expect(await new Response(stdout).text()).toBe('["hello","world"]["another"]');
   proc.kill(0);

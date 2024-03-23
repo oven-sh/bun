@@ -80,6 +80,7 @@ pub const LifecycleScriptSubprocess = struct {
             return;
 
         const process = this.process orelse return;
+
         this.handleExit(process.status);
     }
 
@@ -196,6 +197,8 @@ pub const LifecycleScriptSubprocess = struct {
                     .verbatim_arguments = true,
                 }
             else {},
+
+            .stream = false,
         };
 
         this.remaining_fds = 0;
@@ -203,15 +206,24 @@ pub const LifecycleScriptSubprocess = struct {
 
         if (comptime Environment.isPosix) {
             if (spawned.stdout) |stdout| {
-                this.stdout.setParent(this);
-                this.remaining_fds += 1;
-                try this.stdout.start(stdout, true).unwrap();
+                if (!spawned.memfds[1]) {
+                    this.stdout.setParent(this);
+                    this.remaining_fds += 1;
+                    try this.stdout.start(stdout, true).unwrap();
+                } else {
+                    this.stdout.setParent(this);
+                    this.stdout.startMemfd(stdout);
+                }
             }
-
             if (spawned.stderr) |stderr| {
-                this.stderr.setParent(this);
-                this.remaining_fds += 1;
-                try this.stderr.start(stderr, true).unwrap();
+                if (!spawned.memfds[2]) {
+                    this.stderr.setParent(this);
+                    this.remaining_fds += 1;
+                    try this.stderr.start(stderr, true).unwrap();
+                } else {
+                    this.stderr.setParent(this);
+                    this.stderr.startMemfd(stderr);
+                }
             }
         } else if (comptime Environment.isWindows) {
             if (spawned.stdout == .buffer) {
@@ -245,21 +257,31 @@ pub const LifecycleScriptSubprocess = struct {
 
     pub fn printOutput(this: *LifecycleScriptSubprocess) void {
         if (!this.manager.options.log_level.isVerbose()) {
-            if (this.stdout.buffer().items.len +| this.stderr.buffer().items.len == 0) {
+            var stdout = this.stdout.finalBuffer();
+
+            // Reuse the memory
+            if (stdout.items.len == 0 and stdout.capacity > 0 and this.stderr.buffer().capacity == 0) {
+                this.stderr.buffer().* = stdout.*;
+                stdout.* = std.ArrayList(u8).init(bun.default_allocator);
+            }
+
+            var stderr = this.stderr.finalBuffer();
+
+            if (stdout.items.len +| stderr.items.len == 0) {
                 return;
             }
 
             Output.disableBuffering();
             Output.flush();
 
-            if (this.stdout.buffer().items.len > 0) {
-                Output.errorWriter().print("{s}\n", .{this.stdout.buffer().items}) catch {};
-                this.stdout.buffer().clearAndFree();
+            if (stdout.items.len > 0) {
+                Output.errorWriter().print("{s}\n", .{stdout.items}) catch {};
+                stdout.clearAndFree();
             }
 
-            if (this.stderr.buffer().items.len > 0) {
-                Output.errorWriter().print("{s}\n", .{this.stderr.buffer().items}) catch {};
-                this.stderr.buffer().clearAndFree();
+            if (stderr.items.len > 0) {
+                Output.errorWriter().print("{s}\n", .{stderr.items}) catch {};
+                stderr.clearAndFree();
             }
 
             Output.enableBuffering();

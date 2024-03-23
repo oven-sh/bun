@@ -501,6 +501,7 @@ pub const BunxCommand = struct {
                 try Run.runBinary(
                     ctx,
                     try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                    destination,
                     this_bundler.fs.top_level_dir,
                     this_bundler.env,
                     passthrough,
@@ -538,6 +539,7 @@ pub const BunxCommand = struct {
                         try Run.runBinary(
                             ctx,
                             try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                            destination,
                             this_bundler.fs.top_level_dir,
                             this_bundler.env,
                             passthrough,
@@ -591,41 +593,50 @@ pub const BunxCommand = struct {
         const argv_to_use = args.slice();
 
         debug("installing package: {s}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
-        var child_process = std.ChildProcess.init(argv_to_use, default_allocator);
-        child_process.cwd_dir = bunx_install_dir;
-        debug("cwd: {}", .{bun.toFD(bunx_install_dir.fd)});
-        // https://github.com/ziglang/zig/issues/5190
-        if (Environment.isWindows) {
-            child_process.cwd = bunx_cache_dir;
-        }
         this_bundler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true") catch bun.outOfMemory();
-        var env_map = try this_bundler.env.map.stdEnvMap(ctx.allocator);
-        defer env_map.deinit();
-        child_process.env_map = env_map.get();
-        child_process.stderr_behavior = .Inherit;
-        child_process.stdin_behavior = .Inherit;
-        child_process.stdout_behavior = .Inherit;
 
-        if (Environment.isWindows) {
-            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
-        } else {
-            try child_process.spawn();
-        }
+        const spawn_result = switch ((bun.spawnSync(&.{
+            .argv = argv_to_use,
 
-        const term = try child_process.wait();
+            .envp = try this_bundler.env.map.createNullDelimitedEnvMap(bun.default_allocator),
 
-        switch (term) {
-            .Exited => |exit_code| {
-                if (exit_code != 0) {
-                    Global.exit(exit_code);
-                }
-            },
-            .Signal, .Stopped => |signal| {
-                Global.raiseIgnoringPanicHandler(signal);
-            },
-            .Unknown => {
+            .cwd = bunx_cache_dir,
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
+
+            .windows = if (Environment.isWindows) .{
+                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(this_bundler.env)),
+            } else {},
+        }) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error <b>{s}<r>", .{ install_param, @errorName(err) });
+            Global.exit(1);
+        })) {
+            .err => |err| {
+                _ = err; // autofix
                 Global.exit(1);
             },
+            .result => |result| result,
+        };
+
+        switch (spawn_result.status) {
+            .exited => |exit| {
+                if (exit.signal.valid()) {
+                    Global.raiseIgnoringPanicHandler(exit.signal);
+                }
+
+                if (exit.code != 0) {
+                    Global.exit(exit.code);
+                }
+            },
+            .signaled => |signal| {
+                Global.raiseIgnoringPanicHandler(signal);
+            },
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error:\n{}", .{ install_param, err });
+                Global.exit(1);
+            },
+            else => {},
         }
 
         absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, initial_bin_name, bun.exe_suffix }) catch unreachable;
@@ -644,6 +655,7 @@ pub const BunxCommand = struct {
             try Run.runBinary(
                 ctx,
                 try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                destination,
                 this_bundler.fs.top_level_dir,
                 this_bundler.env,
                 passthrough,
@@ -668,6 +680,7 @@ pub const BunxCommand = struct {
                     try Run.runBinary(
                         ctx,
                         try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                        destination,
                         this_bundler.fs.top_level_dir,
                         this_bundler.env,
                         passthrough,

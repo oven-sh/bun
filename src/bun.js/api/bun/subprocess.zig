@@ -1157,7 +1157,7 @@ pub const Subprocess = struct {
                                     return error.UnexpectedCreatingStdin;
                                 },
                             }
-
+                            pipe.writer.setParent(pipe);
                             subprocess.weak_file_sink_stdin_ptr = pipe;
                             subprocess.flags.has_stdin_destructor_called = false;
 

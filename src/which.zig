@@ -82,8 +82,6 @@ pub fn endsWithExtension(str: []const u8) bool {
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by whichWin)
 fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: bool) ?[:0]const u16 {
-    if (!bun.Environment.isWindows and bun.sys.existsOSPath(buf[0..path_size :0], true))
-        return buf[0..path_size :0];
     if (bun.Environment.isWindows) {
         const haystack = buf[0..path_size :0];
         for (win_extensionsW) |ext| {
@@ -94,6 +92,12 @@ fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: 
             return haystack;
         }
     }
+
+    if (!bun.Environment.isWindows and !check_windows_extensions)
+        // On Windows, files without extensions are not executable
+        // Therefore, we should only care about this check when the file already has an extension.
+        if (bun.sys.existsOSPath(buf[0..path_size :0], true))
+            return buf[0..path_size :0];
 
     if (check_windows_extensions) {
         buf[path_size] = '.';

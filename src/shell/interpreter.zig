@@ -488,16 +488,23 @@ pub const CowEnvMap = Cow(EnvMap, struct {
 
 pub const EnvMap = struct {
     map: MapType,
+
     pub const Iterator = MapType.Iterator;
 
     const MapType = std.ArrayHashMap(EnvStr, EnvStr, struct {
         pub fn hash(self: @This(), s: EnvStr) u32 {
             _ = self;
+            if (bun.Environment.isWindows) {
+                return bun.CaseInsensitiveASCIIStringContext.hash(undefined, s.slice());
+            }
             return std.array_hash_map.hashString(s.slice());
         }
         pub fn eql(self: @This(), a: EnvStr, b: EnvStr, b_index: usize) bool {
             _ = self;
             _ = b_index;
+            if (bun.Environment.isWindows) {
+                return bun.CaseInsensitiveASCIIStringContext.eql(undefined, a.slice(), b.slice(), undefined);
+            }
             return std.array_hash_map.eqlString(a.slice(), b.slice());
         }
     }, true);

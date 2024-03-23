@@ -148,13 +148,13 @@ bool DOMFormData::has(const String& name)
 
 void DOMFormData::set(const String& name, const String& value)
 {
-    set(name, { name, value });
+    set(replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), (createStringEntry(name, value));
 }
 
 void DOMFormData::set(const String& name, RefPtr<Blob> blob, const String& filename)
 {
-    blob->setFileName(filename);
-    set(name, { name, blob });
+    blob->setFileName(replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
+    set(replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), { replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
 }
 
 void DOMFormData::set(const String& name, Item&& item)

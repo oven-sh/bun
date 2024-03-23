@@ -85,6 +85,14 @@ describe("--print for cjs/esm", () => {
     expect(stdout.toString("utf8")).toEqual("object object function string string\n123\n");
     expect(exitCode).toBe(0);
   });
+
+  test("positional argv is not mangled", async () => {
+    let { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.log(process.argv);", "first", "second", "third"],
+      env: bunEnv,
+    });
+    expect(stdout.toString("utf8")).toInclude(`[ "${bunExe()}", "first", "second", "third" ]`);
+  });
 });
 
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {

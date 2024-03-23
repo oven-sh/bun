@@ -524,7 +524,14 @@ pub const Arguments = struct {
         opts.env_files = args.options("--env-file");
         opts.extension_order = args.options("--extension-order");
 
-        ctx.passthrough = args.remaining();
+        {
+            const positionals = args.positionals();
+            const remaining = args.remaining();
+            var list = try std.ArrayList(string).initCapacity(allocator, positionals.len + remaining.len);
+            list.appendSliceAssumeCapacity(positionals);
+            list.appendSliceAssumeCapacity(remaining);
+            ctx.passthrough = list.items;
+        }
 
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand) {
             if (args.options("--conditions").len > 0) {

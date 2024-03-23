@@ -1606,7 +1606,7 @@ pub const Blob = struct {
             this.ref_count += 1;
         }
 
-        pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
+        pub fn externalOnDeref(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
             if (ptr == null) return;
             var this = bun.cast(*Store, ptr);
             this.deref();
@@ -3653,12 +3653,6 @@ pub const Blob = struct {
             return ZigString.Empty.toValue(global);
         }
 
-        if (bom == .utf16_le) {
-            var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
-            defer out.deref();
-            return out.toJS(global);
-        }
-
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
@@ -3692,33 +3686,58 @@ pub const Blob = struct {
             // we don't need to clone
             .clone => {
                 this.store.?.ref();
+
+                if (bom == .utf16_le) {
+                    return ZigString.init16(bun.reinterpretSlice(u16, buf))
+                        .external(global, this.store.?, Store.externalOnDeref);
+                }
+
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-                return ZigString.init(buf).external(global, this.store.?, Store.external);
+                return ZigString.init(buf).external(global, this.store.?, Store.externalOnDeref);
             },
             .transfer => {
                 const store = this.store.?;
                 std.debug.assert(store.data == .bytes);
                 this.transfer();
+
+                if (bom == .utf16_le) {
+                    return ZigString.init16(bun.reinterpretSlice(u16, buf))
+                        .external(global, this.store.?, Store.externalOnDeref);
+                }
+
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-                return ZigString.init(buf).external(global, store, Store.external);
+                return ZigString.init(buf).external(global, store, Store.externalOnDeref);
             },
             // strings are immutable
             // sharing isn't really a thing
             .share => {
                 this.store.?.ref();
-                // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.s
-                return ZigString.init(buf).external(global, this.store.?, Store.external);
+
+                if (bom == .utf16_le) {
+                    return ZigString.init16(bun.reinterpretSlice(u16, buf))
+                        .external(global, this.store.?, Store.externalOnDeref);
+                }
+
+                // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
+                return ZigString.init(buf).external(global, this.store.?, Store.externalOnDeref);
             },
             .temporary => {
-                // if there was a UTF-8 BOM, we need to clone the buffer because
+                // if there was a BOM, we need to clone the buffer because
                 // external doesn't support this case here yet.
-                if (buf.len != raw_bytes.len) {
+
+                if (bom == .utf8) {
                     var out = bun.String.createLatin1(buf);
                     defer {
                         bun.default_allocator.free(raw_bytes);
                         out.deref();
                     }
 
+                    return out.toJS(global);
+                }
+
+                if (bom == .utf16_le) {
+                    var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+                    defer out.deref();
                     return out.toJS(global);
                 }
 
@@ -3756,15 +3775,15 @@ pub const Blob = struct {
         if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
 
         if (bom == .utf16_le) {
+            if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
             defer out.deref();
             return out.toJSByParseJSON(global);
         }
+
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
-        defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(buf));
-
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
             const allocator = stack_fallback.get();

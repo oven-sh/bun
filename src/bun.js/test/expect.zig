@@ -962,6 +962,81 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toContainAllKeys(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainAllKeys() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainAllKeys", "<green>expected<r>") orelse return .zero;
+
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainAllKeys", "expected", "array");
+            return .zero;
+        }
+
+        const not = this.flags.not;
+        var pass = true;
+
+        const count = expected.getLength(globalObject);
+       
+        var iter_value=value._keys(globalObject,value);
+        if(iter_value.getLength(globalObject)==count) {
+            var itr = iter_value.arrayIterator(globalObject);
+            while (itr.next()) |item| {
+                var i:u32=0;
+                var hasKey=false;
+                while (i < count) : (i += 1) {
+                    const key = expected.getIndex(globalObject, i);
+                    if(item==key){
+                        hasKey = true;
+                        break;
+                    }
+                }
+                if(!hasKey) {
+                    pass=false;
+                    break;
+                }
+            }
+        } else {
+            pass=false;
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toContainAllKeys", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toContainAllKeys", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
     pub fn toContainEqual(
         this: *Expect,
         globalObject: *JSC.JSGlobalObject,

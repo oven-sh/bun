@@ -4094,6 +4094,10 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    pub fn _keys(_: JSValue, globalThis: *JSGlobalObject, value: JSC.JSValue) JSValue {
+        return keys(globalThis, value);
+    }
+
     pub fn hasOwnPropertyValue(this: JSValue, globalThis: *JSGlobalObject, value: JSC.JSValue) bool {
         // TODO: add a binding for this
         return hasOwnProperty(this, globalThis, value.getZigString(globalThis));

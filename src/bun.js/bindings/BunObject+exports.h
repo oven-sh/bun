@@ -48,6 +48,8 @@
     macro(getImportedStyles) \
     macro(gunzipSync) \
     macro(gzipSync) \
+    macro(zstdCompressSync) \
+    macro(zstdDecompressSync) \
     macro(indexOfLine) \
     macro(inflateSync) \
     macro(jest) \

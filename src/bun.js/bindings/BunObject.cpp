@@ -592,6 +592,8 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     getImportedStyles                              BunObject_callback_getImportedStyles                                DontEnum|DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
+    zstdCompressSync                                       BunObject_callback_zstdCompressSync                                         DontDelete|Function 1
+    zstdDecompressSync                                       BunObject_callback_zstdDecompressSync                                         DontDelete|Function 1
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
     indexOfLine                                    BunObject_callback_indexOfLine                                      DontDelete|Function 1
     inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1

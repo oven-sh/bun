@@ -8,6 +8,6 @@ cd $BUN_DEPS_DIR/libarchive
 make clean || echo ""
 ./build/clean.sh || echo ""
 ./build/autogen.sh
-./configure --disable-shared --enable-static --with-pic --disable-bsdtar --disable-bsdcat --disable-rpath --enable-posix-regex-lib --without-xml2 --without-expat --without-openssl --without-iconv --without-zlib
+./configure --disable-shared --enable-static --with-pic --disable-bsdtar --disable-bsdcat --disable-rpath --enable-posix-regex-lib --without-xml2 --without-expat --without-openssl --without-iconv --with-zlib=$BUN_DEPS_OUT_DIR/libz.a --with-zstd=$BUN_DEPS_OUT_DIR/libzstd.a --without-bz2lib
 make -j$CPUS
 cp ./.libs/libarchive.a $BUN_DEPS_OUT_DIR/libarchive.a

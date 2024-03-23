@@ -116,6 +116,9 @@ pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
             std.os.sigaction(@intCast(sig), &act, null) catch {};
         }
     }
+
+    Output.Stdio.restore();
+
     // TODO(@paperdave): report a bug that this intcast shouldnt be needed. signals are i32 not u32
     // after that is fixed we can make this function take i32
     _ = std.c.raise(@intCast(sig));

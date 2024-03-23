@@ -5,12 +5,14 @@ import { readdirSync } from "node:fs";
 import { join } from "path";
 
 test("bun build --target bun should support non-ascii source", async () => {
-  const files = {"index.js": `
+  const files = {
+    "index.js": `
     console.log(JSON.stringify({\u{6211}: "a"}));
 
     const \u{6211} = "b";
     console.log(JSON.stringify({\u{6211}}));
-  `};
+  `,
+  };
   const filenames = Object.keys(files);
   const source = tempDirWithFiles("source", files);
 
@@ -19,4 +21,4 @@ test("bun build --target bun should support non-ascii source", async () => {
   const result = await $`${bunExe()} ${join(source, "bundle.js")}`.text();
 
   expect(result).toBe(`{"\u{6211}":"a"}\n{"\u{6211}":"b"}\n`);
-})
+});

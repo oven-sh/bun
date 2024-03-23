@@ -3306,8 +3306,8 @@ pub const PackageManager = struct {
             .folder => {
                 // relative to cwd
                 const folder_path = this.lockfile.str(&version.value.folder);
+                var buf2: bun.PathBuffer = undefined;
                 const folder_path_abs = if (std.fs.path.isAbsolute(folder_path)) folder_path else blk: {
-                    var buf2: bun.PathBuffer = undefined;
                     break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{folder_path}, .auto);
                 };
                 const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
@@ -3329,8 +3329,8 @@ pub const PackageManager = struct {
                 // package name hash should be used to find workspace path from map
                 const workspace_path_raw: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
                 const workspace_path = this.lockfile.str(workspace_path_raw);
+                var buf2: bun.PathBuffer = undefined;
                 const workspace_path_u8 = if (std.fs.path.isAbsolute(workspace_path)) workspace_path else blk: {
-                    var buf2: bun.PathBuffer = undefined;
                     break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{workspace_path}, .auto);
                 };
 

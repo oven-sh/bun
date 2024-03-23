@@ -790,6 +790,7 @@ pub const RunCommand = struct {
                 "-" ++ Environment.git_sha_short
             else
                 "";
+            @memcpy(target_path_buffer[prefix.len..][len..].ptr, comptime bun.strings.w(dir_name));
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
 
             const image_path = bun.windows.exePathW();

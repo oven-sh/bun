@@ -757,6 +757,7 @@ pub const UpgradeCommand = struct {
             }
 
             const destination_executable = bun.selfExePath() catch return error.UpgradeFailedMissingExecutable;
+            @memcpy(current_executable_buf[0..destination_executable.len], destination_executable);
             current_executable_buf[destination_executable.len] = 0;
 
             const target_filename_ = std.fs.path.basename(destination_executable);

@@ -905,19 +905,27 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #ifdef RSA_PKCS1_OAEP_PADDING
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PKCS1_OAEP_PADDING"_s)), jsNumber(RSA_PKCS1_OAEP_PADDING));
 #endif
-#ifndef RSA_X931_PADDING
+#ifdef RSA_X931_PADDING
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_X931_PADDING"_s)), RSA_X931_PADDING);
+#else
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_X931_PADDING"_s)), jsNumber(5));
 #endif
 #ifdef RSA_PKCS1_PSS_PADDING
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PKCS1_PSS_PADDING"_s)), jsNumber(RSA_PKCS1_PSS_PADDING));
 #endif
-#ifndef RSA_PSS_SALTLEN_DIGEST
+#ifdef RSA_PSS_SALTLEN_DIGEST
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_DIGEST"_s)), RSA_PSS_SALTLEN_DIGEST);
+#else
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_DIGEST"_s)), jsNumber(-1));
 #endif
-#ifndef RSA_PSS_SALTLEN_MAX_SIGN
+#ifdef RSA_PSS_SALTLEN_MAX_SIGN
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_MAX_SIGN"_s)), RSA_PSS_SALTLEN_MAX_SIGN);
+#else
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_MAX_SIGN"_s)), jsNumber(-2));
 #endif
-#ifndef RSA_PSS_SALTLEN_AUTO
+#ifdef RSA_PSS_SALTLEN_AUTO
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_AUTO"_s)), RSA_PSS_SALTLEN_AUTO);
+#else
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_AUTO"_s)), jsNumber(-2));
 #endif
     auto cipherList = String("TLS_AES_256_GCM_SHA384:"

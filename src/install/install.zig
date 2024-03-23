@@ -8128,6 +8128,19 @@ pub const PackageManager = struct {
     var package_json_cwd_buf: bun.PathBuffer = undefined;
     pub var package_json_cwd: string = "";
 
+    pub fn exec(ctx: Command.Context) !void {
+        install(ctx) catch |err| switch (err) {
+            error.InstallFailed,
+            error.InvalidPackageJSON,
+            => {
+                const log = &bun.CLI.Cli.log_;
+                log.printForLogLevel(bun.Output.errorWriter()) catch {};
+                bun.Global.exit(1);
+            },
+            else => |e| return e,
+        };
+    }
+
     pub inline fn install(ctx: Command.Context) !void {
         var manager = try init(ctx, .install);
 

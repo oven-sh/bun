@@ -320,6 +320,15 @@ Whether `bun install` will actually install dependencies. Default `false`. When 
 dryRun = false
 ```
 
+### `install.lockfileOnly`
+
+When true, it's equivalent to setting `--lockfile-only` on all `bun install` commands.
+
+```toml
+[install]
+lockfileOnly = false
+```
+
 ### `install.globalDir`
 
 To configure the directory where Bun puts globally installed packages.

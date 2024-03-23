@@ -5353,6 +5353,7 @@ pub const PackageManager = struct {
         min_simultaneous_requests: usize = 4,
 
         max_concurrent_lifecycle_scripts: usize,
+        lockfile_only: bool = false,
 
         pub fn shouldPrintCommandName(this: *const Options) bool {
             return this.log_level != .silent and this.do.summary;
@@ -5802,6 +5803,13 @@ pub const PackageManager = struct {
                     this.enable.manifest_cache_control = false;
                     this.enable.force_install = true;
                     this.enable.force_save_lockfile = true;
+                }
+
+                if (cli.lockfile_only) {
+                    this.do.install_packages = false;
+                    this.lockfile_only = true;
+                    this.do.write_package_json = false;
+                    this.do.save_lockfile = true;
                 }
 
                 this.update.development = cli.development;
@@ -7235,6 +7243,7 @@ pub const PackageManager = struct {
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--link-native-bins <STR>...           Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
+        clap.parseParam("--lockfile-only                       Only bun.lockb is updated") catch unreachable,
         // clap.parseParam("--omit <STR>...                    Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
         // clap.parseParam("--no-dedupe                        Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
@@ -7316,6 +7325,7 @@ pub const PackageManager = struct {
         exact: bool = false,
 
         concurrent_scripts: ?usize = null,
+        lockfile_only: bool = false,
 
         const Omit = struct {
             dev: bool = false,
@@ -7550,6 +7560,8 @@ pub const PackageManager = struct {
                 // var buf: []
                 cli.concurrent_scripts = std.fmt.parseInt(usize, concurrency, 10) catch null;
             }
+
+            cli.lockfile_only = args.flag("--lockfile-only");
 
             // for (args.options("--omit")) |omit| {
             //     if (strings.eqlComptime(omit, "dev")) {

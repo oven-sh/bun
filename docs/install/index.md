@@ -55,6 +55,18 @@ To install dependencies without allowing changes to lockfile (useful on CI):
 $ bun install --frozen-lockfile
 ```
 
+To perform a bun.lockb update without installing any packages or updating package.json
+
+```bash
+$ bun install --lockfile-only
+```
+
+or
+
+```bash
+$ bun update --lockfile-only
+```
+
 To perform a dry run (i.e. don't actually install anything):
 
 ```bash
@@ -88,6 +100,9 @@ production = false
 
 # equivalent to `--frozen-lockfile` flag
 frozenLockfile = false
+
+# equivalent to `--lockfile-only` flag
+lockfileOnly = false
 
 # equivalent to `--dry-run` flag
 dryRun = false

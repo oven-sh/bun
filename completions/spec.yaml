@@ -121,6 +121,7 @@ subcommands:
       - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
+      - lockfile-only -- "Only bun.lockb is updated"
       - force -- "Always request the latest versions from the registry & reinstall all dependencies"
       - name: cache-dir
         type: string
@@ -137,6 +138,7 @@ subcommands:
         enum: ["clonefile", "copyfile", "hardlink", "clonefile_each_dir"]
       - name: link-native-bins
         summary: 'Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo'
+      - lockfile-only -- "Only bun.lockb is updated"
   add:
     summary: Add a dependency to package.json
     options:
@@ -173,6 +175,7 @@ subcommands:
         enum: ["clonefile", "copyfile", "hardlink", "clonefile_each_dir"]
       - name: link-native-bins
         summary: 'Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo'
+      - lockfile-only -- "Only bun.lockb is updated"
     parameters:
       - name: package
         multiple: true
@@ -210,6 +213,7 @@ subcommands:
         enum: ["clonefile", "copyfile", "hardlink", "clonefile_each_dir"]
       - name: link-native-bins
         summary: 'Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo'
+      - lockfile-only -- "Only bun.lockb is updated"
     parameters:
       - name: package
         multiple: true

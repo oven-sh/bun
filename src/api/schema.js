@@ -3068,6 +3068,10 @@ function decodeBunInstall(bb) {
         result["concurrent_scripts"] = bb.readUint32();
         break;
 
+      case 22:
+        result["lockfile_only"] = !!bb.readByte();
+        break;
+
       default:
         throw new Error("Attempted to parse invalid message");
     }
@@ -3206,6 +3210,13 @@ function encodeBunInstall(message, bb) {
     bb.writeByte(21);
     bb.writeUint32(value);
   }
+
+  var value = message["lockfile_only"];
+  if (value != null) {
+    bb.writeByte(22);
+    bb.writeByte(value);
+  }
+
   bb.writeByte(0);
 }
 

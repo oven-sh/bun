@@ -115,7 +115,7 @@ Use `Bun.connect` to connect to a TCP server. Specify the server to connect to w
 
 ```ts
 // The client
-const socket = Bun.connect({
+const socket = await Bun.connect({
   hostname: "localhost",
   port: 8080,
 
@@ -138,7 +138,7 @@ To require TLS, specify `tls: true`.
 
 ```ts
 // The client
-const socket = Bun.connect({
+const socket = await Bun.connect({
   // ... config
   tls: true,
 });
@@ -164,7 +164,7 @@ server.reload({
 ```
 
 ```ts#Client
-const socket = Bun.connect({ /* config */ })
+const socket = await Bun.connect({ /* config */ })
 socket.reload({
   data(){
     // new 'data' handler

@@ -3369,12 +3369,19 @@ pub const Interpreter = struct {
         io: IO,
         state: union(enum) {
             idle,
-            exec_cond,
-            exec_then,
-            exec_elif: struct {
-                idx: usize = 0,
+            exec: struct {
+                state: union(enum) {
+                    cond,
+                    then,
+                    elif: struct {
+                        idx: u32 = 0,
+                    },
+                    @"else",
+                },
+                stmts: *const SmolList(ast.Stmt, 1),
+                stmt_idx: u32 = 0,
+                last_exit_code: ExitCode = 0,
             },
-            exec_else,
             waiting_write_err,
             done,
         } = .idle,
@@ -3418,27 +3425,67 @@ pub const Interpreter = struct {
             while (this.state != .done) {
                 switch (this.state) {
                     .idle => {
-                        this.state = .exec_cond;
+                        this.state = .{ .exec = .{ .state = .cond, .stmts = &this.node.cond } };
                     },
-                    .exec_cond => {
-                        log("{} exec=cond", .{this});
-                        this.spawnBlock(&this.node.cond);
-                        return;
-                    },
-                    .exec_then => {
-                        log("{} exec=then", .{this});
-                        this.spawnBlock(&this.node.then);
-                        return;
-                    },
-                    .exec_elif => {
-                        std.debug.assert(this.state.exec_elif.idx == 0);
-                        log("{} exec=elif0", .{this});
-                        this.spawnBlock(this.node.else_parts.getConst(0));
-                        return;
-                    },
-                    .exec_else => {
-                        log("{} exec=else", .{this});
-                        this.spawnBlock(this.node.else_parts.lastUncheckedConst());
+                    .exec => {
+                        const stmts = this.state.exec.stmts;
+                        // Executed all the stmts
+                        if (this.state.exec.stmt_idx >= stmts.len()) {
+                            switch (this.state.exec.state) {
+                                .cond => {
+                                    if (this.state.exec.last_exit_code == 0) {
+                                        this.state.exec.state = .then;
+                                        this.state.exec.stmt_idx = 0;
+                                        this.state.exec.stmts = &this.node.then;
+                                        continue;
+                                    }
+                                    switch (this.node.else_parts.len()) {
+                                        0 => {
+                                            this.parent.childDone(this, 0);
+                                            return;
+                                        },
+                                        1 => {
+                                            this.state.exec.state = .@"else";
+                                            this.state.exec.stmt_idx = 0;
+                                            this.state.exec.stmts = this.node.else_parts.getConst(0);
+                                            continue;
+                                        },
+                                        else => {
+                                            this.state.exec.state = .{ .elif = .{} };
+                                            this.state.exec.stmt_idx = 0;
+                                            this.state.exec.stmts = this.node.else_parts.getConst(0);
+                                            continue;
+                                        },
+                                    }
+                                },
+                                .then => {
+                                    this.parent.childDone(this, this.state.exec.last_exit_code);
+                                    return;
+                                },
+                                .elif => {
+                                    this.state.exec.state.elif.idx += 2;
+                                    if (this.state.exec.state.elif.idx == this.node.else_parts.len() -| 1) {
+                                        this.state.exec.state = .@"else";
+                                        this.state.exec.stmt_idx = 0;
+                                        this.state.exec.stmts = this.node.else_parts.lastUncheckedConst();
+                                        continue;
+                                    }
+                                    this.state.exec.stmt_idx = 0;
+                                    this.state.exec.stmts = this.node.else_parts.getConst(this.state.exec.state.elif.idx);
+                                    return;
+                                },
+                                .@"else" => {
+                                    this.parent.childDone(this, this.state.exec.last_exit_code);
+                                    return;
+                                },
+                            }
+                        }
+
+                        const idx = this.state.exec.stmt_idx;
+                        this.state.exec.stmt_idx += 1;
+                        const stmt = this.state.exec.stmts.getConst(idx);
+                        var newstmt = Stmt.init(this.base.interpreter, this.base.shell, stmt, this, this.io.copy());
+                        newstmt.start();
                         return;
                     },
                     .waiting_write_err => return, // yield execution
@@ -3449,72 +3496,102 @@ pub const Interpreter = struct {
             this.parent.childDone(this, 0);
         }
 
-        /// Spawn the cond/then/else/elif of the if clause
-        fn spawnBlock(this: *If, stmt: *const ast.Stmt) void {
-            treat_as_stmt: {
-                switch (stmt.exprs.len) {
-                    // TODO: optimization, instead of going through indirection of executing whole stmt, just execute the underlying expression
-                    1 => break :treat_as_stmt,
-                    else => break :treat_as_stmt,
-                }
-            }
-
-            var newstmt = Stmt.init(this.base.interpreter, this.base.shell, stmt, this, this.io.copy());
-            newstmt.start();
-        }
-
         pub fn deinit(this: *If) void {
             log("{} deinit", .{this});
             this.io.deref();
         }
 
         pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) void {
-            switch (this.state) {
-                .exec_cond => {
-                    defer child.deinit();
+            defer child.deinit();
+
+            if (this.state != .exec) {
+                @panic("Expected `exec` state in If, this indicates a bug in Bun. Please file a GitHub issue.");
+            }
+
+            var exec = &this.state.exec;
+            exec.last_exit_code = exit_code;
+
+            switch (exec.state) {
+                .cond => this.next(),
+                .then => this.next(),
+                .elif => {
                     if (exit_code == 0) {
-                        this.state = .exec_then;
-                    } else {
-                        switch (this.node.else_parts.len()) {
-                            0 => {
-                                this.parent.childDone(this, exit_code);
-                                return;
-                            },
-                            1 => this.state = .exec_else,
-                            else => this.state = .{ .exec_elif = .{} },
-                        }
+                        exec.state = .then;
+                        exec.stmts = &this.node.then;
+                        exec.stmt_idx = 0;
+                        this.next();
+                        return;
+                    }
+                    exec.state.elif.idx += 2;
+                    if (exec.state.elif.idx == this.node.else_parts.len() -| 1) {
+                        exec.state = .@"else";
+                        exec.stmt_idx = 0;
+                        exec.stmts = this.node.else_parts.lastUncheckedConst();
+                        this.next();
+                        return;
                     }
                     this.next();
+                    return;
                 },
-                .exec_then => {
-                    defer child.deinit();
-                    this.parent.childDone(this, exit_code);
-                },
-                .exec_elif => {
-                    defer child.deinit();
-                    if (exit_code == 0) {
-                        log("{} exec=then{d}", .{ this, this.state.exec_elif.idx + 1 });
-                        const next_node = this.node.else_parts.getConst(this.state.exec_elif.idx + 1);
-                        this.state = .exec_then;
-                        this.spawnBlock(next_node);
-                    } else {
-                        this.state.exec_elif.idx += 2;
-                        if (this.state.exec_elif.idx == this.node.else_parts.len() -| 1) {
-                            this.state = .exec_else;
-                            this.next();
-                            return;
-                        }
-                        log("{} exec=elif{d}", .{ this, this.state.exec_elif.idx });
-                        this.spawnBlock(this.node.else_parts.getConst(this.state.exec_elif.idx));
-                    }
-                },
-                .exec_else => {
-                    defer child.deinit();
-                    this.parent.childDone(this, exit_code);
-                },
-                .idle, .waiting_write_err, .done => @panic("Invalid state"),
+                .@"else" => this.next(),
             }
         }
+
+        // pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) void {
+        //     switch (this.state) {
+        //         .exec_cond => {
+        //             child.deinit();
+        //             this.state.exec_cond.last_exit_code = exit_code;
+
+        //             if (this.branchHasMore(.cond))
+        //                 return this.spawnBranch(.cond);
+
+        //             if (exit_code == 0) {
+        //                 this.state = .exec_then;
+        //             } else {
+        //                 switch (this.node.else_parts.len()) {
+        //                     0 => {
+        //                         this.parent.childDone(this, exit_code);
+        //                         return;
+        //                     },
+        //                     1 => this.state = .exec_else,
+        //                     else => this.state = .{ .exec_elif = .{} },
+        //                 }
+        //             }
+        //             this.next();
+        //         },
+        //         .exec_then => {
+        //             child.deinit();
+        //             if (this.branchHasMore(.then)) return this.spawnBranch(.then);
+        //             this.parent.childDone(this, exit_code);
+        //         },
+        //         .exec_elif => {
+        //             child.deinit();
+        //             if (this.branchHasMore(.elif)) return this.spawnBranch(.elif);
+        //             if (exit_code == 0) {
+        //                 log("{} exec=then{d}", .{ this, this.state.exec_elif.idx + 1 });
+        //                 const next_node = this.node.else_parts.getConst(this.state.exec_elif.idx + 1);
+        //                 this.state = .exec_then;
+        //                 this.spawnBranch(next_node);
+        //             } else {
+        //                 this.state.exec_elif.idx += 2;
+        //                 if (this.state.exec_elif.idx == this.node.else_parts.len() -| 1) {
+        //                     this.state = .exec_else;
+        //                     this.next();
+        //                     return;
+        //                 }
+        //                 log("{} exec=elif{d}", .{ this, this.state.exec_elif.idx });
+        //                 this.spawnBranch(this.node.else_parts.getConst(this.state.exec_elif.idx));
+        //             }
+        //         },
+        //         .exec_else => {
+        //             child.deinit();
+        //             if (this.branchHasMore(.@"else")) return this.spawnBranch(.@"else");
+        //             this.parent.childDone(this, exit_code);
+        //         },
+        //         .idle, .waiting_write_err, .done => @panic("Invalid state"),
+        //     }
+        // }
     };
 
     pub const Cmd = struct {

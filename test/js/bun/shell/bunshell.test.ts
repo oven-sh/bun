@@ -819,7 +819,7 @@ describe("deno_task", () => {
   });
 });
 
-describe('if_clause', () => {
+describe("if_clause", () => {
   TestBuilder.command`
   if
     echo cond;
@@ -831,7 +831,9 @@ describe('if_clause', () => {
     echo elif then;
   else
     echo else;
-  fi`.stdout('cond\nthen\n').runAsTest('basic')
+  fi`
+    .stdout("cond\nthen\n")
+    .runAsTest("basic");
 
   TestBuilder.command`
   if
@@ -844,7 +846,9 @@ describe('if_clause', () => {
     echo elif then
   else
     echo else
-  fi`.stdout('cond\nthen\n').runAsTest('basic without semicolon')
+  fi`
+    .stdout("cond\nthen\n")
+    .runAsTest("basic without semicolon");
 
   TestBuilder.command`
   if
@@ -854,9 +858,9 @@ describe('if_clause', () => {
   else
     echo okay here
   fi`
-    .stdout('okay here\n')
-    .stderr('bun: command not found: lkfjslkdjfsldf\n')
-    .runAsTest('else basic')
+    .stdout("okay here\n")
+    .stderr("bun: command not found: lkfjslkdjfsldf\n")
+    .runAsTest("else basic");
 
   TestBuilder.command`
   if
@@ -870,9 +874,9 @@ describe('if_clause', () => {
   else
     echo okay here
   fi`
-    .stdout('okay here\n')
-    .stderr('bun: command not found: lkfjslkdjfsldf\nbun: command not found: sdfkjsldf\n')
-    .runAsTest('else')
+    .stdout("okay here\n")
+    .stderr("bun: command not found: lkfjslkdjfsldf\nbun: command not found: sdfkjsldf\n")
+    .runAsTest("else");
 
   TestBuilder.command`
   if
@@ -882,10 +886,38 @@ describe('if_clause', () => {
   else
     echo uh oh
   fi | cat
-  `.stdout('hi\nhey\n').runAsTest('in pipeline')
+  `
+    .stdout("hi\nhey\n")
+    .runAsTest("in pipeline");
 
-  TestBuilder.command`if echo hi; then echo lmao; fi && echo nice`.stdout('hi\nlmao\nnice\n').runAsTest('no else')
-})
+  TestBuilder.command`if echo hi; then echo lmao; fi && echo nice`.stdout("hi\nlmao\nnice\n").runAsTest("no else");
+
+  TestBuilder.command`if [[ -f package.json ]]
+  then
+    a
+    b
+  else
+    c
+  fi`
+    .exitCode(1)
+    .file("package.json", "lol")
+    .stderr("bun: command not found: a\nbun: command not found: b\n")
+    .runAsTest("multi statement then");
+
+  TestBuilder.command`if
+    [[ -f package.json ]]
+    [[ -f lkdfjlskdf ]]
+  then
+    echo yeah...
+    echo nope!
+  else
+    echo okay
+    echo makes sense!
+  fi`
+    .file("package.json", "lol")
+    .stdout("okay\nmakes sense!\n")
+    .runAsTest("multi statement in all branches");
+});
 
 function stringifyBuffer(buffer: Uint8Array): string {
   const sentinel = sentinelByte(buffer);

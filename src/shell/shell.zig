@@ -594,13 +594,13 @@ pub const AST = struct {
 
     /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
     pub const If = struct {
-        cond: Stmt,
-        then: Stmt,
+        cond: SmolList(Stmt, 1) = SmolList(Stmt, 1).zeroes,
+        then: SmolList(Stmt, 1) = SmolList(Stmt, 1).zeroes,
         /// From the spec:
         ///
         /// else_part        : Elif compound_list Then else_part
         ///                  | Else compound_list
-        else_parts: SmolList(Stmt, 1) = SmolList(Stmt, 1).zeroes,
+        else_parts: SmolList(SmolList(Stmt, 1), 1) = SmolList(SmolList(Stmt, 1), 1).zeroes,
 
         pub fn to_expr(this: If, alloc: Allocator) !Expr {
             const @"if" = try alloc.create(If);
@@ -1149,40 +1149,40 @@ pub const Parser = struct {
         return ParseError.Unknown;
     }
 
-    // fn parse_if_body(self: *Parser, comptime until: TokenTag) !AST.Stmt {
-    fn parse_if_body(self: *Parser) !AST.Stmt {
+    fn parse_if_body(self: *Parser, comptime until: []const TokenTag) !SmolList(AST.Stmt, 1) {
+        var ret: SmolList(AST.Stmt, 1) = SmolList(AST.Stmt, 1).zeroes;
+        while (if (self.inside_subshell == null)
+            !self.peek_any_comptime(until ++ .{.Eof})
+        else
+            !self.peek_any(until ++ .{ self.inside_subshell.?.closing_tok(), .Eof }))
+        {
+            self.skip_newlines();
+            const stmt = try self.parse_stmt();
+            ret.append(stmt);
+            self.skip_newlines();
+        }
 
-        // while (if (self.inside_subshell == null)
-        //     !self.match_any_comptime(&.{ until, .Eof })
-        // else
-        //     !self.match_any(&.{ until, self.inside_subshell.?.closing_tok(), .Eof }))
-        // {
-        self.skip_newlines();
-        const ret = try self.parse_stmt();
-        self.skip_newlines();
         return ret;
-        // }
-        // return ret;
     }
 
     fn parse_if_clause(self: *Parser) !AST.If {
         _ = self.expect(.If);
 
-        const cond = try self.parse_if_body();
+        const cond = try self.parse_if_body(&.{.Then});
 
         if (!self.match(.Then)) {
             try self.add_error("Expected \"then\" but got: {s}", .{@tagName(self.peek())});
             return ParseError.Expected;
         }
 
-        const then = try self.parse_if_body();
+        const then = try self.parse_if_body(&.{ .Else, .Elif, .Fi });
 
-        var else_parts: SmolList(AST.Stmt, 1) = SmolList(AST.Stmt, 1).zeroes;
+        var else_parts: SmolList(SmolList(AST.Stmt, 1), 1) = SmolList(SmolList(AST.Stmt, 1), 1).zeroes;
 
         switch (self.peek()) {
             .Else => {
                 _ = self.expect(.Else);
-                const @"else" = try self.parse_if_body();
+                const @"else" = try self.parse_if_body(&.{.Fi});
                 if (!self.match(.Fi)) {
                     try self.add_error("Expected \"fi\" but got: {s}", .{@tagName(self.peek())});
                     return ParseError.Expected;
@@ -1197,12 +1197,12 @@ pub const Parser = struct {
             .Elif => {
                 while (true) {
                     _ = self.expect(.Elif);
-                    const elif_cond = try self.parse_if_body();
+                    const elif_cond = try self.parse_if_body(&.{.Then});
                     if (!self.match(.Then)) {
                         try self.add_error("Expected \"then\" but got: {s}", .{@tagName(self.peek())});
                         return ParseError.Expected;
                     }
-                    const then_part = try self.parse_if_body();
+                    const then_part = try self.parse_if_body(&.{ .Elif, .Else, .Fi });
                     else_parts.append(elif_cond);
                     else_parts.append(then_part);
 
@@ -1210,7 +1210,7 @@ pub const Parser = struct {
                         .Elif => continue,
                         .Else => {
                             _ = self.expect(.Else);
-                            const else_part = try self.parse_if_body();
+                            const else_part = try self.parse_if_body(&.{.Fi});
                             else_parts.append(else_part);
                             break;
                         },
@@ -1588,6 +1588,26 @@ pub const Parser = struct {
         for (toktags) |tag| {
             if (peeked == tag) {
                 _ = self.advance();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn peek_any_comptime(self: *Parser, comptime toktags: []const TokenTag) bool {
+        const peeked = @as(TokenTag, self.peek());
+        inline for (toktags) |tag| {
+            if (peeked == tag) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn peek_any(self: *Parser, toktags: []const TokenTag) bool {
+        const peeked = @as(TokenTag, self.peek());
+        for (toktags) |tag| {
+            if (peeked == tag) {
                 return true;
             }
         }

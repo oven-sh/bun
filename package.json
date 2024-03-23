@@ -33,7 +33,7 @@
     "lint:fix": "eslint './**/*.d.ts' --cache --fix",
     "test": "node packages/bun-internal-test/src/runner.node.mjs ./build/bun-debug",
     "test:release": "node packages/bun-internal-test/src/runner.node.mjs ./build-release/bun",
-    "verdaccio": "cd test && bun run verdaccio -c test/cli/install/registry/verdaccio.yaml",
+    "verdaccio": "cd test && bun run verdaccio -c cli/install/registry/verdaccio.yaml",
     "update-known-failures": "node packages/bun-internal-test/src/update-known-windows-failures.mjs"
   }
 }

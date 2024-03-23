@@ -1265,7 +1265,7 @@ for (const [key, blob] of build.outputs) {
           cmd: [
             ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
             ...(run.bunArgs ?? []),
-            file + exe_extension,
+            path.extname(path.basename(file)).length > 0 ? file : file + exe_extension,
             ...(run.args ?? []),
           ] as [string, ...string[]],
           env: {

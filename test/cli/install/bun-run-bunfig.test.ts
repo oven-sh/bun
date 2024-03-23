@@ -17,7 +17,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
         },
       });
 
-      const cwd = tempDirWithFiles("run.where.node." + cmd2, {
+      const cwd = tempDirWithFiles("run.where.node", {
         "bunfig.toml": bunfig,
         "package.json": JSON.stringify(
           {
@@ -54,6 +54,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
   });
 
   describe.each(["bun", "system", "default"])(`run.shell = "%s"`, shellStr => {
+    if (isWindows && shellStr === "system") return; // windows always uses the bun shell now
     const shell = shellStr === "default" ? (isWindows ? "bun" : "system") : shellStr;
     const command_not_found =
       isWindows && shell === "system" ? "is not recognized as an internal or external command" : "command not found";
@@ -83,7 +84,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
         cmd: [bunExe(), ...runCmd, "startScript"],
         env: bunEnv,
         stderr: "pipe",
-        stdout: "ignore",
+        stdout: "pipe",
         stdin: "ignore",
         cwd,
       });

@@ -21,7 +21,10 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         bun.copy(u8, buf, bin);
         buf[bin.len] = 0;
         const binZ: [:0]u8 = buf[0..bin.len :0];
-        if (bun.Environment.isWindows) return binZ;
+        if (bun.Environment.isWindows) {
+            (std.fs.cwd().openFile(bin, .{}) catch return null).close();
+            return binZ;
+        }
         if (bun.sys.isExecutableFilePath(binZ)) return binZ;
 
         // note that directories are often executable

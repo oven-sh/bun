@@ -5,7 +5,6 @@ import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { tmpdir } from "os";
-import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
 
 expect.extend({
@@ -13,30 +12,9 @@ expect.extend({
   toHaveBins,
 });
 
-var verdaccioServer: ChildProcess;
 var testCounter: number = 0;
 var port: number = 4873;
 var packageDir: string;
-
-beforeAll(async () => {
-  verdaccioServer = fork(
-    await import.meta.resolve("verdaccio/bin/verdaccio"),
-    ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-    { silent: true, execPath: "bun" },
-  );
-
-  await new Promise<void>(done => {
-    verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
-      if (msg.verdaccio_started) {
-        done();
-      }
-    });
-  });
-});
-
-afterAll(() => {
-  verdaccioServer.kill();
-});
 
 beforeEach(async () => {
   packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));

@@ -430,6 +430,8 @@ jobs:
           cd test && npm install
           cd ../packages/bun-internal-test && npm install
           cd ../..
+      - id: verdaccio
+        run: bun run verdaccio &
       - id: test
         name: Run tests
         env:

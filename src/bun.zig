@@ -1890,13 +1890,13 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
 ///
 /// On windows, this file descriptor will always be backed by libuv, so calling .close() is safe.
-pub inline fn toLibUVOwnedFD(fd: anytype) FileDescriptor {
+pub inline fn toLibUVOwnedFD(fd: anytype) !FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
-            FDImpl.System => FDImpl.fromSystem(fd).makeLibUVOwned(),
+            FDImpl.System => try FDImpl.fromSystem(fd).makeLibUVOwned(),
             FDImpl.UV => FDImpl.fromUV(fd),
-            FileDescriptor => FDImpl.decode(fd).makeLibUVOwned(),
+            FileDescriptor => try FDImpl.decode(fd).makeLibUVOwned(),
             FDImpl => fd.makeLibUVOwned(),
             else => @compileError("toLibUVOwnedFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();

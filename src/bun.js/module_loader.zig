@@ -2064,19 +2064,20 @@ pub const ModuleLoader = struct {
             else => {
                 var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
                 const allocator = stack_buf.get();
-                var buf = MutableString.init2048(allocator) catch unreachable;
+                var buf = MutableString.init2048(allocator) catch bun.outOfMemory();
                 defer buf.deinit();
                 var writer = buf.writer();
                 if (!jsc_vm.origin.isEmpty()) {
-                    writer.writeAll("export default `") catch unreachable;
+                    writer.writeAll("export default `") catch bun.outOfMemory();
                     // TODO: escape backtick char, though we might already do that
                     JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
-                    writer.writeAll("`;\n") catch unreachable;
+                    writer.writeAll("`;\n") catch bun.outOfMemory();
                 } else {
-                    writer.writeAll("export default ") catch unreachable;
-                    buf = js_printer.quoteForJSON(specifier, buf, true) catch @panic("out of memory");
+                    // search keywords: "export default \"{}\";"
+                    writer.writeAll("export default ") catch bun.outOfMemory();
+                    buf = js_printer.quoteForJSON(specifier, buf, true) catch bun.outOfMemory();
                     writer = buf.writer();
-                    writer.writeAll(";\n") catch unreachable;
+                    writer.writeAll(";\n") catch bun.outOfMemory();
                 }
 
                 const public_url = bun.String.createUTF8(buf.toOwnedSliceLeaky());

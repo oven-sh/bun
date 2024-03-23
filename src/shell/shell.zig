@@ -155,6 +155,7 @@ pub fn Result(comptime T: anytype) type {
 
 pub const ShellError = error{ Init, Process, GlobalThisThrown, Spawn };
 pub const ParseError = error{
+    Unsupported,
     Expected,
     Unknown,
     Lex,
@@ -347,6 +348,7 @@ pub const AST = struct {
         cmd: *Cmd,
         subshell: Script,
         @"if": *If,
+        condexpr: *CondExpr,
 
         pub fn asPipelineItem(this: *Expr) ?PipelineItem {
             return switch (this.*) {
@@ -354,6 +356,7 @@ pub const AST = struct {
                 .cmd => .{ .cmd = this.cmd },
                 .subshell => .{ .subshell = this.subshell },
                 .@"if" => .{ .@"if" = this.@"if" },
+                .condexpr => .{ .condexpr = this.condexpr },
                 else => null,
             };
         }
@@ -365,7 +368,228 @@ pub const AST = struct {
             cmd,
             subshell,
             @"if",
+            condexpr,
         };
+    };
+
+    /// https://www.gnu.org/software/bash/manual/bash.html#Bash-Conditional-Expressions
+    pub const CondExpr = struct {
+        op: Op,
+        args: ArgList = ArgList.zeroes,
+
+        const ArgList = SmolList(Atom, 2);
+
+        // args: SmolList(1, comptime INLINED_MAX: comptime_int)
+        pub const Op = enum {
+            /// -a file
+            ///   True if file exists.
+            @"-a",
+
+            /// -b file
+            ///   True if file exists and is a block special file.
+            @"-b",
+
+            /// -c file
+            ///   True if file exists and is a character special file.
+            @"-c",
+
+            /// -d file
+            ///   True if file exists and is a directory.
+            @"-d",
+
+            /// -e file
+            ///   True if file exists.
+            @"-e",
+
+            /// -f file
+            ///   True if file exists and is a regular file.
+            @"-f",
+
+            /// -g file
+            ///   True if file exists and its set-group-id bit is set.
+            @"-g",
+
+            /// -h file
+            ///   True if file exists and is a symbolic link.
+            @"-h",
+
+            /// -k file
+            ///   True if file exists and its "sticky" bit is set.
+            @"-k",
+
+            /// -p file
+            ///   True if file exists and is a named pipe (FIFO).
+            @"-p",
+
+            /// -r file
+            ///   True if file exists and is readable.
+            @"-r",
+
+            /// -s file
+            ///   True if file exists and has a size greater than zero.
+            @"-s",
+
+            /// -t fd
+            ///   True if file descriptor fd is open and refers to a terminal.
+            @"-t",
+
+            /// -u file
+            ///   True if file exists and its set-user-id bit is set.
+            @"-u",
+
+            /// -w file
+            ///   True if file exists and is writable.
+            @"-w",
+
+            /// -x file
+            ///   True if file exists and is executable.
+            @"-x",
+
+            /// -G file
+            ///   True if file exists and is owned by the effective group id.
+            @"-G",
+
+            /// -L file
+            ///   True if file exists and is a symbolic link.
+            @"-L",
+
+            /// -N file
+            ///   True if file exists and has been modified since it was last read.
+            @"-N",
+
+            /// -O file
+            ///   True if file exists and is owned by the effective user id.
+            @"-O",
+
+            /// -S file
+            ///   True if file exists and is a socket.
+            @"-S",
+
+            /// file1 -ef file2
+            ///   True if file1 and file2 refer to the same device and inode numbers.
+            @"-ef",
+
+            /// file1 -nt file2
+            ///   True if file1 is newer than file2, or if file1 exists and file2 does not.
+            @"-nt",
+
+            /// file1 -ot file2
+            ///   True if file1 is older than file2, or if file2 exists and file1 does not.
+            @"-ot",
+
+            /// -o optname
+            ///   True if the shell option optname is enabled.
+            @"-o",
+
+            /// -v varname
+            ///   True if the shell variable varname is set.
+            @"-v",
+
+            /// -R varname
+            ///   True if the shell variable varname is set and is a name reference.
+            @"-R",
+
+            /// -z string
+            ///   True if the length of string is zero.
+            @"-z",
+
+            /// -n string
+            ///   True if the length of string is non-zero.
+            @"-n",
+
+            /// string1 == string2
+            ///   True if the strings are equal.
+            @"==",
+
+            /// string1 != string2
+            ///   True if the strings are not equal.
+            @"!=",
+
+            /// string1 < string2
+            ///   True if string1 sorts before string2 lexicographically.
+            @"<",
+
+            /// string1 > string2
+            ///   True if string1 sorts after string2 lexicographically.
+            @">",
+
+            /// arg1 OP arg2
+            ///   OP is one of ‘-eq’, ‘-ne’, ‘-lt’, ‘-le’, ‘-gt’, or ‘-ge’.
+            ///   These arithmetic binary operators return true if arg1 is equal to, not equal to, less than,
+            ///   less than or equal to, greater than, or greater than or equal to arg2, respectively.
+            @"-eq",
+            @"-ne",
+            @"-lt",
+            @"-le",
+            @"-gt",
+            @"-ge",
+
+            const SUPPORTED: []const Op = &.{
+                .@"-f",
+                .@"-z",
+                .@"-n",
+                .@"-d",
+            };
+
+            pub fn isSupported(op: Op) bool {
+                inline for (SUPPORTED) |supported_op| {
+                    if (supported_op == op) return true;
+                }
+                return false;
+            }
+
+            const SINGLE_ARG_OPS: []const std.builtin.Type.EnumField = brk: {
+                const fields: []const std.builtin.Type.EnumField = std.meta.fields(AST.CondExpr.Op);
+                const count = count: {
+                    var count: usize = 0;
+                    for (fields) |f| {
+                        if (f.name[0] == '-' and f.name.len == 2) {
+                            count += 1;
+                        }
+                    }
+                    break :count count;
+                };
+                var ret: [count]std.builtin.Type.EnumField = undefined;
+                var len: usize = 0;
+                for (fields) |f| {
+                    if (f.name[0] == '-' and f.name.len == 2) {
+                        ret[len] = f;
+                        len += 1;
+                    }
+                }
+                break :brk &ret;
+            };
+
+            const BINARY_OPS: []const std.builtin.Type.EnumField = brk: {
+                const fields: []const std.builtin.Type.EnumField = std.meta.fields(AST.CondExpr.Op);
+                const count = count: {
+                    var count: usize = 0;
+                    for (fields) |f| {
+                        if (!(f.name[0] == '-' and f.name.len == 2)) {
+                            count += 1;
+                        }
+                    }
+                    break :count count;
+                };
+                var ret: [count]std.builtin.Type.EnumField = undefined;
+                var len: usize = 0;
+                for (fields) |f| {
+                    if (!(f.name[0] == '-' and f.name.len == 2)) {
+                        ret[len] = f;
+                        len += 1;
+                    }
+                }
+                break :brk &ret;
+            };
+        };
+
+        pub fn to_expr(this: CondExpr, alloc: Allocator) !Expr {
+            const condexpr = try alloc.create(CondExpr);
+            condexpr.* = this;
+            return .{
+                .condexpr = condexpr,
+            };
+        }
     };
 
     /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
@@ -404,6 +628,7 @@ pub const AST = struct {
         assigns: []Assign,
         subshell: Script,
         @"if": *If,
+        condexpr: *CondExpr,
     };
 
     pub const CmdOrAssigns = union(CmdOrAssigns.Tag) {
@@ -812,8 +1037,11 @@ pub const Parser = struct {
         // }
         // return (try self.parse_cmd_or_assigns()).to_expr(self.alloc);
 
-        if (self.peek() == .If)
-            return (try self.parse_if_clause()).to_expr(self.alloc);
+        switch (self.peek()) {
+            .If => return (try self.parse_if_clause()).to_expr(self.alloc),
+            .DoubleBracketOpen => return (try self.parse_cond_expr()).to_expr(self.alloc),
+            else => {},
+        }
 
         return (try self.parse_simple_cmd()).to_expr(self.alloc);
     }
@@ -822,11 +1050,119 @@ pub const Parser = struct {
         while (self.match(.Newline)) {}
     }
 
+    fn parse_cond_expr(self: *Parser) !AST.CondExpr {
+        _ = self.expect(.DoubleBracketOpen);
+
+        // Quick check to see if it's a single operand operator
+        // Operators are not allowed to be expanded (i.e. `FOO=-f; [[ $FOO package.json ]]` won't work)
+        // So it must be a .Text token
+        // Also, all single operand operators start with "-", so check it starts with "-".
+        switch (self.peek()) {
+            .Text => |range| {
+                const txt = self.text(range);
+
+                if (txt[0] == '-') {
+                    // Is a potential single arg op
+                    inline for (AST.CondExpr.Op.SINGLE_ARG_OPS) |single_arg_op| {
+                        if (bun.strings.eqlComptime(txt, single_arg_op.name)) {
+                            const is_supported = comptime AST.CondExpr.Op.isSupported(@enumFromInt(single_arg_op.value));
+                            if (!is_supported) {
+                                try self.add_error("Conditional expression operation: {s}, is not supported right now. Please open a GitHub issue if you would like it to be supported.", .{single_arg_op.name});
+                                return ParseError.Unsupported;
+                            }
+
+                            _ = self.expect(.Text);
+                            if (!self.match(.Delimit)) {
+                                try self.add_error("Expected a single, simple word", .{});
+                                return ParseError.Expected;
+                            }
+
+                            const arg = try self.parse_atom() orelse {
+                                try self.add_error("Expected a word, but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+                                return ParseError.Expected;
+                            };
+
+                            if (!self.match(.DoubleBracketClose)) {
+                                try self.add_error("Expected \"]]\" but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+                                return ParseError.Expected;
+                            }
+
+                            return .{
+                                .op = @enumFromInt(single_arg_op.value),
+                                .args = AST.CondExpr.ArgList.initWith(arg),
+                            };
+                        }
+                    }
+
+                    try self.add_error("Unknown conditional expression operation: {s}", .{txt});
+                    return ParseError.Unknown;
+                }
+            },
+            else => {},
+        }
+
+        // Otherwise check multi-operand operators
+        const arg1 = try self.parse_atom() orelse {
+            try self.add_error("Expected a conditional expression operand, but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+            return ParseError.Expected;
+        };
+
+        // Operator must be a regular text token
+        if (self.peek() != .Text) {
+            try self.add_error("Expected a conditional expression operator, but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+            return ParseError.Expected;
+        }
+
+        const op = self.expect(.Text);
+        if (!self.match(.Delimit)) {
+            try self.add_error("Expected a single, simple word", .{});
+            return ParseError.Expected;
+        }
+        const txt = self.text(op.Text);
+
+        inline for (AST.CondExpr.Op.BINARY_OPS) |binary_op| {
+            if (bun.strings.eqlComptime(txt, binary_op.name)) {
+                const is_supported = comptime AST.CondExpr.Op.isSupported(@enumFromInt(binary_op.value));
+                if (!is_supported) {
+                    try self.add_error("Conditional expression operation: {s}, is not supported right now. Please open a GitHub issue if you would like it to be supported.", .{binary_op.name});
+                    return ParseError.Unsupported;
+                }
+
+                const arg2 = try self.parse_atom() orelse {
+                    try self.add_error("Expected a word, but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+                    return ParseError.Expected;
+                };
+
+                if (!self.match(.DoubleBracketClose)) {
+                    try self.add_error("Expected \"]]\" but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+                    return ParseError.Expected;
+                }
+
+                return .{
+                    .op = @enumFromInt(binary_op.value),
+                    .args = AST.CondExpr.ArgList.initWithSlice(&.{ arg1, arg2 }),
+                };
+            }
+        }
+
+        try self.add_error("Unknown conditional expression operation: {s}", .{txt});
+        return ParseError.Unknown;
+    }
+
+    // fn parse_if_body(self: *Parser, comptime until: TokenTag) !AST.Stmt {
     fn parse_if_body(self: *Parser) !AST.Stmt {
+
+        // while (if (self.inside_subshell == null)
+        //     !self.match_any_comptime(&.{ until, .Eof })
+        // else
+        //     !self.match_any(&.{ until, self.inside_subshell.?.closing_tok(), .Eof }))
+        // {
         self.skip_newlines();
         const ret = try self.parse_stmt();
         self.skip_newlines();
         return ret;
+        // }
+        // return ret;
     }
 
     fn parse_if_clause(self: *Parser) !AST.If {
@@ -1359,6 +1695,8 @@ pub const TokenTag = enum {
     Else,
     Elif,
     Fi,
+    DoubleBracketOpen,
+    DoubleBracketClose,
     Delimit,
     Eof,
 };
@@ -1414,6 +1752,9 @@ pub const Token = union(TokenTag) {
     Elif,
     Fi,
 
+    DoubleBracketOpen,
+    DoubleBracketClose,
+
     Delimit,
     Eof,
 
@@ -1423,7 +1764,7 @@ pub const Token = union(TokenTag) {
     };
 
     pub fn asHumanReadable(self: Token, strpool: []const u8) []const u8 {
-        switch (self) {
+        return switch (self) {
             .Pipe => "`|`",
             .DoublePipe => "`||`",
             .Ampersand => "`&`",
@@ -1452,9 +1793,11 @@ pub const Token = union(TokenTag) {
             .Else => "else",
             .Elif => "elif",
             .Fi => "fi",
+            .DoubleBracketOpen => "[[",
+            .DoubleBracketClose => "]]",
             .Delimit => "Delimit",
             .Eof => "EOF",
-        }
+        };
     }
 
     pub fn debug(self: Token, buf: []const u8) void {
@@ -1669,6 +2012,60 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 // 3. word breakers (spaces, etc.)
                 else if (!escaped) escaped: {
                     switch (char) {
+                        // possibly double bracket open
+                        '[' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.peek()) |p| {
+                                if (p.escaped or p.char != '[') break :escaped;
+                                const state = self.make_snapshot();
+                                _ = self.eat();
+                                do_backtrack: {
+                                    const p2 = self.peek() orelse {
+                                        try self.break_word(true);
+                                        try self.tokens.append(.DoubleBracketClose);
+                                        continue;
+                                    };
+                                    if (p2.escaped) break :do_backtrack;
+                                    switch (p2.char) {
+                                        ' ', '\r', '\n', '\t' => {
+                                            try self.break_word(true);
+                                            try self.tokens.append(.DoubleBracketOpen);
+                                        },
+                                        else => break :do_backtrack,
+                                    }
+                                    continue;
+                                }
+                                self.backtrack(state);
+                            }
+                            break :escaped;
+                        },
+                        ']' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.peek()) |p| {
+                                if (p.escaped or p.char != ']') break :escaped;
+                                const state = self.make_snapshot();
+                                _ = self.eat();
+                                do_backtrack: {
+                                    const p2 = self.peek() orelse {
+                                        try self.break_word(true);
+                                        try self.tokens.append(.DoubleBracketClose);
+                                        continue;
+                                    };
+                                    if (p2.escaped) break :do_backtrack;
+                                    switch (p2.char) {
+                                        ' ', '\r', '\n', '\t', ';', '&', '|', '>' => {
+                                            try self.break_word(true);
+                                            try self.tokens.append(.DoubleBracketClose);
+                                        },
+                                        else => break :do_backtrack,
+                                    }
+                                    continue;
+                                }
+                                self.backtrack(state);
+                            }
+                            break :escaped;
+                        },
+
                         // maybe `if`
                         'i' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
@@ -3020,6 +3417,9 @@ pub const Test = struct {
         Elif,
         Fi,
 
+        DoubleBracketOpen,
+        DoubleBracketClose,
+
         Delimit,
         Eof,
 
@@ -3052,6 +3452,8 @@ pub const Test = struct {
                 .Else => return .Else,
                 .Elif => return .Elif,
                 .Fi => return .Fi,
+                .DoubleBracketOpen => return .DoubleBracketOpen,
+                .DoubleBracketClose => return .DoubleBracketClose,
                 .Delimit => return .Delimit,
                 .Eof => return .Eof,
             }
@@ -3500,6 +3902,27 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
         heap: ByteList,
 
         const ByteList = bun.BabyList(T);
+
+        pub fn initWith(val: T) @This() {
+            var this: @This() = @This().zeroes;
+            this.inlined.items[0] = val;
+            this.inlined.len += 1;
+            return this;
+        }
+
+        pub fn initWithSlice(vals: []const T) @This() {
+            if (vals.len <= INLINED_MAX) {
+                var this: @This() = @This().zeroes;
+                @memcpy(this.inlined.items[0..vals.len], vals);
+                this.inlined.len += vals.len;
+                return this;
+            }
+            var this: @This() = .{
+                .heap = ByteList.initCapacity(bun.default_allocator, vals.len) catch bun.outOfMemory(),
+            };
+            this.heap.appendSliceAssumeCapacity(vals) catch bun.outOfMemory();
+            return this;
+        }
 
         pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const slc = this.slice();

@@ -883,6 +883,8 @@ describe('if_clause', () => {
     echo uh oh
   fi | cat
   `.stdout('hi\nhey\n').runAsTest('in pipeline')
+
+  TestBuilder.command`if echo hi; then echo lmao; fi && echo nice`.stdout('hi\nlmao\nnice\n').runAsTest('no else')
 })
 
 function stringifyBuffer(buffer: Uint8Array): string {

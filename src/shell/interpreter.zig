@@ -85,6 +85,7 @@ pub const StateKind = enum(u8) {
     pipeline,
     expansion,
     if_clause,
+    condexpr,
 };
 
 /// Copy-on-write
@@ -1564,6 +1565,7 @@ pub const Interpreter = struct {
         const ParentPtr = StatePtrUnion(.{
             Cmd,
             Assigns,
+            CondExpr,
         });
 
         const ChildPtr = StatePtrUnion(.{
@@ -2572,6 +2574,7 @@ pub const Interpreter = struct {
             Cmd,
             Assigns,
             If,
+            CondExpr,
         });
 
         pub fn init(
@@ -2638,6 +2641,10 @@ pub const Interpreter = struct {
                     const if_clause = If.init(this.base.interpreter, this.base.shell, child.@"if", If.ParentPtr.init(this), this.io.copy());
                     if_clause.start();
                 },
+                .condexpr => {
+                    const condexpr = CondExpr.init(this.base.interpreter, this.base.shell, child.condexpr, CondExpr.ParentPtr.init(this), this.io.copy());
+                    condexpr.start();
+                },
             }
         }
 
@@ -2680,6 +2687,7 @@ pub const Interpreter = struct {
             Binary,
             Assigns,
             If,
+            CondExpr,
         });
 
         const ParentPtr = StatePtrUnion(.{
@@ -2749,9 +2757,12 @@ pub const Interpreter = struct {
                 },
                 .subshell => @panic(SUBSHELL_TODO_ERROR),
                 .@"if" => {
-                    var if_clause = If.init(this.base.interpreter, this.base.shell, node.@"if", If.ParentPtr.init(this), this.io.copy());
-                    if_clause.start();
+                    const if_clause = If.init(this.base.interpreter, this.base.shell, node.@"if", If.ParentPtr.init(this), this.io.copy());
                     return ChildPtr.init(if_clause);
+                },
+                .condexpr => {
+                    const condexpr = CondExpr.init(this.base.interpreter, this.base.shell, node.condexpr, CondExpr.ParentPtr.init(this), this.io.copy());
+                    return ChildPtr.init(condexpr);
                 },
             }
         }
@@ -2828,9 +2839,10 @@ pub const Interpreter = struct {
             Cmd,
             Assigns,
             If,
+            CondExpr,
         });
 
-        const PipelineItem = TaggedPointerUnion(.{ Cmd, If });
+        const PipelineItem = TaggedPointerUnion(.{ Cmd, If, CondExpr });
 
         const CmdOrResult = union(enum) {
             cmd: PipelineItem,
@@ -2876,7 +2888,7 @@ pub const Interpreter = struct {
                 var i: u32 = 0;
                 for (this.node.items) |*item| {
                     if (switch (item.*) {
-                        .cmd, .@"if" => true,
+                        .cmd, .@"if", .condexpr => true,
                         else => false,
                     }) i += 1;
                 }
@@ -2904,7 +2916,7 @@ pub const Interpreter = struct {
             const evtloop = this.base.eventLoop();
             for (this.node.items) |*item| {
                 switch (item.*) {
-                    .@"if", .cmd => {
+                    .@"if", .cmd, .condexpr => {
                         var cmd_io = this.getIO();
                         const stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io, evtloop) else cmd_io.stdin.ref();
                         const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io, evtloop) else cmd_io.stdout.ref();
@@ -2923,6 +2935,7 @@ pub const Interpreter = struct {
                             .cmd = switch (item.*) {
                                 .@"if" => PipelineItem.init(If.init(this.base.interpreter, subshell_state, item.@"if", If.ParentPtr.init(this), cmd_io)),
                                 .cmd => PipelineItem.init(Cmd.init(this.base.interpreter, subshell_state, item.cmd, Cmd.ParentPtr.init(this), cmd_io)),
+                                .condexpr => PipelineItem.init(CondExpr.init(this.base.interpreter, subshell_state, item.condexpr, CondExpr.ParentPtr.init(this), cmd_io)),
                                 else => @panic("Pipeline runnable should be a command or an if conditional, this appears to be a bug in Bun."),
                             },
                         };
@@ -3007,6 +3020,11 @@ pub const Interpreter = struct {
             } else if (child.ptr.is(If)) {
                 const if_clause = child.as(If);
                 if_clause.base.shell.deinit();
+            } else if (child.ptr.is(CondExpr)) {
+                const condexpr = child.as(CondExpr);
+                condexpr.base.shell.deinit();
+            } else if (child.ptr.is(Assigns)) {
+                // We don't do anything here since assigns have no effect in a pipeline
             }
 
             child.deinit();
@@ -3099,6 +3117,248 @@ pub const Interpreter = struct {
             // First command in the pipeline should read from stdin
             if (proc_idx == 0) return io.stdin.ref();
             return .{ .fd = IOReader.init(pipes[proc_idx - 1][0], evtloop) };
+        }
+    };
+
+    pub const CondExpr = struct {
+        base: State,
+        node: *const ast.CondExpr,
+        parent: ParentPtr,
+        io: IO,
+        state: union(enum) {
+            idle,
+            expanding_args: struct {
+                idx: u32 = 0,
+                expansion: Expansion,
+            },
+            waiting_stat,
+            stat_complete: struct {
+                stat: Maybe(bun.Stat),
+            },
+            waiting_write_err,
+            done,
+        } = .idle,
+        args: std.ArrayList([:0]const u8),
+
+        pub const ShellCondExprStatTask = struct {
+            task: ShellTask(@This(), runFromThreadPool, runFromMainThread, log),
+            condexpr: *CondExpr,
+            result: ?Maybe(bun.Stat) = null,
+            path: [:0]const u8,
+
+            pub fn runFromThreadPool(this: *ShellCondExprStatTask) void {
+                this.result = bun.sys.stat(this.path);
+            }
+
+            pub fn runFromMainThread(this: *ShellCondExprStatTask) void {
+                defer this.deinit();
+                const ret = this.result.?;
+                this.result = null;
+                this.condexpr.onStatTaskComplete(ret);
+            }
+
+            pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
+                this.runFromMainThread();
+            }
+
+            pub fn deinit(this: *ShellCondExprStatTask) void {
+                bun.destroy(this);
+            }
+        };
+
+        const ParentPtr = StatePtrUnion(.{
+            Stmt,
+            Binary,
+            Pipeline,
+        });
+
+        const ChildPtr = StatePtrUnion(.{
+            Expansion,
+        });
+
+        pub fn init(
+            interpreter: *ThisInterpreter,
+            shell_state: *ShellState,
+            node: *const ast.CondExpr,
+            parent: ParentPtr,
+            io: IO,
+        ) *CondExpr {
+            const condexpr = interpreter.allocator.create(CondExpr) catch bun.outOfMemory();
+            condexpr.* = .{
+                .base = .{ .kind = .condexpr, .interpreter = interpreter, .shell = shell_state },
+                .node = node,
+                .parent = parent,
+                .io = io,
+                .args = std.ArrayList([:0]const u8).init(bun.default_allocator),
+            };
+
+            return condexpr;
+        }
+
+        pub fn format(this: *const CondExpr, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("CondExpr(0x{x}, op={s})", .{ @intFromPtr(this), @tagName(this.node.op) });
+        }
+
+        pub fn start(this: *CondExpr) void {
+            log("{} start", .{this});
+            this.next();
+        }
+
+        fn next(this: *CondExpr) void {
+            while (this.state != .done) {
+                switch (this.state) {
+                    .idle => {
+                        this.state = .{ .expanding_args = .{ .expansion = undefined } };
+                        continue;
+                    },
+                    .expanding_args => {
+                        if (this.state.expanding_args.idx >= this.node.args.len()) {
+                            this.commandImplStart();
+                            return;
+                        }
+
+                        this.args.ensureUnusedCapacity(1) catch bun.outOfMemory();
+                        Expansion.init(
+                            this.base.interpreter,
+                            this.base.shell,
+                            &this.state.expanding_args.expansion,
+                            this.node.args.getConst(this.state.expanding_args.idx),
+                            Expansion.ParentPtr.init(this),
+                            .{
+                                .array_of_slice = &this.args,
+                            },
+                            this.io.copy(),
+                        );
+                        this.state.expanding_args.idx += 1;
+                        this.state.expanding_args.expansion.start();
+                        return;
+                    },
+                    .waiting_stat => return,
+                    .stat_complete => {
+                        switch (this.node.op) {
+                            .@"-f" => {
+                                this.parent.childDone(this, if (this.state.stat_complete.stat == .result) 0 else 1);
+                                return;
+                            },
+                            .@"-d" => {
+                                const st: bun.Stat = switch (this.state.stat_complete.stat) {
+                                    .result => |st| st,
+                                    .err => |e| {
+                                        this.parent.childDone(this, e.errno);
+                                        return;
+                                    },
+                                };
+                                this.parent.childDone(this, if (bun.S.ISDIR(@intCast(st.mode))) 0 else 1);
+                                return;
+                            },
+                            .@"-z", .@"-n" => @panic("This conditional expression op does not need `stat()`. This indicates a bug in Bun. Please file a GitHub issue."),
+                            else => @panic("Invalid conditional expression op, this indicates a bug in Bun. Please file a GithHub issue."),
+                        }
+                    },
+                    .waiting_write_err => return,
+                    .done => std.debug.assert(false),
+                }
+            }
+
+            this.parent.childDone(this, 0);
+        }
+
+        fn commandImplStart(this: *CondExpr) void {
+            switch (this.node.op) {
+                .@"-d", .@"-f" => {
+                    this.state = .waiting_stat;
+                    this.doStat();
+                },
+                .@"-z" => this.parent.childDone(this, if (this.args.items[0].len == 0) 1 else 0),
+                .@"-n" => this.parent.childDone(this, if (this.args.items[0].len != 0) 1 else 0),
+                // else => @panic("Invalid node op: " ++ @tagName(this.node.op) ++ ", this indicates a bug in Bun. Please file a GithHub issue."),
+                else => {
+                    if (bun.Environment.allow_assert) {
+                        if (ast.CondExpr.Op.isSupported(this.node.op)) {
+                            @panic("Support this");
+                        }
+                    }
+
+                    @panic("Invalid cond expression op, this indicates a bug in Bun. Please file a GithHub issue.");
+                },
+            }
+        }
+
+        fn doStat(this: *CondExpr) void {
+            const stat_task = bun.new(ShellCondExprStatTask, .{
+                .task = .{
+                    .event_loop = this.base.eventLoop(),
+                    .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.base.eventLoop()),
+                },
+                .condexpr = this,
+                .path = this.args.items[0],
+            });
+            stat_task.task.schedule();
+        }
+
+        pub fn deinit(this: *CondExpr) void {
+            this.io.deinit();
+        }
+
+        pub fn childDone(this: *CondExpr, child: ChildPtr, exit_code: ExitCode) void {
+            if (child.ptr.is(Expansion)) {
+                if (exit_code != 0) {
+                    const err = this.state.expanding_args.expansion.state.err;
+                    defer err.deinit(bun.default_allocator);
+                    this.state.expanding_args.expansion.deinit();
+                    const buf = err.fmt();
+                    this.writeFailingError("{s}", .{buf});
+                    return;
+                }
+                child.deinit();
+                this.next();
+                return;
+            }
+
+            @panic("Invalid child to cond expression, this indicates a bug in Bun. Please file a report on Github.");
+        }
+
+        pub fn onStatTaskComplete(this: *CondExpr, result: Maybe(bun.Stat)) void {
+            if (bun.Environment.allow_assert) std.debug.assert(this.state == .waiting_stat);
+
+            // const st = switch (result) {
+            //     .result => |f| f,
+            //     .err => |e| {
+            //         this.state = .waiting_write_err;
+            //         const systemerror = e.toSystemError();
+            //         defer systemerror.deref();
+            //         this.writeFailingError("bun: {}: {}", .{ systemerror.path, systemerror.message });
+            //         return;
+            //     },
+            // };
+
+            this.state = .{
+                .stat_complete = .{ .stat = result },
+            };
+            this.next();
+        }
+
+        pub fn writeFailingError(this: *CondExpr, comptime fmt: []const u8, args: anytype) void {
+            const handler = struct {
+                fn enqueueCb(ctx: *CondExpr) void {
+                    ctx.state = .waiting_write_err;
+                }
+            };
+            this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
+        }
+
+        pub fn onIOWriterChunk(this: *CondExpr, _: usize, err: ?JSC.SystemError) void {
+            if (err != null) {
+                defer err.?.deref();
+                const exit_code: ExitCode = @intFromEnum(err.?.getErrno());
+                this.parent.childDone(this, exit_code);
+                return;
+            }
+
+            if (this.state == .waiting_write_err) {
+                this.parent.childDone(this, 1);
+                return;
+            }
         }
     };
 
@@ -3215,9 +3475,14 @@ pub const Interpreter = struct {
                     if (exit_code == 0) {
                         this.state = .exec_then;
                     } else {
-                        if (this.node.else_parts.len() == 1) {
-                            this.state = .exec_else;
-                        } else this.state = .{ .exec_elif = .{} };
+                        switch (this.node.else_parts.len()) {
+                            0 => {
+                                this.parent.childDone(this, exit_code);
+                                return;
+                            },
+                            1 => this.state = .exec_else,
+                            else => this.state = .{ .exec_elif = .{} },
+                        }
                     }
                     this.next();
                 },
@@ -9619,10 +9884,11 @@ pub fn ShellTask(
 
         pub fn onFinish(this: *@This()) void {
             print("onFinish", .{});
-            const ctx = @fieldParentPtr(Ctx, "task", this);
             if (this.event_loop == .js) {
+                const ctx = @fieldParentPtr(Ctx, "task", this);
                 this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(ctx, .manual_deinit));
             } else {
+                const ctx = this;
                 this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(ctx, "runFromMainThreadMini"));
             }
         }
@@ -9640,6 +9906,10 @@ pub fn ShellTask(
             const ctx = @fieldParentPtr(Ctx, "task", this);
             this.ref.unref(this.event_loop);
             runFromMainThread_(ctx);
+        }
+
+        pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
+            this.runFromMainThread();
         }
     };
 }
@@ -9701,6 +9971,7 @@ pub const IOWriterChildPtr = struct {
     pub const ChildPtrRaw = TaggedPointerUnion(.{
         Interpreter.Cmd,
         Interpreter.Pipeline,
+        Interpreter.CondExpr,
         Interpreter.Builtin.Cd,
         Interpreter.Builtin.Echo,
         Interpreter.Builtin.Export,

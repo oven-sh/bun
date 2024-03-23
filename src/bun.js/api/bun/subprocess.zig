@@ -1261,9 +1261,10 @@ pub const Subprocess = struct {
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;
                         subprocess.weak_file_sink_stdin_ptr = pipe;
-                        if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(subprocess)) {
+                        if (pipe.signal.ptr == @as(?*anyopaque, @ptrCast(this))) {
                             pipe.signal.clear();
                         }
+
                         return pipe.toJSWithDestructor(
                             globalThis,
                             JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
@@ -1283,8 +1284,11 @@ pub const Subprocess = struct {
 
             return switch (this.*) {
                 .pipe => |pipe| {
-                    pipe.deref();
+                    if (pipe.signal.ptr == @as(?*anyopaque, @ptrCast(this))) {
+                        pipe.signal.clear();
+                    }
 
+                    pipe.deref();
                     this.* = .{ .ignore = {} };
                 },
                 .buffer => {

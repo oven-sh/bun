@@ -33,6 +33,13 @@ it("performance.timeOrigin + performance.now() should be similar to Date.now()",
   expect(Math.abs(performance.timeOrigin + performance.now() - Date.now()) < 1000).toBe(true);
 });
 
+it("performance.now() should never return NaN", () => {
+  for (let i = 0; i < 10e6; i++) {
+    const now = performance.now()
+    expect(Number.isNaN(now)).toBe(false);
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/5604
 it("performance.now() DOMJIT", () => {
   // This test is very finnicky.

@@ -543,8 +543,9 @@ pub const RuntimeTranspilerCache = struct {
 
         const cache_dir_fd = brk: {
             if (std.fs.path.dirname(cache_file_path)) |dirname| {
-                const dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
-                break :brk bun.toLibUVOwnedFD(dir.fd);
+                var dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
+                errdefer dir.close();
+                break :brk try bun.toLibUVOwnedFD(dir.fd);
             }
 
             break :brk bun.toFD(std.fs.cwd().fd);
@@ -597,7 +598,7 @@ pub const RuntimeTranspilerCache = struct {
             debug("get(\"{s}\") = {s}", .{ source.path.text, @errorName(err) });
             return false;
         };
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             if (bun_debug_restore_from_cache) {
                 debug("get(\"{s}\") = {d} bytes, restored", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
             } else {
@@ -606,7 +607,7 @@ pub const RuntimeTranspilerCache = struct {
         }
         bun.Analytics.Features.transpiler_cache = true;
 
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             if (!bun_debug_restore_from_cache) {
                 if (this.entry) |*entry| {
                     entry.deinit(this.sourcemap_allocator, this.output_code_allocator);

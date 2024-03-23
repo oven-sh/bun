@@ -3779,7 +3779,7 @@ pub const NodeFS = struct {
             .path => |path_| {
                 const path = path_.sliceZ(&this.sync_error_buf);
 
-                const fd = switch (Syscall.open(path, @intFromEnum(FileSystemFlags.a), 0o000666)) {
+                const fd = switch (Syscall.open(path, @intFromEnum(FileSystemFlags.a), 0o666)) {
                     .result => |result| result,
                     .err => |err| return .{ .err = err },
                 };
@@ -5148,7 +5148,7 @@ pub const NodeFS = struct {
 
     pub fn readFileWithOptions(this: *NodeFS, args: Arguments.ReadFile, comptime _: Flavor, comptime string_type: StringType) Maybe(Return.ReadFileWithOptions) {
         var path: [:0]const u8 = undefined;
-        const fd: FileDescriptor = bun.toLibUVOwnedFD(switch (args.path) {
+        const fd_maybe_windows: FileDescriptor = switch (args.path) {
             .path => brk: {
                 path = args.path.path.sliceZ(&this.sync_error_buf);
                 if (this.vm) |vm| {
@@ -5180,7 +5180,7 @@ pub const NodeFS = struct {
                     }
                 }
 
-                break :brk switch (Syscall.open(
+                break :brk switch (bun.sys.open(
                     path,
                     os.O.RDONLY | os.O.NOCTTY,
                     0,
@@ -5192,7 +5192,18 @@ pub const NodeFS = struct {
                 };
             },
             .fd => |fd| fd,
-        });
+        };
+        const fd = bun.toLibUVOwnedFD(fd_maybe_windows) catch {
+            if (args.path == .path)
+                _ = Syscall.close(fd_maybe_windows);
+
+            return .{
+                .err = .{
+                    .errno = @intFromEnum(os.E.MFILE),
+                    .syscall = .open,
+                },
+            };
+        };
 
         defer {
             if (args.path == .path)
@@ -5211,6 +5222,7 @@ pub const NodeFS = struct {
             _ = Syscall.setFileOffset(fd, args.offset);
         }
         // For certain files, the size might be 0 but the file might still have contents.
+        // https://github.com/oven-sh/bun/issues/1220
         const size = @as(
             u64,
             @max(
@@ -5248,7 +5260,6 @@ pub const NodeFS = struct {
                 },
             }
         } else {
-            // https://github.com/oven-sh/bun/issues/1220
             while (true) {
                 switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
                     .err => |err| return .{
@@ -5557,7 +5568,7 @@ pub const NodeFS = struct {
         else
             std.os.O.RDONLY;
 
-        const fd = switch (Syscall.open(path, flags, 0)) {
+        const fd = switch (bun.sys.open(path, flags, 0)) {
             .err => |err| return .{ .err = err.withPath(path) },
             .result => |fd_| fd_,
         };
@@ -5807,7 +5818,7 @@ pub const NodeFS = struct {
 
     fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, flags: i32, comptime _: Flavor) Maybe(Return.Truncate) {
         if (comptime Environment.isWindows) {
-            const file = Syscall.open(
+            const file = bun.sys.open(
                 path.sliceZ(&this.sync_error_buf),
                 os.O.WRONLY | flags,
                 0o644,

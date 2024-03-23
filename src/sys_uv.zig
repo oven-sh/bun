@@ -350,9 +350,9 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
         return .{ .result = @as(usize, @intCast(rc.int())) };
     }
 }
+
 pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, position: i64) Maybe(usize) {
-    // TODO: @paperdave is this bad?
-    const uv_fd = bun.uvfdcast(bun.toLibUVOwnedFD(fd));
+    const uv_fd = bun.uvfdcast(fd);
     comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
     const debug_timer = bun.Output.DebugTimer.start();

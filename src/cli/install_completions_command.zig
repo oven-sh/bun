@@ -140,13 +140,13 @@ pub const InstallCompletionsCommand = struct {
 
     fn installUninstallerWindows() !void {
         // This uninstaller file is only written if the current exe is within a path
-        // like `\bun\bin\<whatever>.exe` so that it probably only runs when the
+        // like `bun\bin\<whatever>.exe` so that it probably only runs when the
         // powershell `install.ps1` was used to install.
 
         const image_path = bun.windows.exePathW();
         const image_dirname = image_path[0..(std.mem.lastIndexOfScalar(u16, image_path, '\\') orelse unreachable)];
 
-        if (!std.mem.endsWith(u16, image_dirname, comptime bun.strings.literal(u16, "\\bun\\bin")))
+        if (!std.mem.endsWith(u16, image_dirname, comptime bun.strings.literal(u16, "bun\\bin")))
             return;
 
         const content = @embedFile("uninstall.ps1");

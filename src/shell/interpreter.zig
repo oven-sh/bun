@@ -9596,13 +9596,13 @@ const ShellSyscall = struct {
                         .err => |e| return .{ .err = e },
                     };
                     return switch (Syscall.openDirAtWindowsA(dir, p, true, flags & os.O.NOFOLLOW != 0)) {
-                        .result => |fd| .{ .result = bun.toLibUVOwnedFD(fd) },
-                        .err => |e| return .{ .err = e.withPath(path) },
+                        .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
+                        .err => |e| .{ .err = e.withPath(path) },
                     };
                 }
                 return switch (Syscall.openDirAtWindowsA(dir, path, true, flags & os.O.NOFOLLOW != 0)) {
-                    .result => |fd| .{ .result = bun.toLibUVOwnedFD(fd) },
-                    .err => |e| return .{ .err = e.withPath(path) },
+                    .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
+                    .err => |e| .{ .err = e.withPath(path) },
                 };
             }
 
@@ -9619,7 +9619,7 @@ const ShellSyscall = struct {
             .err => |e| return .{ .err = e.withPath(path) },
         };
         if (bun.Environment.isWindows) {
-            return .{ .result = bun.toLibUVOwnedFD(fd) };
+            return bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail);
         }
         return .{ .result = fd };
     }
@@ -9630,7 +9630,7 @@ const ShellSyscall = struct {
             .err => |e| return .{ .err = e },
         };
         if (bun.Environment.isWindows) {
-            return .{ .result = bun.toLibUVOwnedFD(fd) };
+            return bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail);
         }
         return .{ .result = fd };
     }
@@ -9638,8 +9638,8 @@ const ShellSyscall = struct {
     pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         if (bun.Environment.isWindows) {
             return switch (Syscall.dup(fd)) {
-                .result => |f| return .{ .result = bun.toLibUVOwnedFD(f) },
-                .err => |e| return .{ .err = e },
+                .result => |duped_fd| bun.sys.toLibUVOwnedFD(duped_fd, .dup, .close_on_fail),
+                .err => |e| .{ .err = e },
             };
         }
         return Syscall.dup(fd);

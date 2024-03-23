@@ -7,14 +7,19 @@ param(
   # Skips adding the bun.exe directory to the user's %PATH%
   [Switch]$NoPathUpdate = $false,
   # Skips adding the bun to the list of installed programs
-  [Switch]$NoRegisterInstallation = $false
+  [Switch]$NoRegisterInstallation = $false,
+  # Skips installing powershell completions to your profile
+  [Switch]$NoCompletions = $false,
+
+  # Debugging: Always download with 'Invoke-RestMethod' instead of 'curl.exe'
+  [Switch]$DownloadWithoutCurl = $false
 );
 
 # filter out 32 bit + ARM
 if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
   Write-Output "Install Failed:"
   Write-Output "Bun for Windows is only available for x86 64-bit Windows.`n"
-  exit 1
+  return 1
 }
 
 # This corresponds to .win10_rs5 in build.zig
@@ -24,7 +29,7 @@ $MinBuildName = "Windows 10 1809"
 $WinVer = [System.Environment]::OSVersion.Version
 if ($WinVer.Major -lt 10 -or ($WinVer.Major -eq 10 -and $WinVer.Build -lt $MinBuild)) {
   Write-Warning "Bun requires at ${MinBuildName} or newer.`n`nThe install will still continue but it may not work.`n"
-  exit 1
+  return 1
 }
 
 $ErrorActionPreference = "Stop"
@@ -123,15 +128,15 @@ function Install-Bun {
     $openProcesses = Get-Process -Name bun | Where-Object { $_.Path -eq "${BunBin}\bun.exe" }
     if ($openProcesses.Count -gt 0) {
       Write-Output "Install Failed - An older installation exists and is open. Please close open Bun processes and try again."
-      exit 1
+      return 1
     }
     Write-Output "Install Failed - An unknown error occurred while trying to remove the existing installation"
     Write-Output $_
-    exit 1
+    return 1
   } catch {
     Write-Output "Install Failed - An unknown error occurred while trying to remove the existing installation"
     Write-Output $_
-    exit 1
+    return 1
   }
 
   $Target = "bun-windows-$Arch"
@@ -155,17 +160,26 @@ function Install-Bun {
 
   # curl.exe is faster than PowerShell 5's 'Invoke-WebRequest'
   # note: 'curl' is an alias to 'Invoke-WebRequest'. so the exe suffix is required
-  curl.exe "-#SfLo" "$ZipPath" "$URL" 
-  if ($LASTEXITCODE -ne 0) {
-    Write-Output "Install Failed - could not download $URL"
-    Write-Output "The command 'curl.exe $URL -o $ZipPath' exited with code ${LASTEXITCODE}`n"
-    exit 1
+  if (-not $DownloadWithoutCurl) {
+    curl.exe "-#SfLo" "$ZipPath" "$URL" 
+  }
+  if ($DownloadWithoutCurl -or ($LASTEXITCODE -ne 0)) {
+    Write-Warning "The command 'curl.exe $URL -o $ZipPath' exited with code ${LASTEXITCODE}`nTrying an alternative download method..."
+    try {
+      # Use Invoke-RestMethod instead of Invoke-WebRequest because Invoke-WebRequest breaks on
+      # some machines, see 
+      Invoke-RestMethod -Uri $URL -OutFile $ZipPath
+    } catch {
+      Write-Output "Install Failed - could not download $URL"
+      Write-Output "The command 'Invoke-RestMethod $URL -OutFile $ZipPath' exited with code ${LASTEXITCODE}`n"
+      return 1
+    }
   }
 
   if (!(Test-Path $ZipPath)) {
     Write-Output "Install Failed - could not download $URL"
     Write-Output "The file '$ZipPath' does not exist. Did an antivirus delete it?`n"
-    exit 1
+    return 1
   }
 
   try {
@@ -179,7 +193,7 @@ function Install-Bun {
   } catch {
     Write-Output "Install Failed - could not unzip $ZipPath"
     Write-Error $_
-    exit 1
+    return 1
   }
 
   Move-Item "${BunBin}\$Target\bun.exe" "${BunBin}\bun.exe" -Force
@@ -192,14 +206,14 @@ function Install-Bun {
     if ($IsBaseline) {
       Write-Output "Install Failed - bun.exe (baseline) is not compatible with your CPU.`n"
       Write-Output "Please open a GitHub issue with your CPU model:`nhttps://github.com/oven-sh/bun/issues/new/choose`n"
-      exit 1
+      return 1
     }
 
     Write-Output "Install Failed - bun.exe is not compatible with your CPU. This should have been detected before downloading.`n"
     Write-Output "Attempting to download bun.exe (baseline) instead.`n"
 
     Install-Bun -Version $Version -ForceBaseline $True
-    exit 1
+    return 1
   }
   # '-1073741515' was spotted in the wild, but not clearly documented as a status code:
   # https://discord.com/channels/876711213126520882/1149339379446325248/1205194965383250081
@@ -209,22 +223,34 @@ function Install-Bun {
     Write-Output "Install Failed - You are missing a DLL required to run bun.exe"
     Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.x64.exe`n`n"
     Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
-    exit 1
+    return 1
   }
   if ($LASTEXITCODE -ne 0) {
     Write-Output "Install Failed - could not verify bun.exe"
     Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
-    exit 1
+    return 1
   }
 
-  $env:IS_BUN_AUTO_UPDATE = "1"
-  $null = "$(& "${BunBin}\bun.exe" completions)"
-  # if ($LASTEXITCODE -ne 0) {
-  #   Write-Output "Install Failed - could not finalize installation"
-  #   Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
-  #   exit 1
-  # }
+  try {
+    $env:IS_BUN_AUTO_UPDATE = "1"
+    # TODO: When powershell completions are added, make this switch actually do something
+    if ($NoCompletions) {
+      $env:BUN_NO_INSTALL_COMPLETIONS = "1"
+    }
+    # This completions script in general will install some extra stuff, mainly the `bunx` link.
+    # It also installs completions.
+    $output = "$(& "${BunBin}\bun.exe" completions 2>&1)"
+    if ($LASTEXITCODE -ne 0) {
+      Write-Output $output
+      Write-Output "Install Failed - could not finalize installation"
+      Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
+      return 1
+    }
+  } catch {
+    # it is possible on powershell 5 that an error happens, but it is probably fine?
+  }
   $env:IS_BUN_AUTO_UPDATE = $null
+  $env:BUN_NO_INSTALL_COMPLETIONS = $null
 
   $DisplayVersion = if ($BunRevision -like "*-canary.*") {
     "${BunRevision}"
@@ -238,7 +264,7 @@ function Install-Bun {
   Write-Output "${C_GREEN}Bun ${DisplayVersion} was installed successfully!${C_RESET}"
   Write-Output "The binary is located at ${BunBin}\bun.exe`n"
 
-  Write-Warning "Bun for Windows is currently experimental.`nFor a more stable experience, please install Bun within WSL:`nhttps://bun.sh/docs/installation`n"
+  Write-Warning "Bun for Windows is currently experimental.`nFor a more stable experience, install Bun within WSL:`nhttps://bun.sh/docs/installation`n"
 
   $hasExistingOther = $false;
   try {
@@ -272,6 +298,7 @@ function Install-Bun {
       if (-not $NoPathUpdate) {
         $Path += $BunBin
         Write-Env -Key 'Path' -Value ($Path -join ';')
+        $env:PATH = $Path;
       } else {
         Write-Output "Skipping adding '${BunBin}' to the user's %PATH%`n"
       }
@@ -279,6 +306,8 @@ function Install-Bun {
 
     Write-Output "To get started, restart your terminal/editor, then type `"bun`"`n"
   }
+
+  $LASTEXITCODE = 0;
 }
 
 Install-Bun -Version $Version -ForceBaseline $ForceBaseline

@@ -17,7 +17,6 @@
 const { chmod, copyFile, lstat, mkdir, opendir, readlink, stat, symlink, unlink, utimes } = require("node:fs/promises");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 
-const SafePromiseAll = Promise.all;
 const PromisePrototypeThen = Promise.prototype.then;
 const PromiseReject = Promise.reject;
 const ArrayPrototypeFilter = Array.prototype.filter;
@@ -82,7 +81,7 @@ function areIdentical(srcStat, destStat) {
 
 function getStats(src, dest, opts) {
   const statFunc = opts.dereference ? file => stat(file, { bigint: true }) : file => lstat(file, { bigint: true });
-  return SafePromiseAll([
+  return Promise.all([
     statFunc(src),
     PromisePrototypeThen.$call(statFunc(dest), undefined, err => {
       if (err.code === "ENOENT") return null;
@@ -100,7 +99,7 @@ async function checkParentDir(destStat, src, dest, opts) {
 }
 
 function pathExists(dest) {
-  return PromisePrototypeThen(
+  return PromisePrototypeThen.$call(
     stat(dest),
     () => true,
     err => (err.code === "ENOENT" ? false : PromiseReject(err)),
@@ -137,7 +136,8 @@ async function checkParentPaths(src, srcStat, dest) {
   return checkParentPaths(src, srcStat, destParent);
 }
 
-const normalizePathToArray = path => ArrayPrototypeFilter.$call(StringPrototypeSplit(resolve(path), sep), Boolean);
+const normalizePathToArray = path =>
+  ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
 
 // Return true if dest is a subdir of src, otherwise false.
 // It only checks the path strings.

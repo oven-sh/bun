@@ -1,0 +1,2941 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Web Intl should format number as currency correctly in id-ID with IDR 1`] = `"Rp123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 1`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 1`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 1`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 1`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 1`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with USD 1`] = `"US$123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 2`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 2`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 2`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 2`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 2`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with EUR 1`] = `"€123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 3`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 3`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 3`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 3`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 3`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with JPY 1`] = `"JP¥123.457"`;
+
+exports[`Web Intl should format date correctly in id-ID 4`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 4`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 4`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 4`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 4`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with GBP 1`] = `"£123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 5`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 5`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 5`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 5`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 5`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with MXN 1`] = `"MX$123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 6`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 6`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 6`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 6`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 6`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with BRL 1`] = `"R$123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 7`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 7`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 7`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 7`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 7`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with RUB 1`] = `"RUB 123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 8`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 8`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 8`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 8`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 8`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with TRY 1`] = `"TRY 123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 9`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 9`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 9`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 9`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 9`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with CNY 1`] = `"CN¥123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 10`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 10`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 10`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 10`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 10`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with SAR 1`] = `"SAR 123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 11`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 11`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 11`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 11`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 11`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with INR 1`] = `"Rs123.456,79"`;
+
+exports[`Web Intl should format date correctly in id-ID 12`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 12`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 12`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 12`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 12`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with KWD 1`] = `"KWD 123.456,789"`;
+
+exports[`Web Intl should format date correctly in id-ID 13`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 13`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 13`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 13`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 13`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in id-ID with BHD 1`] = `"BHD 123.456,789"`;
+
+exports[`Web Intl should format date correctly in id-ID 14`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in id-ID 14`] = `"a, b, dan c"`;
+
+exports[`Web Intl should format plural rules correctly in id-ID 14`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in id-ID 14`] = `"1 hari yang lalu"`;
+
+exports[`Web Intl should format display names correctly in id-ID 14`] = `"Inggris"`;
+
+exports[`Web Intl should compare strings correctly in id-ID 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with IDR 1`] = `"IDR 123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 1`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 1`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 1`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 1`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with USD 1`] = `"$123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 2`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 2`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 2`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 2`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with EUR 1`] = `"€123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 3`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 3`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 3`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 3`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with JPY 1`] = `"¥123,457"`;
+
+exports[`Web Intl should format date correctly in en-US 4`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 4`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 4`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 4`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with GBP 1`] = `"£123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 5`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 5`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 5`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 5`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with MXN 1`] = `"MX$123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 6`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 6`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 6`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 6`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with BRL 1`] = `"R$123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 7`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 7`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 7`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 7`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with RUB 1`] = `"RUB 123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 8`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 8`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 8`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 8`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with TRY 1`] = `"TRY 123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 9`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 9`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 9`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 9`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with CNY 1`] = `"CN¥123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 10`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 10`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 10`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 10`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with SAR 1`] = `"SAR 123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 11`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 11`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 11`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 11`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with INR 1`] = `"₹123,456.79"`;
+
+exports[`Web Intl should format date correctly in en-US 12`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 12`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 12`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 12`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with KWD 1`] = `"KWD 123,456.789"`;
+
+exports[`Web Intl should format date correctly in en-US 13`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 13`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 13`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 13`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in en-US with BHD 1`] = `"BHD 123,456.789"`;
+
+exports[`Web Intl should format date correctly in en-US 14`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in en-US 14`] = `"a, b, and c"`;
+
+exports[`Web Intl should format plural rules correctly in en-US 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in en-US 14`] = `"1 day ago"`;
+
+exports[`Web Intl should format display names correctly in en-US 14`] = `"English"`;
+
+exports[`Web Intl should compare strings correctly in en-US 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with IDR 1`] = `"123 456,79 IDR"`;
+
+exports[`Web Intl should format date correctly in fr-FR 1`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 1`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 1`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 1`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with USD 1`] = `"123 456,79 $US"`;
+
+exports[`Web Intl should format date correctly in fr-FR 2`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 2`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 2`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 2`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with EUR 1`] = `"123 456,79 €"`;
+
+exports[`Web Intl should format date correctly in fr-FR 3`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 3`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 3`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 3`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with JPY 1`] = `"123 457 JPY"`;
+
+exports[`Web Intl should format date correctly in fr-FR 4`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 4`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 4`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 4`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with GBP 1`] = `"123 456,79 £GB"`;
+
+exports[`Web Intl should format date correctly in fr-FR 5`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 5`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 5`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 5`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with MXN 1`] = `"123 456,79 $MX"`;
+
+exports[`Web Intl should format date correctly in fr-FR 6`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 6`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 6`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 6`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with BRL 1`] = `"123 456,79 R$"`;
+
+exports[`Web Intl should format date correctly in fr-FR 7`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 7`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 7`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 7`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with RUB 1`] = `"123 456,79 RUB"`;
+
+exports[`Web Intl should format date correctly in fr-FR 8`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 8`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 8`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 8`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with TRY 1`] = `"123 456,79 TRY"`;
+
+exports[`Web Intl should format date correctly in fr-FR 9`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 9`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 9`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 9`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with CNY 1`] = `"123 456,79 CNY"`;
+
+exports[`Web Intl should format date correctly in fr-FR 10`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 10`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 10`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 10`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with SAR 1`] = `"123 456,79 SAR"`;
+
+exports[`Web Intl should format date correctly in fr-FR 11`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 11`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 11`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 11`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with INR 1`] = `"123 456,79 ₹"`;
+
+exports[`Web Intl should format date correctly in fr-FR 12`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 12`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 12`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 12`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with KWD 1`] = `"123 456,789 KWD"`;
+
+exports[`Web Intl should format date correctly in fr-FR 13`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 13`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 13`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 13`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in fr-FR with BHD 1`] = `"123 456,789 BHD"`;
+
+exports[`Web Intl should format date correctly in fr-FR 14`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in fr-FR 14`] = `"a, b et c"`;
+
+exports[`Web Intl should format plural rules correctly in fr-FR 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in fr-FR 14`] = `"il y a 1 jour"`;
+
+exports[`Web Intl should format display names correctly in fr-FR 14`] = `"anglais"`;
+
+exports[`Web Intl should compare strings correctly in fr-FR 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with IDR 1`] = `"IDR 123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 1`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 1`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 1`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 1`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 1`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with USD 1`] = `"$123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 2`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 2`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 2`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 2`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 2`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with EUR 1`] = `"€123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 3`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 3`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 3`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 3`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 3`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with JPY 1`] = `"¥123,457"`;
+
+exports[`Web Intl should format date correctly in ja-JP 4`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 4`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 4`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 4`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 4`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with GBP 1`] = `"£123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 5`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 5`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 5`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 5`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 5`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with MXN 1`] = `"MX$123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 6`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 6`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 6`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 6`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 6`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with BRL 1`] = `"R$123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 7`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 7`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 7`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 7`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 7`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with RUB 1`] = `"RUB 123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 8`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 8`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 8`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 8`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 8`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with TRY 1`] = `"TRY 123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 9`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 9`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 9`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 9`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 9`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with CNY 1`] = `"元 123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 10`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 10`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 10`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 10`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 10`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with SAR 1`] = `"SAR 123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 11`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 11`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 11`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 11`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 11`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with INR 1`] = `"₹123,456.79"`;
+
+exports[`Web Intl should format date correctly in ja-JP 12`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 12`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 12`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 12`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 12`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with KWD 1`] = `"KWD 123,456.789"`;
+
+exports[`Web Intl should format date correctly in ja-JP 13`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 13`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 13`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 13`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 13`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ja-JP with BHD 1`] = `"BHD 123,456.789"`;
+
+exports[`Web Intl should format date correctly in ja-JP 14`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in ja-JP 14`] = `"a、b、c"`;
+
+exports[`Web Intl should format plural rules correctly in ja-JP 14`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in ja-JP 14`] = `"1 日前"`;
+
+exports[`Web Intl should format display names correctly in ja-JP 14`] = `"英語"`;
+
+exports[`Web Intl should compare strings correctly in ja-JP 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with IDR 1`] = `"123.456,79 IDR"`;
+
+exports[`Web Intl should format date correctly in de-DE 1`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 1`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 1`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 1`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with USD 1`] = `"123.456,79 $"`;
+
+exports[`Web Intl should format date correctly in de-DE 2`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 2`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 2`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 2`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with EUR 1`] = `"123.456,79 €"`;
+
+exports[`Web Intl should format date correctly in de-DE 3`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 3`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 3`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 3`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with JPY 1`] = `"123.457 ¥"`;
+
+exports[`Web Intl should format date correctly in de-DE 4`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 4`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 4`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 4`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with GBP 1`] = `"123.456,79 £"`;
+
+exports[`Web Intl should format date correctly in de-DE 5`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 5`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 5`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 5`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with MXN 1`] = `"123.456,79 MX$"`;
+
+exports[`Web Intl should format date correctly in de-DE 6`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 6`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 6`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 6`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with BRL 1`] = `"123.456,79 R$"`;
+
+exports[`Web Intl should format date correctly in de-DE 7`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 7`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 7`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 7`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with RUB 1`] = `"123.456,79 RUB"`;
+
+exports[`Web Intl should format date correctly in de-DE 8`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 8`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 8`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 8`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with TRY 1`] = `"123.456,79 TRY"`;
+
+exports[`Web Intl should format date correctly in de-DE 9`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 9`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 9`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 9`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with CNY 1`] = `"123.456,79 CN¥"`;
+
+exports[`Web Intl should format date correctly in de-DE 10`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 10`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 10`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 10`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with SAR 1`] = `"123.456,79 SAR"`;
+
+exports[`Web Intl should format date correctly in de-DE 11`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 11`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 11`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 11`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with INR 1`] = `"123.456,79 ₹"`;
+
+exports[`Web Intl should format date correctly in de-DE 12`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 12`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 12`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 12`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with KWD 1`] = `"123.456,789 KWD"`;
+
+exports[`Web Intl should format date correctly in de-DE 13`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 13`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 13`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 13`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in de-DE with BHD 1`] = `"123.456,789 BHD"`;
+
+exports[`Web Intl should format date correctly in de-DE 14`] = `"1.1.2021"`;
+
+exports[`Web Intl should format list correctly in de-DE 14`] = `"a, b und c"`;
+
+exports[`Web Intl should format plural rules correctly in de-DE 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in de-DE 14`] = `"vor 1 Tag"`;
+
+exports[`Web Intl should format display names correctly in de-DE 14`] = `"Englisch"`;
+
+exports[`Web Intl should compare strings correctly in de-DE 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with IDR 1`] = `"123.456,79 IDR"`;
+
+exports[`Web Intl should format date correctly in es-ES 1`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 1`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 1`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 1`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with USD 1`] = `"123.456,79 US$"`;
+
+exports[`Web Intl should format date correctly in es-ES 2`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 2`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 2`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 2`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with EUR 1`] = `"123.456,79 €"`;
+
+exports[`Web Intl should format date correctly in es-ES 3`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 3`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 3`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 3`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with JPY 1`] = `"123.457 JPY"`;
+
+exports[`Web Intl should format date correctly in es-ES 4`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 4`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 4`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 4`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with GBP 1`] = `"123.456,79 GBP"`;
+
+exports[`Web Intl should format date correctly in es-ES 5`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 5`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 5`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 5`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with MXN 1`] = `"123.456,79 MXN"`;
+
+exports[`Web Intl should format date correctly in es-ES 6`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 6`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 6`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 6`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with BRL 1`] = `"123.456,79 BRL"`;
+
+exports[`Web Intl should format date correctly in es-ES 7`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 7`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 7`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 7`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with RUB 1`] = `"123.456,79 RUB"`;
+
+exports[`Web Intl should format date correctly in es-ES 8`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 8`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 8`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 8`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with TRY 1`] = `"123.456,79 TRY"`;
+
+exports[`Web Intl should format date correctly in es-ES 9`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 9`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 9`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 9`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with CNY 1`] = `"123.456,79 CNY"`;
+
+exports[`Web Intl should format date correctly in es-ES 10`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 10`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 10`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 10`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with SAR 1`] = `"123.456,79 SAR"`;
+
+exports[`Web Intl should format date correctly in es-ES 11`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 11`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 11`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 11`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with INR 1`] = `"123.456,79 INR"`;
+
+exports[`Web Intl should format date correctly in es-ES 12`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 12`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 12`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 12`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with KWD 1`] = `"123.456,789 KWD"`;
+
+exports[`Web Intl should format date correctly in es-ES 13`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 13`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 13`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 13`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in es-ES with BHD 1`] = `"123.456,789 BHD"`;
+
+exports[`Web Intl should format date correctly in es-ES 14`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in es-ES 14`] = `"a, b y c"`;
+
+exports[`Web Intl should format plural rules correctly in es-ES 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in es-ES 14`] = `"hace 1 día"`;
+
+exports[`Web Intl should format display names correctly in es-ES 14`] = `"Inglés"`;
+
+exports[`Web Intl should compare strings correctly in es-ES 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with IDR 1`] = `"123.456,79 IDR"`;
+
+exports[`Web Intl should format date correctly in it-IT 1`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 1`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 1`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 1`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with USD 1`] = `"123.456,79 USD"`;
+
+exports[`Web Intl should format date correctly in it-IT 2`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 2`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 2`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 2`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with EUR 1`] = `"123.456,79 €"`;
+
+exports[`Web Intl should format date correctly in it-IT 3`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 3`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 3`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 3`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with JPY 1`] = `"123.457 JPY"`;
+
+exports[`Web Intl should format date correctly in it-IT 4`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 4`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 4`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 4`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with GBP 1`] = `"123.456,79 £"`;
+
+exports[`Web Intl should format date correctly in it-IT 5`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 5`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 5`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 5`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with MXN 1`] = `"123.456,79 MXN"`;
+
+exports[`Web Intl should format date correctly in it-IT 6`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 6`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 6`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 6`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with BRL 1`] = `"123.456,79 BRL"`;
+
+exports[`Web Intl should format date correctly in it-IT 7`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 7`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 7`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 7`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with RUB 1`] = `"123.456,79 RUB"`;
+
+exports[`Web Intl should format date correctly in it-IT 8`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 8`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 8`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 8`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with TRY 1`] = `"123.456,79 TRY"`;
+
+exports[`Web Intl should format date correctly in it-IT 9`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 9`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 9`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 9`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with CNY 1`] = `"123.456,79 CN¥"`;
+
+exports[`Web Intl should format date correctly in it-IT 10`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 10`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 10`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 10`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with SAR 1`] = `"123.456,79 SAR"`;
+
+exports[`Web Intl should format date correctly in it-IT 11`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 11`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 11`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 11`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with INR 1`] = `"123.456,79 INR"`;
+
+exports[`Web Intl should format date correctly in it-IT 12`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 12`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 12`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 12`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with KWD 1`] = `"123.456,789 KWD"`;
+
+exports[`Web Intl should format date correctly in it-IT 13`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 13`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 13`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 13`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in it-IT with BHD 1`] = `"123.456,789 BHD"`;
+
+exports[`Web Intl should format date correctly in it-IT 14`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in it-IT 14`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in it-IT 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in it-IT 14`] = `"1 giorno fa"`;
+
+exports[`Web Intl should format display names correctly in it-IT 14`] = `"Inglese"`;
+
+exports[`Web Intl should compare strings correctly in it-IT 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with IDR 1`] = `"IDR 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 1`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 1`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 1`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 1`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with USD 1`] = `"US$ 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 2`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 2`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 2`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 2`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with EUR 1`] = `"€ 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 3`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 3`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 3`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 3`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with JPY 1`] = `"JP¥ 123.457"`;
+
+exports[`Web Intl should format date correctly in pt-BR 4`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 4`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 4`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 4`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with GBP 1`] = `"£ 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 5`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 5`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 5`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 5`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with MXN 1`] = `"MX$ 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 6`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 6`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 6`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 6`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with BRL 1`] = `"R$ 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 7`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 7`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 7`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 7`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with RUB 1`] = `"RUB 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 8`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 8`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 8`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 8`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with TRY 1`] = `"TRY 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 9`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 9`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 9`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 9`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with CNY 1`] = `"CN¥ 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 10`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 10`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 10`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 10`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with SAR 1`] = `"SAR 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 11`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 11`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 11`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 11`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with INR 1`] = `"₹ 123.456,79"`;
+
+exports[`Web Intl should format date correctly in pt-BR 12`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 12`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 12`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 12`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with KWD 1`] = `"KWD 123.456,789"`;
+
+exports[`Web Intl should format date correctly in pt-BR 13`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 13`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 13`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 13`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in pt-BR with BHD 1`] = `"BHD 123.456,789"`;
+
+exports[`Web Intl should format date correctly in pt-BR 14`] = `"01/01/2021"`;
+
+exports[`Web Intl should format list correctly in pt-BR 14`] = `"a, b e c"`;
+
+exports[`Web Intl should format plural rules correctly in pt-BR 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in pt-BR 14`] = `"há 1 dia"`;
+
+exports[`Web Intl should format display names correctly in pt-BR 14`] = `"Inglês"`;
+
+exports[`Web Intl should compare strings correctly in pt-BR 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with IDR 1`] = `"123 456,79 IDR"`;
+
+exports[`Web Intl should format date correctly in ru-RU 1`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 1`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 1`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 1`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with USD 1`] = `"123 456,79 $"`;
+
+exports[`Web Intl should format date correctly in ru-RU 2`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 2`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 2`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 2`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with EUR 1`] = `"123 456,79 €"`;
+
+exports[`Web Intl should format date correctly in ru-RU 3`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 3`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 3`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 3`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with JPY 1`] = `"123 457 ¥"`;
+
+exports[`Web Intl should format date correctly in ru-RU 4`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 4`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 4`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 4`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with GBP 1`] = `"123 456,79 £"`;
+
+exports[`Web Intl should format date correctly in ru-RU 5`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 5`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 5`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 5`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with MXN 1`] = `"123 456,79 MX$"`;
+
+exports[`Web Intl should format date correctly in ru-RU 6`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 6`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 6`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 6`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with BRL 1`] = `"123 456,79 R$"`;
+
+exports[`Web Intl should format date correctly in ru-RU 7`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 7`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 7`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 7`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with RUB 1`] = `"123 456,79 ₽"`;
+
+exports[`Web Intl should format date correctly in ru-RU 8`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 8`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 8`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 8`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with TRY 1`] = `"123 456,79 TRY"`;
+
+exports[`Web Intl should format date correctly in ru-RU 9`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 9`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 9`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 9`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with CNY 1`] = `"123 456,79 CN¥"`;
+
+exports[`Web Intl should format date correctly in ru-RU 10`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 10`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 10`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 10`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with SAR 1`] = `"123 456,79 SAR"`;
+
+exports[`Web Intl should format date correctly in ru-RU 11`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 11`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 11`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 11`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with INR 1`] = `"123 456,79 ₹"`;
+
+exports[`Web Intl should format date correctly in ru-RU 12`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 12`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 12`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 12`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with KWD 1`] = `"123 456,789 KWD"`;
+
+exports[`Web Intl should format date correctly in ru-RU 13`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 13`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 13`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 13`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ru-RU with BHD 1`] = `"123 456,789 BHD"`;
+
+exports[`Web Intl should format date correctly in ru-RU 14`] = `"01.01.2021"`;
+
+exports[`Web Intl should format list correctly in ru-RU 14`] = `"a, b и c"`;
+
+exports[`Web Intl should format plural rules correctly in ru-RU 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ru-RU 14`] = `"1 день назад"`;
+
+exports[`Web Intl should format display names correctly in ru-RU 14`] = `"Английский"`;
+
+exports[`Web Intl should compare strings correctly in ru-RU 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with IDR 1`] = `"IDR 123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 1`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 1`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 1`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 1`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with USD 1`] = `"$123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 2`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 2`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 2`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 2`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with EUR 1`] = `"€123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 3`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 3`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 3`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 3`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with JPY 1`] = `"¥123.457"`;
+
+exports[`Web Intl should format date correctly in tr-TR 4`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 4`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 4`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 4`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with GBP 1`] = `"£123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 5`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 5`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 5`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 5`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with MXN 1`] = `"MX$123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 6`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 6`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 6`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 6`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with BRL 1`] = `"R$123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 7`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 7`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 7`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 7`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with RUB 1`] = `"RUB 123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 8`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 8`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 8`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 8`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with TRY 1`] = `"₺123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 9`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 9`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 9`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 9`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with CNY 1`] = `"CN¥123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 10`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 10`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 10`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 10`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with SAR 1`] = `"SAR 123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 11`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 11`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 11`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 11`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with INR 1`] = `"₹123.456,79"`;
+
+exports[`Web Intl should format date correctly in tr-TR 12`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 12`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 12`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 12`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with KWD 1`] = `"KWD 123.456,789"`;
+
+exports[`Web Intl should format date correctly in tr-TR 13`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 13`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 13`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 13`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in tr-TR with BHD 1`] = `"BHD 123.456,789"`;
+
+exports[`Web Intl should format date correctly in tr-TR 14`] = `"1.01.2021"`;
+
+exports[`Web Intl should format list correctly in tr-TR 14`] = `"a, b ve c"`;
+
+exports[`Web Intl should format plural rules correctly in tr-TR 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in tr-TR 14`] = `"1 gün önce"`;
+
+exports[`Web Intl should format display names correctly in tr-TR 14`] = `"İngilizce"`;
+
+exports[`Web Intl should compare strings correctly in tr-TR 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with IDR 1`] = `"IDR 123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 1`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 1`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 1`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 1`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 1`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with USD 1`] = `"US$123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 2`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 2`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 2`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 2`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 2`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with EUR 1`] = `"€123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 3`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 3`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 3`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 3`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 3`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with JPY 1`] = `"JP¥123,457"`;
+
+exports[`Web Intl should format date correctly in zh-CN 4`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 4`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 4`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 4`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 4`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with GBP 1`] = `"£123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 5`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 5`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 5`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 5`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 5`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with MXN 1`] = `"MX$123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 6`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 6`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 6`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 6`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 6`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with BRL 1`] = `"R$123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 7`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 7`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 7`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 7`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 7`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with RUB 1`] = `"RUB 123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 8`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 8`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 8`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 8`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 8`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with TRY 1`] = `"TRY 123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 9`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 9`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 9`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 9`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 9`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with CNY 1`] = `"¥123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 10`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 10`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 10`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 10`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 10`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with SAR 1`] = `"SAR 123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 11`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 11`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 11`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 11`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 11`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with INR 1`] = `"₹123,456.79"`;
+
+exports[`Web Intl should format date correctly in zh-CN 12`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 12`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 12`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 12`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 12`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with KWD 1`] = `"KWD 123,456.789"`;
+
+exports[`Web Intl should format date correctly in zh-CN 13`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 13`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 13`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 13`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 13`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in zh-CN with BHD 1`] = `"BHD 123,456.789"`;
+
+exports[`Web Intl should format date correctly in zh-CN 14`] = `"2021/1/1"`;
+
+exports[`Web Intl should format list correctly in zh-CN 14`] = `"a、b和c"`;
+
+exports[`Web Intl should format plural rules correctly in zh-CN 14`] = `"other"`;
+
+exports[`Web Intl should format relative time correctly in zh-CN 14`] = `"1天前"`;
+
+exports[`Web Intl should format display names correctly in zh-CN 14`] = `"英语"`;
+
+exports[`Web Intl should compare strings correctly in zh-CN 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with IDR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ IDR"`;
+
+exports[`Web Intl should format date correctly in ar-SA 1`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 1`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 1`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 1`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with USD 1`] = `"‏١٢٣٬٤٥٦٫٧٩ US$"`;
+
+exports[`Web Intl should format date correctly in ar-SA 2`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 2`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 2`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 2`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with EUR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ €"`;
+
+exports[`Web Intl should format date correctly in ar-SA 3`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 3`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 3`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 3`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with JPY 1`] = `"‏١٢٣٬٤٥٧ JP¥"`;
+
+exports[`Web Intl should format date correctly in ar-SA 4`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 4`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 4`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 4`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with GBP 1`] = `"‏١٢٣٬٤٥٦٫٧٩ UK£"`;
+
+exports[`Web Intl should format date correctly in ar-SA 5`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 5`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 5`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 5`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with MXN 1`] = `"‏١٢٣٬٤٥٦٫٧٩ MX$"`;
+
+exports[`Web Intl should format date correctly in ar-SA 6`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 6`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 6`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 6`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with BRL 1`] = `"‏١٢٣٬٤٥٦٫٧٩ R$"`;
+
+exports[`Web Intl should format date correctly in ar-SA 7`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 7`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 7`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 7`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with RUB 1`] = `"‏١٢٣٬٤٥٦٫٧٩ RUB"`;
+
+exports[`Web Intl should format date correctly in ar-SA 8`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 8`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 8`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 8`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with TRY 1`] = `"‏١٢٣٬٤٥٦٫٧٩ TRY"`;
+
+exports[`Web Intl should format date correctly in ar-SA 9`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 9`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 9`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 9`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with CNY 1`] = `"‏١٢٣٬٤٥٦٫٧٩ CN¥"`;
+
+exports[`Web Intl should format date correctly in ar-SA 10`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 10`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 10`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 10`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with SAR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ ر.س.‏"`;
+
+exports[`Web Intl should format date correctly in ar-SA 11`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 11`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 11`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 11`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with INR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ ₹"`;
+
+exports[`Web Intl should format date correctly in ar-SA 12`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 12`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 12`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 12`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with KWD 1`] = `"‏١٢٣٬٤٥٦٫٧٨٩ د.ك.‏"`;
+
+exports[`Web Intl should format date correctly in ar-SA 13`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 13`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 13`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 13`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-SA with BHD 1`] = `"‏١٢٣٬٤٥٦٫٧٨٩ د.ب.‏"`;
+
+exports[`Web Intl should format date correctly in ar-SA 14`] = `"١٧ جما١، ١٤٤٢ هـ"`;
+
+exports[`Web Intl should format list correctly in ar-SA 14`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-SA 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-SA 14`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-SA 14`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-SA 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with IDR 1`] = `"IDR 1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 1`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 1`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 1`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 1`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with USD 1`] = `"$1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 2`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 2`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 2`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 2`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with EUR 1`] = `"€1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 3`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 3`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 3`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 3`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with JPY 1`] = `"JP¥1,23,457"`;
+
+exports[`Web Intl should format date correctly in hi-IN 4`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 4`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 4`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 4`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with GBP 1`] = `"£1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 5`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 5`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 5`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 5`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with MXN 1`] = `"MX$1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 6`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 6`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 6`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 6`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with BRL 1`] = `"R$1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 7`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 7`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 7`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 7`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with RUB 1`] = `"RUB 1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 8`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 8`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 8`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 8`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with TRY 1`] = `"TRY 1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 9`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 9`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 9`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 9`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with CNY 1`] = `"CN¥1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 10`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 10`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 10`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 10`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with SAR 1`] = `"SAR 1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 11`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 11`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 11`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 11`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with INR 1`] = `"₹1,23,456.79"`;
+
+exports[`Web Intl should format date correctly in hi-IN 12`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 12`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 12`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 12`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with KWD 1`] = `"KWD 1,23,456.789"`;
+
+exports[`Web Intl should format date correctly in hi-IN 13`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 13`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 13`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 13`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in hi-IN with BHD 1`] = `"BHD 1,23,456.789"`;
+
+exports[`Web Intl should format date correctly in hi-IN 14`] = `"1/1/2021"`;
+
+exports[`Web Intl should format list correctly in hi-IN 14`] = `"a, b और c"`;
+
+exports[`Web Intl should format plural rules correctly in hi-IN 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in hi-IN 14`] = `"1 दिन पहले"`;
+
+exports[`Web Intl should format display names correctly in hi-IN 14`] = `"अंग्रेज़ी"`;
+
+exports[`Web Intl should compare strings correctly in hi-IN 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with IDR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ IDR"`;
+
+exports[`Web Intl should format date correctly in ar-KW 1`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 1`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 1`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 1`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with USD 1`] = `"‏١٢٣٬٤٥٦٫٧٩ US$"`;
+
+exports[`Web Intl should format date correctly in ar-KW 2`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 2`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 2`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 2`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with EUR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ €"`;
+
+exports[`Web Intl should format date correctly in ar-KW 3`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 3`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 3`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 3`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with JPY 1`] = `"‏١٢٣٬٤٥٧ JP¥"`;
+
+exports[`Web Intl should format date correctly in ar-KW 4`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 4`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 4`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 4`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with GBP 1`] = `"‏١٢٣٬٤٥٦٫٧٩ UK£"`;
+
+exports[`Web Intl should format date correctly in ar-KW 5`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 5`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 5`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 5`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with MXN 1`] = `"‏١٢٣٬٤٥٦٫٧٩ MX$"`;
+
+exports[`Web Intl should format date correctly in ar-KW 6`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 6`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 6`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 6`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with BRL 1`] = `"‏١٢٣٬٤٥٦٫٧٩ R$"`;
+
+exports[`Web Intl should format date correctly in ar-KW 7`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 7`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 7`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 7`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with RUB 1`] = `"‏١٢٣٬٤٥٦٫٧٩ RUB"`;
+
+exports[`Web Intl should format date correctly in ar-KW 8`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 8`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 8`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 8`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with TRY 1`] = `"‏١٢٣٬٤٥٦٫٧٩ TRY"`;
+
+exports[`Web Intl should format date correctly in ar-KW 9`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 9`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 9`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 9`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with CNY 1`] = `"‏١٢٣٬٤٥٦٫٧٩ CN¥"`;
+
+exports[`Web Intl should format date correctly in ar-KW 10`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 10`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 10`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 10`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with SAR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ ر.س.‏"`;
+
+exports[`Web Intl should format date correctly in ar-KW 11`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 11`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 11`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 11`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with INR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ ₹"`;
+
+exports[`Web Intl should format date correctly in ar-KW 12`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 12`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 12`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 12`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with KWD 1`] = `"‏١٢٣٬٤٥٦٫٧٨٩ د.ك.‏"`;
+
+exports[`Web Intl should format date correctly in ar-KW 13`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 13`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 13`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 13`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-KW with BHD 1`] = `"‏١٢٣٬٤٥٦٫٧٨٩ د.ب.‏"`;
+
+exports[`Web Intl should format date correctly in ar-KW 14`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-KW 14`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-KW 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-KW 14`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-KW 14`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-KW 14`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with IDR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ IDR"`;
+
+exports[`Web Intl should format date correctly in ar-BH 1`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 1`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 1`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 1`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 1`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 1`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with USD 1`] = `"‏١٢٣٬٤٥٦٫٧٩ US$"`;
+
+exports[`Web Intl should format date correctly in ar-BH 2`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 2`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 2`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 2`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 2`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 2`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with EUR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ €"`;
+
+exports[`Web Intl should format date correctly in ar-BH 3`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 3`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 3`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 3`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 3`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 3`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with JPY 1`] = `"‏١٢٣٬٤٥٧ JP¥"`;
+
+exports[`Web Intl should format date correctly in ar-BH 4`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 4`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 4`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 4`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 4`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 4`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with GBP 1`] = `"‏١٢٣٬٤٥٦٫٧٩ UK£"`;
+
+exports[`Web Intl should format date correctly in ar-BH 5`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 5`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 5`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 5`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 5`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 5`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with MXN 1`] = `"‏١٢٣٬٤٥٦٫٧٩ MX$"`;
+
+exports[`Web Intl should format date correctly in ar-BH 6`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 6`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 6`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 6`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 6`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 6`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with BRL 1`] = `"‏١٢٣٬٤٥٦٫٧٩ R$"`;
+
+exports[`Web Intl should format date correctly in ar-BH 7`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 7`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 7`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 7`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 7`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 7`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with RUB 1`] = `"‏١٢٣٬٤٥٦٫٧٩ RUB"`;
+
+exports[`Web Intl should format date correctly in ar-BH 8`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 8`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 8`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 8`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 8`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 8`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with TRY 1`] = `"‏١٢٣٬٤٥٦٫٧٩ TRY"`;
+
+exports[`Web Intl should format date correctly in ar-BH 9`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 9`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 9`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 9`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 9`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 9`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with CNY 1`] = `"‏١٢٣٬٤٥٦٫٧٩ CN¥"`;
+
+exports[`Web Intl should format date correctly in ar-BH 10`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 10`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 10`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 10`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 10`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 10`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with SAR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ ر.س.‏"`;
+
+exports[`Web Intl should format date correctly in ar-BH 11`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 11`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 11`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 11`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 11`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 11`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with INR 1`] = `"‏١٢٣٬٤٥٦٫٧٩ ₹"`;
+
+exports[`Web Intl should format date correctly in ar-BH 12`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 12`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 12`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 12`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 12`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 12`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with KWD 1`] = `"‏١٢٣٬٤٥٦٫٧٨٩ د.ك.‏"`;
+
+exports[`Web Intl should format date correctly in ar-BH 13`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 13`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 13`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 13`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 13`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 13`] = `-1`;
+
+exports[`Web Intl should format number as currency correctly in ar-BH with BHD 1`] = `"‏١٢٣٬٤٥٦٫٧٨٩ د.ب.‏"`;
+
+exports[`Web Intl should format date correctly in ar-BH 14`] = `"١‏/١‏/٢٠٢١"`;
+
+exports[`Web Intl should format list correctly in ar-BH 14`] = `"⁨a⁩ و⁨b⁩ و⁨c⁩"`;
+
+exports[`Web Intl should format plural rules correctly in ar-BH 14`] = `"one"`;
+
+exports[`Web Intl should format relative time correctly in ar-BH 14`] = `"قبل يوم واحد"`;
+
+exports[`Web Intl should format display names correctly in ar-BH 14`] = `"الإنجليزية"`;
+
+exports[`Web Intl should compare strings correctly in ar-BH 14`] = `-1`;

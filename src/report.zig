@@ -76,7 +76,7 @@ pub const CrashReportWriter = struct {
             _ = bun.sys.mkdirA(dirname, 0);
         }
 
-        const call = bun.sys.open(file_path, std.os.O.TRUNC, 0).unwrap() catch return;
+        const call = bun.sys.openA(file_path, std.os.O.CREAT | std.os.O.TRUNC, 0).unwrap() catch return;
         var file = call.asFile();
         this.file = std.io.bufferedWriter(
             file.writer(),
@@ -107,7 +107,11 @@ pub const CrashReportWriter = struct {
 
 pub fn printMetadata() void {
     @setCold(true);
-    crash_report_writer.generateFile();
+
+    if (comptime !Environment.isWindows) {
+        // TODO(@paperdave): report files do not work on windows, and report files in general are buggy
+        crash_report_writer.generateFile();
+    }
 
     const cmd_label: string = if (CLI.cmd) |tag| @tagName(tag) else "Unknown";
 
@@ -179,7 +183,9 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
     const had_printed_fatal = has_printed_fatal;
     if (!has_printed_fatal) {
         has_printed_fatal = true;
-        crash_report_writer.generateFile();
+        if (comptime !Environment.isWindows) {
+            crash_report_writer.generateFile();
+        }
 
         if (err_) |err| {
             if (Output.isEmojiEnabled()) {
@@ -234,19 +240,11 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 
         crash_report_writer.flush();
 
-        // TODO(@paperdave):
-        // Bun__crashReportDumpStackTrace does not work on Windows, even in a debug build
-        // It is fine to skip this because in release we ship with ReleaseSafe
-        // because zig's panic handler will also trigger right after
-        if (!Environment.isWindows) {
-            // It only is a real crash report if it's not coming from Zig
-            if (comptime !@import("root").bun.JSC.is_bindgen) {
-                std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-                Bun__crashReportDumpStackTrace(&crash_report_writer);
-            }
+        // It only is a real crash report if it's not coming from Zig
+        std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+        Bun__crashReportDumpStackTrace(&crash_report_writer);
 
-            crash_report_writer.flush();
-        }
+        crash_report_writer.flush();
 
         crash_report_writer.printPath();
     }
@@ -289,7 +287,10 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     if (has_printed_fatal) return;
     has_printed_fatal = true;
 
-    crash_report_writer.generateFile();
+    if (comptime !Environment.isWindows) {
+        // TODO(@paperdave): report files do not work on windows, and report files in general are buggy
+        crash_report_writer.generateFile();
+    }
 
     const name = switch (signal) {
         std.os.SIG.SEGV => error.SegmentationFault,
@@ -374,7 +375,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
             );
             Global.exit(1);
         },
-        error.InvalidArgument, error.InstallFailed, error.InvalidPackageJSON => {
+        error.InvalidArgument => {
             Global.exit(1);
         },
         error.SystemFdQuotaExceeded => {

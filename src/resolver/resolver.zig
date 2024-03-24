@@ -581,9 +581,6 @@ pub const Resolver = struct {
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
-        // TODO: enable auto-install on Windows
-        if (Environment.isWindows) return false;
-
         // TODO(@paperdave): make this configurable. the rationale for disabling
         // auto-install in standalone mode is that such executable must either:
         //
@@ -2142,7 +2139,6 @@ pub const Resolver = struct {
             dir_entries_ptr.* = new_entry;
 
             if (r.store_fd) {
-                Fs.FileSystem.setMaxFd(open_dir.fd);
                 dir_entries_ptr.fd = bun.toFD(open_dir.fd);
             }
 
@@ -2219,6 +2215,7 @@ pub const Resolver = struct {
                 ) catch |err| {
                     return .{ .failure = err };
                 };
+                package.meta.setHasInstallScript(package.scripts.hasAny());
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };
@@ -2233,6 +2230,7 @@ pub const Resolver = struct {
                         .value = .{ .root = {} },
                     },
                 };
+                package.meta.setHasInstallScript(package.scripts.hasAny());
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };

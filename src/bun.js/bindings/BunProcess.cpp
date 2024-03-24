@@ -3,6 +3,7 @@
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
+#include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "node_api.h"
 #include "ZigGlobalObject.h"
@@ -599,82 +600,90 @@ static void loadSignalNumberMap()
     std::call_once(signalNameToNumberMapOnceFlag, [] {
         signalNameToNumberMap = new HashMap<String, int>();
         signalNameToNumberMap->reserveInitialCapacity(31);
-        signalNameToNumberMap->add(signalNames[0], SIGHUP);
+#if OS(WINDOWS)
+        // libuv supported signals
         signalNameToNumberMap->add(signalNames[1], SIGINT);
         signalNameToNumberMap->add(signalNames[2], SIGQUIT);
-        signalNameToNumberMap->add(signalNames[3], SIGILL);
+        signalNameToNumberMap->add(signalNames[9], SIGKILL);
+        signalNameToNumberMap->add(signalNames[15], SIGTERM);
+#else
+            signalNameToNumberMap->add(signalNames[0], SIGHUP);
+            signalNameToNumberMap->add(signalNames[1], SIGINT);
+            signalNameToNumberMap->add(signalNames[2], SIGQUIT);
+            signalNameToNumberMap->add(signalNames[3], SIGILL);
 #ifdef SIGTRAP
-        signalNameToNumberMap->add(signalNames[4], SIGTRAP);
+            signalNameToNumberMap->add(signalNames[4], SIGTRAP);
 #endif
-        signalNameToNumberMap->add(signalNames[5], SIGABRT);
+            signalNameToNumberMap->add(signalNames[5], SIGABRT);
 #ifdef SIGIOT
-        signalNameToNumberMap->add(signalNames[6], SIGIOT);
+            signalNameToNumberMap->add(signalNames[6], SIGIOT);
 #endif
 #ifdef SIGBUS
-        signalNameToNumberMap->add(signalNames[7], SIGBUS);
+            signalNameToNumberMap->add(signalNames[7], SIGBUS);
 #endif
-        signalNameToNumberMap->add(signalNames[8], SIGFPE);
-        signalNameToNumberMap->add(signalNames[9], SIGKILL);
+            signalNameToNumberMap->add(signalNames[8], SIGFPE);
+            signalNameToNumberMap->add(signalNames[9], SIGKILL);
 #ifdef SIGUSR1
-        signalNameToNumberMap->add(signalNames[10], SIGUSR1);
+            signalNameToNumberMap->add(signalNames[10], SIGUSR1);
 #endif
-        signalNameToNumberMap->add(signalNames[11], SIGSEGV);
+            signalNameToNumberMap->add(signalNames[11], SIGSEGV);
 #ifdef SIGUSR2
-        signalNameToNumberMap->add(signalNames[12], SIGUSR2);
+            signalNameToNumberMap->add(signalNames[12], SIGUSR2);
 #endif
 #ifdef SIGPIPE
-        signalNameToNumberMap->add(signalNames[13], SIGPIPE);
+            signalNameToNumberMap->add(signalNames[13], SIGPIPE);
 #endif
 #ifdef SIGALRM
-        signalNameToNumberMap->add(signalNames[14], SIGALRM);
+            signalNameToNumberMap->add(signalNames[14], SIGALRM);
 #endif
-        signalNameToNumberMap->add(signalNames[15], SIGTERM);
+            signalNameToNumberMap->add(signalNames[15], SIGTERM);
 #ifdef SIGCHLD
-        signalNameToNumberMap->add(signalNames[16], SIGCHLD);
+            signalNameToNumberMap->add(signalNames[16], SIGCHLD);
 #endif
 #ifdef SIGCONT
-        signalNameToNumberMap->add(signalNames[17], SIGCONT);
+            signalNameToNumberMap->add(signalNames[17], SIGCONT);
 #endif
 #ifdef SIGSTOP
-        signalNameToNumberMap->add(signalNames[18], SIGSTOP);
+            signalNameToNumberMap->add(signalNames[18], SIGSTOP);
 #endif
 #ifdef SIGTSTP
-        signalNameToNumberMap->add(signalNames[19], SIGTSTP);
+            signalNameToNumberMap->add(signalNames[19], SIGTSTP);
 #endif
 #ifdef SIGTTIN
-        signalNameToNumberMap->add(signalNames[20], SIGTTIN);
+            signalNameToNumberMap->add(signalNames[20], SIGTTIN);
 #endif
 #ifdef SIGTTOU
-        signalNameToNumberMap->add(signalNames[21], SIGTTOU);
+            signalNameToNumberMap->add(signalNames[21], SIGTTOU);
 #endif
 #ifdef SIGURG
-        signalNameToNumberMap->add(signalNames[22], SIGURG);
+            signalNameToNumberMap->add(signalNames[22], SIGURG);
 #endif
 #ifdef SIGXCPU
-        signalNameToNumberMap->add(signalNames[23], SIGXCPU);
+            signalNameToNumberMap->add(signalNames[23], SIGXCPU);
 #endif
 #ifdef SIGXFSZ
-        signalNameToNumberMap->add(signalNames[24], SIGXFSZ);
+            signalNameToNumberMap->add(signalNames[24], SIGXFSZ);
 #endif
 #ifdef SIGVTALRM
-        signalNameToNumberMap->add(signalNames[25], SIGVTALRM);
+            signalNameToNumberMap->add(signalNames[25], SIGVTALRM);
 #endif
 #ifdef SIGPROF
-        signalNameToNumberMap->add(signalNames[26], SIGPROF);
+            signalNameToNumberMap->add(signalNames[26], SIGPROF);
 #endif
-        signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+            signalNameToNumberMap->add(signalNames[27], SIGWINCH);
 #ifdef SIGIO
-        signalNameToNumberMap->add(signalNames[28], SIGIO);
+            signalNameToNumberMap->add(signalNames[28], SIGIO);
 #endif
 #ifdef SIGINFO
-        signalNameToNumberMap->add(signalNames[29], SIGINFO);
+            signalNameToNumberMap->add(signalNames[29], SIGINFO);
 #endif
 
 #ifndef SIGINFO
-        signalNameToNumberMap->add(signalNames[29], 255);
+            signalNameToNumberMap->add(signalNames[29], 255);
 #endif
 #ifdef SIGSYS
-        signalNameToNumberMap->add(signalNames[30], SIGSYS);
+            signalNameToNumberMap->add(signalNames[30], SIGSYS);
+#endif
 #endif
     });
 }
@@ -693,28 +702,29 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
         return;
 
-    SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
-
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
     if (UNLIKELY(!context))
         return;
 
-    JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
-    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    // signal handlers can be run on any thread
+    context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
+        JSGlobalObject* lexicalGlobalObject = context.jsGlobalObject();
+        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
-    Process* process = jsCast<Process*>(globalObject->processObject());
+        Process* process = jsCast<Process*>(globalObject->processObject());
 
-    String signalName = signalNumberToNameMap->get(signalNumber);
-    Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
-    MarkedArgumentBuffer args;
-    args.append(jsNumber(signalNumber));
-    // TODO(@paperdave): add an ASSERT(isMainThread());
-    // This should be true on posix if I understand sigaction right
-    // On Windows it should be true if the uv_signal is created on the main thread's loop
-    //
-    // I would like to assert this because if that assumption is not true,
-    // this call will probably cause very confusing bugs.
-    process->wrapped().emitForBindings(signalNameIdentifier, args);
+        String signalName = signalNumberToNameMap->get(signalNumber);
+        Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
+        MarkedArgumentBuffer args;
+        args.append(jsNumber(signalNumber));
+        // TODO(@paperdave): add an ASSERT(isMainThread());
+        // This should be true on posix if I understand sigaction right
+        // On Windows it should be true if the uv_signal is created on the main thread's loop
+        //
+        // I would like to assert this because if that assumption is not true,
+        // this call will probably cause very confusing bugs.
+        process->wrapped().emitForBindings(signalNameIdentifier, args);
+    });
 };
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
@@ -827,7 +837,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #else
             if (signalNumber != SIGKILL) { // windows has no SIGSTOP
 #endif
-                uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
 
                 if (isAdded) {
                     if (!signalToContextIdsMap->contains(signalNumber)) {
@@ -863,10 +872,11 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     }
                 } else {
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
-                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
+
 #if !OS(WINDOWS)
                         signal(signalNumber, SIG_DFL);
 #else
+                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                         Bun__UVSignalHandle__close(signal_handle.handle);
 #endif
                         signalToContextIdsMap->remove(signalNumber);
@@ -1244,8 +1254,6 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
     // }
     auto constructUserLimits = [&]() -> JSValue {
         JSC::JSObject* userLimits = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 11);
-
-        rusage usage;
 
         static constexpr int resourceLimits[] = {
             RLIMIT_CORE,
@@ -1636,16 +1644,19 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
     return hrtime;
 }
 
+#if OS(WINDOWS)
+extern "C" void Bun__ForceFileSinkToBeSynchronousOnWindows(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+#endif
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(fd));
 
-    auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
@@ -1661,7 +1672,19 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
         return {};
     }
 
-    return result;
+    ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
+    JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
+
+#if OS(WINDOWS)
+    // Node.js docs - https://nodejs.org/api/process.html#a-note-on-process-io
+    // > Files: synchronous on Windows and POSIX
+    // > TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
+    // > Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
+    // > Synchronous writes avoid problems such as output written with console.log() or console.error() being unexpectedly interleaved, or not written at all if process.exit() is called before an asynchronous write completes. See process.exit() for more information.
+    Bun__ForceFileSinkToBeSynchronousOnWindows(globalThis, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+#endif
+
+    return resultObject->getIndex(globalObject, 0);
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -1684,12 +1707,10 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = Bun__getDefaultGlobal();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(STDIN_FILENO));
 
-    auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
@@ -2576,9 +2597,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     }
 
     JSC::JSValue signalValue = callFrame->argument(1);
-#if !OS(WINDOWS)
     int signal = SIGTERM;
-
     if (signalValue.isNumber()) {
         signal = signalValue.toInt32(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2598,21 +2617,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
         return JSValue::encode(jsUndefined());
     }
 
-    int result = kill(pid, signal);
-#else
-    int signal = 1;
-    if (signalValue.isNumber()) {
-        signal = signalValue.toInt32(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    } else if (signalValue.isString()) {
-        throwTypeError(globalObject, scope, "TODO: implement this function with strings on Windows! Sorry!!"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-    } else if (!signalValue.isUndefinedOrNull()) {
-        throwTypeError(globalObject, scope, "signal must be a string or number"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
+#if OS(WINDOWS)
     int result = uv_kill(pid, signal);
+#else
+    int result = kill(pid, signal);
 #endif
 
     if (result < 0) {

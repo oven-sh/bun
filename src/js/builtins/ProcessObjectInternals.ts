@@ -27,25 +27,19 @@
 export function getStdioWriteStream(fd) {
   const tty = require("node:tty");
 
-  const stream = tty.WriteStream(fd);
+  let stream;
+  if (tty.isatty(fd)) {
+    stream = new tty.WriteStream(fd);
+    process.on("SIGWINCH", () => {
+      stream._refreshSize();
+    });
+    stream._type = "tty";
+  } else {
+    stream = new (require("node:fs").WriteStream)(fd, { autoClose: false, fd });
+    stream._type = "fs";
+  }
 
-  process.on("SIGWINCH", () => {
-    stream._refreshSize();
-  });
-
-  if (fd === 1) {
-    stream.destroySoon = stream.destroy;
-    stream._destroy = function (err, cb) {
-      cb(err);
-      this._undestroy();
-
-      if (!this._writableState.emitClose) {
-        process.nextTick(() => {
-          this.emit("close");
-        });
-      }
-    };
-  } else if (fd === 2) {
+  if (fd === 1 || fd === 2) {
     stream.destroySoon = stream.destroy;
     stream._destroy = function (err, cb) {
       cb(err);
@@ -59,11 +53,10 @@ export function getStdioWriteStream(fd) {
     };
   }
 
-  stream._type = "tty";
   stream._isStdio = true;
   stream.fd = fd;
 
-  return stream;
+  return [stream, stream[require("internal/shared").fileSinkSymbol]];
 }
 
 export function getStdinStream(fd) {
@@ -362,6 +355,10 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       o[k] = internalEnv[k.toUpperCase()];
     }
     return o;
+  };
+
+  (internalEnv as any).toJSON = () => {
+    return { ...internalEnv };
   };
 
   return new Proxy(internalEnv, {

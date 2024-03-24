@@ -3020,6 +3020,13 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .FILE_IS_A_DIRECTORY => .ISDIR,
         .OBJECT_PATH_NOT_FOUND => .NOENT,
         .OBJECT_NAME_NOT_FOUND => .NOENT,
+        .NOT_A_DIRECTORY => .NOTDIR,
+        .RETRY => .AGAIN,
+        .FILE_TOO_LARGE => .@"2BIG",
+        .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
+            bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
+            break :brk .INVAL;
+        } else .INVAL,
 
         else => |t| {
             // if (bun.Environment.isDebug) {
@@ -3178,4 +3185,134 @@ comptime {
         @export(Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
         @export(Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
     }
+}
+
+extern fn GetUserNameW(
+    lpBuffer: bun.windows.LPWSTR,
+    pcbBuffer: bun.windows.LPDWORD,
+) bun.windows.BOOL;
+
+/// Is not the actual UID of the user, but just a hash of username.
+pub fn userUniqueId() u32 {
+    // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/165836c1-89d7-4abb-840d-80cf2510aa3e
+    // UNLEN + 1
+    var buf: [257]u16 = undefined;
+    var size: u32 = buf.len;
+    if (GetUserNameW(@ptrCast(&buf), &size) == 0) {
+        if (Environment.isDebug) std.debug.panic("GetUserNameW failed: {}", .{bun.windows.GetLastError()});
+        return 0;
+    }
+    const name = buf[0..size];
+    bun.Output.scoped(.windowsUserUniqueId, false)("username: {}", .{bun.fmt.utf16(name)});
+    return bun.hash32(std.mem.sliceAsBytes(name));
+}
+
+pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
+    return switch (err) {
+        // TODO: use `inline else` if https://github.com/ziglang/zig/issues/12250 is accepted
+        .WSA_INVALID_HANDLE => error.WSA_INVALID_HANDLE,
+        .WSA_NOT_ENOUGH_MEMORY => error.WSA_NOT_ENOUGH_MEMORY,
+        .WSA_INVALID_PARAMETER => error.WSA_INVALID_PARAMETER,
+        .WSA_OPERATION_ABORTED => error.WSA_OPERATION_ABORTED,
+        .WSA_IO_INCOMPLETE => error.WSA_IO_INCOMPLETE,
+        .WSA_IO_PENDING => error.WSA_IO_PENDING,
+        .WSAEINTR => error.WSAEINTR,
+        .WSAEBADF => error.WSAEBADF,
+        .WSAEACCES => error.WSAEACCES,
+        .WSAEFAULT => error.WSAEFAULT,
+        .WSAEINVAL => error.WSAEINVAL,
+        .WSAEMFILE => error.WSAEMFILE,
+        .WSAEWOULDBLOCK => error.WSAEWOULDBLOCK,
+        .WSAEINPROGRESS => error.WSAEINPROGRESS,
+        .WSAEALREADY => error.WSAEALREADY,
+        .WSAENOTSOCK => error.WSAENOTSOCK,
+        .WSAEDESTADDRREQ => error.WSAEDESTADDRREQ,
+        .WSAEMSGSIZE => error.WSAEMSGSIZE,
+        .WSAEPROTOTYPE => error.WSAEPROTOTYPE,
+        .WSAENOPROTOOPT => error.WSAENOPROTOOPT,
+        .WSAEPROTONOSUPPORT => error.WSAEPROTONOSUPPORT,
+        .WSAESOCKTNOSUPPORT => error.WSAESOCKTNOSUPPORT,
+        .WSAEOPNOTSUPP => error.WSAEOPNOTSUPP,
+        .WSAEPFNOSUPPORT => error.WSAEPFNOSUPPORT,
+        .WSAEAFNOSUPPORT => error.WSAEAFNOSUPPORT,
+        .WSAEADDRINUSE => error.WSAEADDRINUSE,
+        .WSAEADDRNOTAVAIL => error.WSAEADDRNOTAVAIL,
+        .WSAENETDOWN => error.WSAENETDOWN,
+        .WSAENETUNREACH => error.WSAENETUNREACH,
+        .WSAENETRESET => error.WSAENETRESET,
+        .WSAECONNABORTED => error.WSAECONNABORTED,
+        .WSAECONNRESET => error.WSAECONNRESET,
+        .WSAENOBUFS => error.WSAENOBUFS,
+        .WSAEISCONN => error.WSAEISCONN,
+        .WSAENOTCONN => error.WSAENOTCONN,
+        .WSAESHUTDOWN => error.WSAESHUTDOWN,
+        .WSAETOOMANYREFS => error.WSAETOOMANYREFS,
+        .WSAETIMEDOUT => error.WSAETIMEDOUT,
+        .WSAECONNREFUSED => error.WSAECONNREFUSED,
+        .WSAELOOP => error.WSAELOOP,
+        .WSAENAMETOOLONG => error.WSAENAMETOOLONG,
+        .WSAEHOSTDOWN => error.WSAEHOSTDOWN,
+        .WSAEHOSTUNREACH => error.WSAEHOSTUNREACH,
+        .WSAENOTEMPTY => error.WSAENOTEMPTY,
+        .WSAEPROCLIM => error.WSAEPROCLIM,
+        .WSAEUSERS => error.WSAEUSERS,
+        .WSAEDQUOT => error.WSAEDQUOT,
+        .WSAESTALE => error.WSAESTALE,
+        .WSAEREMOTE => error.WSAEREMOTE,
+        .WSASYSNOTREADY => error.WSASYSNOTREADY,
+        .WSAVERNOTSUPPORTED => error.WSAVERNOTSUPPORTED,
+        .WSANOTINITIALISED => error.WSANOTINITIALISED,
+        .WSAEDISCON => error.WSAEDISCON,
+        .WSAENOMORE => error.WSAENOMORE,
+        .WSAECANCELLED => error.WSAECANCELLED,
+        .WSAEINVALIDPROCTABLE => error.WSAEINVALIDPROCTABLE,
+        .WSAEINVALIDPROVIDER => error.WSAEINVALIDPROVIDER,
+        .WSAEPROVIDERFAILEDINIT => error.WSAEPROVIDERFAILEDINIT,
+        .WSASYSCALLFAILURE => error.WSASYSCALLFAILURE,
+        .WSASERVICE_NOT_FOUND => error.WSASERVICE_NOT_FOUND,
+        .WSATYPE_NOT_FOUND => error.WSATYPE_NOT_FOUND,
+        .WSA_E_NO_MORE => error.WSA_E_NO_MORE,
+        .WSA_E_CANCELLED => error.WSA_E_CANCELLED,
+        .WSAEREFUSED => error.WSAEREFUSED,
+        .WSAHOST_NOT_FOUND => error.WSAHOST_NOT_FOUND,
+        .WSATRY_AGAIN => error.WSATRY_AGAIN,
+        .WSANO_RECOVERY => error.WSANO_RECOVERY,
+        .WSANO_DATA => error.WSANO_DATA,
+        .WSA_QOS_RECEIVERS => error.WSA_QOS_RECEIVERS,
+        .WSA_QOS_SENDERS => error.WSA_QOS_SENDERS,
+        .WSA_QOS_NO_SENDERS => error.WSA_QOS_NO_SENDERS,
+        .WSA_QOS_NO_RECEIVERS => error.WSA_QOS_NO_RECEIVERS,
+        .WSA_QOS_REQUEST_CONFIRMED => error.WSA_QOS_REQUEST_CONFIRMED,
+        .WSA_QOS_ADMISSION_FAILURE => error.WSA_QOS_ADMISSION_FAILURE,
+        .WSA_QOS_POLICY_FAILURE => error.WSA_QOS_POLICY_FAILURE,
+        .WSA_QOS_BAD_STYLE => error.WSA_QOS_BAD_STYLE,
+        .WSA_QOS_BAD_OBJECT => error.WSA_QOS_BAD_OBJECT,
+        .WSA_QOS_TRAFFIC_CTRL_ERROR => error.WSA_QOS_TRAFFIC_CTRL_ERROR,
+        .WSA_QOS_GENERIC_ERROR => error.WSA_QOS_GENERIC_ERROR,
+        .WSA_QOS_ESERVICETYPE => error.WSA_QOS_ESERVICETYPE,
+        .WSA_QOS_EFLOWSPEC => error.WSA_QOS_EFLOWSPEC,
+        .WSA_QOS_EPROVSPECBUF => error.WSA_QOS_EPROVSPECBUF,
+        .WSA_QOS_EFILTERSTYLE => error.WSA_QOS_EFILTERSTYLE,
+        .WSA_QOS_EFILTERTYPE => error.WSA_QOS_EFILTERTYPE,
+        .WSA_QOS_EFILTERCOUNT => error.WSA_QOS_EFILTERCOUNT,
+        .WSA_QOS_EOBJLENGTH => error.WSA_QOS_EOBJLENGTH,
+        .WSA_QOS_EFLOWCOUNT => error.WSA_QOS_EFLOWCOUNT,
+        .WSA_QOS_EUNKOWNPSOBJ => error.WSA_QOS_EUNKOWNPSOBJ,
+        .WSA_QOS_EPOLICYOBJ => error.WSA_QOS_EPOLICYOBJ,
+        .WSA_QOS_EFLOWDESC => error.WSA_QOS_EFLOWDESC,
+        .WSA_QOS_EPSFLOWSPEC => error.WSA_QOS_EPSFLOWSPEC,
+        .WSA_QOS_EPSFILTERSPEC => error.WSA_QOS_EPSFILTERSPEC,
+        .WSA_QOS_ESDMODEOBJ => error.WSA_QOS_ESDMODEOBJ,
+        .WSA_QOS_ESHAPERATEOBJ => error.WSA_QOS_ESHAPERATEOBJ,
+        .WSA_QOS_RESERVED_PETYPE => error.WSA_QOS_RESERVED_PETYPE,
+        _ => |t| {
+            if (Environment.isDebug) {
+                bun.Output.debugWarn("Unknown WinSockError: {d}", .{@intFromEnum(t)});
+            }
+        },
+    };
+}
+
+pub fn WSAGetLastError() !void {
+    return winSockErrorToZigError(std.os.windows.ws2_32.WSAGetLastError());
 }

@@ -9,7 +9,7 @@ const StatError = std.fs.File.StatError;
 const off_t = std.c.off_t;
 const errno = os.errno;
 const zeroes = mem.zeroes;
-
+const This = @This();
 pub extern "c" fn copyfile(from: [*:0]const u8, to: [*:0]const u8, state: ?std.c.copyfile_state_t, flags: u32) c_int;
 pub const COPYFILE_STATE_SRC_FD = @as(c_int, 1);
 pub const COPYFILE_STATE_SRC_FILENAME = @as(c_int, 2);
@@ -766,7 +766,14 @@ pub const sockaddr_dl = extern struct {
 
 pub usingnamespace @cImport({
     @cInclude("sys/spawn.h");
+    @cInclude("sys/fcntl.h");
+    @cInclude("sys/socket.h");
 });
+
+pub const F = struct {
+    pub const DUPFD_CLOEXEC = This.F_DUPFD_CLOEXEC;
+    pub const DUPFD = This.F_DUPFD;
+};
 
 // it turns out preallocating on APFS on an M1 is slower.
 // so this is a linux-only optimization for now.

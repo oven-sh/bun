@@ -63,6 +63,7 @@ pub const ReadFile = struct {
     store: ?*Store = null,
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
+    total_size: SizeType = Blob.max_size,
     opened_fd: bun.FileDescriptor = invalid_fd,
     read_off: SizeType = 0,
     read_eof: bool = false,
@@ -110,7 +111,7 @@ pub const ReadFile = struct {
         max_len: SizeType,
     ) !*ReadFile {
         if (Environment.isWindows)
-            @compileError("dont call this function on windows");
+            @compileError("Do not call ReadFile.createWithCtx on Windows, see ReadFileUV");
 
         const read_file = bun.new(ReadFile, ReadFile{
             .file_store = store.data.file,
@@ -212,10 +213,8 @@ pub const ReadFile = struct {
 
     pub fn doRead(this: *ReadFile, buffer: []u8, read_len: *usize, retry: *bool) bool {
         const result: JSC.Maybe(usize) = brk: {
-            if (comptime Environment.isPosix) {
-                if (std.os.S.ISSOCK(this.file_store.mode)) {
-                    break :brk bun.sys.recv(this.opened_fd, buffer, std.os.SOCK.NONBLOCK);
-                }
+            if (std.os.S.ISSOCK(this.file_store.mode)) {
+                break :brk bun.sys.recvNonBlock(this.opened_fd, buffer);
             }
 
             break :brk bun.sys.read(this.opened_fd, buffer);
@@ -272,7 +271,7 @@ pub const ReadFile = struct {
             return;
         } else if (this.store == null) {
             bun.destroy(this);
-            if (Environment.isDebug) @panic("assertion failure - store should not be null");
+            if (Environment.allow_assert) @panic("assertion failure - store should not be null");
             cb(cb_ctx, ResultType{
                 .err = SystemError{
                     .code = bun.String.static("INTERNAL_ERROR"),
@@ -287,7 +286,6 @@ pub const ReadFile = struct {
         const buf = this.buffer.items;
 
         defer store.deref();
-        const total_size = this.size;
         const system_error = this.system_error;
         bun.destroy(this);
 
@@ -296,7 +294,7 @@ pub const ReadFile = struct {
             return;
         }
 
-        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = total_size, .is_temporary = true } });
+        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.total_size, .is_temporary = true } });
     }
 
     pub fn run(this: *ReadFile, task: *ReadFileTask) void {
@@ -368,12 +366,10 @@ pub const ReadFile = struct {
         }
 
         this.could_block = !bun.isRegularFile(stat.mode);
+        this.total_size = @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))));
 
         if (stat.size > 0 and !this.could_block) {
-            this.size = @min(
-                @as(SizeType, @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))))),
-                this.max_length,
-            );
+            this.size = @min(this.total_size, this.max_length);
             // read up to 4k at a time if
             // they didn't explicitly set a size and we're reading from something that's not a regular file
         } else if (stat.size == 0 and this.could_block) {
@@ -450,7 +446,6 @@ pub const ReadFile = struct {
 
     fn doReadLoop(this: *ReadFile) void {
         while (this.state.load(.Monotonic) == .running) {
-
             // we hold a 64 KB stack buffer incase the amount of data to
             // be read is greater than the reported amount
             //
@@ -469,9 +464,9 @@ pub const ReadFile = struct {
                 if (read.ptr == &stack_buffer) {
                     if (this.buffer.capacity == 0) {
                         // We need to allocate a new buffer
-                        // In this case, we want to use `initCapacity` so that it's an exact amount
+                        // In this case, we want to use `ensureTotalCapacityPrecis` so that it's an exact amount
                         // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
-                        this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, read.len) catch bun.outOfMemory();
+                        this.buffer.ensureTotalCapacityPrecise(bun.default_allocator, read.len) catch bun.outOfMemory();
                     } else {
                         this.buffer.ensureUnusedCapacity(bun.default_allocator, read.len) catch bun.outOfMemory();
                     }
@@ -556,19 +551,20 @@ pub const ReadFileUV = struct {
     store: *Store,
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
+    total_size: SizeType = Blob.max_size,
     opened_fd: bun.FileDescriptor = invalid_fd,
     read_len: SizeType = 0,
     read_off: SizeType = 0,
     read_eof: bool = false,
     size: SizeType = 0,
-    buffer: []u8 = &.{},
+    buffer: std.ArrayListUnmanaged(u8) = .{},
     system_error: ?JSC.SystemError = null,
     errno: ?anyerror = null,
     on_complete_data: *anyopaque = undefined,
     on_complete_fn: ReadFile.OnReadFileCallback,
-    could_block: bool = false,
+    is_regular_file: bool = false,
 
-    req: libuv.fs_t = libuv.fs_t.uninitialized,
+    req: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
 
     pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
         log("ReadFileUV.start", .{});
@@ -596,15 +592,13 @@ pub const ReadFileUV = struct {
 
         const cb = this.on_complete_fn;
         const cb_ctx = this.on_complete_data;
-        const buf = this.buffer;
 
         if (this.system_error) |err| {
             cb(cb_ctx, ReadFile.ResultType{ .err = err });
             return;
         }
-        const size = this.size;
 
-        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = size, .is_temporary = true } });
+        cb(cb_ctx, .{ .result = .{ .buf = this.byte_store.slice(), .total_size = this.total_size, .is_temporary = true } });
     }
 
     pub fn isAllowedToClose(this: *const ReadFileUV) bool {
@@ -617,6 +611,7 @@ pub const ReadFileUV = struct {
         const needs_close = fd != bun.invalid_fd;
 
         this.size = @max(this.read_len, this.size);
+        this.total_size = @max(this.total_size, this.size);
 
         if (needs_close) {
             if (this.doClose(this.isAllowedToClose())) {
@@ -636,6 +631,7 @@ pub const ReadFileUV = struct {
         }
 
         this.req.deinit();
+        this.req.data = this;
 
         if (libuv.uv_fs_fstat(this.loop, &this.req, bun.uvfdcast(opened_fd), &onFileInitialStat).errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
@@ -643,6 +639,8 @@ pub const ReadFileUV = struct {
             this.onFinish();
             return;
         }
+
+        this.req.data = this;
     }
 
     fn onFileInitialStat(req: *libuv.fs_t) callconv(.C) void {
@@ -657,64 +655,61 @@ pub const ReadFileUV = struct {
         }
 
         const stat = req.statbuf;
+        log("stat: {any}", .{stat});
 
         // keep in sync with resolveSizeAndLastModified
-        {
-            if (this.store.data == .file) {
-                this.store.data.file.last_modified = JSC.toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
-            }
+        if (this.store.data == .file) {
+            this.store.data.file.last_modified = JSC.toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+        }
 
-            if (bun.S.ISDIR(@intCast(stat.mode))) {
-                this.errno = error.EISDIR;
-                this.system_error = JSC.SystemError{
-                    .code = bun.String.static("EISDIR"),
-                    .path = if (this.file_store.pathlike == .path)
-                        bun.String.createUTF8(this.file_store.pathlike.path.slice())
-                    else
-                        bun.String.empty,
-                    .message = bun.String.static("Directories cannot be read like files"),
-                    .syscall = bun.String.static("read"),
-                };
-                this.onFinish();
-                return;
-            }
-            this.could_block = !bun.isRegularFile(stat.mode);
-
-            if (stat.size > 0 and !this.could_block) {
-                this.size = @min(
-                    @as(SizeType, @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))))),
-                    this.max_length,
-                );
-                // read up to 4k at a time if
-                // they didn't explicitly set a size and we're reading from something that's not a regular file
-            } else if (stat.size == 0 and this.could_block) {
-                this.size = if (this.max_length == Blob.max_size)
-                    4096
+        if (bun.S.ISDIR(@intCast(stat.mode))) {
+            this.errno = error.EISDIR;
+            this.system_error = JSC.SystemError{
+                .code = bun.String.static("EISDIR"),
+                .path = if (this.file_store.pathlike == .path)
+                    bun.String.createUTF8(this.file_store.pathlike.path.slice())
                 else
-                    this.max_length;
-            }
+                    bun.String.empty,
+                .message = bun.String.static("Directories cannot be read like files"),
+                .syscall = bun.String.static("read"),
+            };
+            this.onFinish();
+            return;
+        }
+        this.total_size = @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))));
+        this.is_regular_file = bun.isRegularFile(stat.mode);
 
-            if (this.offset > 0) {
-                // We DO support offset in Bun.file()
-                switch (bun.sys.setFileOffset(this.opened_fd, this.offset)) {
-                    // we ignore errors because it should continue to work even if its a pipe
-                    .err, .result => {},
-                }
+        log("is_regular_file: {}", .{this.is_regular_file});
+
+        if (stat.size > 0 and this.is_regular_file) {
+            this.size = @min(this.total_size, this.max_length);
+        } else if (stat.size == 0 and !this.is_regular_file) {
+            // read up to 4k at a time if they didn't explicitly set a size and
+            // we're reading from something that's not a regular file.
+            this.size = if (this.max_length == Blob.max_size)
+                4096
+            else
+                this.max_length;
+        }
+
+        if (this.offset > 0) {
+            // We DO support offset in Bun.file()
+            switch (bun.sys.setFileOffset(this.opened_fd, this.offset)) {
+                // we ignore errors because it should continue to work even if its a pipe
+                .err, .result => {},
             }
         }
 
         // Special files might report a size of > 0, and be wrong.
         // so we should check specifically that its a regular file before trusting the size.
-        if (this.size == 0 and bun.isRegularFile(this.file_store.mode)) {
-            this.buffer = &[_]u8{};
-            this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
-
+        if (this.size == 0 and this.is_regular_file) {
+            this.byte_store = ByteStore.init(this.buffer.items, bun.default_allocator);
             this.onFinish();
             return;
         }
 
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-        this.buffer = bun.default_allocator.alloc(u8, this.size + 16) catch |err| {
+        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, this.size + 16) catch |err| {
             this.errno = err;
             this.onFinish();
             return;
@@ -722,23 +717,35 @@ pub const ReadFileUV = struct {
         this.read_len = 0;
         this.read_off = 0;
 
+        this.req.deinit();
+
         this.queueRead();
     }
 
     fn remainingBuffer(this: *const ReadFileUV) []u8 {
-        var remaining = this.buffer[@min(this.read_off, this.buffer.len)..];
-        remaining = remaining[0..@min(remaining.len, this.max_length -| this.read_off)];
-        return remaining;
+        var remaining = this.buffer.unusedCapacitySlice();
+        return remaining[0..@min(remaining.len, this.max_length -| this.read_off)];
     }
 
     pub fn queueRead(this: *ReadFileUV) void {
         if (this.remainingBuffer().len > 0 and this.errno == null and !this.read_eof) {
             log("ReadFileUV.queueRead - this.remainingBuffer().len = {d}", .{this.remainingBuffer().len});
 
+            if (!this.is_regular_file) {
+                // non-regular files have variable sizes, so we always ensure
+                // theres at least 4096 bytes of free space. there has already
+                // been an initial allocation done for us
+                this.buffer.ensureUnusedCapacity(this.byte_store.allocator, 4096) catch |err| {
+                    this.errno = err;
+                    this.onFinish();
+                };
+            }
+
             const buf = this.remainingBuffer();
             var bufs: [1]libuv.uv_buf_t = .{
                 libuv.uv_buf_t.init(buf),
             };
+            this.req.assertCleanedUp();
             const res = libuv.uv_fs_read(
                 this.loop,
                 &this.req,
@@ -748,6 +755,7 @@ pub const ReadFileUV = struct {
                 @as(i64, @intCast(this.offset + this.read_off)),
                 &onRead,
             );
+            this.req.data = this;
             if (res.errEnum()) |errno| {
                 this.errno = bun.errnoToZigErr(errno);
                 this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
@@ -757,9 +765,14 @@ pub const ReadFileUV = struct {
             log("ReadFileUV.queueRead done", .{});
 
             // We are done reading.
-            _ = bun.default_allocator.resize(this.buffer, this.read_off);
-            this.buffer = this.buffer[0..this.read_off];
-            this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+            this.byte_store = ByteStore.init(
+                this.buffer.toOwnedSlice(this.byte_store.allocator) catch |err| {
+                    this.errno = err;
+                    this.onFinish();
+                    return;
+                },
+                bun.default_allocator,
+            );
             this.onFinish();
         }
     }
@@ -767,24 +780,33 @@ pub const ReadFileUV = struct {
     pub fn onRead(req: *libuv.fs_t) callconv(.C) void {
         var this: *ReadFileUV = @alignCast(@ptrCast(req.data));
 
-        if (req.result.errEnum()) |errno| {
+        const result = req.result;
+
+        if (result.errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
             this.finalize();
             return;
         }
 
-        if (req.result.value == 0) {
+        if (result.int() == 0) {
             // We are done reading.
-            _ = bun.default_allocator.resize(this.buffer, this.read_off);
-            this.buffer = this.buffer[0..this.read_off];
-            this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+            this.byte_store = ByteStore.init(
+                this.buffer.toOwnedSlice(this.byte_store.allocator) catch |err| {
+                    this.errno = err;
+                    this.onFinish();
+                    return;
+                },
+                bun.default_allocator,
+            );
             this.onFinish();
             return;
         }
 
-        this.read_off += @intCast(req.result.value);
+        this.read_off += @intCast(result.int());
+        this.buffer.items.len += @intCast(result.int());
 
+        this.req.deinit();
         this.queueRead();
     }
 };

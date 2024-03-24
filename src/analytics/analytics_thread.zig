@@ -277,6 +277,8 @@ pub const GenerateHeader = struct {
         var platform_: ?Analytics.Platform = null;
         pub const Platform = Analytics.Platform;
 
+        var linux_kernel_version: Semver.Version = undefined;
+
         pub fn forOS() Analytics.Platform {
             if (platform_ != null) return platform_.?;
 
@@ -285,6 +287,11 @@ pub const GenerateHeader = struct {
                 return platform_.?;
             } else if (comptime Environment.isPosix) {
                 platform_ = forLinux();
+
+                const release = bun.sliceTo(&linux_os_name.release, 0);
+                const sliced_string = Semver.SlicedString.init(release, release);
+                const result = Semver.Version.parse(sliced_string);
+                linux_kernel_version = result.version.min();
             } else {
                 platform_ = Platform{
                     .os = Analytics.OperatingSystem.windows,
@@ -301,11 +308,9 @@ pub const GenerateHeader = struct {
                 @compileError("This function is only implemented on Linux");
             }
             _ = forOS();
-            const release = bun.sliceTo(&linux_os_name.release, 0);
-            const sliced_string = Semver.SlicedString.init(release, release);
-            const result = Semver.Version.parse(sliced_string);
+
             // we only care about major, minor, patch so we don't care about the string
-            return result.version.min();
+            return linux_kernel_version;
         }
 
         pub fn forLinux() Analytics.Platform {

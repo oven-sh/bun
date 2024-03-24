@@ -29,31 +29,21 @@ using namespace JSC;
 
 // clang-format off
 #define DEFINE_CALLBACK_FUNCTION_BODY(ZigFunction) JSC::VM& vm = globalObject->vm(); \
-    auto* thisObject = JSC::jsDynamicCast<JSC::JSFinalObject*>( callFrame->thisValue()); \
-    auto scope = DECLARE_THROW_SCOPE(vm); \
-    if (!thisObject) \
+    auto* thisObject = JSC::jsDynamicCast<JSC::JSFinalObject*>(callFrame->thisValue()); \
+    if (!thisObject) { \
+        auto scope = DECLARE_THROW_SCOPE(vm); \
         return throwVMTypeError(globalObject, scope); \
+    } \
     auto argCount = static_cast<uint16_t>(callFrame->argumentCount()); \
     WTF::Vector<JSC::EncodedJSValue, 16> arguments; \
     arguments.reserveInitialCapacity(argCount); \
-     if (argCount) { \
+    if (argCount) { \
         for (uint16_t i = 0; i < argCount; ++i) { \
             arguments.unsafeAppendWithoutCapacityCheck(JSC::JSValue::encode(callFrame->uncheckedArgument(i))); \
         } \
-     } \
-    auto clientData = WebCore::clientData(vm); \
-    auto isWindows = thisObject->get(globalObject, clientData->builtinNames().isWindowsPrivateName()); \
-    JSC::JSValue result = JSC::JSValue::decode( \
-        ZigFunction(globalObject, isWindows.asBoolean(), reinterpret_cast<JSC__JSValue*>(arguments.data()), argCount) \
-    ); \
-    JSC::JSObject *obj = result.getObject(); \
-    if (UNLIKELY(obj != nullptr && obj->isErrorInstance())) { \
-        scope.throwException(globalObject, obj); \
-        return JSC::JSValue::encode(JSC::jsUndefined()); \
     } \
-    if (UNLIKELY(scope.exception())) \
-        return JSC::JSValue::encode(JSC::jsUndefined()); \
-    return JSC::JSValue::encode(result);
+    auto isWindows = thisObject->get(globalObject, WebCore::clientData(vm)->builtinNames().isWindowsPrivateName()); \
+    return ZigFunction(globalObject, isWindows.asBoolean(), reinterpret_cast<JSC__JSValue*>(arguments.data()), argCount);
 
 // clang-format on
 
@@ -201,8 +191,6 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
 
 extern JSC__JSValue Bun__Path__create(JSC::JSGlobalObject* globalObject, bool isWindows)
 {
-    JSC::VM& vm = globalObject->vm();
-
     return JSC::JSValue::encode(JSC::JSValue(Zig::createPath(
         globalObject, isWindows)));
 }

@@ -10,6 +10,8 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const Syscall = bun.sys;
 
+const exe_suffix = bun.exe_suffix;
+
 const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
@@ -568,7 +570,8 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {
-        const self_exe = bun.toLibUVOwnedFD(openSelf() catch return null);
+        // Do not invoke libuv here.
+        const self_exe = openSelf() catch return null;
         defer _ = Syscall.close(self_exe);
 
         var trailer_bytes: [4096]u8 = undefined;
@@ -662,8 +665,6 @@ pub const StandaloneModuleGraph = struct {
         return try StandaloneModuleGraph.fromBytes(allocator, to_read, offsets);
     }
 
-    const exe_suffix = if (Environment.isWindows) ".exe" else "";
-
     fn isBuiltInExe(argv0: []const u8) bool {
         if (argv0.len == 0) return false;
 
@@ -746,7 +747,7 @@ pub const StandaloneModuleGraph = struct {
                 const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
 
                 return bun.sys.openFileAtWindows(
-                    bun.invalid_fd,
+                    bun.FileDescriptor.cwd(),
                     nt_path,
                     // access_mask
                     w.SYNCHRONIZE | w.GENERIC_READ,

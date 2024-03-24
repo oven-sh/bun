@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 // Portions of this file are derived from works under the MIT License:
 //
 // Copyright (c) Denis Malinochkin
@@ -394,7 +393,8 @@ test("broken symlinks", async () => {
   );
 });
 
-test("error broken symlinks", async () => {
+// This is consistent with fast-glob's behavior
+test.skipIf(process.platform == "win32")("error broken symlinks", async () => {
   const glob = new Glob("**/*");
   let err: Error | undefined = undefined;
   try {

@@ -148,7 +148,7 @@ Some methods are not optimized yet.
 
 ### [`node:url`](https://nodejs.org/api/url.html)
 
-🟡 Missing `domainToASCII` `domainToUnicode`. It's recommended to use `URL` and `URLSearchParams` globals instead.
+🟢 Fully implemented.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 

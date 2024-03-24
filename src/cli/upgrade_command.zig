@@ -756,12 +756,12 @@ pub const UpgradeCommand = struct {
                 }
             }
 
-            const destination_executable_ = std.fs.selfExePath(&current_executable_buf) catch return error.UpgradeFailedMissingExecutable;
-            current_executable_buf[destination_executable_.len] = 0;
+            const destination_executable = std.fs.selfExePath(&current_executable_buf) catch return error.UpgradeFailedMissingExecutable;
+            current_executable_buf[destination_executable.len] = 0;
 
-            const target_filename_ = std.fs.path.basename(destination_executable_);
-            const target_filename = current_executable_buf[destination_executable_.len - target_filename_.len ..][0..target_filename_.len :0];
-            const target_dir_ = std.fs.path.dirname(destination_executable_) orelse return error.UpgradeFailedBecauseOfMissingExecutableDir;
+            const target_filename_ = std.fs.path.basename(destination_executable);
+            const target_filename = current_executable_buf[destination_executable.len - target_filename_.len ..][0..target_filename_.len :0];
+            const target_dir_ = std.fs.path.dirname(destination_executable) orelse return error.UpgradeFailedBecauseOfMissingExecutableDir;
             // safe because the slash will no longer be in use
             current_executable_buf[target_dir_.len] = 0;
             const target_dirname = current_executable_buf[0..target_dir_.len :0];
@@ -829,7 +829,7 @@ pub const UpgradeCommand = struct {
                         target_dirname,
                         target_filename,
                     });
-                    std.os.rename(destination_executable_, outdated_filename.?) catch |err| {
+                    std.os.rename(destination_executable, outdated_filename.?) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to rename current executable {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -842,11 +842,14 @@ pub const UpgradeCommand = struct {
 
                     if (comptime Environment.isWindows) {
                         // Attempt to restore the old executable. If this fails, the user will be left without a working copy of bun.
-                        std.os.rename(outdated_filename.?, destination_executable_) catch {
+                        std.os.rename(outdated_filename.?, destination_executable) catch {
                             Output.errGeneric(
-                                \\Failed to move new version of Bun due to {s}
+                                \\Failed to move new version of Bun to {s} due to {s}
                             ,
-                                .{@errorName(err)},
+                                .{
+                                    destination_executable,
+                                    @errorName(err),
+                                },
                             );
                             Output.errGeneric(
                                 \\Failed to restore the working copy of Bun. The installation is now corrupt.
@@ -862,13 +865,17 @@ pub const UpgradeCommand = struct {
                     }
 
                     Output.errGeneric(
-                        \\Failed to move new version of Bun due to {s}
+                        \\Failed to move new version of Bun to {s} to {s}
                         \\
                         \\Please reinstall Bun manually with the following command:
                         \\   {s}
                         \\
                     ,
-                        .{ @errorName(err), manual_upgrade_command },
+                        .{
+                            destination_executable,
+                            @errorName(err),
+                            manual_upgrade_command,
+                        },
                     );
                     Global.exit(1);
                 };
@@ -882,13 +889,14 @@ pub const UpgradeCommand = struct {
                 };
 
                 env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch bun.outOfMemory();
-                var buf_map = try env_loader.map.cloneToEnvMap(ctx.allocator);
+                var std_map = try env_loader.map.stdEnvMap(ctx.allocator);
+                defer std_map.deinit();
                 _ = std.ChildProcess.run(.{
                     .allocator = ctx.allocator,
                     .argv = &completions_argv,
                     .cwd = target_dirname,
                     .max_output_bytes = 4096,
-                    .env_map = &buf_map,
+                    .env_map = std_map.get(),
                 }) catch {};
             }
 
@@ -960,7 +968,7 @@ pub const UpgradeCommand = struct {
                         \\Start-Process powershell.exe -WindowStyle Minimized -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-Command",'&{{$ErrorActionPreference=''SilentlyContinue''; Get-Process|Where-Object{{ $_.Path -eq ''{s}'' }}|Wait-Process; Remove-Item -Path ''{s}'' -Force }};'; exit
                     ,
                         .{
-                            destination_executable_,
+                            destination_executable,
                             to_remove,
                         },
                     );

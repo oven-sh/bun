@@ -875,7 +875,7 @@ pub const Loader = enum(u8) {
     }
 };
 
-pub const defaultLoaders = ComptimeStringMap(Loader, .{
+const default_loaders_posix = .{
     .{ ".jsx", Loader.jsx },
     .{ ".json", Loader.json },
     .{ ".js", Loader.jsx },
@@ -895,7 +895,16 @@ pub const defaultLoaders = ComptimeStringMap(Loader, .{
     .{ ".node", Loader.napi },
     .{ ".txt", Loader.text },
     .{ ".text", Loader.text },
-});
+};
+const default_loaders_win32 = default_loaders_posix ++ .{
+    .{ ".sh", Loader.bunsh },
+};
+
+const default_loaders = if (Environment.isWindows) default_loaders_win32 else default_loaders_posix;
+pub const defaultLoaders = ComptimeStringMap(
+    Loader,
+    default_loaders,
+);
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub const ESMConditions = struct {
@@ -2057,7 +2066,7 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .copy => |copy| brk: {
                 const file_blob = JSC.WebCore.Blob.Store.initFile(
-                    if (copy.fd.int() != 0)
+                    if (copy.fd != .zero)
                         JSC.Node.PathOrFileDescriptor{
                             .fd = copy.fd,
                         }

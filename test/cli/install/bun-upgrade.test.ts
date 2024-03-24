@@ -7,7 +7,7 @@ import { join } from "path";
 import { copyFileSync } from "js/node/fs/export-star-from";
 
 let run_dir: string;
-let exe_name: string = "bun-debug";
+let exe_name: string = "bun-debug" + (process.platform === "win32" ? ".exe" : "");
 
 beforeEach(async () => {
   run_dir = await realpath(
@@ -20,6 +20,7 @@ afterEach(async () => {
 });
 
 it("two invalid arguments, should display error message and suggest command", async () => {
+  console.log(run_dir, exe_name);
   const { stderr } = spawn({
     cmd: [join(run_dir, exe_name), "upgrade", "bun-types", "--dev"],
     cwd: run_dir,

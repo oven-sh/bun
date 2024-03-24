@@ -48,6 +48,7 @@ typedef struct bun_spawn_request_t {
 
 extern "C" ssize_t posix_spawn_bun(
     int* pid,
+    const char* path,
     const bun_spawn_request_t* request,
     char* const argv[],
     char* const envp[])
@@ -58,7 +59,6 @@ extern "C" ssize_t posix_spawn_bun(
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
-    const char* path = argv[0];
     pid_t child = vfork();
 
     const auto parentFailed = [&]() -> ssize_t {
@@ -155,7 +155,9 @@ extern "C" ssize_t posix_spawn_bun(
         if (bun_close_range(current_max_fd + 1, ~0U, CLOSE_RANGE_CLOEXEC) != 0) {
             bun_close_range(current_max_fd + 1, ~0U, 0);
         }
-        execve(path, argv, envp);
+        if (execve(path, argv, envp) == -1) {
+            return childFailed();
+        }
         _exit(127);
 
         // should never be reached.

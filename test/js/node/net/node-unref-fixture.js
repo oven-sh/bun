@@ -8,6 +8,7 @@ const socket = connect(
   },
   () => {
     socket.on("data", () => {
+      console.error("Received data. FAIL");
       process.exit(1);
     });
     socket.write("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n\r\n");

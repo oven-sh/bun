@@ -464,3 +464,6 @@ pub fn dlopen(filename: [:0]const u8, flags: i32) ?*anyopaque {
 }
 
 pub extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+
+pub extern "C" fn bun_initialize_process() void;
+pub extern "C" fn bun_restore_stdio() void;

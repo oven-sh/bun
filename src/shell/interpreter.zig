@@ -3145,9 +3145,10 @@ pub const Interpreter = struct {
             condexpr: *CondExpr,
             result: ?Maybe(bun.Stat) = null,
             path: [:0]const u8,
+            cwdfd: bun.FileDescriptor,
 
             pub fn runFromThreadPool(this: *ShellCondExprStatTask) void {
-                this.result = bun.sys.stat(this.path);
+                this.result = Syscall.fstatat(this.cwdfd, this.path);
             }
 
             pub fn runFromMainThread(this: *ShellCondExprStatTask) void {
@@ -3243,16 +3244,36 @@ pub const Interpreter = struct {
                             .@"-d" => {
                                 const st: bun.Stat = switch (this.state.stat_complete.stat) {
                                     .result => |st| st,
-                                    .err => |e| {
-                                        this.parent.childDone(this, e.errno);
+                                    .err => {
+                                        // It seems that bash always gives exit code 1
+                                        this.parent.childDone(this, 1);
                                         return;
                                     },
                                 };
                                 this.parent.childDone(this, if (bun.S.ISDIR(@intCast(st.mode))) 0 else 1);
                                 return;
                             },
+                            .@"-c" => {
+                                const st: bun.Stat = switch (this.state.stat_complete.stat) {
+                                    .result => |st| st,
+                                    .err => {
+                                        // It seems that bash always gives exit code 1
+                                        this.parent.childDone(this, 1);
+                                        return;
+                                    },
+                                };
+                                this.parent.childDone(this, if (bun.S.ISCHR(@intCast(st.mode))) 0 else 1);
+                                return;
+                            },
                             .@"-z", .@"-n" => @panic("This conditional expression op does not need `stat()`. This indicates a bug in Bun. Please file a GitHub issue."),
-                            else => @panic("Invalid conditional expression op, this indicates a bug in Bun. Please file a GithHub issue."),
+                            else => {
+                                inline for (ast.CondExpr.Op.SUPPORTED) |supported| {
+                                    if (supported == this.node.op) {
+                                        @panic("DEV: You did not support the \"" ++ @tagName(supported) ++ "\" conditional expression operation here.");
+                                    }
+                                }
+                                @panic("Invalid conditional expression op, this indicates a bug in Bun. Please file a GithHub issue.");
+                            },
                         }
                     },
                     .waiting_write_err => return,
@@ -3265,17 +3286,22 @@ pub const Interpreter = struct {
 
         fn commandImplStart(this: *CondExpr) void {
             switch (this.node.op) {
-                .@"-d", .@"-f" => {
+                .@"-c",
+                .@"-d",
+                .@"-f",
+                => {
                     this.state = .waiting_stat;
                     this.doStat();
                 },
-                .@"-z" => this.parent.childDone(this, if (this.args.items[0].len == 0) 1 else 0),
-                .@"-n" => this.parent.childDone(this, if (this.args.items[0].len != 0) 1 else 0),
+                .@"-z" => this.parent.childDone(this, if (this.args.items.len == 0 or this.args.items[0].len == 0) 0 else 1),
+                .@"-n" => this.parent.childDone(this, if (this.args.items.len > 0 and this.args.items[0].len != 0) 0 else 1),
                 // else => @panic("Invalid node op: " ++ @tagName(this.node.op) ++ ", this indicates a bug in Bun. Please file a GithHub issue."),
                 else => {
                     if (bun.Environment.allow_assert) {
-                        if (ast.CondExpr.Op.isSupported(this.node.op)) {
-                            @panic("Support this");
+                        inline for (ast.CondExpr.Op.SUPPORTED) |supported| {
+                            if (supported == this.node.op) {
+                                @panic("DEV: You did not support the \"" ++ @tagName(supported) ++ "\" conditional expression operation here.");
+                            }
                         }
                     }
 
@@ -3292,6 +3318,7 @@ pub const Interpreter = struct {
                 },
                 .condexpr = this,
                 .path = this.args.items[0],
+                .cwdfd = this.base.shell.cwd_fd,
             });
             stat_task.task.schedule();
         }

@@ -890,7 +890,14 @@ describe("if_clause", () => {
     .stdout("hi\nhey\n")
     .runAsTest("in pipeline");
 
-  TestBuilder.command`if echo hi; then echo lmao; fi && echo nice`.stdout("hi\nlmao\nnice\n").runAsTest("no else");
+  TestBuilder.command`if echo hi; then echo lmao; fi && echo nice`
+    .stdout("hi\nlmao\nnice\n")
+    .runAsTest("no else, cond true");
+
+  TestBuilder.command`if BUNISBAD; then echo not true; fi && echo bun is good`
+    .stdout("bun is good\n")
+    .stderr("bun: command not found: BUNISBAD\n")
+    .runAsTest("no else, cond false");
 
   TestBuilder.command`if [[ -f package.json ]]
   then
@@ -917,6 +924,24 @@ describe("if_clause", () => {
     .file("package.json", "lol")
     .stdout("okay\nmakes sense!\n")
     .runAsTest("multi statement in all branches");
+});
+
+describe("condexprs", () => {
+  TestBuilder.command`[[ -f package.json ]] && echo yes!`.file("package.json", "hi").stdout("yes!\n").runAsTest("-f");
+  TestBuilder.command`[[ -f mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-f non-existent");
+
+  TestBuilder.command`[[ -d mydir ]] && echo yes!`.directory("mydir").stdout("yes!\n").runAsTest("-d");
+  TestBuilder.command`[[ -d mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-d non-existent");
+
+  TestBuilder.command`[[ -c /dev/null ]] && echo yes!`.stdout("yes!\n").runAsTest("-c");
+  TestBuilder.command`[[ -c lol ]] && echo yes!`.exitCode(1).file("lol", "lol").runAsTest("-c not character device");
+  TestBuilder.command`[[ -c mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-c non-existent");
+
+  TestBuilder.command`FOO=""; [[ -z $FOO ]] && echo yes!`.stdout("yes!\n").runAsTest("-z");
+  TestBuilder.command`[[ -z "skldjfldsf" ]] && echo yes!`.exitCode(1).runAsTest("-z fail");
+
+  TestBuilder.command`FOO="lkjdflskdjf"; [[ -n $FOO ]] && echo yes!`.stdout("yes!\n").runAsTest("-n");
+  TestBuilder.command`FOO="" [[ -n $FOO ]] && echo yes!`.exitCode(1).runAsTest("-n fail");
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {

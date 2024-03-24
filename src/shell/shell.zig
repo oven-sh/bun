@@ -524,11 +524,12 @@ pub const AST = struct {
             @"-gt",
             @"-ge",
 
-            const SUPPORTED: []const Op = &.{
+            pub const SUPPORTED: []const Op = &.{
                 .@"-f",
                 .@"-z",
                 .@"-n",
                 .@"-d",
+                .@"-c",
             };
 
             pub fn isSupported(op: Op) bool {
@@ -1101,7 +1102,10 @@ pub const Parser = struct {
             else => {},
         }
 
-        // Otherwise check multi-operand operators
+        // Otherwise check binary operators like:
+        //     arg1 -eq arg2
+        // Again the token associated with the operator (in this case `-eq`) *must* be a .Text token.
+
         const arg1 = try self.parse_atom() orelse {
             try self.add_error("Expected a conditional expression operand, but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
             return ParseError.Expected;
@@ -2394,10 +2398,18 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return try self.break_word_impl(add_delimiter, false, false);
         }
 
+        inline fn isImmediatelyEscapedQuote(self: *@This()) bool {
+            return (self.chars.state == .Double and
+                (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '"') and
+                (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"'));
+        }
+
         fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool, in_redirect_operator: bool) !void {
             const start: u32 = self.word_start;
             const end: u32 = self.j;
-            if (start != end) {
+            if (start != end or
+                self.isImmediatelyEscapedQuote() // we want to preserve immediately escaped quotes like: ""
+            ) {
                 try self.tokens.append(.{ .Text = .{ .start = start, .end = end } });
                 if (add_delimiter) {
                     try self.tokens.append(.Delimit);

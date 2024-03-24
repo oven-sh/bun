@@ -991,30 +991,31 @@ pub const Expect = struct {
         }
 
         const not = this.flags.not;
-        var pass = true;
+        var pass = false;
 
         const count = expected.getLength(globalObject);
        
         var iter_value=value.getKeys(globalObject,value);
         if(iter_value.getLength(globalObject)==count) {
             var itr = iter_value.arrayIterator(globalObject);
-            while (itr.next()) |item| {
-                var i:u32=0;
-                var hasKey=false;
-                while (i < count) : (i += 1) {
-                    const key = expected.getIndex(globalObject, i);
-                    if (!item.jestDeepEquals(key, globalObject)) {
-                        hasKey = true;
-                        break;
+            outer: {
+                while (itr.next()) |item| {
+                    var i:u32=0;
+                    var hasKey=false;
+                    while (i < count) : (i += 1) {
+                        const key = expected.getIndex(globalObject, i);
+                        if (!item.jestDeepEquals(key, globalObject)) {
+                            hasKey = true;
+                            break;
+                        }
+                    }
+                    if(!hasKey) {
+                        pass=false;
+                        break :outer;
                     }
                 }
-                if(!hasKey) {
-                    pass=false;
-                    break;
-                }
+                pass=true;
             }
-        } else {
-            pass=false;
         }
 
         if (not) pass = !pass;
@@ -1022,17 +1023,17 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-        const value_fmt = value.toFmt(globalObject, &formatter);
+        const value_fmt = value.getKeys(globalObject,value).toFmt(globalObject, &formatter);
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
-            const received_fmt = value.toFmt(globalObject, &formatter);
-            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const received_fmt = value.getKeys(globalObject,value).toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain all keys: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContainAllKeys", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
         }
 
-        const expected_line = "Expected to contain: <green>{any}<r>\n";
+        const expected_line = "Expected to contain all keys: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContainAllKeys", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
         globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });

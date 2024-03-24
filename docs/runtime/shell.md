@@ -404,21 +404,21 @@ await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`
 
 For simple shell scripts, instead of `/bin/sh`, you can use Bun Shell to run shell scripts.
 
-To do so, just run the script with `bun` on a file with the `.sh` extension.
+To do so, just run the script with `bun` on a file with the `.bun.sh` extension.
 
-```sh#script.sh
+```sh#script.bun.sh
 echo "Hello World! pwd=$(pwd)"
 ```
 
 ```sh
-$ bun ./script.sh
+$ bun ./script.bun.sh
 Hello World! pwd=/home/demo
 ```
 
 Scripts with Bun Shell are cross platform, which means they work on Windows:
 
 ```
-PS C:\Users\Demo> bun .\script.sh
+PS C:\Users\Demo> bun .\script.bun.sh
 Hello World! pwd=C:\Users\Demo
 ```
 

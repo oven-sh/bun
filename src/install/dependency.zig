@@ -967,16 +967,21 @@ pub fn parseWithTag(
         .folder => {
             if (strings.indexOfChar(dependency, ':')) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
+                    const after_file_protocol = if (protocol + 1 < dependency.len) dependency[protocol + 1 ..] else "";
+
                     const folder = brk: {
-                        if (dependency[protocol + 1] == '/') {
-                            if (dependency.len >= protocol + 2 and dependency[protocol + 2] == '/') {
-                                break :brk dependency[protocol + 3 ..];
-                            }
-                            break :brk dependency[protocol + 2 ..];
+                        if (strings.hasPrefixComptime(after_file_protocol, "///")) {
+                            break :brk after_file_protocol[3..];
+                        } else if (strings.hasPrefixComptime(after_file_protocol, "//")) {
+                            break :brk after_file_protocol[2..];
                         }
-                        break :brk dependency[protocol + 1 ..];
+
+                        break :brk after_file_protocol;
                     };
 
+                    if (folder.len == 0) {
+                        return null;
+                    }
                     return .{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(folder).value() }, .tag = .folder };
                 }
 

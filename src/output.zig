@@ -133,6 +133,132 @@ pub const Source = struct {
         return false;
     }
 
+    export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
+
+    const WindowsStdio = struct {
+        const w = std.os.windows;
+
+        // TODO: when https://github.com/ziglang/zig/pull/18692 merges, use std.os.windows for this
+        extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
+        extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
+        extern fn GetConsoleOutputCP() u32;
+        pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+
+        pub var console_mode = [3]?u32{ null, null, null };
+        pub var console_codepage = @as(u32, 0);
+        pub var console_output_codepage = @as(u32, 0);
+
+        pub fn restore() void {
+            const peb = std.os.windows.peb();
+            const stdout = peb.ProcessParameters.hStdOutput;
+            const stderr = peb.ProcessParameters.hStdError;
+            const stdin = peb.ProcessParameters.hStdInput;
+
+            const handles = &.{ &stdin, &stdout, &stderr };
+            inline for (console_mode, handles) |mode, handle| {
+                if (mode) |m| {
+                    _ = SetConsoleMode(handle.*, m);
+                }
+            }
+
+            if (console_output_codepage != 0)
+                _ = w.kernel32.SetConsoleOutputCP(console_output_codepage);
+
+            if (console_codepage != 0)
+                _ = SetConsoleCP(console_codepage);
+        }
+
+        pub fn init() void {
+            bun.windows.libuv.uv_disable_stdio_inheritance();
+
+            const peb = std.os.windows.peb();
+            var stdout = peb.ProcessParameters.hStdOutput;
+            var stderr = peb.ProcessParameters.hStdError;
+            var stdin = peb.ProcessParameters.hStdInput;
+
+            const handle_identifiers = &.{ std.os.windows.STD_INPUT_HANDLE, std.os.windows.STD_OUTPUT_HANDLE, std.os.windows.STD_ERROR_HANDLE };
+            const handles = &.{ &stdin, &stdout, &stderr };
+            inline for (0..3) |fd_i| {
+                if (handles[fd_i].* == std.os.windows.INVALID_HANDLE_VALUE) {
+                    handles[fd_i].* = bun.windows.CreateFileW(
+                        comptime bun.strings.w("NUL" ++ .{0}).ptr,
+                        if (fd_i > 0) std.os.windows.GENERIC_WRITE else std.os.windows.GENERIC_READ,
+                        0,
+                        null,
+                        std.os.windows.OPEN_EXISTING,
+                        0,
+                        null,
+                    );
+                    _ = SetStdHandle(handle_identifiers[fd_i], handles[fd_i].*);
+                }
+            }
+
+            bun.win32.STDERR_FD = if (stderr != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stderr) else bun.invalid_fd;
+            bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
+            bun.win32.STDIN_FD = if (stdin != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdin) else bun.invalid_fd;
+
+            buffered_stdin.unbuffered_reader.context.handle = bun.win32.STDIN_FD;
+
+            // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
+            const CP_UTF8 = 65001;
+            console_output_codepage = w.kernel32.GetConsoleOutputCP();
+            _ = w.kernel32.SetConsoleOutputCP(CP_UTF8);
+
+            console_codepage = w.kernel32.GetConsoleOutputCP();
+            _ = SetConsoleCP(CP_UTF8);
+
+            const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
+            const ENABLE_PROCESSED_OUTPUT = 0x0001;
+
+            var mode: w.DWORD = undefined;
+            if (w.kernel32.GetConsoleMode(stdin, &mode) != 0) {
+                console_mode[0] = mode;
+                bun_stdio_tty[0] = 1;
+                _ = SetConsoleMode(stdin, mode | ENABLE_VIRTUAL_TERMINAL_INPUT);
+            }
+
+            if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
+                console_mode[1] = mode;
+                bun_stdio_tty[1] = 1;
+                _ = SetConsoleMode(stdout, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | 0);
+            }
+
+            if (w.kernel32.GetConsoleMode(stderr, &mode) != 0) {
+                console_mode[2] = mode;
+                bun_stdio_tty[2] = 1;
+                _ = SetConsoleMode(stderr, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | 0);
+            }
+        }
+    };
+
+    pub const Stdio = struct {
+        pub fn init() void {
+            bun.C.bun_initialize_process();
+
+            if (Environment.isWindows) {
+                WindowsStdio.init();
+            }
+
+            const stdout = bun.sys.File.from(std.io.getStdOut());
+            const stderr = bun.sys.File.from(std.io.getStdErr());
+            var output_source = Output.Source.init(stdout, stderr);
+
+            output_source.set();
+
+            if (comptime Environment.isDebug) {
+                initScopedDebugWriterAtStartup();
+            }
+        }
+
+        pub fn restore() void {
+            if (Environment.isWindows) {
+                WindowsStdio.restore();
+            } else {
+                bun.C.bun_restore_stdio();
+            }
+        }
+    };
+
     pub fn set(_source: *Source) void {
         source = _source.*;
 
@@ -147,12 +273,12 @@ pub const Source = struct {
                     enable_color = false;
                 }
 
-                const is_stdout_tty = _source.stream.isTty();
+                const is_stdout_tty = bun_stdio_tty[1] != 0;
                 if (is_stdout_tty) {
                     stdout_descriptor_type = OutputStreamDescriptor.terminal;
                 }
 
-                const is_stderr_tty = _source.error_stream.isTty();
+                const is_stderr_tty = bun_stdio_tty[2] != 0;
                 if (is_stderr_tty) {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
                 }

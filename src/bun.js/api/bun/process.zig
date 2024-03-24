@@ -493,6 +493,10 @@ pub const Status = union(enum) {
     signaled: bun.SignalCode,
     err: bun.sys.Error,
 
+    pub fn isOK(this: *const Status) bool {
+        return this.* == .exited and this.exited.code == 0;
+    }
+
     pub const Exited = struct {
         code: u8 = 0,
         signal: bun.SignalCode = @enumFromInt(0),
@@ -1719,6 +1723,10 @@ pub const sync = struct {
         status: Status,
         stdout: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
         stderr: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
+
+        pub fn isOK(this: *const Result) bool {
+            return this.status.isOK();
+        }
     };
 
     const SyncWindowsPipeReader = struct {

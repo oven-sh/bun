@@ -1,6 +1,5 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
-#include <cstdint>
 
 #if !OS(WINDOWS)
 #include <sys/resource.h>
@@ -9,6 +8,10 @@
 #include <sys/signal.h>
 #include <unistd.h>
 #include <cstring>
+#include <csignal>
+#include <cstdint>
+#include <cstdlib>
+#include <sys/termios.h>
 #else
 #include <uv.h>
 #include <windows.h>
@@ -295,7 +298,7 @@ static inline void make_pos_h_l(unsigned long* pos_h, unsigned long* pos_l,
 extern "C" ssize_t sys_preadv2(int fd, const struct iovec* iov, int iovcnt,
     off_t offset, unsigned int flags)
 {
-	return syscall(SYS_preadv2, fd, iov, iovcnt, offset, offset>>32, RWF_NOWAIT);
+    return syscall(SYS_preadv2, fd, iov, iovcnt, offset, offset >> 32, RWF_NOWAIT);
 }
 extern "C" ssize_t sys_pwritev2(int fd, const struct iovec* iov, int iovcnt,
     off_t offset, unsigned int flags)
@@ -320,3 +323,128 @@ extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
 }
 
 #endif
+
+extern "C" void Bun__onExit();
+extern "C" int32_t bun_stdio_tty[3];
+#if !OS(WINDOWS)
+static termios termios_to_restore_later[3];
+#endif
+
+extern "C" void bun_restore_stdio()
+{
+
+#if !OS(WINDOWS)
+
+    // restore stdio
+    for (int32_t fd = 0; fd < 3; fd++) {
+        if (!bun_stdio_tty[fd])
+            continue;
+
+        sigset_t sa;
+        int err;
+
+        // We might be a background job that doesn't own the TTY so block SIGTTOU
+        // before making the tcsetattr() call, otherwise that signal suspends us.
+        sigemptyset(&sa);
+        sigaddset(&sa, SIGTTOU);
+
+        pthread_sigmask(SIG_BLOCK, &sa, nullptr);
+        do
+            err = tcsetattr(fd, TCSANOW, &termios_to_restore_later[fd]);
+        while (err == -1 && errno == EINTR);
+        pthread_sigmask(SIG_UNBLOCK, &sa, nullptr);
+    }
+#endif
+}
+
+#if !OS(WINDOWS)
+extern "C" void onExitSignal(int sig)
+{
+    bun_restore_stdio();
+    raise(sig);
+}
+#endif
+
+extern "C" void bun_initialize_process()
+{
+    // Disable printf() buffering. We buffer it ourselves.
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
+
+#if OS(LINUX)
+    // Prevent leaking inherited file descriptors on Linux
+    // This is less of an issue for macOS due to posix_spawn
+    // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
+    bun_close_range(0, ~0U, CLOSE_RANGE_CLOEXEC);
+#endif
+
+#if OS(LINUX) || OS(DARWIN)
+
+    int devNullFd_ = -1;
+    bool anyTTYs = false;
+
+    const auto setDevNullFd = [&](int target_fd) -> void {
+        if (devNullFd_ == -1) {
+            do {
+                devNullFd_ = open("/dev/null", O_RDWR | O_CLOEXEC, 0);
+            } while (devNullFd_ < 0 and errno == EINTR);
+        };
+
+        if (devNullFd_ == target_fd) {
+            devNullFd_ = -1;
+            return;
+        }
+
+        ASSERT(devNullFd_ != -1);
+        int err;
+        do {
+            err = dup2(devNullFd_, target_fd);
+        } while (err < 0 && errno == EINTR);
+
+        if (UNLIKELY(err != 0)) {
+            abort();
+        }
+    };
+
+    for (int fd = 0; fd < 3; fd++) {
+        int result = isatty(fd);
+        if (result == 0) {
+            if (UNLIKELY(errno == EBADF)) {
+                // the fd is invalid, let's make sure it's always valid
+                setDevNullFd(fd);
+            }
+        } else {
+            bun_stdio_tty[fd] = 1;
+            int err = 0;
+
+            do {
+                err = tcgetattr(fd, &termios_to_restore_later[fd]);
+            } while (err == -1 && errno == EINTR);
+
+            if (LIKELY(err == 0)) {
+                anyTTYs = true;
+            }
+        }
+    }
+
+    ASSERT(devNullFd_ == -1 || devNullFd_ > 2);
+    if (devNullFd_ > 2) {
+        close(devNullFd_);
+    }
+
+    // Restore TTY state on exit
+    if (anyTTYs) {
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sigemptyset(&sa.sa_mask);
+
+        sa.sa_flags = SA_RESETHAND;
+        sa.sa_handler = onExitSignal;
+
+        sigaction(SIGTERM, &sa, nullptr);
+        sigaction(SIGINT, &sa, nullptr);
+    }
+#endif
+
+    atexit(Bun__onExit);
+}

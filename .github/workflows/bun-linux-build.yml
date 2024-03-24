@@ -4,6 +4,9 @@ concurrency:
   group: bun-linux-build-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  BUN_CI: 1
+
 on:
   push:
     branches:

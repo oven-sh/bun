@@ -1,11 +1,12 @@
 import { test, expect, describe } from "bun:test";
+import { isBunCI } from "harness";
 import { Pool, Client } from "pg";
 import { parse } from "pg-connection-string";
 import postgres from "postgres";
 
 const CONNECTION_STRING = process.env.TLS_POSTGRES_DATABASE_URL;
 
-const it = CONNECTION_STRING ? test : test.skip;
+const it = CONNECTION_STRING ? test : test.skipIf(!isBunCI);
 
 describe("pg", () => {
   it("should connect using TLS", async () => {

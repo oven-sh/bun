@@ -301,7 +301,7 @@ const NetworkTask = struct {
         name: string,
         allocator: std.mem.Allocator,
         scope: *const Npm.Registry.Scope,
-        loaded_manifest: ?Npm.PackageManifest,
+        loaded_manifest: ?*const Npm.PackageManifest,
         warn_on_error: bool,
     ) !void {
         this.url_buf = blk: {
@@ -349,6 +349,21 @@ const NetworkTask = struct {
 
                 return error.InvalidURL;
             }
+
+            if (!(tmp.hasPrefixComptime("https://") or tmp.hasPrefixComptime("http://"))) {
+                const msg = .{
+                    .fmt = "Unable to resolve npm package {}, registry URLs must be http or https\nReceived: \"{}\"",
+                    .args = .{ bun.fmt.QuotedFormatter{ .text = name }, tmp },
+                };
+
+                if (warn_on_error)
+                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
+                else
+                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
+
+                return error.InvalidURL;
+            }
+
             // This actually duplicates the string! So we defer deref the WTF managed one above.
             break :blk try tmp.toOwnedSlice(allocator);
         };
@@ -420,7 +435,7 @@ const NetworkTask = struct {
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
-                .loaded_manifest = loaded_manifest,
+                .loaded_manifest = if (loaded_manifest) |manifest| manifest.* else null,
             },
         };
 
@@ -3898,7 +3913,7 @@ pub const PackageManager = struct {
                                         name_str,
                                         this.allocator,
                                         this.scopeForPackageName(name_str),
-                                        loaded_manifest,
+                                        if (loaded_manifest) |*manifest| manifest else null,
                                         dependency.behavior.isOptional() or !this.options.do.install_peer_dependencies,
                                     );
                                     this.enqueueNetworkTask(network_task);

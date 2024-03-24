@@ -1010,6 +1010,12 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
             -Werror=uninitialized
+            -Werror=conditional-uninitialized
+            -Werror=suspicious-memaccess
+            -Werror=move
+            -Werror=sometimes-uninitialized
+            -Werror=unused
+            -Wno-unused-function
             -Werror
         )
     else()
@@ -1030,6 +1036,12 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
             -Werror=uninitialized
+            -Werror=conditional-uninitialized
+            -Werror=suspicious-memaccess
+            -Werror=move
+            -Werror=sometimes-uninitialized
+            -Werror=unused
+            -Wno-unused-function
             -Werror
         )
     else()

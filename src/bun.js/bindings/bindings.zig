@@ -4094,7 +4094,7 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
-    pub fn _keys(_: JSValue, globalThis: *JSGlobalObject, value: JSC.JSValue) JSValue {
+    pub fn getKeys(_: JSValue, globalThis: *JSGlobalObject, value: JSC.JSValue) JSValue {
         return keys(globalThis, value);
     }
 

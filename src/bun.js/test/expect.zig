@@ -993,7 +993,7 @@ pub const Expect = struct {
 
         const count = expected.getLength(globalObject);
        
-        var iter_value=value._keys(globalObject,value);
+        var iter_value=value.getKeys(globalObject,value);
         if(iter_value.getLength(globalObject)==count) {
             var itr = iter_value.arrayIterator(globalObject);
             while (itr.next()) |item| {
@@ -1001,7 +1001,7 @@ pub const Expect = struct {
                 var hasKey=false;
                 while (i < count) : (i += 1) {
                     const key = expected.getIndex(globalObject, i);
-                    if(item==key){
+                    if (!item.jestDeepEquals(key, globalObject)) {
                         hasKey = true;
                         break;
                     }

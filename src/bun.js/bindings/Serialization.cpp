@@ -10,7 +10,7 @@ using namespace WebCore;
 
 // Must be synced with bindings.zig's JSValue.SerializedScriptValue.External
 struct SerializedValueSlice {
-    uint8_t* bytes;
+    const uint8_t* bytes;
     size_t size;
     WebCore::SerializedScriptValue* value;
 };
@@ -36,7 +36,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
 
     auto serializedValue = serialized.releaseReturnValue();
 
-    auto bytes = serializedValue->wireBytes();
+    const Vector<uint8_t>& bytes = serializedValue->wireBytes();
 
     return {
         bytes.data(),

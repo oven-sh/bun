@@ -5386,7 +5386,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
         const External = extern struct {
             bytes: ?[*]const u8,
-            size: isize,
+            size: usize,
             handle: ?*anyopaque,
         };
 
@@ -5400,7 +5400,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub inline fn serialize(this: JSValue, global: *JSGlobalObject) ?SerializedScriptValue {
         const value = Bun__serializeJSValue(global, this);
         return if (value.bytes) |bytes|
-            .{ .data = bytes[0..@intCast(value.size)], .handle = value.handle.? }
+            .{ .data = bytes[0..value.size], .handle = value.handle.? }
         else
             null;
     }

@@ -75,7 +75,7 @@ private:
     Ref<WTF::StringImpl> m_source;
     bool did_free_source_code = false;
     Zig::GlobalObject* m_globalObjectForSourceProviderMap;
-    unsigned m_hash;
+    unsigned m_hash = 0;
 
     // JSC::SourceCodeKey key;
 };

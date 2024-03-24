@@ -336,24 +336,12 @@ const NetworkTask = struct {
                     this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
 
                 return error.InvalidURL;
-            } else if (!(tmp.hasPrefixComptime("https://") or tmp.hasPrefixComptime("http://"))) {
-                const msg = .{
-                    .fmt = "Expected manifest URL to start with https:// or http://, got {} (while fetching package {})",
-                    .args = .{ tmp, bun.fmt.QuotedFormatter{ .text = name } },
-                };
-
-                if (warn_on_error)
-                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
-                else
-                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
-
-                return error.InvalidURL;
             }
 
             if (!(tmp.hasPrefixComptime("https://") or tmp.hasPrefixComptime("http://"))) {
                 const msg = .{
                     .fmt = "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                    .args = .{ bun.fmt.QuotedFormatter{ .text = name }, tmp },
+                    .args = .{tmp},
                 };
 
                 if (warn_on_error)

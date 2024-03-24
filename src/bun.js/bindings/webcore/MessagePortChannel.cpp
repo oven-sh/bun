@@ -157,9 +157,6 @@ void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& por
 
     callback(WTFMove(result), [this, port, protectedThis = WTFMove(m_pendingMessageProtectors[i])] {
         UNUSED_PARAM(port);
-#if LOG_DISABLED
-        UNUSED_PARAM(size);
-#endif
         --m_messageBatchesInFlight;
         // LOG(MessagePorts, "Message port channel %s was notified that a batch of %zu message port messages targeted for port %s just completed dispatch, in flight is now %" PRIu64, logString().utf8().data(), size, port.logString().utf8().data(), m_messageBatchesInFlight);
     });

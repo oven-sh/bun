@@ -7928,7 +7928,7 @@ describe("Registry URLs", () => {
         const err = await new Response(stderr).text();
 
         if (fails === -1) {
-          expect(err).toContain(`Unable to resolve npm package "notapackage". registry URLs must be http or https`);
+          expect(err).toContain(`Registry URL must be http:// or https://`);
           expect(err).toContain("error: InvalidURL");
         } else if (fails) {
           expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);

@@ -352,7 +352,7 @@ const NetworkTask = struct {
 
             if (!(tmp.hasPrefixComptime("https://") or tmp.hasPrefixComptime("http://"))) {
                 const msg = .{
-                    .fmt = "Unable to resolve npm package {}, registry URLs must be http or https\nReceived: \"{}\"",
+                    .fmt = "Registry URL must be http:// or https://\nReceived: \"{}\"",
                     .args = .{ bun.fmt.QuotedFormatter{ .text = name }, tmp },
                 };
 

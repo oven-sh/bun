@@ -577,4 +577,8 @@ export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | Array
       i = str.indexOf("\n");
     }
   }
+
+  if (str.length > 0) {
+    yield str;
+  }
 }

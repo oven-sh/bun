@@ -375,7 +375,8 @@ extern "C" void bun_initialize_process()
     // Prevent leaking inherited file descriptors on Linux
     // This is less of an issue for macOS due to posix_spawn
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
-    bun_close_range(0, ~0U, CLOSE_RANGE_CLOEXEC);
+    // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
+    bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
 
 #if OS(LINUX) || OS(DARWIN)

@@ -946,6 +946,21 @@ describe("condexprs", () => {
   TestBuilder.command`[[ -n hey ]] | echo hi | cat`.stdout("hi\n").runAsTest("precedence: pipeline");
 });
 
+describe("async", () => {
+  TestBuilder.command`echo hi && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${/* ts */ `await Bun.sleep(500); console.log('noice')`} &; echo hello`
+    .stdout("hi\nhello\nnoice\n")
+    .runAsTest("basic");
+
+  TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${/* ts */ `await Bun.sleep(500); console.log('noice')`} | cat &; echo hello`
+    .stdout("hello\nnoice\n")
+    .runAsTest("pipeline");
+
+  TestBuilder.command`echo start > output.txt & cat output.txt`
+    .file("output.txt", "hey")
+    .stdout("start\n")
+    .runAsTest("background_execution_with_output_redirection");
+});
+
 function stringifyBuffer(buffer: Uint8Array): string {
   const sentinel = sentinelByte(buffer);
   const str = new TextDecoder().decode(buffer.slice(0, sentinel));

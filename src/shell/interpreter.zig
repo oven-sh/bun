@@ -86,6 +86,7 @@ pub const StateKind = enum(u8) {
     expansion,
     if_clause,
     condexpr,
+    @"async",
 };
 
 /// Copy-on-write
@@ -608,8 +609,10 @@ pub const Interpreter = struct {
     has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
+    async_commands_executing: u32 = 0,
+
     done: ?*bool = null,
-    exit_code: ?*ExitCode = null,
+    exit_code: ?ExitCode = null,
 
     const InterpreterChildPtr = StatePtrUnion(.{
         Script,
@@ -643,6 +646,10 @@ pub const Interpreter = struct {
         __prev_cwd: std.ArrayList(u8),
         __cwd: std.ArrayList(u8),
         cwd_fd: bun.FileDescriptor,
+
+        async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
+
+        const pid_t = if (bun.Environment.isPosix) std.os.pid_t else uv.uv_pid_t;
 
         const Bufio = union(enum) { owned: bun.ByteList, borrowed: *bun.ByteList };
 
@@ -1193,7 +1200,8 @@ pub const Interpreter = struct {
             },
             .result => |i| i,
         };
-        var exit_code: ExitCode = 1;
+
+        const exit_code: ExitCode = 1;
 
         const IsDone = struct {
             done: bool = false,
@@ -1205,7 +1213,7 @@ pub const Interpreter = struct {
         };
         var is_done: IsDone = .{};
         interp.done = &is_done.done;
-        interp.exit_code = &exit_code;
+        interp.exit_code = exit_code;
         try interp.run();
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         return exit_code;
@@ -1252,9 +1260,9 @@ pub const Interpreter = struct {
             }
         };
         var is_done: IsDone = .{};
-        var exit_code: ExitCode = 1;
+        const exit_code: ExitCode = 1;
         interp.done = &is_done.done;
-        interp.exit_code = &exit_code;
+        interp.exit_code = exit_code;
         try interp.run();
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         interp.deinitEverything();
@@ -1292,11 +1300,21 @@ pub const Interpreter = struct {
         return value;
     }
 
+    fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {
+        log("asyncCommandDone {}", .{@"async"});
+        @"async".actuallyDeinit();
+        this.async_commands_executing -= 1;
+        if (this.async_commands_executing == 0 and this.exit_code != null) {
+            this.finish(this.exit_code.?);
+        }
+    }
+
     fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: ExitCode) void {
         if (child.ptr.is(Script)) {
             const script = child.as(Script);
             script.deinitFromInterpreter();
-            this.finish(exit_code);
+            this.exit_code = exit_code;
+            if (this.async_commands_executing == 0) this.finish(exit_code);
             return;
         }
         @panic("Bad child");
@@ -1311,7 +1329,7 @@ pub const Interpreter = struct {
             _ = this.resolve.call(&.{JSValue.jsNumberFromU16(exit_code)});
         } else {
             this.done.?.* = true;
-            this.exit_code.?.* = exit_code;
+            this.exit_code = exit_code;
         }
     }
 
@@ -2569,6 +2587,7 @@ pub const Interpreter = struct {
         });
 
         const ChildPtr = StatePtrUnion(.{
+            Async,
             Binary,
             Pipeline,
             Cmd,
@@ -2645,6 +2664,10 @@ pub const Interpreter = struct {
                     const condexpr = CondExpr.init(this.base.interpreter, this.base.shell, child.condexpr, CondExpr.ParentPtr.init(this), this.io.copy());
                     condexpr.start();
                 },
+                .@"async" => {
+                    const @"async" = Async.init(this.base.interpreter, this.base.shell, child.@"async", Async.ParentPtr.init(this), this.io.copy());
+                    @"async".start();
+                },
             }
         }
 
@@ -2682,6 +2705,7 @@ pub const Interpreter = struct {
         currently_executing: ?ChildPtr = null,
 
         const ChildPtr = StatePtrUnion(.{
+            Async,
             Cmd,
             Pipeline,
             Binary,
@@ -2764,6 +2788,10 @@ pub const Interpreter = struct {
                     const condexpr = CondExpr.init(this.base.interpreter, this.base.shell, node.condexpr, CondExpr.ParentPtr.init(this), this.io.copy());
                     return ChildPtr.init(condexpr);
                 },
+                .@"async" => {
+                    const @"async" = Async.init(this.base.interpreter, this.base.shell, node.@"async", Async.ParentPtr.init(this), this.io.copy());
+                    return ChildPtr.init(@"async");
+                },
             }
         }
 
@@ -2833,6 +2861,7 @@ pub const Interpreter = struct {
         const ParentPtr = StatePtrUnion(.{
             Stmt,
             Binary,
+            Async,
         });
 
         const ChildPtr = StatePtrUnion(.{
@@ -3120,6 +3149,151 @@ pub const Interpreter = struct {
         }
     };
 
+    pub const Async = struct {
+        base: State,
+        node: *const ast.Expr,
+        parent: ParentPtr,
+        io: IO,
+        state: union(enum) {
+            idle,
+            exec: struct {
+                child: ?ChildPtr = null,
+            },
+            done: ExitCode,
+        } = .idle,
+        event_loop: JSC.EventLoopHandle,
+        concurrent_task: JSC.EventLoopTask,
+
+        const ParentPtr = StatePtrUnion(.{
+            Binary,
+            Stmt,
+        });
+
+        const ChildPtr = StatePtrUnion(.{
+            Pipeline,
+            Cmd,
+            If,
+            CondExpr,
+        });
+
+        pub fn format(this: *const Async, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("Async(0x{x}, child={s})", .{ @intFromPtr(this), @tagName(this.node.*) });
+        }
+
+        pub fn init(
+            interpreter: *ThisInterpreter,
+            shell_state: *ShellState,
+            node: *const ast.Expr,
+            parent: ParentPtr,
+            io: IO,
+        ) *Async {
+            interpreter.async_commands_executing += 1;
+            return bun.new(Async, .{
+                .base = .{ .kind = .@"async", .interpreter = interpreter, .shell = shell_state },
+                .node = node,
+                .parent = parent,
+                .io = io,
+                .event_loop = interpreter.event_loop,
+                .concurrent_task = JSC.EventLoopTask.fromEventLoop(interpreter.event_loop),
+            });
+        }
+
+        pub fn start(this: *Async) void {
+            log("{} start", .{this});
+            this.enqueueSelf();
+            this.parent.childDone(this, 0);
+        }
+
+        pub fn next(this: *Async) void {
+            log("{} next {s}", .{ this, @tagName(this.state) });
+            switch (this.state) {
+                .idle => {
+                    this.state = .{ .exec = .{} };
+                    this.enqueueSelf();
+                },
+                .exec => {
+                    if (this.state.exec.child) |child| {
+                        child.start();
+                        return;
+                    }
+
+                    const child = brk: {
+                        switch (this.node.*) {
+                            .pipeline => break :brk ChildPtr.init(Pipeline.init(
+                                this.base.interpreter,
+                                this.base.shell,
+                                this.node.pipeline,
+                                Pipeline.ParentPtr.init(this),
+                                this.io.copy(),
+                            )),
+                            .cmd => break :brk ChildPtr.init(Cmd.init(
+                                this.base.interpreter,
+                                this.base.shell,
+                                this.node.cmd,
+                                Cmd.ParentPtr.init(this),
+                                this.io.copy(),
+                            )),
+                            .@"if" => break :brk ChildPtr.init(If.init(
+                                this.base.interpreter,
+                                this.base.shell,
+                                this.node.@"if",
+                                If.ParentPtr.init(this),
+                                this.io.copy(),
+                            )),
+                            .condexpr => break :brk ChildPtr.init(CondExpr.init(
+                                this.base.interpreter,
+                                this.base.shell,
+                                this.node.condexpr,
+                                CondExpr.ParentPtr.init(this),
+                                this.io.copy(),
+                            )),
+                            else => {
+                                @panic("Encountered an unexpected child of an async command, this indicates a bug in Bun. Please open a GitHub issue.");
+                            },
+                        }
+                    };
+                    this.state.exec.child = child;
+                    this.enqueueSelf();
+                },
+                .done => {
+                    this.base.interpreter.asyncCmdDone(this);
+                },
+            }
+        }
+
+        pub fn enqueueSelf(this: *Async) void {
+            if (this.event_loop == .js) {
+                this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+            } else {
+                this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+            }
+        }
+
+        pub fn childDone(this: *Async, child_ptr: ChildPtr, exit_code: ExitCode) void {
+            log("{} childDone", .{this});
+            child_ptr.deinit();
+            this.state = .{ .done = exit_code };
+            this.enqueueSelf();
+        }
+
+        pub fn deinit(this: *Async) void {
+            _ = this; // autofix
+        }
+
+        pub fn actuallyDeinit(this: *Async) void {
+            this.io.deref();
+            bun.destroy(this);
+        }
+
+        pub fn runFromMainThread(this: *Async) void {
+            this.next();
+        }
+
+        pub fn runFromMainThreadMini(this: *Async, _: *void) void {
+            this.runFromMainThread();
+        }
+    };
+
     pub const CondExpr = struct {
         base: State,
         node: *const ast.CondExpr,
@@ -3171,6 +3345,7 @@ pub const Interpreter = struct {
             Stmt,
             Binary,
             Pipeline,
+            Async,
         });
 
         const ChildPtr = StatePtrUnion(.{
@@ -3184,16 +3359,13 @@ pub const Interpreter = struct {
             parent: ParentPtr,
             io: IO,
         ) *CondExpr {
-            const condexpr = interpreter.allocator.create(CondExpr) catch bun.outOfMemory();
-            condexpr.* = .{
+            return bun.new(CondExpr, .{
                 .base = .{ .kind = .condexpr, .interpreter = interpreter, .shell = shell_state },
                 .node = node,
                 .parent = parent,
                 .io = io,
                 .args = std.ArrayList([:0]const u8).init(bun.default_allocator),
-            };
-
-            return condexpr;
+            });
         }
 
         pub fn format(this: *const CondExpr, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -3325,6 +3497,7 @@ pub const Interpreter = struct {
 
         pub fn deinit(this: *CondExpr) void {
             this.io.deinit();
+            bun.destroy(this);
         }
 
         pub fn childDone(this: *CondExpr, child: ChildPtr, exit_code: ExitCode) void {
@@ -3417,6 +3590,7 @@ pub const Interpreter = struct {
             Stmt,
             Binary,
             Pipeline,
+            Async,
         });
 
         const ChildPtr = StatePtrUnion(.{
@@ -3434,14 +3608,12 @@ pub const Interpreter = struct {
             parent: ParentPtr,
             io: IO,
         ) *If {
-            const this = interpreter.allocator.create(If) catch bun.outOfMemory();
-            this.* = .{
+            return bun.new(If, .{
                 .base = .{ .kind = .cmd, .interpreter = interpreter, .shell = shell_state },
                 .node = node,
                 .parent = parent,
                 .io = io,
-            };
-            return this;
+            });
         }
 
         pub fn start(this: *If) void {
@@ -3526,6 +3698,7 @@ pub const Interpreter = struct {
         pub fn deinit(this: *If) void {
             log("{} deinit", .{this});
             this.io.deref();
+            bun.destroy(this);
         }
 
         pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) void {
@@ -3771,6 +3944,7 @@ pub const Interpreter = struct {
             Stmt,
             Binary,
             Pipeline,
+            Async,
             // Expansion,
             // TODO
             // .subst = void,
@@ -4178,7 +4352,10 @@ pub const Interpreter = struct {
             const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child)) {
                 .result => this.exec.subproc.child,
                 .err => |*e| {
-                    this.base.throw(e);
+                    this.exec = .none;
+                    const msg = e.fmt();
+                    defer bun.default_allocator.free(msg);
+                    this.writeFailingError("{s}", .{msg});
                     return;
                 },
             };
@@ -9826,6 +10003,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
                     const Ty = comptime Ptr.typeFromTag(tag.value);
+                    Ptr.assert_type(Ty);
                     var casted = this.as(Ty);
                     casted.start();
                     return;
@@ -9839,6 +10017,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
                     const Ty = comptime Ptr.typeFromTag(tag.value);
+                    Ptr.assert_type(Ty);
                     var casted = this.as(Ty);
 
                     casted.deinit();
@@ -9853,6 +10032,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
                     const Ty = comptime Ptr.typeFromTag(tag.value);
+                    Ptr.assert_type(Ty);
                     const child_ptr = brk: {
                         const ChildPtr = getChildPtrType(Ty);
                         break :brk ChildPtr.init(child);
@@ -9881,6 +10061,11 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         pub fn init(_ptr: anytype) @This() {
+            const tyinfo = @typeInfo(@TypeOf(_ptr));
+            if (tyinfo != .Pointer) @compileError("Only pass pointers to StatePtrUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
+            const Type = std.meta.Child(@TypeOf(_ptr));
+            Ptr.assert_type(Type);
+
             return .{ .ptr = Ptr.init(_ptr) };
         }
 

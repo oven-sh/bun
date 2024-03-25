@@ -801,6 +801,119 @@ describe("parse shell", () => {
     });
   });
 
+  describe("async", () => {
+    TestBuilder.command`echo foo & && echo hi`
+      .error('"&" is not allowed on the left-hand side of "&&"')
+      .runAsTest("left side of binary not allowed");
+
+    TestBuilder.command`echo hi && echo foo & && echo hi`
+      .error('"&" is not allowed on the left-hand side of "&&"')
+      .runAsTest("left side of binary not allowed 2");
+
+    test("right side of binary works", () => {
+      const expected = {
+        "stmts": [
+          {
+            "exprs": [
+              {
+                "binary": {
+                  "op": "And",
+                  "left": {
+                    "cmd": {
+                      "assigns": [],
+                      "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "hi" } }],
+                      "redirect": {
+                        "stdin": false,
+                        "stdout": false,
+                        "stderr": false,
+                        "append": false,
+                        "duplicate_out": false,
+                        "__unused": 0,
+                      },
+                      "redirect_file": null,
+                    },
+                  },
+                  "right": {
+                    "async": {
+                      "cmd": {
+                        "assigns": [],
+                        "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
+                        "redirect": {
+                          "stdin": false,
+                          "stdout": false,
+                          "stderr": false,
+                          "append": false,
+                          "duplicate_out": false,
+                          "__unused": 0,
+                        },
+                        "redirect_file": null,
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = JSON.parse($.parse`echo hi && echo foo &`);
+      expect(result).toEqual(expected);
+    });
+
+    test("pipeline", () => {
+      const expected = {
+        "stmts": [
+          {
+            "exprs": [
+              {
+                "async": {
+                  "pipeline": {
+                    "items": [
+                      {
+                        "cmd": {
+                          "assigns": [],
+                          "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "hi" } }],
+                          "redirect": {
+                            "stdin": false,
+                            "stdout": false,
+                            "stderr": false,
+                            "append": false,
+                            "duplicate_out": false,
+                            "__unused": 0,
+                          },
+                          "redirect_file": null,
+                        },
+                      },
+                      {
+                        "cmd": {
+                          "assigns": [],
+                          "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
+                          "redirect": {
+                            "stdin": false,
+                            "stdout": false,
+                            "stderr": false,
+                            "append": false,
+                            "duplicate_out": false,
+                            "__unused": 0,
+                          },
+                          "redirect_file": null,
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = JSON.parse($.parse`echo hi | echo foo &`);
+      expect(result).toEqual(expected);
+    });
+  });
+
   describe("bad syntax", () => {
     test("cmd subst edgecase", () => {
       const expected = {

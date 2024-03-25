@@ -349,6 +349,16 @@ pub const AST = struct {
         subshell: Script,
         @"if": *If,
         condexpr: *CondExpr,
+        /// Valid async (`&`) expressions:
+        /// - pipeline
+        /// - cmd
+        /// - subshell
+        /// - if
+        /// - condexpr
+        /// Note that commands in a pipeline cannot be async
+        /// TODO: Extra indirection for essentially a boolean feels bad for performance
+        /// could probably find a more efficient way to encode this information.
+        @"async": *Expr,
 
         pub fn asPipelineItem(this: *Expr) ?PipelineItem {
             return switch (this.*) {
@@ -369,6 +379,7 @@ pub const AST = struct {
             subshell,
             @"if",
             condexpr,
+            @"async",
         };
     };
 
@@ -981,7 +992,12 @@ pub const Parser = struct {
     }
 
     fn parse_expr(self: *Parser) !AST.Expr {
-        return self.parse_binary();
+        const left = try self.parse_binary();
+        if (switch (left) {
+            .pipeline, .cmd, .condexpr, .@"if" => true,
+            else => false,
+        } and self.match(.Ampersand)) return .{ .@"async" = try self.allocate(AST.Expr, left) };
+        return left;
     }
 
     fn parse_binary(self: *Parser) !AST.Expr {
@@ -997,12 +1013,50 @@ pub const Parser = struct {
             };
 
             const right = try self.parse_pipeline();
+            // const right: AST.Expr = brk: {
+            //     const right = try self.parse_pipeline();
+            //     // For some reason `&` is not allowed on the left side (e.g. `echo foo & && echo hi` is invalid),
+            //     // but is allowed on the right hand side.
+            //     if (self.peek() == .Ampersand and self.peek_n(1) != .DoubleAmpersand) break :brk .{ .@"async" = try self.allocate(AST.Expr, right) };
+            //     break :brk right;
+            // };
+
             const binary = try self.allocate(AST.Binary, .{ .op = op, .left = left, .right = right });
             left = .{ .binary = binary };
         }
 
+        if (self.match(.Ampersand)) {
+            if (self.peek() == .DoubleAmpersand) {
+                try self.add_error("\"&\" is not allowed on the left-hand side of \"&&\"", .{});
+                return ParseError.Expected;
+            }
+            switch (left) {
+                .binary => {
+                    const right_alloc = try self.allocate(AST.Expr, left.binary.right);
+                    const right: AST.Expr = .{ .@"async" = right_alloc };
+                    left.binary.right = right;
+                },
+                else => {
+                    left = .{ .@"async" = try self.allocate(AST.Expr, left) };
+                },
+            }
+        }
+
         return left;
     }
+
+    // fn parse_async(self: *Parser) !AST.Expr {
+    //     const left = try self.parse_pipeline();
+    //     if (self.peek() == .Ampersand) {
+    //         _ = self.expect(.Ampersand);
+    //         const expr = try self.alloc.create(AST.Expr);
+    //         expr.* = left;
+    //         return .{
+    //             .@"async" = expr,
+    //         };
+    //     }
+    //     return left;
+    // }
 
     fn parse_pipeline(self: *Parser) !AST.Expr {
         var expr = try self.parse_compound_cmd();
@@ -2298,9 +2352,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             try self.break_word(true);
 
                             const next = self.peek() orelse {
-                                self.add_error("Unexpected EOF");
-                                return;
+                                try self.tokens.append(.Ampersand);
+                                continue;
                             };
+
                             if (next.char == '>' and !next.escaped) {
                                 _ = self.eat();
                                 const inner = if (self.eat_simple_redirect_operator(.out))
@@ -2313,7 +2368,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             } else if (next.char == '&') {
                                 _ = self.eat() orelse unreachable;
                                 try self.tokens.append(.DoubleAmpersand);
-                            } else continue;
+                            } else {
+                                try self.tokens.append(.Ampersand);
+                                continue;
+                            }
                         },
 
                         // 2. State switchers

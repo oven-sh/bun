@@ -1675,7 +1675,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
 
 #if OS(WINDOWS)
-    Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject)
+        Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject);
         // Node.js docs - https://nodejs.org/api/process.html#a-note-on-process-io
         // > Files: synchronous on Windows and POSIX
         // > TTYs (Terminals): asynchronous on Windows, synchronous on POSIX

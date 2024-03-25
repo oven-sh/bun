@@ -30,7 +30,7 @@ shebang: ?Shebang,
 /// These arbitrary numbers will probably not show up in the other fields.
 /// This will reveal off-by-one mistakes.
 pub const VersionFlag = enum(u13) {
-    pub const current = .v4;
+    pub const current = .v5;
 
     v1 = 5474,
     /// Fix bug where paths were not joined correctly

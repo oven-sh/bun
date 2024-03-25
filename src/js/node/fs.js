@@ -330,7 +330,7 @@ var access = function access(...args) {
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = fs.rmSync.bind(fs),
   rmdirSync = fs.rmdirSync.bind(fs),
-  writev = (fd, buffers, position, callback) => {
+  writev = function writev(fd, buffers, position, callback) {
     if (typeof position === "function") {
       callback = position;
       position = null;
@@ -343,7 +343,7 @@ var access = function access(...args) {
     fs.writev(fd, buffers, position).$then(bytesWritten => callback(null, bytesWritten, buffers), callback);
   },
   writevSync = fs.writevSync.bind(fs),
-  readv = (fd, buffers, position, callback) => {
+  readv = function readv(fd, buffers, position, callback) {
     if (typeof position === "function") {
       callback = position;
       position = null;

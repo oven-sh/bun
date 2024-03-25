@@ -1139,7 +1139,7 @@ pub const PackageManifest = struct {
                 // so names go last because we are better able to dedupe at the end
                 var dependency_values = version_extern_strings;
                 var dependency_names = all_dependency_names_and_values;
-                var prev_extern_bin_group = extern_strings_bin_entries;
+                var prev_extern_bin_group: ?[]ExternalString = null;
                 const empty_version = bun.serializable(PackageVersion{
                     .bin = Bin.init(),
                 });
@@ -1264,17 +1264,17 @@ pub const PackageManifest = struct {
                                         else => {
                                             var group_slice = extern_strings_bin_entries[0 .. obj.properties.len * 2];
 
-                                            var is_identical = prev_extern_bin_group.len == group_slice.len;
+                                            var is_identical = if (prev_extern_bin_group) |bin_group| bin_group.len == group_slice.len else false;
                                             var group_i: u32 = 0;
 
                                             for (obj.properties.slice()) |bin_prop| {
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.key.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
-                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group.?[group_i].hash;
                                                     if (comptime Environment.allow_assert) {
                                                         if (is_identical) {
                                                             const first = group_slice[group_i].slice(string_builder.allocatedSlice());
-                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group.?[group_i].slice(string_builder.allocatedSlice());
                                                             if (!strings.eqlLong(first, second, true)) {
                                                                 Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
                                                             }
@@ -1285,11 +1285,11 @@ pub const PackageManifest = struct {
 
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.value.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
-                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group.?[group_i].hash;
                                                     if (comptime Environment.allow_assert) {
                                                         if (is_identical) {
                                                             const first = group_slice[group_i].slice(string_builder.allocatedSlice());
-                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group.?[group_i].slice(string_builder.allocatedSlice());
                                                             if (!strings.eqlLong(first, second, true)) {
                                                                 Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
                                                             }
@@ -1300,7 +1300,7 @@ pub const PackageManifest = struct {
                                             }
 
                                             if (is_identical) {
-                                                group_slice = prev_extern_bin_group;
+                                                group_slice = prev_extern_bin_group.?;
                                             } else {
                                                 prev_extern_bin_group = group_slice;
                                                 extern_strings_bin_entries = extern_strings_bin_entries[group_slice.len..];

@@ -150,7 +150,7 @@ $ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 $ ninja -C build # 'bun run build' runs just this
 ```
 
-Advanced uses can pass CMake flags to customize the build.
+Advanced users can pass CMake flags to customize the build.
 
 ## VSCode
 

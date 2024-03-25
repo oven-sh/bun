@@ -400,10 +400,6 @@ pub const Process = struct {
         } else if (Environment.isWindows) {
             switch (this.poller) {
                 .uv => |*process| {
-                    if (comptime !Environment.isWindows) {
-                        unreachable;
-                    }
-
                     if (process.isClosed()) {
                         this.poller = .{ .detached = {} };
                     } else if (!process.isClosing()) {

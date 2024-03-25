@@ -3181,10 +3181,20 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
         .allocated => |escaped_html| {
             if (comptime Environment.allow_assert) {
                 // assert that re-encoding the string produces the same result
+                const allocated = strings.toUTF16AllocForReal(
+                    bun.default_allocator,
+                    strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable,
+                    false,
+                    false,
+                ) catch {
+                    globalObject.throwOutOfMemory();
+                    return .zero;
+                };
+                defer bun.default_allocator.free(allocated);
                 std.debug.assert(
                     std.mem.eql(
                         u16,
-                        (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false, false) catch unreachable).?,
+                        allocated,
                         escaped_html,
                     ),
                 );

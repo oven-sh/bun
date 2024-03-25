@@ -276,7 +276,7 @@ Object.defineProperty(WriteStream, "prototype", {
     };
 
     WriteStream.prototype.moveCursor = function (dx, dy, cb) {
-      return (readline ??= require("node:readline")).moveCursor(this, dx, dy, cb);
+      return require("node:readline").moveCursor(this, dx, dy, cb);
     };
 
     return Real;

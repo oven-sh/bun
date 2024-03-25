@@ -36,6 +36,8 @@
 //!
 //! The compiled binary is 12800 bytes and is `@embedFile`d into Bun itself.
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
+//!
+//! Questions about this file should be directed at @paperdave.
 const builtin = @import("builtin");
 const dbg = builtin.mode == .Debug;
 
@@ -128,7 +130,7 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
     if (!is_standalone) {
         bunDebugMessage(fmt, args);
     } else {
-        std.log.debug(if (fmt[fmt.len - 1] == '\n') fmt else fmt ++ "\n", args);
+        std.log.debug(fmt, args);
     }
 }
 
@@ -485,7 +487,10 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         if (dbg) debug("left = {d}, at {}, after {}\n", .{ left, ptr[0], ptr[1] });
 
         // if this is false, potential out of bounds memory access
-        std.debug.assert(@intFromPtr(ptr) - left * @sizeOf(std.meta.Child(@TypeOf(ptr))) >= @intFromPtr(buf1_u16));
+        if (dbg)
+            std.debug.assert(
+                @intFromPtr(ptr) - left * @sizeOf(std.meta.Child(@TypeOf(ptr))) >= @intFromPtr(buf1_u16),
+            );
         // we start our search right before the . as we know the extension is '.bunx'
         std.debug.assert(ptr[1] == '.');
 
@@ -502,7 +507,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 return mode.fail(.NoDirname);
             }
             ptr -= 1;
-            std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
+            if (dbg)
+                std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
         }
         // inlined loop to do this again, because the completion case is different
         // using `inline for` caused comptime issues that made the code much harder to read
@@ -517,7 +523,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 return mode.fail(.NoDirname);
             }
             ptr -= 1;
-            std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
+            if (dbg)
+                std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
         }
         @compileError("unreachable");
     };
@@ -667,7 +674,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
                 //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^  ^ read_ptr
                 const len = (@intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - shebang_arg_len_u8) / 2 - nt_object_prefix.len - "\"\x00".len;
-                const launch_slice = buf1_u16[nt_object_prefix.len..][0..len :'"'];
+                const launch_slice = buf1_u16[nt_object_prefix.len..][0..len :'"']; // assert we slice at the "
                 bun_ctx.direct_launch_with_bun_js(
                     launch_slice,
                     bun_ctx.cli_context,
@@ -678,6 +685,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             // Copy the shebang bin path
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //                                                                  ^~~~^
+            //                                                                  ^ read_ptr
             // BUF2: 'node !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
             read_ptr = @ptrFromInt(@intFromPtr(read_ptr) - shebang_arg_len_u8);
             @memcpy(buf2_u8, @as([*]u8, @ptrCast(read_ptr))[0..shebang_arg_len_u8]);
@@ -687,29 +695,40 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
             // Copy the filename in. There is no leading " but there is a trailing "
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^   ^ read_ptr
+            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
-            const length_of_filename_u8 = @intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - shebang_arg_len_u8;
+            const length_of_filename_u8 = @intFromPtr(read_ptr) -
+                @intFromPtr(buf1_u8) - nt_object_prefix.len -
+                (2 * "\x00n".len); // the 'n' refers to the first char of the shebang.
+            const filename = buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8];
+            if (dbg)
+                debug("filename and quote: '{}'\n", .{fmt16(@alignCast(std.mem.bytesAsSlice(u16, filename)))});
+
             @memcpy(
                 buf2_u8[shebang_arg_len_u8 + 2 * "\"".len ..][0..length_of_filename_u8],
-                buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8],
+                filename,
             );
-            read_ptr = @ptrFromInt(@intFromPtr(buf2_u8) + length_of_filename_u8 + 2 * ("\"".len + nt_object_prefix.len));
+            // the pointer is now going to act as a write pointer for remaining data.
+            // note that it points into buf2 now, not buf1. this will write arguments and the null terminator
+            // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
+            //                                                                   ^ write_ptr
+            const advance = length_of_filename_u8 + shebang_arg_len_u8 + 2 * "\"".len;
+            var write_ptr: [*]u8 = @ptrFromInt(@intFromPtr(buf2_u8) + advance);
 
             if (user_arguments_u8.len > 0) {
                 // Copy the user arguments in:
                 // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags!!!!!!!!!!!'
                 //        ^~~~~X^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
-                //        |    |filename_len                                         where the user args go
+                //        |    |filename_len                                         write_ptr
                 //        |    the quote
                 //        shebang_arg_len
-                @memcpy(@as([*]u8, @ptrCast(read_ptr)), user_arguments_u8);
-                read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + user_arguments_u8.len);
+                @memcpy(@as([*]u8, @ptrCast(write_ptr)), user_arguments_u8);
+                write_ptr = @ptrFromInt(@intFromPtr(write_ptr) + user_arguments_u8.len);
             }
 
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
             //                                                                           ^ null terminator
-            @as(*align(1) u16, @ptrCast(read_ptr)).* = 0;
+            @as(*align(1) u16, @ptrCast(write_ptr)).* = 0;
 
             break :spawn_command_line @ptrCast(buf2_u16);
         },

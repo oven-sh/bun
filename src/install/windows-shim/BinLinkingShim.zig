@@ -41,6 +41,8 @@ pub const VersionFlag = enum(u13) {
     /// automatic fallback path where if "node" is asked for, but not present,
     /// it will retry the spawn with "bun".
     v4 = 5477,
+    /// Fixed bugs where passing arguments did not always work.
+    v5 = 5478,
     _,
 };
 

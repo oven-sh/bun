@@ -1675,7 +1675,8 @@ pub const BunXFastPath = struct {
     var environment_buffer: bun.WPathBuffer = undefined;
 
     /// If this returns, it implies the fast path cannot be taken
-    fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+    fn tryLaunch(ctx_const: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+        var ctx = ctx_const;    
         std.debug.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
@@ -1700,6 +1701,7 @@ pub const BunXFastPath = struct {
             const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
             i += result.len + 1;
         }
+        ctx.passthrough = passthrough;
 
         const run_ctx = shim_impl.FromBunRunContext{
             .handle = handle,

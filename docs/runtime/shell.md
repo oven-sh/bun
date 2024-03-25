@@ -12,7 +12,7 @@ import { $ } from "bun";
 const response = await fetch("https://example.com");
 
 // Use Response as stdin.
-await $`echo < ${response} > wc -c`; // 120
+await $`cat < ${response} | wc -c`; // 1256
 ```
 
 ## Features:
@@ -68,15 +68,16 @@ console.log(exitCode); // 0
 ## Redirection
 
 A command's _input_ or _output_ may be _redirected_ using the typical Bash operators:
-- `<`           redirect stdin 
-- `>` or `1>`   redirect stdout
-- `2>`          redirect stderr
-- `&>`          redirect both stdout and stderr
+
+- `<` redirect stdin
+- `>` or `1>` redirect stdout
+- `2>` redirect stderr
+- `&>` redirect both stdout and stderr
 - `>>` or `1>>` redirect stdout, _appending_ to the destination, instead of overwriting
-- `2>>`         redirect stderr, _appending_ to the destination, instead of overwriting
-- `&>>`         redirect both stdout and stderr, _appending_ to the destination, instead of overwriting
-- `1>&2`        redirect stdout to stderr (all writes to stdout will instead be in stderr)
-- `2>&1`        redirect stderr to stdout (all writes to stderr will instead be in stdout)
+- `2>>` redirect stderr, _appending_ to the destination, instead of overwriting
+- `&>>` redirect both stdout and stderr, _appending_ to the destination, instead of overwriting
+- `1>&2` redirect stdout to stderr (all writes to stdout will instead be in stderr)
+- `2>&1` redirect stderr to stdout (all writes to stderr will instead be in stdout)
 
 Bun Shell also supports redirecting from and to JavaScript objects.
 
@@ -122,46 +123,45 @@ The following JavaScript objects are supported for redirection from:
 ### Example: Redirect stdin -> file
 
 ```js
-import { $ } from "bun"
+import { $ } from "bun";
 
-await $`cat < myfile.txt`
+await $`cat < myfile.txt`;
 ```
 
 ### Example: Redirect stdout -> file
 
 ```js
-import { $ } from "bun"
+import { $ } from "bun";
 
-await $`echo bun! > greeting.txt`
+await $`echo bun! > greeting.txt`;
 ```
 
 ### Example: Redirect stderr -> file
 
 ```js
-import { $ } from "bun"
+import { $ } from "bun";
 
-await $`bun run index.ts 2> errors.txt`
+await $`bun run index.ts 2> errors.txt`;
 ```
-
 
 ### Example: Redirect stdout -> stderr
 
 ```js
-import { $ } from "bun"
+import { $ } from "bun";
 
 // redirects stderr to stdout, so all output
 // will be available on stdout
-await $`bun run ./index.ts 2>&1`
+await $`bun run ./index.ts 2>&1`;
 ```
 
 ### Example: Redirect stderr -> stdout
 
 ```js
-import { $ } from "bun"
+import { $ } from "bun";
 
 // redirects stdout to stderr, so all output
 // will be available on stderr
-await $`bun run ./index.ts 1>&2`
+await $`bun run ./index.ts 1>&2`;
 ```
 
 ## Piping (`|`)
@@ -385,7 +385,7 @@ Exposes Bun Shell's escaping logic as a function:
 ```js
 import { $ } from "bun";
 
-console.log($.escape('$(foo) `bar` "baz"'))
+console.log($.escape('$(foo) `bar` "baz"'));
 // => \$(foo) \`bar\` \"baz\"
 ```
 
@@ -394,7 +394,7 @@ If you do not want your string to be escaped, wrap it in a `{ raw: 'str' }` obje
 ```js
 import { $ } from "bun";
 
-await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`
+await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`;
 // => bun: command not found: foo
 // => bun: command not found: bar
 // => baz
@@ -404,21 +404,21 @@ await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`
 
 For simple shell scripts, instead of `/bin/sh`, you can use Bun Shell to run shell scripts.
 
-To do so, just run the script with `bun` on a file with the `.sh` extension.
+To do so, just run the script with `bun` on a file with the `.bun.sh` extension.
 
-```sh#script.sh
+```sh#script.bun.sh
 echo "Hello World! pwd=$(pwd)"
 ```
 
 ```sh
-$ bun ./script.sh
+$ bun ./script.bun.sh
 Hello World! pwd=/home/demo
 ```
 
 Scripts with Bun Shell are cross platform, which means they work on Windows:
 
 ```
-PS C:\Users\Demo> bun .\script.sh
+PS C:\Users\Demo> bun .\script.bun.sh
 Hello World! pwd=C:\Users\Demo
 ```
 

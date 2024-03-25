@@ -432,7 +432,6 @@ const Scanner = struct {
                 FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch continue;
             } else {
-                defer _ = bun.sys.close(entry.relative_dir);
                 const dir = entry.relative_dir.asDir();
                 std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 

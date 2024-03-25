@@ -259,6 +259,10 @@ pub const PosixSpawn = struct {
         }
 
         pub fn dup2(self: *PosixSpawnActions, fd: bun.FileDescriptor, newfd: bun.FileDescriptor) !void {
+            if (fd == newfd) {
+                return self.inherit(fd);
+            }
+
             switch (errno(system.posix_spawn_file_actions_adddup2(&self.actions, fd.cast(), newfd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,

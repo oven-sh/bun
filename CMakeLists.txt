@@ -1010,6 +1010,12 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
             -Werror=uninitialized
+            -Werror=conditional-uninitialized
+            -Werror=suspicious-memaccess
+            -Werror=move
+            -Werror=sometimes-uninitialized
+            -Werror=unused
+            -Wno-unused-function
             -Werror
         )
     else()
@@ -1025,11 +1031,16 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
         endif()
 
+        # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
         target_compile_options(${bun} PUBLIC -O3 ${LTO_FLAG} -g1
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
             -Werror=uninitialized
+            -Werror=conditional-uninitialized
+            -Werror=suspicious-memaccess
+            -Werror=move
+            -Werror=sometimes-uninitialized
             -Werror
         )
     else()

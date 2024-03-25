@@ -408,7 +408,7 @@ pub const LifecycleScriptSubprocess = struct {
         });
 
         if (comptime log_level.isVerbose()) {
-            Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Starting scripts for <b>\"{s}\"<r>", .{
+            Output.prettyErrorln("<d>[Scripts]<r> Starting scripts for <b>\"{s}\"<r>", .{
                 list.package_name,
             });
         }

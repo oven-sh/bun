@@ -96,12 +96,6 @@ pub fn exit(code: u8) noreturn {
 }
 
 pub fn exitWide(code: u32) noreturn {
-    runExitCallbacks();
-    Output.flush();
-    std.mem.doNotOptimizeAway(&Bun__atexit);
-    if (Environment.isWindows) {
-        bun.windows.libuv.uv_library_shutdown();
-    }
     std.c.exit(@bitCast(code));
 }
 
@@ -122,6 +116,9 @@ pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
             std.os.sigaction(@intCast(sig), &act, null) catch {};
         }
     }
+
+    Output.Source.Stdio.restore();
+
     // TODO(@paperdave): report a bug that this intcast shouldnt be needed. signals are i32 not u32
     // after that is fixed we can make this function take i32
     _ = std.c.raise(@intCast(sig));
@@ -229,4 +226,20 @@ pub export const Bun__userAgent: [*:0]const u8 = Global.user_agent;
 
 comptime {
     _ = Bun__userAgent;
+}
+
+pub export fn Bun__onExit() void {
+    runExitCallbacks();
+    Output.flush();
+    std.mem.doNotOptimizeAway(&Bun__atexit);
+
+    Output.Source.Stdio.restore();
+
+    if (Environment.isWindows) {
+        bun.windows.libuv.uv_library_shutdown();
+    }
+}
+
+comptime {
+    _ = Bun__onExit;
 }

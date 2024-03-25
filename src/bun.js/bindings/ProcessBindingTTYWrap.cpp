@@ -363,9 +363,6 @@ public:
     {
         Base::finishCreation(vm);
 
-        auto* clientData = WebCore::clientData(vm);
-        auto& builtinNames = clientData->builtinNames();
-
         reifyStaticProperties(vm, TTYWrapObject::info(), TTYWrapPrototypeValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }

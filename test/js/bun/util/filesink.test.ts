@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { ArrayBufferSink } from "bun";
 import { describe, expect, it } from "bun:test";
 import { isWindows } from "harness";

@@ -2062,6 +2062,87 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   }
 });
 
+test("one version with binary map", async () => {
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "map-bin": "1.0.2",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stderr: "pipe",
+    stdout: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + map-bin@1.0.2",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toHaveBins(["map-bin", "map_bin"]);
+  expect(join(packageDir, "node_modules", ".bin", "map-bin")).toBeValidBin(join("..", "map-bin", "bin", "map-bin"));
+  expect(join(packageDir, "node_modules", ".bin", "map_bin")).toBeValidBin(join("..", "map-bin", "bin", "map-bin"));
+});
+
+test("multiple versions with binary map", async () => {
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      dependencies: {
+        "map-bin-multiple": "1.0.2",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stderr: "pipe",
+    stdout: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + map-bin-multiple@1.0.2",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toHaveBins(["map-bin", "map_bin"]);
+  expect(join(packageDir, "node_modules", ".bin", "map-bin")).toBeValidBin(
+    join("..", "map-bin-multiple", "bin", "map-bin"),
+  );
+  expect(join(packageDir, "node_modules", ".bin", "map_bin")).toBeValidBin(
+    join("..", "map-bin-multiple", "bin", "map-bin"),
+  );
+});
+
 test("missing package on reinstall, some with binaries", async () => {
   await writeFile(
     join(packageDir, "package.json"),

@@ -8823,7 +8823,7 @@ pub const Interpreter = struct {
 
         pub fn asyncDeinit(this: *@This()) void {
             log("IOReader(0x{x}) asyncDeinit", .{@intFromPtr(this)});
-            this.async_deinit.schedule();
+            this.async_deinit.enqueue();
         }
 
         pub fn __deinit(this: *@This()) void {
@@ -8852,11 +8852,14 @@ pub const Interpreter = struct {
     };
 
     pub const AsyncDeinitWriter = struct {
-        task: WorkPoolTask = .{ .callback = &runFromThreadPool },
+        ran: bool = false,
 
-        pub fn runFromThreadPool(task: *WorkPoolTask) void {
-            var this = @fieldParentPtr(@This(), "task", task);
+        pub fn enqueue(this: *@This()) void {
+            if (this.ran) return;
+            this.ran = true;
+
             var iowriter = this.writer();
+
             if (iowriter.evtloop == .js) {
                 iowriter.evtloop.js.enqueueTaskConcurrent(iowriter.concurrent_task.js.from(this, .manual_deinit));
             } else {
@@ -8876,17 +8879,15 @@ pub const Interpreter = struct {
         pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
             this.runFromMainThread();
         }
-
-        pub fn schedule(this: *@This()) void {
-            WorkPool.schedule(&this.task);
-        }
     };
 
     pub const AsyncDeinit = struct {
-        task: WorkPoolTask = .{ .callback = &runFromThreadPool },
+        ran: bool = false,
 
-        pub fn runFromThreadPool(task: *WorkPoolTask) void {
-            var this = @fieldParentPtr(AsyncDeinit, "task", task);
+        pub fn enqueue(this: *@This()) void {
+            if (this.ran) return;
+            this.ran = true;
+
             var ioreader = this.reader();
             if (ioreader.evtloop == .js) {
                 ioreader.evtloop.js.enqueueTaskConcurrent(ioreader.concurrent_task.js.from(this, .manual_deinit));
@@ -8906,10 +8907,6 @@ pub const Interpreter = struct {
 
         pub fn runFromMainThreadMini(this: *AsyncDeinit, _: *void) void {
             this.runFromMainThread();
-        }
-
-        pub fn schedule(this: *AsyncDeinit) void {
-            WorkPool.schedule(&this.task);
         }
     };
 
@@ -9334,7 +9331,7 @@ pub const Interpreter = struct {
 
         pub fn asyncDeinit(this: *@This()) void {
             print("IOWriter(0x{x}, fd={}) asyncDeinit", .{ @intFromPtr(this), this.fd });
-            this.async_deinit.schedule();
+            this.async_deinit.enqueue();
         }
 
         pub fn __deinit(this: *This) void {
@@ -10093,7 +10090,6 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 .heap => {
                     const new_len = this.heap.len - starting_idx;
                     std.mem.copyForwards(T, this.heap.ptr[0..new_len], this.heap.ptr[starting_idx..this.heap.len]);
-                    // this.heap.replaceRange(0, starting_idx, this.heap.ptr[starting_idx..this.heap.len]) catch bun.outOfMemory();
                     this.heap.len = @intCast(new_len);
                 },
             }

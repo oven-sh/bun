@@ -994,14 +994,14 @@ pub const Expect = struct {
         var pass = false;
 
         const count = expected.getLength(globalObject);
-       
-        var iter_value=value.getKeys(globalObject,value);
-        if(iter_value.getLength(globalObject)==count) {
+
+        var iter_value = value.getKeys(globalObject, value);
+        if (iter_value.getLength(globalObject) == count) {
             var itr = iter_value.arrayIterator(globalObject);
             outer: {
                 while (itr.next()) |item| {
-                    var i:u32=0;
-                    var hasKey=false;
+                    var i: u32 = 0;
+                    var hasKey = false;
                     while (i < count) : (i += 1) {
                         const key = expected.getIndex(globalObject, i);
                         if (!item.jestDeepEquals(key, globalObject)) {
@@ -1009,12 +1009,12 @@ pub const Expect = struct {
                             break;
                         }
                     }
-                    if(!hasKey) {
-                        pass=false;
+                    if (!hasKey) {
+                        pass = false;
                         break :outer;
                     }
                 }
-                pass=true;
+                pass = true;
             }
         }
 
@@ -1023,10 +1023,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-        const value_fmt = value.getKeys(globalObject,value).toFmt(globalObject, &formatter);
+        const value_fmt = value.getKeys(globalObject, value).toFmt(globalObject, &formatter);
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
-            const received_fmt = value.getKeys(globalObject,value).toFmt(globalObject, &formatter);
+            const received_fmt = value.getKeys(globalObject, value).toFmt(globalObject, &formatter);
             const expected_line = "Expected to not contain all keys: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContainAllKeys", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });

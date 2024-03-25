@@ -1603,8 +1603,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.clearData();
                 return;
             }
-
-            socket.shutdownRead();
+            // we dont wanna shutdownRead when SSL, because SSL handshake can happen when writting
+            if (comptime !ssl) {
+                socket.shutdownRead();
+            }
             var final_body_bytes: [128 + 8]u8 = undefined;
             var header = @as(WebsocketHeader, @bitCast(@as(u16, 0)));
             header.final = true;

@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins } from "harness";
 import { join } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -51,7 +51,7 @@ registry = "http://localhost:${port}/"
 });
 
 afterEach(async () => {
-  await rm(packageDir, { force: true, recursive: true });
+  0 && (await rm(packageDir, { force: true, recursive: true }));
 });
 
 describe.each(["--production", "without --production"])("%s", flag => {
@@ -6615,4 +6615,41 @@ describe("yarn tests", () => {
     expect(await exists(join(packageDir, "node_modules/one-dep-scripted/success.txt"))).toBeTrue();
     expect(await exited).toBe(0);
   });
+});
+
+test.if(isWindows)("bin linking shim should work", async () => {
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "bunx-bins": "*",
+      },
+    }),
+  );
+  console.log(packageDir);
+
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--dev"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  var err = await new Response(stderr).text();
+  var out = await new Response(stdout).text();
+  console.log(err);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(err).not.toContain("not found");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + bunx-bins@1.0.0",
+    "",
+    expect.stringContaining("1 package installed"),
+  ]);
 });

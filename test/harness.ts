@@ -252,14 +252,17 @@ export function randomPort(): number {
 }
 
 expect.extend({
-  toRun(cmds: string[]) {
+  toRun(opts: string[] | { cwd: string; cmds: string[]; exitCode?: number }) {
+    const { cwd, cmds, exitCode = 0 } = Array.isArray(opts) ? { cwd: ".", cmds: opts, exitCode: 0 } : opts;
+
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
+      cwd,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    if (result.exitCode !== 0) {
+    if (result.exitCode !== exitCode) {
       return {
         pass: false,
         message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),

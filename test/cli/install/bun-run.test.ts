@@ -126,7 +126,7 @@ for (let withRun of [false, true]) {
 
       describe.each(["--silent", "not silent"])("%s", silentOption => {
         const silent = silentOption === "--silent";
-        it("exit signal works", async () => {
+        it.skipIf(isWindows)("exit signal works", async () => {
           {
             const { stdout, stderr, exitCode, signalCode } = spawnSync({
               cmd: [bunExe(), silent ? "--silent" : "", "run", "bash", "-c", "kill -4 $$"].filter(Boolean),

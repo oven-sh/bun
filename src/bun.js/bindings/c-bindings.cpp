@@ -162,6 +162,24 @@ extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 
     return 0;
 }
+
+extern "C" void windows_enable_stdio_inheritance()
+{
+    HANDLE handle;
+
+    handle = GetStdHandle(STD_INPUT_HANDLE);
+    if (handle != NULL && handle != INVALID_HANDLE_VALUE)
+        SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 1);
+
+    handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (handle != NULL && handle != INVALID_HANDLE_VALUE)
+        SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 1);
+
+    handle = GetStdHandle(STD_ERROR_HANDLE);
+    if (handle != NULL && handle != INVALID_HANDLE_VALUE)
+        SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 1);
+}
+
 #endif
 
 #if OS(LINUX)
@@ -178,12 +196,26 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
     return syscall(__NR_close_range, start, end, flags);
 }
 
+static void unset_cloexec(int fd)
+{
+    int flags = fcntl(fd, F_GETFD, 0);
+    if (flags == -1) {
+        return;
+    }
+    flags &= ~FD_CLOEXEC;
+    fcntl(fd, F_SETFD, flags);
+}
+
 extern "C" void on_before_reload_process_linux()
 {
+    unset_cloexec(STDIN_FILENO);
+    unset_cloexec(STDOUT_FILENO);
+    unset_cloexec(STDERR_FILENO);
+
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
-    bun_close_range(8, ~0U, CLOSE_RANGE_CLOEXEC);
+    bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
 
     // reset all signals to default
     sigset_t signal_set;
@@ -375,6 +407,7 @@ extern "C" void bun_initialize_process()
     // Prevent leaking inherited file descriptors on Linux
     // This is less of an issue for macOS due to posix_spawn
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
+    // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
     bun_close_range(0, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
 

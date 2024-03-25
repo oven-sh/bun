@@ -1011,7 +1011,7 @@ bool JSCommonJSModule::evaluate(
     if (this->hasEvaluated)
         return true;
 
-    this->sourceCode = WTFMove(JSC::SourceCode(WTFMove(sourceProvider)));
+    this->sourceCode = JSC::SourceCode(WTFMove(sourceProvider));
 
     WTF::NakedPtr<JSC::Exception> exception;
 

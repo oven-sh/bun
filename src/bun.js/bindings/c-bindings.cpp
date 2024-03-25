@@ -162,6 +162,24 @@ extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 
     return 0;
 }
+
+extern "C" void windows_enable_stdio_inheritance()
+{
+    HANDLE handle;
+
+    handle = GetStdHandle(STD_INPUT_HANDLE);
+    if (handle != NULL && handle != INVALID_HANDLE_VALUE)
+        SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 1);
+
+    handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (handle != NULL && handle != INVALID_HANDLE_VALUE)
+        SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 1);
+
+    handle = GetStdHandle(STD_ERROR_HANDLE);
+    if (handle != NULL && handle != INVALID_HANDLE_VALUE)
+        SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 1);
+}
+
 #endif
 
 #if OS(LINUX)

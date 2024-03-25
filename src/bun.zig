@@ -2061,6 +2061,7 @@ pub const win32 = struct {
     pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
         // this process will be the parent of the child process that actually runs the script
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
+        C.windows_enable_stdio_inheritance();
         while (true) {
             spawnWatcherChild(allocator, &procinfo) catch |err| {
                 Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});

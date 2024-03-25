@@ -280,8 +280,6 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
                 JSC::JSFunction::create(vm, WebCore::bundlerPluginRunSetupFunctionCodeGenerator(vm), globalObject));
         });
 
-    auto* clientData = WebCore::clientData(vm);
-
     this->putDirect(vm, Identifier::fromString(vm, String("onLoad"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("onResolve"_s)), jsUndefined(), 0);
     reifyStaticProperties(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
@@ -313,7 +311,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, 
     arguments.append(JSC::jsString(plugin->vm(), namespaceStringStr));
     arguments.append(JSC::jsNumber(defaultLoaderId));
 
-    auto result = call(globalObject, function, callData, plugin, arguments);
+    call(globalObject, function, callData, plugin, arguments);
 
     if (scope.exception()) {
         auto exception = scope.exception();
@@ -355,7 +353,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObjec
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
     arguments.append(JSC::jsNumber(kindId));
 
-    auto result = call(globalObject, function, callData, plugin, arguments);
+    call(globalObject, function, callData, plugin, arguments);
 
     if (UNLIKELY(scope.exception())) {
         auto exception = JSValue(scope.exception());

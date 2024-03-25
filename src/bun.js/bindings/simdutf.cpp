@@ -1,3 +1,6 @@
+// clang-format off
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wall"
 /* auto-generated on 2023-10-25 10:13:03 -0400. Do not edit! */
 /* begin file src/simdutf.cpp */
 #include "simdutf.h"
@@ -33296,3 +33299,4 @@ SIMDUTF_UNTARGET_REGION
 
 SIMDUTF_POP_DISABLE_WARNINGS
 /* end file src/simdutf.cpp */
+#pragma clang diagnostic pop

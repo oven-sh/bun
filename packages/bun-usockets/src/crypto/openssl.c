@@ -44,8 +44,6 @@ void *sni_find(void *sni, const char *hostname);
 #endif
 
 #include "./root_certs.h"
-static X509 *root_cert_instances[sizeof(root_certs) / sizeof(root_certs[0])] = {
-    NULL};
 
 /* These are in root_certs.cpp */
 extern X509_STORE *us_get_default_ca_store();
@@ -543,7 +541,6 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
     s = (struct us_internal_ssl_socket_t *)context->sc.on_data(&s->s, 0,
                                                                0); // cast here!
   }
-
 
   // Do not call on_writable if the socket is closed.
   // on close means the socket data is no longer accessible
@@ -1219,10 +1216,10 @@ void us_internal_ssl_socket_context_add_server_name(
   if (ssl_context) {
     /* Attach the user data to this context */
     if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
-      #if BUN_DEBUG
-        printf("CANNOT SET EX DATA!\n");
-        abort();
-      #endif
+#if BUN_DEBUG
+      printf("CANNOT SET EX DATA!\n");
+      abort();
+#endif
     }
 
     /* * We do not want to hold any nullptr's in our SNI tree */
@@ -1442,8 +1439,8 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
 }
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *path, size_t pathlen,
-    int options, int socket_ext_size) {
+    struct us_internal_ssl_socket_context_t *context, const char *path,
+    size_t pathlen, int options, int socket_ext_size) {
   return us_socket_context_listen_unix(0, &context->sc, path, pathlen, options,
                                        sizeof(struct us_internal_ssl_socket_t) -
                                            sizeof(struct us_socket_t) +
@@ -1460,8 +1457,8 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
 }
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *server_path, size_t pathlen,
-    int options, int socket_ext_size) {
+    struct us_internal_ssl_socket_context_t *context, const char *server_path,
+    size_t pathlen, int options, int socket_ext_size) {
   return (struct us_internal_ssl_socket_t *)us_socket_context_connect_unix(
       0, &context->sc, server_path, pathlen, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +

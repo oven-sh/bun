@@ -724,7 +724,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     }
 
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
-    struct addrinfo *listenAddr;
+    struct addrinfo *listenAddr = NULL;
     for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);

@@ -8,7 +8,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 
-
 namespace WebCore {
 
 IdentifierEventListenerMap::IdentifierEventListenerMap() = default;
@@ -139,18 +138,6 @@ SimpleEventListenerVector* IdentifierEventListenerMap::find(const JSC::Identifie
     }
 
     return nullptr;
-}
-
-static void removeFirstListenerCreatedFromMarkup(SimpleEventListenerVector& listenerVector)
-{
-    bool foundListener = listenerVector.removeFirstMatching([] (const auto& registeredListener) {
-        if (JSEventListener::wasCreatedFromMarkup(registeredListener->callback())) {
-            registeredListener->markAsRemoved();
-            return true;
-        }
-        return false;
-    });
-    ASSERT_UNUSED(foundListener, foundListener);
 }
 
 } // namespace WebCore

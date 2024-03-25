@@ -539,11 +539,11 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 12. added support for agent cluster ID.
  * Version 13. added support for ErrorInstance objects.
  */
-static constexpr unsigned CurrentVersion = 13;
-static constexpr unsigned TerminatorTag = 0xFFFFFFFF;
-static constexpr unsigned StringPoolTag = 0xFFFFFFFE;
-static constexpr unsigned NonIndexPropertiesTag = 0xFFFFFFFD;
-static constexpr uint32_t ImageDataPoolTag = 0xFFFFFFFE;
+[[maybe_unused]] static constexpr unsigned CurrentVersion = 13;
+[[maybe_unused]] static constexpr unsigned TerminatorTag = 0xFFFFFFFF;
+[[maybe_unused]] static constexpr unsigned StringPoolTag = 0xFFFFFFFE;
+[[maybe_unused]] static constexpr unsigned NonIndexPropertiesTag = 0xFFFFFFFD;
+[[maybe_unused]] static constexpr uint32_t ImageDataPoolTag = 0xFFFFFFFE;
 
 // The high bit of a StringData's length determines the character size.
 static constexpr unsigned StringDataIs8BitFlag = 0x80000000;

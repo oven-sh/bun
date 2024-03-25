@@ -16,10 +16,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionNotImplementedYet);
 DEFINE_NATIVE_MODULE(NodeTTY) {
   INIT_NATIVE_MODULE(3);
 
-  auto *isattyFunction =
-      JSFunction::create(vm, globalObject, 1, "isatty"_s, jsFunctionTty_isatty,
-                         ImplementationVisibility::Public);
-
   auto *notimpl = JSFunction::create(vm, globalObject, 0, "notimpl"_s,
                                      jsFunctionNotImplementedYet,
                                      ImplementationVisibility::Public,

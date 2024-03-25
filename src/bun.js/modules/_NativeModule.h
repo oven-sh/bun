@@ -5,6 +5,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGlobalObject.h"
 
+
 // These modules are implemented in native code as a function which writes ESM
 // export key+value pairs. The following macros help simplify the implementation
 // of these functions.
@@ -45,8 +46,8 @@
                       "NATIVE_MODULE_START() was should be given %d", numberOfActualExportNames);
 
 #define __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames)                       \
-  int numberOfActualExportNames = 0;                                           \
-  int passedNumberOfExportNames = numberOfExportNames;                         \
+  [[maybe_unused]] int numberOfActualExportNames = 0;                                           \
+  [[maybe_unused]] int passedNumberOfExportNames = numberOfExportNames;                         \
   
 #define __NATIVE_MODULE_ASSERT_INCR numberOfActualExportNames++;
 
@@ -71,13 +72,13 @@
   JSC::JSObject *defaultObject = JSC::constructEmptyObject(                    \
       globalObject, globalObject->objectPrototype(), numberOfExportNames);     \
   __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames);                            \
-  auto put = [&](JSC::Identifier name, JSC::JSValue value) {                   \
+  [[maybe_unused]] const auto put = [&](JSC::Identifier name, JSC::JSValue value) {                   \
     defaultObject->putDirect(vm, name, value);                                 \
     exportNames.append(name);                                                  \
     exportValues.append(value);                                                \
     __NATIVE_MODULE_ASSERT_INCR                                                \
   };                                                                           \
-  auto putNativeFn = [&](JSC::Identifier name, JSC::NativeFunction ptr) {      \
+  [[maybe_unused]] const auto putNativeFn = [&](JSC::Identifier name, JSC::NativeFunction ptr) {      \
     JSC::JSFunction *value = JSC::JSFunction::create(                          \
         vm, globalObject, 1, name.string(), ptr,                               \
         JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, ptr);         \
@@ -92,3 +93,4 @@
   exportValues.append(defaultObject);                                          \
   while (0) {                                                                  \
   }
+

@@ -28,22 +28,6 @@ using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
-static uintptr_t getSourceProviderMapKey(ResolvedSource& resolvedSource)
-{
-    switch (resolvedSource.source_code.tag) {
-    case BunStringTag::WTFStringImpl: {
-        return (uintptr_t)resolvedSource.source_code.impl.wtf->characters8();
-    }
-    case BunStringTag::StaticZigString:
-    case BunStringTag::ZigString: {
-        return (uintptr_t)Zig::untag(resolvedSource.source_code.impl.zig.ptr);
-    }
-    default: {
-        return 0;
-    }
-    }
-}
-
 SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 {
     if (isBuiltin) {

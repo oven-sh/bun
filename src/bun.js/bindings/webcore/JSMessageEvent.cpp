@@ -351,7 +351,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_lastEventId, (JSGlobalObject * lexicalGl
 
 static inline JSValue jsMessageEvent_sourceGetter(JSGlobalObject& lexicalGlobalObject, JSMessageEvent& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
     return jsNull();
     // auto throwScope = DECLARE_THROW_SCOPE(vm);
     // auto& impl = thisObject.wrapped();

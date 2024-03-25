@@ -178,7 +178,6 @@ template<> void JSFetchHeadersDOMConstructor::initializeProperties(VM& vm, JSDOM
  **/
 JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersGetterCount, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    auto& vm = JSC::getVM(globalObject);
     JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(JSValue::decode(thisValue));
     if (UNLIKELY(!castedThis)) {
         return JSValue::encode(jsUndefined());

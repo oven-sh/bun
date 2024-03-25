@@ -1453,7 +1453,6 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     return JSValue(result);
 }
 
-static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext);
 static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext)
 {
     int count = castedThis->columnNames->size();
@@ -1508,11 +1507,6 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
     }
 
     return result;
-}
-
-static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope)
-{
-    return constructResultRow(lexicalGlobalObject, castedThis, scope, nullptr);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

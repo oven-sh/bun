@@ -6432,10 +6432,15 @@ pub const PackageManager = struct {
                         .npm => brk: {
                             if (comptime FeatureFlags.breaking_changes_1_1_0) {
                                 if (request.version.tag == .dist_tag) {
-                                    const fmt = if (options.exact_versions) "{}" else "^{}";
-                                    break :brk try std.fmt.allocPrint(allocator, fmt, .{
-                                        request.resolution.value.npm.version.fmt(request.version_buf),
-                                    });
+                                    if (options.exact_versions) {
+                                        break :brk try std.fmt.allocPrint(allocator, "{}", .{
+                                            request.resolution.value.npm.version.fmt(request.version_buf),
+                                        });
+                                    } else {
+                                        break :brk try std.fmt.allocPrint(allocator, "^{}", .{
+                                            request.resolution.value.npm.version.fmt(request.version_buf),
+                                        });
+                                    }
                                 }
                                 break :brk null;
                             } else {
@@ -10142,9 +10147,19 @@ pub const PackageManager = struct {
 
         if (manager.options.do.run_scripts) {
             if (manager.root_lifecycle_scripts) |scripts| {
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(scripts.total > 0);
+                }
+
+                if (FeatureFlags.breaking_changes_1_1_0) {
+                    if (comptime log_level != .silent) {
+                        Output.printError("\n", .{});
+                        Output.flush();
+                    }
+                }
                 // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
                 // have finished, and lockfiles have been saved
-                try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, true);
+                try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, FeatureFlags.breaking_changes_1_1_0);
 
                 while (manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
                     if (PackageManager.verbose_install) {

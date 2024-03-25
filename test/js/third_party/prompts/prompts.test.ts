@@ -10,10 +10,11 @@ test("works with prompts", async () => {
     stdin: "pipe",
   });
 
+  await Bun.sleep(100);
   child.stdin.write("dylan\n");
-  Bun.sleepSync(100);
+  await Bun.sleep(100);
   child.stdin.write("999\n");
-  Bun.sleepSync(100);
+  await Bun.sleep(100);
   child.stdin.write("hi\n");
   expect(await child.exited).toBe(0);
 

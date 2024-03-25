@@ -1531,6 +1531,7 @@ pub fn reloadProcess(
         Output.disableBuffering();
         Output.resetTerminalAll();
     }
+    Output.Source.Stdio.restore();
     const bun = @This();
 
     if (comptime Environment.isWindows) {
@@ -1890,13 +1891,13 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
 ///
 /// On windows, this file descriptor will always be backed by libuv, so calling .close() is safe.
-pub inline fn toLibUVOwnedFD(fd: anytype) FileDescriptor {
+pub inline fn toLibUVOwnedFD(fd: anytype) !FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
-            FDImpl.System => FDImpl.fromSystem(fd).makeLibUVOwned(),
+            FDImpl.System => try FDImpl.fromSystem(fd).makeLibUVOwned(),
             FDImpl.UV => FDImpl.fromUV(fd),
-            FileDescriptor => FDImpl.decode(fd).makeLibUVOwned(),
+            FileDescriptor => try FDImpl.decode(fd).makeLibUVOwned(),
             FDImpl => fd.makeLibUVOwned(),
             else => @compileError("toLibUVOwnedFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
@@ -2060,6 +2061,7 @@ pub const win32 = struct {
     pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
         // this process will be the parent of the child process that actually runs the script
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
+        C.windows_enable_stdio_inheritance();
         while (true) {
             spawnWatcherChild(allocator, &procinfo) catch |err| {
                 Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
@@ -2070,8 +2072,11 @@ pub const win32 = struct {
             var exit_code: w.DWORD = 0;
             if (w.kernel32.GetExitCodeProcess(procinfo.hProcess, &exit_code) == 0) {
                 const err = windows.GetLastError();
+                _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
                 Output.panic("Failed to get exit code of child process: {s}\n", .{@tagName(err)});
             }
+            _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
+
             // magic exit code to indicate that the child process should be re-spawned
             if (exit_code == watcher_reload_exit) {
                 continue;
@@ -2143,6 +2148,7 @@ pub const win32 = struct {
             .hStdOutput = std.io.getStdOut().handle,
             .hStdError = std.io.getStdErr().handle,
         };
+        @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(
             image_pathZ.ptr,
             w.kernel32.GetCommandLineW(),
@@ -2158,6 +2164,7 @@ pub const win32 = struct {
         if (rc == 0) {
             Output.panic("Unexpected error while reloading process\n", .{});
         }
+        _ = std.os.windows.ntdll.NtClose(procinfo.hThread);
     }
 };
 
@@ -2823,8 +2830,6 @@ pub fn selfExePath() ![:0]u8 {
     memo.set = true;
     return memo.value[0..memo.len :0];
 }
-
-pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");
 
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
 

@@ -597,10 +597,12 @@ pub const Loop = extern struct {
     wq_async: uv_async_t,
 
     pub fn subActive(this: *Loop, value: u32) void {
+        log("subActive({d}) - {d}", .{ value, this.active_handles });
         this.active_handles -= value;
     }
 
     pub fn addActive(this: *Loop, value: u32) void {
+        log("addActive({d})", .{value});
         this.active_handles += value;
     }
 
@@ -608,15 +610,28 @@ pub const Loop = extern struct {
     pub const unref = dec;
 
     pub fn inc(this: *Loop) void {
+        log("inc - {d}", .{this.active_handles + 1});
+
+        // This log may be helpful if you are curious where KeepAlives are being created from
+        // if (Env.isDebug) {
+        //     std.debug.dumpCurrentStackTrace(@returnAddress());
+        // }
         this.active_handles += 1;
     }
 
     pub fn dec(this: *Loop) void {
+        log("dec", .{});
         this.active_handles -= 1;
     }
 
-    pub fn isActive(this: *const Loop) bool {
-        return uv_loop_alive(this) != 0;
+    pub fn isActive(this: *Loop) bool {
+        const loop_alive = uv_loop_alive(this) != 0;
+        // This log may be helpful if you are curious what exact handles are active
+        // if (Env.isDebug and loop_alive) {
+        //     bun.Output.debug("Active Handles:", .{});
+        //     dumpActiveHandles(this, null);
+        // }
+        return loop_alive;
     }
 
     pub fn init(ptr: *Loop) ?bun.C.E {
@@ -668,15 +683,22 @@ pub const Loop = extern struct {
     }
 
     pub fn refConcurrently(this: *Loop) void {
+        log("refConcurrently", .{});
         _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Add, 1, .Monotonic);
     }
 
     pub fn unrefConcurrently(this: *Loop) void {
+        log("unrefConcurrently", .{});
         _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Sub, 1, .Monotonic);
     }
 
     pub fn unrefCount(this: *Loop, count: i32) void {
+        log("unrefCount({d})", .{count});
         this.active_handles -= @intCast(count);
+    }
+
+    pub fn dumpActiveHandles(this: *Loop, stream: ?*FILE) void {
+        uv_print_active_handles(this, stream);
     }
 };
 pub const struct_uv__work = extern struct {
@@ -2034,8 +2056,8 @@ pub extern fn uv_req_get_type(req: [*c]const uv_req_t) uv_req_type;
 pub extern fn uv_req_type_name(@"type": uv_req_type) [*]const u8;
 pub extern fn uv_is_active(handle: *const uv_handle_t) c_int;
 pub extern fn uv_walk(loop: *uv_loop_t, walk_cb: uv_walk_cb, arg: ?*anyopaque) void;
-pub extern fn uv_print_all_handles(loop: *uv_loop_t, stream: [*c]FILE) void;
-pub extern fn uv_print_active_handles(loop: *uv_loop_t, stream: [*c]FILE) void;
+pub extern fn uv_print_all_handles(loop: *uv_loop_t, stream: ?*FILE) void;
+pub extern fn uv_print_active_handles(loop: *uv_loop_t, stream: ?*FILE) void;
 pub extern fn uv_close(handle: *uv_handle_t, close_cb: uv_close_cb) void;
 pub extern fn uv_send_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;
 pub extern fn uv_recv_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;

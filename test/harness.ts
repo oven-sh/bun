@@ -320,9 +320,6 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
 }
 
 export function getMaxFD(): number {
-  if (isWindows) {
-    return 0;
-  }
   const maxFD = openSync("/dev/null", "r");
   closeSync(maxFD);
   return maxFD;
@@ -572,5 +569,33 @@ export function writeShebangScript(path: string, program: string, data: string) 
     return writeFile(path, shebang_posix(program) + "\n" + data, { mode: 0o777 });
   } else {
     return writeFile(path + ".cmd", shebang_windows(program) + "\n" + data);
+  }
+}
+
+export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
+  var decoder = new (require("string_decoder").StringDecoder)("utf8");
+  var str = "";
+  for await (const chunk of iter) {
+    str += decoder.write(chunk);
+    let i = str.indexOf("\n");
+    while (i >= 0) {
+      yield str.slice(0, i);
+      str = str.slice(i + 1);
+      i = str.indexOf("\n");
+    }
+  }
+
+  str += decoder.end();
+  {
+    let i = str.indexOf("\n");
+    while (i >= 0) {
+      yield str.slice(0, i);
+      str = str.slice(i + 1);
+      i = str.indexOf("\n");
+    }
+  }
+
+  if (str.length > 0) {
+    yield str;
   }
 }

@@ -968,12 +968,13 @@ pub fn parseWithTag(
             if (strings.indexOfChar(dependency, ':')) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
                     const folder = brk: {
-                        if (dependency[protocol + 1] == '/') {
-                            if (dependency.len >= protocol + 2 and dependency[protocol + 2] == '/') {
+                        if (dependency.len > protocol + 1 and dependency[protocol + 1] == '/') {
+                            if (dependency.len > protocol + 2 and dependency[protocol + 2] == '/') {
                                 break :brk dependency[protocol + 3 ..];
                             }
                             break :brk dependency[protocol + 2 ..];
                         }
+
                         break :brk dependency[protocol + 1 ..];
                     };
 

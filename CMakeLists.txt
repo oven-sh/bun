@@ -5,37 +5,6 @@ cmake_policy(SET CMP0067 NEW)
 set(Bun_VERSION "1.0.35")
 set(WEBKIT_TAG 089023cc9078b3aa173869fd6685f3e7bed2a994)
 
-if(APPLE AND DEFINED ENV{CI})
-    if(ARCH STREQUAL "x86_64")
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
-    else()
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
-    endif()
-endif()
-
-if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-    execute_process(COMMAND xcrun --show-sdk-path OUTPUT_VARIABLE SDKROOT)
-    string(STRIP ${SDKROOT} SDKROOT)
-    message(STATUS "Using SDKROOT: ${SDKROOT}")
-    SET(CMAKE_OSX_SYSROOT ${SDKROOT})
-
-    execute_process(COMMAND xcrun --sdk macosx --show-sdk-version OUTPUT_VARIABLE MACOSX_DEPLOYMENT_TARGET)
-    string(STRIP ${MACOSX_DEPLOYMENT_TARGET} MACOSX_DEPLOYMENT_TARGET)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET ${MACOSX_DEPLOYMENT_TARGET})
-
-    # Check if current version of macOS is less than the deployment target and if so, raise an error
-    execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE MACOS_VERSION)
-    string(STRIP ${MACOS_VERSION} MACOS_VERSION)
-
-    if(MACOS_VERSION VERSION_LESS ${MACOSX_DEPLOYMENT_TARGET})
-        message(WARNING "\nThe current version of macOS (${MACOS_VERSION}) is less than the deployment target (${MACOSX_DEPLOYMENT_TARGET}).\nThis makes icucore fail to run at start.\nTo fix this, please either:\n- Upgrade to the latest version of macOS\n- Use `xcode-select` to switch to an SDK version <= ${MACOS_VERSION}")
-    endif()
-endif()
-
-if(APPLE)
-    message(STATUS "Building for macOS v${CMAKE_OSX_DEPLOYMENT_TARGET}")
-endif()
-
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
 
@@ -78,6 +47,45 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             set(bun "bun-profile")
         endif()
     endif()
+endif()
+
+# --- MacOS SDK ---
+if(APPLE AND DEFINED ENV{CI})
+    if(ARCH STREQUAL "x86_64")
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
+    else()
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+    endif()
+endif()
+
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    execute_process(COMMAND xcrun --show-sdk-path OUTPUT_VARIABLE SDKROOT)
+    string(STRIP ${SDKROOT} SDKROOT)
+    message(STATUS "MacOS SDK path: ${SDKROOT}")
+    SET(CMAKE_OSX_SYSROOT ${SDKROOT})
+
+    execute_process(COMMAND xcrun --sdk macosx --show-sdk-version OUTPUT_VARIABLE MACOSX_DEPLOYMENT_TARGET)
+    string(STRIP ${MACOSX_DEPLOYMENT_TARGET} MACOSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET ${MACOSX_DEPLOYMENT_TARGET})
+
+    # Check if current version of macOS is less than the deployment target and if so, raise an error
+    execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE MACOS_VERSION)
+    string(STRIP ${MACOS_VERSION} MACOS_VERSION)
+
+    if(MACOS_VERSION VERSION_LESS ${MACOSX_DEPLOYMENT_TARGET})
+        message(WARNING
+            "The current version of macOS (${MACOS_VERSION}) is less than the deployment target (${MACOSX_DEPLOYMENT_TARGET}).\n"
+            "The build will be incompatible with your current device due to mismatches in `icucore` versions.\n"
+            "To fix this, please either:\n"
+            " - Upgrade to at least macOS ${MACOSX_DEPLOYMENT_TARGET}\n"
+            " - Use `xcode-select` to switch to an SDK version <= ${MACOS_VERSION}\n"
+            " - Set CMAKE_OSX_DEPLOYMENT_TARGET=${MACOS_VERSION} (make sure to build all dependencies with this variable set too)"
+        )
+    endif()
+endif()
+
+if(APPLE)
+    message(STATUS "Building for macOS v${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif()
 
 # --- LLVM ---
@@ -1002,6 +1010,12 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
             -Werror=uninitialized
+            -Werror=conditional-uninitialized
+            -Werror=suspicious-memaccess
+            -Werror=move
+            -Werror=sometimes-uninitialized
+            -Werror=unused
+            -Wno-unused-function
             -Werror
         )
     else()
@@ -1017,11 +1031,16 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
         endif()
 
+        # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
         target_compile_options(${bun} PUBLIC -O3 ${LTO_FLAG} -g1
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
             -Werror=uninitialized
+            -Werror=conditional-uninitialized
+            -Werror=suspicious-memaccess
+            -Werror=move
+            -Werror=sometimes-uninitialized
             -Werror
         )
     else()

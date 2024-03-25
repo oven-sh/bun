@@ -9500,6 +9500,15 @@ pub const PackageManager = struct {
 
             installer.completeRemainingScripts(log_level);
 
+            if (!FeatureFlags.breaking_changes_1_1_0) {
+                if (this.root_lifecycle_scripts) |scripts| {
+                    if (comptime log_level.showProgress()) {
+                        scripts_node.setEstimatedTotalItems(scripts_node.unprotected_completed_items + scripts.total);
+                    }
+                    try this.spawnPackageLifecycleScripts(ctx, scripts, log_level, false);
+                }
+            }
+
             while (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
                 if (PackageManager.verbose_install) {
                     if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{this.pending_lifecycle_script_tasks.load(.Monotonic)});
@@ -10145,28 +10154,28 @@ pub const PackageManager = struct {
             }
         }
 
-        if (manager.options.do.run_scripts) {
-            if (manager.root_lifecycle_scripts) |scripts| {
-                if (comptime Environment.allow_assert) {
-                    std.debug.assert(scripts.total > 0);
-                }
+        if (FeatureFlags.breaking_changes_1_1_0) {
+            if (manager.options.do.run_scripts) {
+                if (manager.root_lifecycle_scripts) |scripts| {
+                    if (comptime Environment.allow_assert) {
+                        std.debug.assert(scripts.total > 0);
+                    }
 
-                if (FeatureFlags.breaking_changes_1_1_0) {
                     if (comptime log_level != .silent) {
                         Output.printError("\n", .{});
                         Output.flush();
                     }
-                }
-                // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
-                // have finished, and lockfiles have been saved
-                try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, FeatureFlags.breaking_changes_1_1_0);
+                    // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
+                    // have finished, and lockfiles have been saved
+                    try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, true);
 
-                while (manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                    if (PackageManager.verbose_install) {
-                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{manager.pending_lifecycle_script_tasks.load(.Monotonic)});
+                    while (manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+                        if (PackageManager.verbose_install) {
+                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{manager.pending_lifecycle_script_tasks.load(.Monotonic)});
+                        }
+
+                        manager.sleep();
                     }
-
-                    manager.sleep();
                 }
             }
         }

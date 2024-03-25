@@ -3523,13 +3523,13 @@ pub const Interpreter = struct {
             const args = args: {
                 this.args.append(null) catch bun.outOfMemory();
 
-                // if (bun.Environment.allow_assert) {
-                for (this.args.items) |maybe_arg| {
-                    if (maybe_arg) |arg| {
-                        log("ARG: {s}\n", .{arg});
+                if (bun.Environment.allow_assert) {
+                    for (this.args.items) |maybe_arg| {
+                        if (maybe_arg) |arg| {
+                            log("ARG: {s}\n", .{arg});
+                        }
                     }
                 }
-                // }
 
                 const first_arg = this.args.items[0] orelse {
                     // If no args then this is a bug

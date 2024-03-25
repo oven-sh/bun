@@ -1676,7 +1676,7 @@ pub const BunXFastPath = struct {
 
     /// If this returns, it implies the fast path cannot be taken
     fn tryLaunch(ctx_const: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
-        var ctx = ctx_const;    
+        var ctx = ctx_const;
         std.debug.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 

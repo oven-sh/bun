@@ -2072,8 +2072,11 @@ pub const win32 = struct {
             var exit_code: w.DWORD = 0;
             if (w.kernel32.GetExitCodeProcess(procinfo.hProcess, &exit_code) == 0) {
                 const err = windows.GetLastError();
+                _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
                 Output.panic("Failed to get exit code of child process: {s}\n", .{@tagName(err)});
             }
+            _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
+
             // magic exit code to indicate that the child process should be re-spawned
             if (exit_code == watcher_reload_exit) {
                 continue;
@@ -2145,6 +2148,7 @@ pub const win32 = struct {
             .hStdOutput = std.io.getStdOut().handle,
             .hStdError = std.io.getStdErr().handle,
         };
+        @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(
             image_pathZ.ptr,
             w.kernel32.GetCommandLineW(),
@@ -2160,6 +2164,7 @@ pub const win32 = struct {
         if (rc == 0) {
             Output.panic("Unexpected error while reloading process\n", .{});
         }
+        _ = std.os.windows.ntdll.NtClose(procinfo.hThread);
     }
 };
 

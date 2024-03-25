@@ -7869,7 +7869,7 @@ it("should install correct version of peer dependency from root package", async 
 describe("Registry URLs", () => {
   // Some of the non failing URLs are invalid, but bun's URL parser ignores
   // the validation error and returns a valid serialized URL anyway.
-  const registryURLs: [url: string, fails: boolean][] = [
+  const registryURLs: [url: string, fails: boolean | -1][] = [
     ["asdfghjklqwertyuiop", true],
     ["                ", true],
     ["::::::::::::::::", true],
@@ -7888,7 +7888,7 @@ describe("Registry URLs", () => {
     ["https://example.com/[]?[]#[]", false],
     ["http://example/%?%#%", false],
     ["c:", true],
-    ["c:/", false],
+    ["c:/", -1],
     ["http://點看", false], // gets converted to punycode
     ["http://xn--c1yn36f/", false],
   ];
@@ -7927,7 +7927,10 @@ describe("Registry URLs", () => {
         expect(stderr).toBeDefined();
         const err = await new Response(stderr).text();
 
-        if (fails) {
+        if (fails === -1) {
+          expect(err).toContain(`Registry URL must be http:// or https://`);
+          expect(err).toContain("error: InvalidURL");
+        } else if (fails) {
           expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
           expect(err).toContain("error: InvalidURL");
         } else {

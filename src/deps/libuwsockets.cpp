@@ -323,7 +323,7 @@ extern "C"
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(port, [handler, config,
+      uwsApp->listen(port, [handler, 
                             user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, user_data); });
     }
@@ -331,7 +331,7 @@ extern "C"
     {
       uWS::App *uwsApp = (uWS::App *)app;
 
-      uwsApp->listen(port, [handler, config,
+      uwsApp->listen(port, [handler, 
                             user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, user_data); });
     }

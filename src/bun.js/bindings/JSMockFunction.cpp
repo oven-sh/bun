@@ -1096,7 +1096,6 @@ extern "C" JSC::EncodedJSValue JSMock__jsMockFn(JSC::JSGlobalObject* lexicalGlob
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto thisObject_ = callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict());
     JSMockFunction* thisObject = JSMockFunction::create(
         vm,
         globalObject,
@@ -1453,7 +1452,6 @@ MockWithImplementationCleanupData* MockWithImplementationCleanupData::create(JSC
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = jsGlobalObject->vm();
-    auto count = callframe->argumentCount();
     auto ctx = jsDynamicCast<MockWithImplementationCleanupData*>(callframe->argument(1));
     if (!ctx) {
         return JSValue::encode(jsUndefined());

@@ -129,7 +129,7 @@ RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importJwk(size_t lengthBits, CryptoAlgorith
 JsonWebKey CryptoKeyHMAC::exportJwk() const
 {
 
-    JsonWebKey result;
+    JsonWebKey result {};
     result.kty = "oct"_s;
     result.k = Bun::base64URLEncodeToString(m_key);
     result.key_ops = usages();

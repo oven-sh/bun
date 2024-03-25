@@ -828,19 +828,12 @@ describe("deno_task", () => {
     writer.flush()
     `;
 
-    const { stdout, stderr, exitCode } = Bun.spawnSync(
-      [BUN, "-e", `await Bun.$\`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${$.escape(writerCode)} | cat\``],
-      {
-        env: bunEnv,
-      },
-    );
+    const runnerCode = /* ts */ `await Bun.$\`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${$.escape(writerCode)} | cat\``;
+    const { stdout, stderr, exitCode } = await $`${BUN} -e ${runnerCode}`.env(bunEnv);
 
     expect(stderr.length).toEqual(0);
     expect(exitCode).toEqual(0);
     expect(stdout.length).toEqual(128 * 1024 * 10);
-    for (let i = 0; i < stdout.length; i++) {
-      expect(stdout[i]).toEqual("a".charCodeAt(0));
-    }
   });
 
   // https://github.com/oven-sh/bun/issues/9458

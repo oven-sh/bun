@@ -99,8 +99,6 @@ void JSErrorHandler::handleEvent(ScriptExecutionContext& scriptExecutionContext,
         args.append(errorEvent.error(*globalObject));
         ASSERT(!args.hasOverflowed());
 
-        VM& vm = globalObject->vm();
-
         // JSExecState::instrumentFunction(&scriptExecutionContext, callData);
 
         NakedPtr<JSC::Exception> exception;

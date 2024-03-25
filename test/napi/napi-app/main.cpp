@@ -55,10 +55,10 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   }
 
   size_t copied;
-  size_t BUF_SIZE = 30;
+  const size_t BUF_SIZE = 30;
   char buf[BUF_SIZE];
   memset(buf, '*', BUF_SIZE);
-  buf[BUF_SIZE] = '\0';
+  buf[BUF_SIZE - 1] = '\0';
 
   if (napi_get_value_string_utf8(env, info[0], buf, len, &copied) != napi_ok) {
     return fail(env, "call to napi_get_value_string_utf8 failed");

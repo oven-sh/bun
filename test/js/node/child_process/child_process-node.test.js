@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { ChildProcess, spawn, exec, fork } from "node:child_process";
 import { createTest } from "node-harness";
 import { tmpdir } from "node:os";
@@ -370,7 +369,9 @@ describe("child_process cwd", () => {
 describe("child_process default options", () => {
   it("should use process.env as default env", done => {
     process.env.TMPDIR = platformTmpDir;
-    let child = spawn("printenv", [], {});
+
+    // fake printenv
+    let child = spawn(bunExe(), ["--print", "process.env"], {});
     let response = "";
 
     child.stdout.setEncoding("utf8");
@@ -383,7 +384,7 @@ describe("child_process default options", () => {
     // because the process can exit before the stream is closed and the data is read
     child.stdout.on("close", () => {
       try {
-        expect(response).toContain(`TMPDIR=${platformTmpDir}`);
+        expect(response).toContain(`TMPDIR: "${platformTmpDir.replace(/\\/g, "\\\\")}"`);
         done();
       } catch (e) {
         done(e);
@@ -397,24 +398,30 @@ describe("child_process double pipe", () => {
     // const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
     const mustCallAtLeast = fn => fn;
     const mustCall = fn => fn;
-    let grep, sed, echo;
-    grep = spawn("grep", ["o"], { stdio: ["pipe", "pipe", "pipe"] });
-    sed = spawn("sed", ["s/o/O/"]);
-    echo = spawn("echo", ["hello\nnode\nand\nworld\n"]);
+    let fakeGrep, fakeSed, fakeEcho;
+    fakeGrep = spawn(bunExe(), [
+      "-e",
+      "process.stdin.on('data', (data) => { const dataStr = data.toString(); if (dataStr.includes('o')) process.stdout.write(dataStr); });",
+    ]);
+    fakeSed = spawn(bunExe(), [
+      "-e",
+      "process.stdin.on('data', (data) => { process.stdout.write(data.toString().replace(/o/g, 'O')); });",
+    ]);
+    fakeEcho = spawn(bunExe(), ["-e", "console.log('hello');console.log('node');console.log('world');"]);
 
     // pipe grep | sed
-    grep.stdout.on(
+    fakeGrep.stdout.on(
       "data",
       mustCallAtLeast(data => {
         debug(`grep stdout ${data.length}`);
-        if (!sed.stdin.write(data)) {
-          grep.stdout.pause();
+        if (!fakeSed.stdin.write(data)) {
+          fakeGrep.stdout.pause();
         }
       }),
     );
 
     // print sed's output
-    sed.stdout.on(
+    fakeSed.stdout.on(
       "data",
       mustCallAtLeast(data => {
         result += data.toString("utf8");
@@ -422,13 +429,13 @@ describe("child_process double pipe", () => {
       }),
     );
 
-    echo.stdout.on(
+    fakeEcho.stdout.on(
       "data",
       mustCallAtLeast(data => {
         debug(`grep stdin write ${data.length}`);
-        if (!grep.stdin.write(data)) {
+        if (!fakeGrep.stdin.write(data)) {
           debug("echo stdout pause");
-          echo.stdout.pause();
+          fakeEcho.stdout.pause();
         }
       }),
     );
@@ -437,35 +444,35 @@ describe("child_process double pipe", () => {
     // So stdin has no 'drain' event.
     // TODO(@jasnell): This does not appear to ever be
     // emitted. It's not clear if it is necessary.
-    grep.stdin.on("drain", () => {
+    fakeGrep.stdin.on("drain", () => {
       debug("echo stdout resume");
-      echo.stdout.resume();
+      fakeEcho.stdout.resume();
     });
 
     // Propagate end from echo to grep
-    echo.stdout.on(
+    fakeEcho.stdout.on(
       "end",
       mustCall(() => {
         debug("echo stdout end");
-        grep.stdin.end();
+        fakeGrep.stdin.end();
       }),
     );
 
-    echo.on(
+    fakeEcho.on(
       "exit",
       mustCall(() => {
         debug("echo exit");
       }),
     );
 
-    grep.on(
+    fakeGrep.on(
       "exit",
       mustCall(() => {
         debug("grep exit");
       }),
     );
 
-    sed.on(
+    fakeSed.on(
       "exit",
       mustCall(() => {
         debug("sed exit");
@@ -474,22 +481,22 @@ describe("child_process double pipe", () => {
 
     // TODO(@jasnell): This does not appear to ever be
     // emitted. It's not clear if it is necessary.
-    sed.stdin.on("drain", () => {
-      grep.stdout.resume();
+    fakeSed.stdin.on("drain", () => {
+      fakeGrep.stdout.resume();
     });
 
     // Propagate end from grep to sed
-    grep.stdout.on(
+    fakeGrep.stdout.on(
       "end",
       mustCall(() => {
         debug("grep stdout end");
-        sed.stdin.end();
+        fakeSed.stdin.end();
       }),
     );
 
     let result = "";
 
-    sed.stdout.on(
+    fakeSed.stdout.on(
       "end",
       mustCall(() => {
         debug("result: " + result);

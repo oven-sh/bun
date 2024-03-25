@@ -439,7 +439,6 @@ const Scanner = struct {
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
                 const child_dir = bun.openDirAbsolute(path2) catch continue;
                 path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
-                FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch bun.outOfMemory();
             }
         }

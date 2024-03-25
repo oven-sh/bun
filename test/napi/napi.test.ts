@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { it, expect, test, beforeAll, describe } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import { spawnSync } from "bun";
@@ -18,20 +17,7 @@ describe("napi", () => {
     if (!install.success) {
       throw new Error("build failed");
     }
-
-    const build = spawnSync({
-      cmd: ["bun", "run", "build"],
-      cwd: join(__dirname, "napi-app"),
-      stderr: "inherit",
-      env: bunEnv,
-      stdout: "inherit",
-      stdin: "inherit",
-    });
-    if (!build.success) {
-      throw new Error("build failed");
-    }
   });
-
   describe("issue_7685", () => {
     it("works", () => {
       const args = [...Array(20).keys()];
@@ -53,7 +39,7 @@ describe("napi", () => {
 
     it("copies zero char", () => {
       const result = checkSameOutput("test_napi_get_value_string_utf8_with_buffer", ["abcdef", 0]);
-      expect(result).toEndWith("str: ******************************");
+      expect(result).toEndWith("str: *****************************");
     });
 
     it("copies more than given len", () => {

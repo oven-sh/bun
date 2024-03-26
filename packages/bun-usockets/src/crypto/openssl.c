@@ -971,28 +971,25 @@ long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
 
 struct us_bun_verify_error_t
 us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
+  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+    return (struct us_bun_verify_error_t){
+        .error = 0, .code = NULL, .reason = NULL};
+  }
+
+  SSL *ssl = s->ssl;
+  long x509_verify_error = // NOLINT(runtime/int)
+      us_internal_verify_peer_certificate(ssl,
+                                          X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
+
+  if (x509_verify_error == X509_V_OK)
+    return (struct us_bun_verify_error_t){
+        .error = x509_verify_error, .code = NULL, .reason = NULL};
+
+  const char *reason = X509_verify_cert_error_string(x509_verify_error);
+  const char *code = us_X509_error_code(x509_verify_error);
+
   return (struct us_bun_verify_error_t){
-      .error = 0, .code = NULL, .reason = NULL};
-  // if (us_socket_is_closed(0, &s->s) ||
-  // us_internal_ssl_socket_is_shut_down(s)) {
-  //   return (struct us_bun_verify_error_t){
-  //       .error = 0, .code = NULL, .reason = NULL};
-  // }
-
-  // SSL *ssl = s->ssl;
-  // long x509_verify_error = // NOLINT(runtime/int)
-  //     us_internal_verify_peer_certificate(ssl,
-  //                                         X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
-
-  // if (x509_verify_error == X509_V_OK)
-  //   return (struct us_bun_verify_error_t){
-  //       .error = x509_verify_error, .code = NULL, .reason = NULL};
-
-  // const char *reason = X509_verify_cert_error_string(x509_verify_error);
-  // const char *code = us_X509_error_code(x509_verify_error);
-
-  // return (struct us_bun_verify_error_t){
-  //     .error = x509_verify_error, .code = code, .reason = reason};
+      .error = x509_verify_error, .code = code, .reason = reason};
 }
 
 int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {

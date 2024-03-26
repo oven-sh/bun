@@ -1089,6 +1089,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn terminate(this: *WebSocket, code: ErrorCode) void {
+            log("terminate", .{});
             this.fail(code);
         }
 

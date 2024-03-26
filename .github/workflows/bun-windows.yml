@@ -422,13 +422,9 @@ jobs:
           packages: bash
       - name: Install dependencies
         run: |
-          # bun install --verbose
-          # bun install --cwd=test --verbose
-          # bun install --cwd=packages/bun-internal-test --verbose
-
-          npm install
-          cd test && npm install
-          cd ../packages/bun-internal-test && npm install
+          bun install --verbose
+          bun install --cwd=test --verbose
+          bun install --cwd=packages/bun-internal-test --verbose
           cd ../..
       - id: verdaccio
         run: bun run verdaccio &

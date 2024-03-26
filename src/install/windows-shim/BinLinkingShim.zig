@@ -84,14 +84,14 @@ fn wU8(comptime s: []const u8) []const u8 {
 pub const Shebang = struct {
     launcher: []const u8,
     utf16_len: u32,
-    is_bun: bool,
+    is_node_or_bun: bool,
 
-    pub fn init(launcher: []const u8, is_bun: bool) !Shebang {
+    pub fn init(launcher: []const u8, is_node_or_bun: bool) !Shebang {
         return .{
             .launcher = launcher,
             // TODO(@paperdave): what if this is invalid utf8?
             .utf16_len = @intCast(bun.simdutf.length.utf16.from.utf8(launcher)),
-            .is_bun = is_bun,
+            .is_node_or_bun = is_node_or_bun,
         };
     }
 
@@ -202,8 +202,8 @@ pub const Shebang = struct {
         if (eqlComptime(first, "/usr/bin/env") or eqlComptime(first, "/bin/env")) {
             const rest = tokenizer.rest();
             const program = tokenizer.next() orelse return parseFromBinPath(bin_path);
-            const is_bun = eqlComptime(program, "bun") or eqlComptime(program, "node");
-            return try Shebang.init(rest, is_bun);
+            const is_node_or_bun = eqlComptime(program, "bun") or eqlComptime(program, "node");
+            return try Shebang.init(rest, is_node_or_bun);
         }
 
         return try Shebang.init(line, false);
@@ -237,7 +237,7 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
     wbuf[1] = 0;
     wbuf = wbuf[2..];
 
-    const is_node_or_bun = if (options.shebang) |s| s.is_bun else false;
+    const is_node_or_bun = if (options.shebang) |s| s.is_node_or_bun else false;
     var flags = Flags{
         .has_shebang = options.shebang != null,
         .is_node_or_bun = is_node_or_bun,

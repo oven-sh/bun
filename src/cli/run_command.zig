@@ -456,19 +456,20 @@ pub const RunCommand = struct {
         // wrapper exe.  we build the full exe path even though we could do
         // a relative lookup, because in the case we do find it, we have to
         // generate this full path anyways.
+        //
         if (Environment.isWindows and bun.strings.hasSuffixComptime(executable, ".exe")) {
             std.debug.assert(std.fs.path.isAbsolute(executable));
-
+            
             // Using @constCast is safe because we know that
             // `direct_launch_buffer` is the data destination that assumption is
             // backed by the immediate assertion.
             var wpath = @constCast(bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable));
             std.debug.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
-
+            
             std.debug.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
             wpath.len += ".bunx".len - ".exe".len;
             @memcpy(wpath[wpath.len - "bunx".len ..], comptime bun.strings.w("bunx"));
-
+            
             BunXFastPath.tryLaunch(ctx, wpath, env, passthrough);
         }
 
@@ -1507,6 +1508,7 @@ pub const RunCommand = struct {
 
         // Run absolute/relative path
         if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
+            (Environment.isWindows and script_name_to_search > 3 and std.ascii.isAlphabetic(script_name_to_search[0]) and script_name_to_search[1] == ':') or
             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
         {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {

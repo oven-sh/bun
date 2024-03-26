@@ -29,9 +29,10 @@ it("should choose the tagged versions instead of the PATH versions when a tag is
 
   const results = await Promise.all(processes.map(p => p.exited));
   expect(results).toEqual([0, 0, 0]);
-  const outputs = (await Promise.all(processes.map(p => new Response(p.stdout).text()))).map(a =>
-    a.substring(0, a.indexOf("\n")),
-  );
+  const outputs = (await Promise.all(processes.map(p => new Response(p.stdout).text()))).map(a => {
+    console.log(a);
+    return a.substring(0, a.indexOf("\n"));
+  });
   expect(outputs).toEqual(["SemVer 7.5.0", "SemVer 7.5.1", "SemVer 7.5.2"]);
 });
 

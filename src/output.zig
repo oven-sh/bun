@@ -241,9 +241,9 @@ pub const Source = struct {
 
             const stdout = bun.sys.File.from(std.io.getStdOut());
             const stderr = bun.sys.File.from(std.io.getStdErr());
-            var output_source = Output.Source.init(stdout, stderr);
 
-            output_source.set();
+            Output.Source.init(stdout, stderr)
+                .set();
 
             if (comptime Environment.isDebug) {
                 initScopedDebugWriterAtStartup();
@@ -259,8 +259,8 @@ pub const Source = struct {
         }
     };
 
-    pub fn set(_source: *Source) void {
-        source = _source.*;
+    pub fn set(new_source: *const Source) void {
+        source = new_source.*;
 
         source_set = true;
         if (!stdout_stream_set) {
@@ -288,8 +288,8 @@ pub const Source = struct {
                 enable_ansi_colors = enable_ansi_colors_stdout or enable_ansi_colors_stderr;
             }
 
-            stdout_stream = _source.stream;
-            stderr_stream = _source.error_stream;
+            stdout_stream = new_source.stream;
+            stderr_stream = new_source.error_stream;
         }
     }
 };

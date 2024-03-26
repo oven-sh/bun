@@ -1,12 +1,13 @@
 import { file, spawn } from "bun";
 import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins } from "harness";
 import { join } from "path";
-import { mkdtempSync, realpathSync } from "fs";
+import { mkdtempSync, realpathSync, copyFileSync, mkdirSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
+import { f } from "js/bun/http/js-sink-sourmap-fixture/index.mjs";
 
 expect.extend({
   toBeValidBin,
@@ -6617,7 +6618,11 @@ describe("yarn tests", () => {
   });
 });
 
-test.if(isWindows)("bin linking shim should work", async () => {
+// This test is to verify that BinLinkingShim.zig creates correct shim files as
+// well as bun_shim_impl.exe works in various edge cases. There are many fast
+// paths for many many cases.
+test.if(isWindows)("windows bin linking shim should work", async () => {
+  expect(process.platform).toBe("win32"); // extra check
   await writeFile(
     join(packageDir, "package.json"),
     JSON.stringify({
@@ -6652,4 +6657,50 @@ test.if(isWindows)("bin linking shim should work", async () => {
     "",
     expect.stringContaining("1 package installed"),
   ]);
+
+  const temp_bin_dir = join(packageDir, "temp");
+  mkdirSync(temp_bin_dir);
+
+  for (let i = 1; i <= 7; i++) {
+    const target = join(temp_bin_dir, "a".repeat(i) + ".exe");
+    copyFileSync(bunExe(), target);
+  }
+
+  const PATH = process.env.PATH + ";" + temp_bin_dir;
+
+  const bins = [
+    { bin: "bin1", name: "bin1" },
+    { bin: "bin2", name: "bin2" },
+    { bin: "bin3", name: "bin3" },
+    { bin: "bin4", name: "bin4" },
+    { bin: "bin5", name: "bin5" },
+    { bin: "bin6", name: "bin6" },
+    { bin: "bin7", name: "bin7" },
+    { bin: "bin-node", name: "bin-node" },
+    { bin: "bin-bun", name: "bin-bun" },
+    { bin: "bin-py", name: "bin-py" },
+    { bin: "native", name: "exe" },
+    { bin: "uses-native", name: "exe" },
+  ];
+
+  for (const { bin, name } of bins) {
+    // `bun run ${bin} arg1 arg2`
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "run", bin, "arg1", "arg2"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        PATH,
+      },
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err.trim()).toBe("");
+    const out = await new Response(stdout).text();
+    expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
+    expect(await exited).toBe(0);
+  }
 });

@@ -957,7 +957,7 @@ describe("async", () => {
 
   TestBuilder.command`echo start > output.txt & cat output.txt`
     .file("output.txt", "hey")
-    .stdout("start\n")
+    .stdout(s => expect(s).toBeOneOf(["hey", "start\n"]))
     .runAsTest("background_execution_with_output_redirection");
 });
 

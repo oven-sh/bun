@@ -1070,6 +1070,44 @@ pub const Parser = struct {
         return expr;
     }
 
+    fn extractIfClauseTextToken(comptime if_clause_token: @TypeOf(.EnumLiteral)) []const u8 {
+        const tagname = comptime switch (if_clause_token) {
+            .@"if" => "if",
+            .@"else" => "else",
+            .elif => "elif",
+            .then => "then",
+            .fi => "fi",
+            else => @compileError("Invalid " ++ @tagName(if_clause_token)),
+        };
+        return tagname;
+    }
+
+    fn expectIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) Token {
+        const tagname = comptime extractIfClauseTextToken(if_clause_token);
+        std.debug.assert(@as(TokenTag, self.peek()) == .Text);
+        if (self.peek() == .Text and
+            self.delimits(self.peek_n(1)) and
+            std.mem.eql(u8, self.text(self.peek().Text), tagname))
+        {
+            const tok = self.advance();
+            _ = self.expect_delimit();
+            return tok;
+        }
+        unreachable;
+    }
+
+    fn isIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) bool {
+        return switch (self.peek()) {
+            .Text => |range| self.isIfClauseTextTokenImpl(range, if_clause_token),
+            else => false,
+        };
+    }
+
+    fn isIfClauseTextTokenImpl(self: *Parser, range: Token.TextRange, comptime if_clause_token: @TypeOf(.EnumLiteral)) bool {
+        const tagname = comptime extractIfClauseTextToken(if_clause_token);
+        return bun.strings.eqlComptime(self.text(range), tagname);
+    }
+
     fn parse_compound_cmd(self: *Parser) anyerror!AST.Expr {
         // Placeholder for when we fully support subshells
         // if (self.peek() == .OpenParen) {
@@ -1080,8 +1118,9 @@ pub const Parser = struct {
         // }
         // return (try self.parse_cmd_or_assigns()).to_expr(self.alloc);
 
+        if (self.isIfClauseTextToken(.@"if")) return (try self.parse_if_clause()).to_expr(self.alloc);
+
         switch (self.peek()) {
-            .If => return (try self.parse_if_clause()).to_expr(self.alloc),
             .DoubleBracketOpen => return (try self.parse_cond_expr()).to_expr(self.alloc),
             else => {},
         }
@@ -1195,12 +1234,40 @@ pub const Parser = struct {
         return ParseError.Unknown;
     }
 
-    fn parse_if_body(self: *Parser, comptime until: []const TokenTag) !SmolList(AST.Stmt, 1) {
+    /// We make it so that `if`/`else`/`elif`/`then`/`fi` need to be single,
+    /// simple .Text tokens (so the whitespace logic remains the same).
+    /// This is used to convert them
+    const IfClauseTok = enum {
+        @"if",
+        @"else",
+        elif,
+        then,
+        fi,
+
+        pub fn fromTok(p: *Parser, tok: Token) ?IfClauseTok {
+            return switch (tok) {
+                .Text => fromText(p.text(tok.Text)),
+                else => null,
+            };
+        }
+
+        pub fn fromText(txt: []const u8) ?IfClauseTok {
+            if (bun.strings.eqlComptime(txt, "if")) return .@"if";
+            if (bun.strings.eqlComptime(txt, "else")) return .@"else";
+            if (bun.strings.eqlComptime(txt, "elif")) return .elif;
+            if (bun.strings.eqlComptime(txt, "then")) return .then;
+            if (bun.strings.eqlComptime(txt, "fi")) return .fi;
+
+            return null;
+        }
+    };
+
+    fn parse_if_body(self: *Parser, comptime until: []const IfClauseTok) !SmolList(AST.Stmt, 1) {
         var ret: SmolList(AST.Stmt, 1) = SmolList(AST.Stmt, 1).zeroes;
         while (if (self.inside_subshell == null)
-            !self.peek_any_comptime(until ++ .{.Eof})
+            !self.peek_any_comptime_ifclausetok(until) and !self.peek_any_comptime(&.{.Eof})
         else
-            !self.peek_any(until ++ .{ self.inside_subshell.?.closing_tok(), .Eof }))
+            !self.peek_any_ifclausetok(until) and !self.peek_any(&.{ self.inside_subshell.?.closing_tok(), .Eof }))
         {
             self.skip_newlines();
             const stmt = try self.parse_stmt();
@@ -1212,24 +1279,34 @@ pub const Parser = struct {
     }
 
     fn parse_if_clause(self: *Parser) !AST.If {
-        _ = self.expect(.If);
+        _ = self.expectIfClauseTextToken(.@"if");
+        // _ = self.expect(.If);
 
-        const cond = try self.parse_if_body(&.{.Then});
+        const cond = try self.parse_if_body(&.{.then});
 
-        if (!self.match(.Then)) {
+        if (!self.match_if_clausetok(.then)) {
             try self.add_error("Expected \"then\" but got: {s}", .{@tagName(self.peek())});
             return ParseError.Expected;
         }
 
-        const then = try self.parse_if_body(&.{ .Else, .Elif, .Fi });
+        const then = try self.parse_if_body(&.{ .@"else", .elif, .fi });
 
         var else_parts: SmolList(SmolList(AST.Stmt, 1), 1) = SmolList(SmolList(AST.Stmt, 1), 1).zeroes;
 
-        switch (self.peek()) {
-            .Else => {
-                _ = self.expect(.Else);
-                const @"else" = try self.parse_if_body(&.{.Fi});
-                if (!self.match(.Fi)) {
+        const if_clause_tok = IfClauseTok.fromTok(self, self.peek()) orelse {
+            try self.add_error("Expected \"else\", \"elif\", or \"fi\" but got: {s}", .{@tagName(self.peek())});
+            return ParseError.Expected;
+        };
+
+        switch (if_clause_tok) {
+            .@"if", .then => {
+                try self.add_error("Expected \"else\", \"elif\", or \"fi\" but got: {s}", .{@tagName(self.peek())});
+                return ParseError.Expected;
+            },
+            .@"else" => {
+                _ = self.expectIfClauseTextToken(.@"else");
+                const @"else" = try self.parse_if_body(&.{.fi});
+                if (!self.match_if_clausetok(.fi)) {
                     try self.add_error("Expected \"fi\" but got: {s}", .{@tagName(self.peek())});
                     return ParseError.Expected;
                 }
@@ -1240,30 +1317,32 @@ pub const Parser = struct {
                     .else_parts = else_parts,
                 };
             },
-            .Elif => {
+            .elif => {
                 while (true) {
-                    _ = self.expect(.Elif);
-                    const elif_cond = try self.parse_if_body(&.{.Then});
-                    if (!self.match(.Then)) {
+                    _ = self.expectIfClauseTextToken(.elif);
+                    const elif_cond = try self.parse_if_body(&.{.then});
+                    if (!self.match_if_clausetok(.then)) {
                         try self.add_error("Expected \"then\" but got: {s}", .{@tagName(self.peek())});
                         return ParseError.Expected;
                     }
-                    const then_part = try self.parse_if_body(&.{ .Elif, .Else, .Fi });
+                    const then_part = try self.parse_if_body(&.{ .elif, .@"else", .fi });
                     else_parts.append(elif_cond);
                     else_parts.append(then_part);
 
-                    switch (self.peek()) {
-                        .Elif => continue,
-                        .Else => {
-                            _ = self.expect(.Else);
-                            const else_part = try self.parse_if_body(&.{.Fi});
+                    switch (IfClauseTok.fromTok(self, self.peek()) orelse {
+                        break;
+                    }) {
+                        .elif => continue,
+                        .@"else" => {
+                            _ = self.expectIfClauseTextToken(.@"else");
+                            const else_part = try self.parse_if_body(&.{.fi});
                             else_parts.append(else_part);
                             break;
                         },
                         else => break,
                     }
                 }
-                if (!self.match(.Fi)) {
+                if (!self.match_if_clausetok(.fi)) {
                     try self.add_error("Expected \"fi\" but got: {s}", .{@tagName(self.peek())});
                     return ParseError.Expected;
                 }
@@ -1273,16 +1352,12 @@ pub const Parser = struct {
                     .else_parts = else_parts,
                 };
             },
-            .Fi => {
-                _ = self.expect(.Fi);
+            .fi => {
+                _ = self.expectIfClauseTextToken(.fi);
                 return .{
                     .cond = cond,
                     .then = then,
                 };
-            },
-            else => {
-                try self.add_error("Expected \"else\", \"elif\", or \"fi\" but got: {s}", .{@tagName(self.peek())});
-                return ParseError.Expected;
             },
         }
     }
@@ -1487,20 +1562,6 @@ pub const Parser = struct {
                             if (should_break) break;
                         }
                     },
-                    .If, .Then, .Elif, .Else => {
-                        _ = self.expect(@as(TokenTag, peeked));
-                        const tags: []const TokenTag = &.{ .If, .Then, .Elif, .Else };
-                        inline for (tags) |tag| {
-                            const thistag = @as(TokenTag, peeked);
-                            if (tag == thistag) {
-                                try atoms.append(@unionInit(AST.SimpleAtom, @tagName(tag), {}));
-                                if (next_delimits) {
-                                    _ = self.match(.Delimit);
-                                    if (should_break) break;
-                                }
-                            }
-                        }
-                    },
                     .CmdSubstBegin => {
                         _ = self.expect(.CmdSubstBegin);
                         const is_quoted = self.match(.CmdSubstQuoted);
@@ -1609,6 +1670,18 @@ pub const Parser = struct {
         unreachable;
     }
 
+    fn match_if_clausetok(self: *Parser, toktag: IfClauseTok) bool {
+        if (self.peek() == .Text and
+            self.delimits(self.peek_n(1)) and
+            std.mem.eql(u8, self.text(self.peek().Text), @tagName(toktag)))
+        {
+            _ = self.advance();
+            _ = self.expect_delimit();
+            return true;
+        }
+        return false;
+    }
+
     /// Consumes token if it matches
     fn match(self: *Parser, toktag: TokenTag) bool {
         if (@as(TokenTag, self.peek()) == toktag) {
@@ -1634,6 +1707,34 @@ pub const Parser = struct {
         for (toktags) |tag| {
             if (peeked == tag) {
                 _ = self.advance();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn peek_any_ifclausetok(self: *Parser, toktags: []const IfClauseTok) bool {
+        const peektok = self.peek();
+        const peeked = @as(TokenTag, peektok);
+        if (peeked != .Text) return false;
+
+        const txt = self.text(peektok.Text);
+        for (toktags) |tag| {
+            if (bun.strings.eql(txt, @tagName(tag))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn peek_any_comptime_ifclausetok(self: *Parser, comptime toktags: []const IfClauseTok) bool {
+        const peektok = self.peek();
+        const peeked = @as(TokenTag, peektok);
+        if (peeked != .Text) return false;
+
+        const txt = self.text(peektok.Text);
+        inline for (toktags) |tag| {
+            if (bun.strings.eqlComptime(txt, @tagName(tag))) {
                 return true;
             }
         }
@@ -1756,11 +1857,6 @@ pub const TokenTag = enum {
     Var,
     Text,
     JSObjRef,
-    If,
-    Then,
-    Else,
-    Elif,
-    Fi,
     DoubleBracketOpen,
     DoubleBracketClose,
     Delimit,
@@ -1812,12 +1908,6 @@ pub const Token = union(TokenTag) {
     Text: TextRange,
     JSObjRef: u32,
 
-    If,
-    Then,
-    Else,
-    Elif,
-    Fi,
-
     DoubleBracketOpen,
     DoubleBracketClose,
 
@@ -1854,11 +1944,6 @@ pub const Token = union(TokenTag) {
             .Var => strpool[self.Var.start..self.Var.end],
             .Text => strpool[self.Text.start..self.Text.end],
             .JSObjRef => "JSObjRef",
-            .If => "if",
-            .Then => "then",
-            .Else => "else",
-            .Elif => "elif",
-            .Fi => "fi",
             .DoubleBracketOpen => "[[",
             .DoubleBracketClose => "]]",
             .Delimit => "Delimit",
@@ -2130,37 +2215,6 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                                 self.backtrack(state);
                             }
                             break :escaped;
-                        },
-
-                        // maybe `if`
-                        'i' => {
-                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            if (self.eatIf()) |tok| {
-                                try self.break_word(true);
-                                try self.tokens.append(tok);
-                            } else break :escaped;
-                        },
-                        't' => {
-                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            if (self.eatThen()) |tok| {
-                                try self.break_word(true);
-                                try self.tokens.append(tok);
-                            } else break :escaped;
-                        },
-                        'e' => {
-                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            const maybe_tok = self.eatElse() orelse self.eatElif();
-                            if (maybe_tok) |tok| {
-                                try self.break_word(true);
-                                try self.tokens.append(tok);
-                            } else break :escaped;
-                        },
-                        'f' => {
-                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            if (self.eatFi()) |tok| {
-                                try self.break_word(true);
-                                try self.tokens.append(tok);
-                            } else break :escaped;
                         },
 
                         '#' => {
@@ -2743,114 +2797,6 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             }
             const end = self.strpool.items.len;
             self.j += @intCast(end - start);
-        }
-
-        fn eatIf(self: *@This()) ?Token {
-            var p = self.peek() orelse return null;
-            if (p.escaped or p.char != 'f') return null;
-            const state = self.make_snapshot();
-            _ = self.eat();
-            // In the case of EOF just return if token
-            p = self.peek() orelse return .If;
-            do_backtrack: {
-                if (p.escaped) break :do_backtrack;
-                switch (p.char) {
-                    ' ', '\r', '\n', '\t', '(' => return .If,
-                    else => break :do_backtrack,
-                }
-            }
-            self.backtrack(state);
-            return null;
-        }
-
-        fn eatThen(self: *@This()) ?Token {
-            if (!self.matchesAsciiLiteral("hen")) return null;
-            const state = self.make_snapshot();
-
-            var i: usize = 0;
-            i += "then".len - 1;
-            const new_idx = self.chars.cursorPos() + i;
-            const prev_ascii_char: ?u7 = 'e';
-            const cur_ascii_char: u7 = 'n';
-            self.bumpCursorAscii(new_idx, prev_ascii_char, cur_ascii_char);
-
-            // In the case of EOF just return then token
-            const p = self.peek() orelse return .Then;
-            do_backtrack: {
-                if (p.escaped) break :do_backtrack;
-                switch (p.char) {
-                    ' ', '\r', '\n', '\t', '(' => return .Then,
-                    else => break :do_backtrack,
-                }
-            }
-            self.backtrack(state);
-            return null;
-        }
-
-        fn eatElse(self: *@This()) ?Token {
-            if (!self.matchesAsciiLiteral("lse")) return null;
-            const state = self.make_snapshot();
-
-            var i: usize = 0;
-            i += "else".len - 1;
-            const new_idx = self.chars.cursorPos() + i;
-            const prev_ascii_char: ?u7 = 's';
-            const cur_ascii_char: u7 = 'e';
-            self.bumpCursorAscii(new_idx, prev_ascii_char, cur_ascii_char);
-
-            // In the case of EOF just return else token
-            const p = self.peek() orelse return .Else;
-            do_backtrack: {
-                if (p.escaped) break :do_backtrack;
-                switch (p.char) {
-                    ' ', '\r', '\n', '\t', '(' => return .Else,
-                    else => break :do_backtrack,
-                }
-            }
-            self.backtrack(state);
-            return null;
-        }
-
-        fn eatElif(self: *@This()) ?Token {
-            if (!self.matchesAsciiLiteral("lif")) return null;
-            const state = self.make_snapshot();
-
-            var i: usize = 0;
-            i += "elif".len - 1;
-            const new_idx = self.chars.cursorPos() + i;
-            const prev_ascii_char: ?u7 = 'i';
-            const cur_ascii_char: u7 = 'f';
-            self.bumpCursorAscii(new_idx, prev_ascii_char, cur_ascii_char);
-
-            // In the case of EOF just return elif token
-            const p = self.peek() orelse return .Elif;
-            do_backtrack: {
-                if (p.escaped) break :do_backtrack;
-                switch (p.char) {
-                    ' ', '\r', '\n', '\t', '(' => return .Elif,
-                    else => break :do_backtrack,
-                }
-            }
-            self.backtrack(state);
-            return null;
-        }
-
-        fn eatFi(self: *@This()) ?Token {
-            var p = self.peek() orelse return null;
-            if (p.escaped or p.char != 'i') return null;
-            const state = self.make_snapshot();
-            _ = self.eat();
-            // In the case of EOF just return fi token
-            p = self.peek() orelse return .Fi;
-            do_backtrack: {
-                if (p.escaped) break :do_backtrack;
-                switch (p.char) {
-                    ' ', '\r', '\n', '\t', '(' => return .Fi,
-                    else => break :do_backtrack,
-                }
-            }
-            self.backtrack(state);
-            return null;
         }
 
         fn handleJSStringRef(self: *@This(), bunstr: bun.String) !void {
@@ -3489,12 +3435,6 @@ pub const Test = struct {
         Text: []const u8,
         JSObjRef: u32,
 
-        If,
-        Then,
-        Else,
-        Elif,
-        Fi,
-
         DoubleBracketOpen,
         DoubleBracketClose,
 
@@ -3525,11 +3465,6 @@ pub const Test = struct {
                 .CmdSubstEnd => return .CmdSubstEnd,
                 .OpenParen => return .OpenParen,
                 .CloseParen => return .CloseParen,
-                .If => return .If,
-                .Then => return .Then,
-                .Else => return .Else,
-                .Elif => return .Elif,
-                .Fi => return .Fi,
                 .DoubleBracketOpen => return .DoubleBracketOpen,
                 .DoubleBracketClose => return .DoubleBracketClose,
                 .Delimit => return .Delimit,

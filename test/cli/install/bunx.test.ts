@@ -29,8 +29,8 @@ it("should choose the tagged versions instead of the PATH versions when a tag is
 
   const results = await Promise.all(processes.map(p => p.exited));
   expect(results).toEqual([0, 0, 0]);
-  const outputs = (await Promise.all(processes.map(p => new Response(p.stdout).text()))).map(a => 
-    a.substring(0, a.indexOf("\n"))
+  const outputs = (await Promise.all(processes.map(p => new Response(p.stdout).text()))).map(a =>
+    a.substring(0, a.indexOf("\n")),
   );
   expect(outputs).toEqual(["SemVer 7.5.0", "SemVer 7.5.1", "SemVer 7.5.2"]);
 });
@@ -181,7 +181,7 @@ it("should work for github repository", async () => {
   expect(err).not.toContain("panic:");
   expect(withoutCache.stdout).toBeDefined();
   let out = await new Response(withoutCache.stdout).text();
-  expect(out.trim()).toContain("Usage: " + (isWindows ? 'cli.js' : 'cowsay'));
+  expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
   expect(await withoutCache.exited).toBe(0);
 
   // cached
@@ -200,7 +200,7 @@ it("should work for github repository", async () => {
   expect(err).not.toContain("panic:");
   expect(cached.stdout).toBeDefined();
   out = await new Response(cached.stdout).text();
-  expect(out.trim()).toContain("Usage: " + (isWindows ? 'cli.js' : 'cowsay'));
+  expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
   expect(await cached.exited).toBe(0);
 });
 

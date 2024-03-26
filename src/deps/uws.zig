@@ -229,6 +229,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             us_socket_sendfile_needs_more(this.socket);
         }
+        pub fn markDeadExtPtr(this: ThisSocket) void {
+            const holder = this.ext(*anyopaque) orelse return;
+            holder.* = @ptrFromInt(1);
+        }
 
         pub fn ext(this: ThisSocket, comptime ContextType: type) ?*ContextType {
             const alignment = if (ContextType == *anyopaque)

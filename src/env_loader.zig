@@ -1081,6 +1081,11 @@ pub const Map = struct {
 
     /// Creates a environment block for use in Posix Spawn APIs.
     /// As in, a sentinel slice of sentinel string pointers.
+    ///
+    /// TODO: the returned value of this is very hard to cleanup manually, and currently must be
+    /// backed by an arena allocator to avoid a memory leak. We use this in many places without
+    /// an area, so those usages are leaking here. Solution would be to make this return a struct
+    /// with a deinit that contained the allocation length.
     pub fn createNullDelimitedEnvMap(this: *Map, alloc: std.mem.Allocator) ![:null]?[*:0]u8 {
         var env_map = &this.map;
 

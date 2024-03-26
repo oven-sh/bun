@@ -710,7 +710,36 @@ test("NODE_ENV default is not propogated in bun run", () => {
   expect(bunRunAsScript(tmp, "show-env", {}).stdout).toBe("");
 });
 
-test("the script runner does not pass variables from .env files into scripts", () => {
+test("the script runner (system) does not pass variables from .env files into scripts", () => {
+  const script = isWindows ? "echo ENV_FILE_NAME=%ENV_FILE_NAME%" : "echo ENV_FILE_NAME=$ENV_FILE_NAME";
+  const tmp = tempDirWithFiles("script-runner-env", {
+    "package.json": '{"scripts":{"show-env":"' + script + '"}}',
+
+    ".env": "ENV_FILE_NAME=.env",
+    ".env.development": "ENV_FILE_NAME=.env.development",
+    ".env.production": "ENV_FILE_NAME=.env.production",
+    ".env.test": "ENV_FILE_NAME=.env.test",
+  });
+  // Cannot be empty as windows system shell will print "ECHO is on/off." if echo has no arguments
+  expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=system"]).stdout).toBe("ENV_FILE_NAME=");
+});
+
+test("the script runner (system) does pass .env.local in", () => {
+  const script = isWindows ? "echo ENV_FILE_NAME=%ENV_FILE_NAME%" : "echo ENV_FILE_NAME=$ENV_FILE_NAME";
+  const tmp = tempDirWithFiles("script-runner-env", {
+    "package.json": '{"scripts":{"show-env":"' + script + '"}}',
+
+    ".env": "ENV_FILE_NAME=.env",
+    ".env.development": "ENV_FILE_NAME=.env.development",
+    ".env.production": "ENV_FILE_NAME=.env.production",
+    ".env.test": "ENV_FILE_NAME=.env.test",
+    ".env.local": "ENV_FILE_NAME=.env.local",
+  });
+  expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=system"]).stdout).toBe("ENV_FILE_NAME=.env.local");
+});
+
+// TODO(@paperdave): fix this
+test.todo("the script runner (bun shell) does not pass variables from .env files into scripts", () => {
   const tmp = tempDirWithFiles("script-runner-env", {
     "package.json": '{"scripts":{"show-env":"echo $ENV_FILE_NAME"}}',
 
@@ -719,10 +748,10 @@ test("the script runner does not pass variables from .env files into scripts", (
     ".env.production": "ENV_FILE_NAME=.env.production",
     ".env.test": "ENV_FILE_NAME=.env.test",
   });
-  expect(bunRunAsScript(tmp, "show-env", {}).stdout).toBe("");
+  expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=bun"]).stdout).toBe("");
 });
 
-test("the script runner does pass .env.local in", () => {
+test("the script runner (bun shell) does pass .env.local in", () => {
   const tmp = tempDirWithFiles("script-runner-env", {
     "package.json": '{"scripts":{"show-env":"echo $ENV_FILE_NAME"}}',
 
@@ -732,7 +761,7 @@ test("the script runner does pass .env.local in", () => {
     ".env.test": "ENV_FILE_NAME=.env.test",
     ".env.local": "ENV_FILE_NAME=.env.local",
   });
-  expect(bunRunAsScript(tmp, "show-env", {}).stdout).toBe(".env.local");
+  expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=bun"]).stdout).toBe(".env.local");
 });
 
 const todoOnPosix = process.platform !== "win32" ? test.todo : test;

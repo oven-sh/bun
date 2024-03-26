@@ -665,7 +665,6 @@ pub const TestCommand = struct {
             node_env_entry.key_ptr.* = try env_loader.allocator.dupe(u8, node_env_entry.key_ptr.*);
             node_env_entry.value_ptr.* = .{
                 .value = try env_loader.allocator.dupe(u8, "test"),
-                .conditional = false,
             };
         }
 

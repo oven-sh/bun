@@ -2114,7 +2114,6 @@ pub const PackageManager = struct {
             init_cwd_gop.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_gop.key_ptr.*);
             init_cwd_gop.value_ptr.* = .{
                 .value = try ctx.allocator.dupe(u8, FileSystem.instance.top_level_dir),
-                .conditional = false,
             };
         }
 
@@ -6672,7 +6671,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(entries_option.entries, &[_][]u8{}, .production);
+        try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 

@@ -189,7 +189,6 @@ pub const Loader = struct {
     }
 
     fn loadCCachePathImpl(this: *Loader, fs: *Fs.FileSystem) !void {
-
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -206,7 +205,6 @@ pub const Loader = struct {
                 cxx_gop.key_ptr.* = try this.allocator.dupe(u8, cxx_gop.key_ptr.*);
                 cxx_gop.value_ptr.* = .{
                     .value = try this.allocator.dupe(u8, ccache_path),
-                    .conditional = false,
                 };
             }
             const c_gop = try this.map.getOrPutWithoutValue("CMAKE_C_COMPILER_LAUNCHER");
@@ -214,7 +212,6 @@ pub const Loader = struct {
                 c_gop.key_ptr.* = try this.allocator.dupe(u8, c_gop.key_ptr.*);
                 c_gop.value_ptr.* = .{
                     .value = try this.allocator.dupe(u8, ccache_path),
-                    .conditional = false,
                 };
             }
         }
@@ -468,13 +465,14 @@ pub const Loader = struct {
         dir: *Fs.FileSystem.DirEntry,
         env_files: []const []const u8,
         comptime suffix: DotEnvFileSuffix,
+        is_script_runner: bool,
     ) !void {
         const start = std.time.nanoTimestamp();
 
         if (env_files.len > 0) {
             try this.loadExplicitFiles(env_files);
         } else {
-            try this.loadDefaultFiles(dir, suffix);
+            try this.loadDefaultFiles(dir, suffix, is_script_runner);
         }
 
         if (!this.quiet) this.printLoaded(start);
@@ -492,8 +490,7 @@ pub const Loader = struct {
                 var iter = std.mem.splitBackwardsScalar(u8, arg_value, ',');
                 while (iter.next()) |file_path| {
                     if (file_path.len > 0) {
-                        try this.loadEnvFileDynamic(file_path, false, true);
-                        Analytics.Features.dotenv = true;
+                        try this.loadEnvFileDynamic(file_path, false);
                     }
                 }
             }
@@ -508,61 +505,61 @@ pub const Loader = struct {
         this: *Loader,
         dir: *Fs.FileSystem.DirEntry,
         comptime suffix: DotEnvFileSuffix,
+        /// Only '.env' and '.env.local' are loaded when running a script
+        /// mostly for backwards compatibility with older behavior of bun.
+        /// See https://github.com/oven-sh/bun/pull/9642
+        is_script_runner: bool,
     ) !void {
         const dir_handle: std.fs.Dir = std.fs.cwd();
 
-        switch (comptime suffix) {
-            .development => {
-                if (dir.hasComptimeQuery(".env.development.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.development.local", false, true);
-                    Analytics.Features.dotenv = true;
-                }
-            },
-            .production => {
-                if (dir.hasComptimeQuery(".env.production.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.production.local", false, true);
-                    Analytics.Features.dotenv = true;
-                }
-            },
-            .@"test" => {
-                if (dir.hasComptimeQuery(".env.test.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.test.local", false, true);
-                    Analytics.Features.dotenv = true;
-                }
-            },
+        if (!is_script_runner) {
+            switch (comptime suffix) {
+                .development => {
+                    if (dir.hasComptimeQuery(".env.development.local")) {
+                        try this.loadEnvFile(dir_handle, ".env.development.local", false);
+                    }
+                },
+                .production => {
+                    if (dir.hasComptimeQuery(".env.production.local")) {
+                        try this.loadEnvFile(dir_handle, ".env.production.local", false);
+                    }
+                },
+                .@"test" => {
+                    if (dir.hasComptimeQuery(".env.test.local")) {
+                        try this.loadEnvFile(dir_handle, ".env.test.local", false);
+                    }
+                },
+            }
         }
 
         if (comptime suffix != .@"test") {
             if (dir.hasComptimeQuery(".env.local")) {
-                try this.loadEnvFile(dir_handle, ".env.local", false, false);
-                Analytics.Features.dotenv = true;
+                try this.loadEnvFile(dir_handle, ".env.local", false);
             }
         }
 
-        switch (comptime suffix) {
-            .development => {
-                if (dir.hasComptimeQuery(".env.development")) {
-                    try this.loadEnvFile(dir_handle, ".env.development", false, true);
-                    Analytics.Features.dotenv = true;
-                }
-            },
-            .production => {
-                if (dir.hasComptimeQuery(".env.production")) {
-                    try this.loadEnvFile(dir_handle, ".env.production", false, true);
-                    Analytics.Features.dotenv = true;
-                }
-            },
-            .@"test" => {
-                if (dir.hasComptimeQuery(".env.test")) {
-                    try this.loadEnvFile(dir_handle, ".env.test", false, true);
-                    Analytics.Features.dotenv = true;
-                }
-            },
-        }
+        if (!is_script_runner) {
+            switch (comptime suffix) {
+                .development => {
+                    if (dir.hasComptimeQuery(".env.development")) {
+                        try this.loadEnvFile(dir_handle, ".env.development", false);
+                    }
+                },
+                .production => {
+                    if (dir.hasComptimeQuery(".env.production")) {
+                        try this.loadEnvFile(dir_handle, ".env.production", false);
+                    }
+                },
+                .@"test" => {
+                    if (dir.hasComptimeQuery(".env.test")) {
+                        try this.loadEnvFile(dir_handle, ".env.test", false);
+                    }
+                },
+            }
 
-        if (dir.hasComptimeQuery(".env")) {
-            try this.loadEnvFile(dir_handle, ".env", false, false);
-            Analytics.Features.dotenv = true;
+            if (dir.hasComptimeQuery(".env")) {
+                try this.loadEnvFile(dir_handle, ".env", false);
+            }
         }
     }
 
@@ -636,7 +633,6 @@ pub const Loader = struct {
         dir: std.fs.Dir,
         comptime base: string,
         comptime override: bool,
-        comptime conditional: bool,
     ) !void {
         if (@field(this, base) != null) {
             return;
@@ -714,7 +710,6 @@ pub const Loader = struct {
             this.map,
             override,
             false,
-            conditional,
         );
 
         @field(this, base) = source;
@@ -724,7 +719,6 @@ pub const Loader = struct {
         this: *Loader,
         file_path: []const u8,
         comptime override: bool,
-        comptime conditional: bool,
     ) !void {
         if (this.custom_files_loaded.contains(file_path)) {
             return;
@@ -786,7 +780,6 @@ pub const Loader = struct {
             this.map,
             override,
             false,
-            conditional,
         );
 
         try this.custom_files_loaded.put(file_path, source);
@@ -1011,8 +1004,9 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
-        comptime conditional: bool,
     ) void {
+        Analytics.Features.dotenv = true;
+
         var count = map.map.count();
         while (this.pos < this.src.len) {
             const key = this.parseKey(true) orelse {
@@ -1032,7 +1026,6 @@ const Parser = struct {
             }
             entry.value_ptr.* = .{
                 .value = allocator.dupe(u8, value) catch unreachable,
-                .conditional = conditional,
             };
         }
         if (comptime !is_process) {
@@ -1044,7 +1037,6 @@ const Parser = struct {
                     allocator.free(entry.value_ptr.value);
                     entry.value_ptr.* = .{
                         .value = allocator.dupe(u8, value) catch unreachable,
-                        .conditional = conditional,
                     };
                 }
             }
@@ -1057,17 +1049,15 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
-        comptime conditional: bool,
     ) void {
         var parser = Parser{ .src = source.contents };
-        parser._parse(allocator, map, override, is_process, conditional);
+        parser._parse(allocator, map, override, is_process);
     }
 };
 
 pub const Map = struct {
     const HashTableValue = struct {
         value: string,
-        conditional: bool,
     };
     // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
     // An issue with this exact implementation is unicode characters can technically appear in these
@@ -1094,12 +1084,9 @@ pub const Map = struct {
         {
             var it = env_map.iterator();
             while (it.next()) |pair| {
-                // Allow var from .env.development or .env.production to be loaded again
-                if (!pair.value_ptr.conditional) {
-                    envp_count += 1;
-                    // env line is 'KEY=VALUE\x00'
-                    total_bytes += (pair.key_ptr.len + pair.value_ptr.value.len + "=\x00".len);
-                }
+                envp_count += 1;
+                // env line is 'KEY=VALUE\x00'
+                total_bytes += (pair.key_ptr.len + pair.value_ptr.value.len + "=\x00".len);
             }
         }
         total_bytes += (envp_count + 1) * @sizeOf(?[*:0]u8); // +1 for the null ptr after the pointer list
@@ -1119,19 +1106,16 @@ pub const Map = struct {
             var it = env_map.iterator();
             var i: usize = 0;
             while (it.next()) |pair| {
-                // Allow var from .env.development or .env.production to be loaded again
-                if (!pair.value_ptr.conditional) {
-                    const variable_buf = string_alloc.allocSentinel(
-                        u8,
-                        pair.key_ptr.len + pair.value_ptr.value.len + 1,
-                        0,
-                    ) catch unreachable; // all bytes were pre-allocated.
-                    @memcpy(variable_buf[0..pair.key_ptr.len], pair.key_ptr.*);
-                    variable_buf[pair.key_ptr.len] = '=';
-                    @memcpy(variable_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
-                    envp[i] = variable_buf.ptr;
-                    i += 1;
-                }
+                const variable_buf = string_alloc.allocSentinel(
+                    u8,
+                    pair.key_ptr.len + pair.value_ptr.value.len + 1,
+                    0,
+                ) catch unreachable; // all bytes were pre-allocated.
+                @memcpy(variable_buf[0..pair.key_ptr.len], pair.key_ptr.*);
+                variable_buf[pair.key_ptr.len] = '=';
+                @memcpy(variable_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
+                envp[i] = variable_buf.ptr;
+                i += 1;
             }
             if (comptime Environment.allow_assert) std.debug.assert(i == envp_count);
         }
@@ -1153,10 +1137,7 @@ pub const Map = struct {
 
         var iter = this.map.iterator();
         while (iter.next()) |entry| {
-            // Allow var from .env.development or .env.production to be loaded again
-            if (!entry.value_ptr.conditional) {
-                try env_map.hash_map.put(entry.key_ptr.*, entry.value_ptr.value);
-            }
+            try env_map.hash_map.put(entry.key_ptr.*, entry.value_ptr.value);
         }
 
         return .{ .unsafe_map = env_map };
@@ -1215,7 +1196,6 @@ pub const Map = struct {
         }
         try this.map.put(key, .{
             .value = value,
-            .conditional = false,
         });
     }
 
@@ -1223,7 +1203,6 @@ pub const Map = struct {
         const gop = try this.map.getOrPut(key);
         gop.value_ptr.* = .{
             .value = try allocator.dupe(u8, value),
-            .conditional = false,
         };
         if (!gop.found_existing) {
             gop.key_ptr.* = try allocator.dupe(u8, key);
@@ -1234,7 +1213,6 @@ pub const Map = struct {
         const gop = try this.map.getOrPut(key);
         gop.value_ptr.* = .{
             .value = value,
-            .conditional = false,
         };
         if (!gop.found_existing) {
             gop.key_ptr.* = try allocator.dupe(u8, key);
@@ -1244,7 +1222,6 @@ pub const Map = struct {
     pub inline fn putAllocValue(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
         try this.map.put(key, .{
             .value = try allocator.dupe(u8, value),
-            .conditional = false,
         });
     }
 
@@ -1283,14 +1260,12 @@ pub const Map = struct {
     pub inline fn putDefault(this: *Map, key: string, value: string) !void {
         _ = try this.map.getOrPutValue(key, .{
             .value = value,
-            .conditional = false,
         });
     }
 
     pub inline fn getOrPut(this: *Map, key: string, value: string) !void {
         _ = try this.map.getOrPutValue(key, .{
             .value = value,
-            .conditional = false,
         });
     }
 

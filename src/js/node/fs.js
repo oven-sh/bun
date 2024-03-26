@@ -95,6 +95,10 @@ class FSWatcher extends EventEmitter {
 //   close();
 // }
 
+function openAsBlob(path, options) {
+  return Promise.$resolve(Bun.file(path, options));
+}
+
 class StatWatcher extends EventEmitter {
   // _handle: StatWatcherHandle;
 
@@ -326,44 +330,39 @@ var access = function access(...args) {
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = fs.rmSync.bind(fs),
   rmdirSync = fs.rmdirSync.bind(fs),
-  writev = (fd, buffers, position, callback) => {
+  writev = function writev(fd, buffers, position, callback) {
     if (typeof position === "function") {
       callback = position;
       position = null;
     }
 
-    queueMicrotask(() => {
-      try {
-        var written = fs.writevSync(fd, buffers, position);
-      } catch (e) {
-        callback(e);
-      }
+    if (!$isCallable(callback)) {
+      throw new TypeError("callback must be a function");
+    }
 
-      callback(null, written, buffers);
-    });
+    fs.writev(fd, buffers, position).$then(bytesWritten => callback(null, bytesWritten, buffers), callback);
   },
   writevSync = fs.writevSync.bind(fs),
-  readv = (fd, buffers, position, callback) => {
+  readv = function readv(fd, buffers, position, callback) {
     if (typeof position === "function") {
       callback = position;
       position = null;
     }
 
-    queueMicrotask(() => {
-      try {
-        var written = fs.readvSync(fd, buffers, position);
-      } catch (e) {
-        callback(e);
-      }
+    if (!$isCallable(callback)) {
+      throw new TypeError("callback must be a function");
+    }
 
-      callback(null, written, buffers);
-    });
+    fs.readv(fd, buffers, position).$then(bytesRead => callback(null, bytesRead, buffers), callback);
   },
   readvSync = fs.readvSync.bind(fs),
   Dirent = fs.Dirent,
   Stats = fs.Stats,
   watch = function watch(path, options, listener) {
     return new FSWatcher(path, options, listener);
+  },
+  opendir = function opendir(...args) {
+    callbackify(promises.opendir, args);
   };
 
 // TODO: make symbols a separate export somewhere
@@ -1349,6 +1348,8 @@ export default {
   writevSync,
   fdatasync,
   fdatasyncSync,
+  openAsBlob,
+  opendir,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,

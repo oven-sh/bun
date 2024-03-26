@@ -1179,7 +1179,7 @@ pub const Interpreter = struct {
         interp.exit_code = &exit_code;
         switch (try interp.run()) {
             .err => |e| {
-                defer interp.deinitEverything();
+                interp.deinitEverything();
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ std.fs.path.basename(path), e.toSystemError() });
                 bun.Global.exit(1);
                 return 1;
@@ -9262,13 +9262,13 @@ pub const Interpreter = struct {
 
             if (this.total_bytes_written >= SHRINK_THRESHOLD) {
                 log("IOWriter(0x{x}, fd={}) exceeded shrink threshold: truncating", .{ @intFromPtr(this), this.fd });
-                const remaining_len = this.buf.items.len - this.total_bytes_written;
-                if (remaining_len == 0) {
+                const slice = this.buf.items[this.total_bytes_written..];
+                const remaining_len = slice.len;
+                if (slice.len == 0) {
                     this.buf.clearRetainingCapacity();
                     this.total_bytes_written = 0;
                 } else {
-                    const slice = this.buf.items[this.total_bytes_written..this.buf.items.len];
-                    std.mem.copyForwards(u8, this.buf.items[0..remaining_len], slice);
+                    bun.copy(u8, this.buf.items[0..remaining_len], slice);
                     this.buf.items.len = remaining_len;
                     this.total_bytes_written = 0;
                 }
@@ -10085,11 +10085,11 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 .inlined => {
                     if (starting_idx >= this.inlined.len) return;
                     const slice_to_move = this.inlined.items[starting_idx..this.inlined.len];
-                    std.mem.copyForwards(T, this.inlined.items[0..starting_idx], slice_to_move);
+                    bun.copy(T, this.inlined.items[0..starting_idx], slice_to_move);
                 },
                 .heap => {
                     const new_len = this.heap.len - starting_idx;
-                    std.mem.copyForwards(T, this.heap.ptr[0..new_len], this.heap.ptr[starting_idx..this.heap.len]);
+                    bun.copy(T, this.heap.ptr[0..new_len], this.heap.ptr[starting_idx..this.heap.len]);
                     this.heap.len = @intCast(new_len);
                 },
             }

@@ -887,7 +887,6 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellAsyncSubprocessDone))) => {
                     var shell_ls_task: *ShellAsyncSubprocessDone = task.get(ShellAsyncSubprocessDone).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellIOWriterAsyncDeinit))) => {
                     var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;

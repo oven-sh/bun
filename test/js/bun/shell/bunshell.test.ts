@@ -825,7 +825,7 @@ describe("deno_task", () => {
     for (let i = 0; i < 10; i++) {
       writer.write(buf);
     }
-    writer.flush()
+    await writer.flush()
     `;
 
     const runnerCode = /* ts */ `await Bun.$\`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${$.escape(writerCode)} | cat\``;

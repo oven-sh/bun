@@ -1508,7 +1508,7 @@ pub const RunCommand = struct {
 
         // Run absolute/relative path
         if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
-            (Environment.isWindows and script_name_to_search > 3 and std.ascii.isAlphabetic(script_name_to_search[0]) and script_name_to_search[1] == ':') or
+            (Environment.isWindows and script_name_to_search.len > 3 and std.ascii.isAlphabetic(script_name_to_search[0]) and script_name_to_search[1] == ':') or
             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
         {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
@@ -1527,7 +1527,6 @@ pub const RunCommand = struct {
 
         if (script_name_to_search.len == 1 and script_name_to_search[0] == '-') {
             // read from stdin
-
             var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
             var list = std.ArrayList(u8).init(stack_fallback.get());
             errdefer list.deinit();

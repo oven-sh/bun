@@ -197,8 +197,8 @@ describe.each(["--production", "without --production"])("%s", flag => {
             name: "basic-1",
             version: "1.0.0",
           }))().then(
-          async () => await rm(join(packageDir, "node_modules", "basic-1"), { recursive: true, force: true }),
-        ),
+            async () => await rm(join(packageDir, "node_modules", "basic-1"), { recursive: true, force: true }),
+          ),
 
         (async () => (hash = Bun.hash(await file(join(packageDir, "bun.lockb")).arrayBuffer())))(),
       ]);
@@ -4678,14 +4678,14 @@ for (const forceWaiterThread of [false, true]) {
           out = await Bun.readableStreamToText(stdout);
           expected = withRm
             ? [
-                "",
-                " + uses-what-bin@1.0.0",
-                "",
-                expect.stringContaining("1 package installed"),
-                "",
-                " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
-                "",
-              ]
+              "",
+              " + uses-what-bin@1.0.0",
+              "",
+              expect.stringContaining("1 package installed"),
+              "",
+              " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+              "",
+            ]
             : ["", expect.stringContaining("Checked 3 installs across 4 packages (no changes)")];
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(expected);
 
@@ -6666,6 +6666,8 @@ test.if(isWindows)("windows bin linking shim should work", async () => {
     copyFileSync(bunExe(), target);
   }
 
+  copyFileSync(join(packageDir, "node_modules\\bunx-bins\\native.exe"), join(temp_bin_dir, "native.exe"));
+
   const PATH = process.env.PATH + ";" + temp_bin_dir;
 
   const bins = [
@@ -6680,11 +6682,11 @@ test.if(isWindows)("windows bin linking shim should work", async () => {
     { bin: "bin-bun", name: "bin-bun" },
     { bin: "bin-py", name: "bin-py" },
     { bin: "native", name: "exe" },
-    { bin: "uses-native", name: "exe" },
+    { bin: "uses-native", name: `exe ${packageDir}\\node_modules\\bunx-bins\\uses-native.ts` },
   ];
 
+  // `bun run ${bin} arg1 arg2`
   for (const { bin, name } of bins) {
-    // `bun run ${bin} arg1 arg2`
     var { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "run", bin, "arg1", "arg2"],
       cwd: packageDir,
@@ -6693,7 +6695,7 @@ test.if(isWindows)("windows bin linking shim should work", async () => {
       stderr: "pipe",
       env: {
         ...env,
-        PATH,
+        Path: PATH,
       },
     });
     expect(stderr).toBeDefined();
@@ -6703,4 +6705,67 @@ test.if(isWindows)("windows bin linking shim should work", async () => {
     expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
     expect(await exited).toBe(0);
   }
-});
+
+  // `bun --bun run ${bin} arg1 arg2`
+  for (const { bin, name } of bins) {
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "--bun", "run", bin, "arg1", "arg2"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        Path: PATH,
+      },
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err.trim()).toBe("");
+    const out = await new Response(stdout).text();
+    expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
+    expect(await exited).toBe(0);
+  }
+
+  // `bun --bun x ${bin} arg1 arg2`
+  for (const { bin, name } of bins) {
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "--bun", "x", bin, "arg1", "arg2"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        Path: PATH,
+      },
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err.trim()).toBe("");
+    const out = await new Response(stdout).text();
+    expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
+    expect(await exited).toBe(0);
+  }
+
+  // `${bin} arg1 arg2`
+  for (const { bin, name } of bins) {
+    var { stdout, stderr, exited } = spawn({
+      cmd: [join(packageDir, 'node_modules', '.bin', bin + ".exe"), "arg1", "arg2"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        Path: PATH,
+      },
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err.trim()).toBe("");
+    const out = await new Response(stdout).text();
+    expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
+    expect(await exited).toBe(0);
+  }
+}, 60_000);

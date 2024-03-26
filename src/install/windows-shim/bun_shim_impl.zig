@@ -698,7 +698,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
             const length_of_filename_u8 = @intFromPtr(read_ptr) -
-                @intFromPtr(buf1_u8) - 2 * nt_object_prefix.len - 2 * "\x00".len;
+                @intFromPtr(buf1_u8) - 2 * (nt_object_prefix.len - "\x00".len); 
             const filename = buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8];
             if (dbg) {
                 const sliced = std.mem.bytesAsSlice(u16, filename);
@@ -742,7 +742,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     };
 
     if (!is_standalone) {
-        // Prepare stdio for the child process, as after this we are going to immediatly exit.
+        // Prepare stdio for the child process, as after this we are going to *immediatly* exit
+        // it is likely that the c-runtime's atexit will not be called as we end the process ourselves.
         bun.Output.Source.Stdio.restore();
         bun.C.windows_enable_stdio_inheritance();
     }

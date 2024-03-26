@@ -24,8 +24,7 @@
 			"_nodeVersion": "21.7.1",
 			"_npmVersion": "10.5.0",
 			"dist": {
-				"integrity": "sha512-BJf8PSFHafYTaZ76t2c0C1KXAv0xKdqJNKxZ9APbCzbEhT9ilvfLFYsbkXjOySGBDuWg0Pb/dEc6gb6WLvJMoQ==",
-				"shasum": "c23382ce43a04a94035050ac736f04179a8639ff",
+				"shasum": "1809cf2217354265981106f91617b87381abad75",
 				"tarball": "http://localhost:4873/bunx-bins/-/bunx-bins-1.0.0.tgz"
 			},
 			"contributors": []

@@ -208,6 +208,7 @@ pub const Source = struct {
             _ = SetConsoleCP(CP_UTF8);
 
             const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
+            const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
             const ENABLE_PROCESSED_OUTPUT = 0x0001;
 
             var mode: w.DWORD = undefined;
@@ -220,13 +221,13 @@ pub const Source = struct {
             if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
                 console_mode[1] = mode;
                 bun_stdio_tty[1] = 1;
-                _ = SetConsoleMode(stdout, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | 0);
+                _ = SetConsoleMode(stdout, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_WRAP_AT_EOL_OUTPUT | mode);
             }
 
             if (w.kernel32.GetConsoleMode(stderr, &mode) != 0) {
                 console_mode[2] = mode;
                 bun_stdio_tty[2] = 1;
-                _ = SetConsoleMode(stderr, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | 0);
+                _ = SetConsoleMode(stderr, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_WRAP_AT_EOL_OUTPUT | mode);
             }
         }
     };

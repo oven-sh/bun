@@ -37,6 +37,7 @@ import fs, {
   readvSync,
   fstatSync,
   fdatasyncSync,
+  openAsBlob,
 } from "node:fs";
 
 import _promises, { type FileHandle } from "node:fs/promises";
@@ -45,7 +46,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
-import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_, fdatasync } from "./export-star-from.js";
+import { Dir, ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_, fdatasync } from "./export-star-from.js";
 import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
@@ -58,6 +59,10 @@ if (!import.meta.dir) {
 function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
+
+it("fs.openAsBlob", async () => {
+  expect((await openAsBlob(import.meta.path)).size).toBe(statSync(import.meta.path).size);
+});
 
 it("writing to 1, 2 are possible", () => {
   expect(fs.writeSync(1, Buffer.from("\nhello-stdout-test\n"))).toBe(19);
@@ -2291,6 +2296,13 @@ describe("fs/promises", () => {
 
   it("opendir should have a path property, issue#4995", async () => {
     expect((await fs.promises.opendir(".")).path).toBe(".");
+
+    const { promise, resolve } = Promise.withResolvers<Dir>();
+    fs.opendir(".", (err, dir) => {
+      resolve(dir);
+    });
+
+    expect((await promise).path).toBe(".");
   });
 });
 

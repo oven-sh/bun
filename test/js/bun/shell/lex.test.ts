@@ -732,7 +732,7 @@ describe("lex shell", () => {
 
     test("Unexpected EOF", async () => {
       await TestBuilder.command`echo hi |`.error("Unexpected EOF").run();
-      await TestBuilder.command`echo hi &`.error("Unexpected EOF").run();
+      await TestBuilder.command`echo hi &`.stdout("hi\n").run();
     });
 
     test("Unclosed subshell", async () => {

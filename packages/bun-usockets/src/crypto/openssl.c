@@ -184,6 +184,7 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   s->ssl = SSL_new(context->ssl_context);
   s->ssl_write_wants_read = 0;
   s->ssl_read_wants_write = 0;
+  s->pending_handshake = 1;
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
 
@@ -230,7 +231,6 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
 
   // will start on_open, on_writable or on_data
   if (!s->ssl) {
-    s->pending_handshake = 1;
     return;
   }
 
@@ -243,7 +243,8 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
 
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) ||
+      SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     s->pending_handshake = 0;
 
     struct us_bun_verify_error_t verify_error = (struct us_bun_verify_error_t){
@@ -321,10 +322,12 @@ struct us_internal_ssl_socket_t *
 ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-  if (s->pending_handshake) {
-    s->pending_handshake = 0;
+
+  s->pending_handshake = 0;
+  if (s->ssl) {
+    SSL_free(s->ssl);
+    s->ssl = NULL;
   }
-  SSL_free(s->ssl);
 
   return context->on_close(s, code, reason);
 }
@@ -343,7 +346,6 @@ ssl_on_end(struct us_internal_ssl_socket_t *s) {
 // this whole function needs a complete clean-up
 struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
                                              void *data, int length) {
-
   // note: this context can change when we adopt the socket!
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
@@ -363,7 +365,7 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
 
-  if (us_socket_is_closed(0, &s->s)) {
+  if (!s || us_socket_is_closed(0, &s->s)) {
     return s;
   }
 
@@ -456,7 +458,7 @@ restart:
         s = context->on_data(
             s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
             read);
-        if (us_socket_is_closed(0, &s->s)) {
+        if (!s || us_socket_is_closed(0, &s->s)) {
           return s;
         }
 
@@ -476,7 +478,7 @@ restart:
       // emit data and restart
       s = context->on_data(
           s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
-      if (us_socket_is_closed(0, &s->s)) {
+      if (!s || us_socket_is_closed(0, &s->s)) {
         return s;
       }
 
@@ -484,7 +486,11 @@ restart:
       goto restart;
     }
   }
-
+  int received_shutdown = SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN;
+  // if we received shutdown here on_writable will not be called
+  if (received_shutdown) {
+    return us_internal_ssl_socket_close(s, 0, NULL);
+  }
   // trigger writable if we failed last write with want read
   if (s->ssl_write_wants_read) {
     s->ssl_write_wants_read = 0;
@@ -502,24 +508,14 @@ restart:
     }
   }
 
-  // check this then?
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
-    // printf("SSL_RECEIVED_SHUTDOWN\n");
-
-    // exit(-2);
-
-    // not correct anyways!
     s = us_internal_ssl_socket_close(s, 0, NULL);
-
-    // us_
   }
-
   return s;
 }
 
 struct us_internal_ssl_socket_t *
 ssl_on_writable(struct us_internal_ssl_socket_t *s) {
-
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
@@ -940,7 +936,9 @@ const char *us_X509_error_code(long err) { // NOLINT(runtime/int)
 
 long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
     const SSL *ssl,
-    long def) {   // NOLINT(runtime/int)
+    long def) { // NOLINT(runtime/int)
+  if (!ssl)
+    return def;
   long err = def; // NOLINT(runtime/int)
   X509 *peer_cert = SSL_get_peer_certificate(ssl);
   if (peer_cert) {

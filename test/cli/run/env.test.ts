@@ -746,18 +746,21 @@ for (const shell of ["system", "bun"]) {
       );
     });
 
-    for (const { NODE_ENV, expected } of [
+    for (const { NODE_ENV, expected, env_file } of [
       {
         NODE_ENV: "production",
         expected: "production",
+        env_file: ".env.production",
       },
       {
         NODE_ENV: "development",
         expected: "development",
+        env_file: ".env.development",
       },
       {
         NODE_ENV: undefined,
         expected: "",
+        env_file: ".env.development",
       },
     ]) {
       test("explicit NODE_ENV=" + NODE_ENV, () => {
@@ -772,6 +775,28 @@ for (const shell of ["system", "bun"]) {
 
         expect(bunRunAsScript(tmp, "show-env", { NODE_ENV }, ["--shell=" + shell]).stdout).toBe(
           "ENV_FILE_NAME=, NODE_ENV=" + expected,
+        );
+      });
+
+      // This is already covered in isolation by the '.env file is loaded' describe
+      // but it is nice to have just a couple e2e tests combining script runner AND the runtime.
+      test("e2e NODE_ENV=" + NODE_ENV, () => {
+        const run_index_script = isWindowsCMD
+          ? `set NODE_ENV=${NODE_ENV} && bun run index.ts`
+          : `NODE_ENV=${NODE_ENV} bun run index.ts`;
+
+        const tmp = tempDirWithFiles("script-runner-env", {
+          "package.json": '{"scripts":{"start":"' + run_index_script + '"}}',
+          "index.ts": "console.log(`ENV_FILE_NAME=${process.env.ENV_FILE_NAME}, NODE_ENV=${process.env.NODE_ENV}`);",
+
+          ".env.development": "ENV_FILE_NAME=.env.development",
+          ".env.production": "ENV_FILE_NAME=.env.production",
+          ".env.test": "ENV_FILE_NAME=.env.test",
+          ".env": "ENV_FILE_NAME=.env",
+        });
+
+        expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe(
+          "ENV_FILE_NAME=" + env_file + ", NODE_ENV=" + NODE_ENV,
         );
       });
     }

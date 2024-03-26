@@ -202,11 +202,8 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
                                                           ip_length);
 
   // Hello Message!
-  // always handshake after open if on_handshake is set
-  if (context->on_handshake || s->pending_handshake) {
-    s->pending_handshake = 1;
-    us_internal_ssl_handshake(s);
-  }
+  // always handshake after open
+  us_internal_ssl_handshake(s);
 
   return result;
 }

@@ -1261,7 +1261,7 @@ pub const Subprocess = struct {
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;
                         subprocess.weak_file_sink_stdin_ptr = pipe;
-                        if (pipe.signal.ptr == @as(?*anyopaque, @ptrCast(this))) {
+                        if (pipe.signal.ptr == @as(?*anyopaque, @ptrCast(subprocess))) {
                             pipe.signal.clear();
                         }
 

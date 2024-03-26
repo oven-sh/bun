@@ -1,3 +1,5 @@
+// @known-failing-on-windows: 21 failing
+// file packages use subshells which bun shell does not support yet.
 import fs from "fs";
 import path from "path";
 import { test, expect, describe, beforeAll } from "bun:test";

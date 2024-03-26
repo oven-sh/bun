@@ -3320,7 +3320,7 @@ pub const Interpreter = struct {
             cwdfd: bun.FileDescriptor,
 
             pub fn runFromThreadPool(this: *ShellCondExprStatTask) void {
-                this.result = Syscall.fstatat(this.cwdfd, this.path);
+                this.result = ShellSyscall.statat(this.cwdfd, this.path);
             }
 
             pub fn runFromMainThread(this: *ShellCondExprStatTask) void {
@@ -10272,16 +10272,20 @@ const ShellSyscall = struct {
     }
 
     fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const path = switch (getPath(dir, path_, &buf)) {
-            .err => |e| return .{ .err = e },
-            .result => |p| p,
-        };
+        if (bun.Environment.isWindows) {
+            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const path = switch (getPath(dir, path_, &buf)) {
+                .err => |e| return .{ .err = e },
+                .result => |p| p,
+            };
 
-        return switch (Syscall.stat(path)) {
-            .err => |e| .{ .err = e.clone(bun.default_allocator) catch bun.outOfMemory() },
-            .result => |s| .{ .result = s },
-        };
+            return switch (Syscall.stat(path)) {
+                .err => |e| .{ .err = e.clone(bun.default_allocator) catch bun.outOfMemory() },
+                .result => |s| .{ .result = s },
+            };
+        }
+
+        return Syscall.fstatat(dir, path_);
     }
 
     fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {

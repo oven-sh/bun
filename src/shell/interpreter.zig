@@ -2415,9 +2415,8 @@ pub const Interpreter = struct {
         }
     };
 
-    /// In pipelines and binary expressions, assigns (e.g. `FOO=bar BAR=baz &&
-    /// echo hi` or `FOO=bar BAR=baz | echo hi`) have no effect on the environment
-    /// of the shell, so we can skip them.
+    /// In pipeline expressions, assigns (e.g. `FOO=bar BAR=baz | echo hi`) have
+    /// no effect on the environment of the shell, so we can skip them.
     const Assigns = struct {
         base: State,
         node: []const ast.Assign,
@@ -2758,7 +2757,6 @@ pub const Interpreter = struct {
             }
         }
 
-        /// Returns null if child is assignments
         fn makeChild(this: *Binary, left: bool) ?ChildPtr {
             const node = if (left) &this.node.left else &this.node.right;
             switch (node.*) {
@@ -3439,9 +3437,11 @@ pub const Interpreter = struct {
                             },
                             .@"-z", .@"-n" => @panic("This conditional expression op does not need `stat()`. This indicates a bug in Bun. Please file a GitHub issue."),
                             else => {
-                                inline for (ast.CondExpr.Op.SUPPORTED) |supported| {
-                                    if (supported == this.node.op) {
-                                        @panic("DEV: You did not support the \"" ++ @tagName(supported) ++ "\" conditional expression operation here.");
+                                if (bun.Environment.allow_assert) {
+                                    inline for (ast.CondExpr.Op.SUPPORTED) |supported| {
+                                        if (supported == this.node.op) {
+                                            @panic("DEV: You did not support the \"" ++ @tagName(supported) ++ "\" conditional expression operation here.");
+                                        }
                                     }
                                 }
                                 @panic("Invalid conditional expression op, this indicates a bug in Bun. Please file a GithHub issue.");
@@ -3520,17 +3520,6 @@ pub const Interpreter = struct {
 
         pub fn onStatTaskComplete(this: *CondExpr, result: Maybe(bun.Stat)) void {
             if (bun.Environment.allow_assert) std.debug.assert(this.state == .waiting_stat);
-
-            // const st = switch (result) {
-            //     .result => |f| f,
-            //     .err => |e| {
-            //         this.state = .waiting_write_err;
-            //         const systemerror = e.toSystemError();
-            //         defer systemerror.deref();
-            //         this.writeFailingError("bun: {}: {}", .{ systemerror.path, systemerror.message });
-            //         return;
-            //     },
-            // };
 
             this.state = .{
                 .stat_complete = .{ .stat = result },
@@ -3628,9 +3617,11 @@ pub const Interpreter = struct {
                     },
                     .exec => {
                         const stmts = this.state.exec.stmts;
-                        // Executed all the stmts
+                        // Executed all the stmts in the condition/branch
                         if (this.state.exec.stmt_idx >= stmts.len()) {
                             switch (this.state.exec.state) {
+                                // Move to the then, elif, or else branch based on the exit code
+                                // and the amount of else parts
                                 .cond => {
                                     if (this.state.exec.last_exit_code == 0) {
                                         this.state.exec.state = .then;
@@ -3657,10 +3648,13 @@ pub const Interpreter = struct {
                                         },
                                     }
                                 },
+                                // done
                                 .then => {
                                     this.parent.childDone(this, this.state.exec.last_exit_code);
                                     return;
                                 },
+                                // if succesful, execute the elif's then branch
+                                // otherwise, move to the next elif, or to the final else if it exists
                                 .elif => {
                                     this.state.exec.state.elif.idx += 2;
                                     if (this.state.exec.state.elif.idx == this.node.else_parts.len() -| 1) {
@@ -3736,62 +3730,6 @@ pub const Interpreter = struct {
                 .@"else" => this.next(),
             }
         }
-
-        // pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) void {
-        //     switch (this.state) {
-        //         .exec_cond => {
-        //             child.deinit();
-        //             this.state.exec_cond.last_exit_code = exit_code;
-
-        //             if (this.branchHasMore(.cond))
-        //                 return this.spawnBranch(.cond);
-
-        //             if (exit_code == 0) {
-        //                 this.state = .exec_then;
-        //             } else {
-        //                 switch (this.node.else_parts.len()) {
-        //                     0 => {
-        //                         this.parent.childDone(this, exit_code);
-        //                         return;
-        //                     },
-        //                     1 => this.state = .exec_else,
-        //                     else => this.state = .{ .exec_elif = .{} },
-        //                 }
-        //             }
-        //             this.next();
-        //         },
-        //         .exec_then => {
-        //             child.deinit();
-        //             if (this.branchHasMore(.then)) return this.spawnBranch(.then);
-        //             this.parent.childDone(this, exit_code);
-        //         },
-        //         .exec_elif => {
-        //             child.deinit();
-        //             if (this.branchHasMore(.elif)) return this.spawnBranch(.elif);
-        //             if (exit_code == 0) {
-        //                 log("{} exec=then{d}", .{ this, this.state.exec_elif.idx + 1 });
-        //                 const next_node = this.node.else_parts.getConst(this.state.exec_elif.idx + 1);
-        //                 this.state = .exec_then;
-        //                 this.spawnBranch(next_node);
-        //             } else {
-        //                 this.state.exec_elif.idx += 2;
-        //                 if (this.state.exec_elif.idx == this.node.else_parts.len() -| 1) {
-        //                     this.state = .exec_else;
-        //                     this.next();
-        //                     return;
-        //                 }
-        //                 log("{} exec=elif{d}", .{ this, this.state.exec_elif.idx });
-        //                 this.spawnBranch(this.node.else_parts.getConst(this.state.exec_elif.idx));
-        //             }
-        //         },
-        //         .exec_else => {
-        //             child.deinit();
-        //             if (this.branchHasMore(.@"else")) return this.spawnBranch(.@"else");
-        //             this.parent.childDone(this, exit_code);
-        //         },
-        //         .idle, .waiting_write_err, .done => @panic("Invalid state"),
-        //     }
-        // }
     };
 
     pub const Cmd = struct {

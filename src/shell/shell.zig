@@ -612,6 +612,12 @@ pub const AST = struct {
         ///
         /// else_part        : Elif compound_list Then else_part
         ///                  | Else compound_list
+        ///
+        /// If len is:
+        /// - 0                                   => no else
+        /// - 1                                   => just else
+        /// - 2n (n is # of elif/then branches)   => n elif/then branches
+        /// - 2n + 1                              => n elif/then branches and an else branch
         else_parts: SmolList(SmolList(Stmt, 1), 1) = SmolList(SmolList(Stmt, 1), 1).zeroes,
 
         pub fn to_expr(this: If, alloc: Allocator) !Expr {
@@ -1013,18 +1019,13 @@ pub const Parser = struct {
             };
 
             const right = try self.parse_pipeline();
-            // const right: AST.Expr = brk: {
-            //     const right = try self.parse_pipeline();
-            //     // For some reason `&` is not allowed on the left side (e.g. `echo foo & && echo hi` is invalid),
-            //     // but is allowed on the right hand side.
-            //     if (self.peek() == .Ampersand and self.peek_n(1) != .DoubleAmpersand) break :brk .{ .@"async" = try self.allocate(AST.Expr, right) };
-            //     break :brk right;
-            // };
 
             const binary = try self.allocate(AST.Binary, .{ .op = op, .left = left, .right = right });
             left = .{ .binary = binary };
         }
 
+        // Parse async (`&`)
+        // Note that it is not allowed on the left hand side of a binary
         if (self.match(.Ampersand)) {
             if (self.peek() == .DoubleAmpersand) {
                 try self.add_error("\"&\" is not allowed on the left-hand side of \"&&\"", .{});
@@ -1044,19 +1045,6 @@ pub const Parser = struct {
 
         return left;
     }
-
-    // fn parse_async(self: *Parser) !AST.Expr {
-    //     const left = try self.parse_pipeline();
-    //     if (self.peek() == .Ampersand) {
-    //         _ = self.expect(.Ampersand);
-    //         const expr = try self.alloc.create(AST.Expr);
-    //         expr.* = left;
-    //         return .{
-    //             .@"async" = expr,
-    //         };
-    //     }
-    //     return left;
-    // }
 
     fn parse_pipeline(self: *Parser) !AST.Expr {
         var expr = try self.parse_compound_cmd();

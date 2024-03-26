@@ -663,9 +663,7 @@ pub const TestCommand = struct {
         const node_env_entry = try env_loader.map.getOrPutWithoutValue("NODE_ENV");
         if (!node_env_entry.found_existing) {
             node_env_entry.key_ptr.* = try env_loader.allocator.dupe(u8, node_env_entry.key_ptr.*);
-            node_env_entry.value_ptr.* = .{
-                .value = try env_loader.allocator.dupe(u8, "test"),
-            };
+            node_env_entry.value_ptr.* = try env_loader.allocator.dupe(u8, "test");
         }
 
         try vm.bundler.configureDefines();

@@ -2112,9 +2112,7 @@ pub const PackageManager = struct {
         const init_cwd_gop = try this.env.map.getOrPutWithoutValue("INIT_CWD");
         if (!init_cwd_gop.found_existing) {
             init_cwd_gop.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_gop.key_ptr.*);
-            init_cwd_gop.value_ptr.* = .{
-                .value = try ctx.allocator.dupe(u8, FileSystem.instance.top_level_dir),
-            };
+            init_cwd_gop.value_ptr.* = try ctx.allocator.dupe(u8, FileSystem.instance.top_level_dir);
         }
 
         this.env.loadCCachePath(this_bundler.fs);

@@ -1043,7 +1043,7 @@ pub const Interpreter = struct {
             var iter = env_loader.iterator();
 
             while (iter.next()) |entry| {
-                const value = EnvStr.initSlice(entry.value_ptr.value);
+                const value = EnvStr.initSlice(entry.value_ptr.*);
                 const key = EnvStr.initSlice(entry.key_ptr.*);
                 export_env.insert(key, value);
             }

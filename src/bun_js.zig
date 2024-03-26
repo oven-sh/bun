@@ -226,9 +226,7 @@ pub const Run = struct {
         const node_env_entry = try b.env.map.getOrPutWithoutValue("NODE_ENV");
         if (!node_env_entry.found_existing) {
             node_env_entry.key_ptr.* = try b.env.allocator.dupe(u8, node_env_entry.key_ptr.*);
-            node_env_entry.value_ptr.* = .{
-                .value = try b.env.allocator.dupe(u8, "development"),
-            };
+            node_env_entry.value_ptr.* = try b.env.allocator.dupe(u8, "development");
         }
 
         b.configureRouter(false) catch {

@@ -203,16 +203,12 @@ pub const Loader = struct {
             const cxx_gop = try this.map.getOrPutWithoutValue("CMAKE_CXX_COMPILER_LAUNCHER");
             if (!cxx_gop.found_existing) {
                 cxx_gop.key_ptr.* = try this.allocator.dupe(u8, cxx_gop.key_ptr.*);
-                cxx_gop.value_ptr.* = .{
-                    .value = try this.allocator.dupe(u8, ccache_path),
-                };
+                cxx_gop.value_ptr.* = try this.allocator.dupe(u8, ccache_path);
             }
             const c_gop = try this.map.getOrPutWithoutValue("CMAKE_C_COMPILER_LAUNCHER");
             if (!c_gop.found_existing) {
                 c_gop.key_ptr.* = try this.allocator.dupe(u8, c_gop.key_ptr.*);
-                c_gop.value_ptr.* = .{
-                    .value = try this.allocator.dupe(u8, ccache_path),
-                };
+                c_gop.value_ptr.* = try this.allocator.dupe(u8, ccache_path);
             }
         }
     }
@@ -332,7 +328,7 @@ pub const Loader = struct {
 
                 if (behavior == .prefix) {
                     while (iter.next()) |entry| {
-                        const value: string = entry.value_ptr.value;
+                        const value: string = entry.value_ptr.*;
 
                         if (strings.startsWith(entry.key_ptr.*, prefix)) {
                             const key_str = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
@@ -383,12 +379,11 @@ pub const Loader = struct {
                     }
                 } else {
                     while (iter.next()) |entry| {
-                        const value: string = entry.value_ptr.value;
                         const key = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
 
                         e_strings[0] = js_ast.E.String{
-                            .data = if (entry.value_ptr.value.len > 0)
-                                @as([*]u8, @ptrFromInt(@intFromPtr(entry.value_ptr.value.ptr)))[0..value.len]
+                            .data = if (entry.value_ptr.len > 0)
+                                entry.value_ptr.*
                             else
                                 &[_]u8{},
                         };
@@ -1021,23 +1016,19 @@ const Parser = struct {
                     // https://github.com/oven-sh/bun/issues/1262
                     if (comptime !override) continue;
                 } else {
-                    allocator.free(entry.value_ptr.value);
+                    allocator.free(entry.value_ptr.*);
                 }
             }
-            entry.value_ptr.* = .{
-                .value = allocator.dupe(u8, value) catch unreachable,
-            };
+            entry.value_ptr.* = allocator.dupe(u8, value) catch bun.outOfMemory();
         }
         if (comptime !is_process) {
             var it = map.iterator();
             while (it.next()) |entry| {
                 if (count > 0) {
                     count -= 1;
-                } else if (expandValue(map, entry.value_ptr.value)) |value| {
-                    allocator.free(entry.value_ptr.value);
-                    entry.value_ptr.* = .{
-                        .value = allocator.dupe(u8, value) catch unreachable,
-                    };
+                } else if (expandValue(map, entry.value_ptr.*)) |value| {
+                    allocator.free(entry.value_ptr.*);
+                    entry.value_ptr.* = allocator.dupe(u8, value) catch bun.outOfMemory();
                 }
             }
         }
@@ -1056,14 +1047,11 @@ const Parser = struct {
 };
 
 pub const Map = struct {
-    const HashTableValue = struct {
-        value: string,
-    };
     // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
     // An issue with this exact implementation is unicode characters can technically appear in these
     // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
     // some strings collide.
-    const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(HashTableValue);
+    const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(string);
 
     const GetOrPutResult = HashTable.GetOrPutResult;
 
@@ -1086,7 +1074,7 @@ pub const Map = struct {
             while (it.next()) |pair| {
                 envp_count += 1;
                 // env line is 'KEY=VALUE\x00'
-                total_bytes += (pair.key_ptr.len + pair.value_ptr.value.len + "=\x00".len);
+                total_bytes += (pair.key_ptr.len + pair.value_ptr.len + "=\x00".len);
             }
         }
         total_bytes += (envp_count + 1) * @sizeOf(?[*:0]u8); // +1 for the null ptr after the pointer list
@@ -1108,12 +1096,12 @@ pub const Map = struct {
             while (it.next()) |pair| {
                 const variable_buf = string_alloc.allocSentinel(
                     u8,
-                    pair.key_ptr.len + pair.value_ptr.value.len + 1,
+                    pair.key_ptr.len + pair.value_ptr.len + 1,
                     0,
                 ) catch unreachable; // all bytes were pre-allocated.
                 @memcpy(variable_buf[0..pair.key_ptr.len], pair.key_ptr.*);
                 variable_buf[pair.key_ptr.len] = '=';
-                @memcpy(variable_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
+                @memcpy(variable_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.*);
                 envp[i] = variable_buf.ptr;
                 i += 1;
             }
@@ -1137,7 +1125,7 @@ pub const Map = struct {
 
         var iter = this.map.iterator();
         while (iter.next()) |entry| {
-            try env_map.hash_map.put(entry.key_ptr.*, entry.value_ptr.value);
+            try env_map.hash_map.put(entry.key_ptr.*, entry.value_ptr.*);
         }
 
         return .{ .unsafe_map = env_map };
@@ -1194,16 +1182,12 @@ pub const Map = struct {
         if (Environment.isWindows and Environment.allow_assert) {
             std.debug.assert(bun.strings.indexOfChar(key, '\x00') == null);
         }
-        try this.map.put(key, .{
-            .value = value,
-        });
+        try this.map.put(key, value);
     }
 
     pub inline fn putAllocKeyAndValue(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
         const gop = try this.map.getOrPut(key);
-        gop.value_ptr.* = .{
-            .value = try allocator.dupe(u8, value),
-        };
+        gop.value_ptr.* = try allocator.dupe(u8, value);
         if (!gop.found_existing) {
             gop.key_ptr.* = try allocator.dupe(u8, key);
         }
@@ -1211,18 +1195,14 @@ pub const Map = struct {
 
     pub inline fn putAllocKey(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
         const gop = try this.map.getOrPut(key);
-        gop.value_ptr.* = .{
-            .value = value,
-        };
+        gop.value_ptr.* = value;
         if (!gop.found_existing) {
             gop.key_ptr.* = try allocator.dupe(u8, key);
         }
     }
 
     pub inline fn putAllocValue(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
-        try this.map.put(key, .{
-            .value = try allocator.dupe(u8, value),
-        });
+        try this.map.put(key, try allocator.dupe(u8, value));
     }
 
     pub inline fn getOrPutWithoutValue(this: *Map, key: string) !GetOrPutResult {
@@ -1254,19 +1234,15 @@ pub const Map = struct {
         this: *const Map,
         key: string,
     ) ?string {
-        return if (this.map.get(key)) |entry| entry.value else null;
+        return this.map.get(key);
     }
 
     pub inline fn putDefault(this: *Map, key: string, value: string) !void {
-        _ = try this.map.getOrPutValue(key, .{
-            .value = value,
-        });
+        _ = try this.map.getOrPutValue(key, value);
     }
 
     pub inline fn getOrPut(this: *Map, key: string, value: string) !void {
-        _ = try this.map.getOrPutValue(key, .{
-            .value = value,
-        });
+        _ = try this.map.getOrPutValue(key, value);
     }
 
     pub fn remove(this: *Map, key: string) void {

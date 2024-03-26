@@ -207,7 +207,7 @@ const NetworkTask = struct {
     allocator: std.mem.Allocator,
     request_buffer: MutableString = undefined,
     response_buffer: MutableString = undefined,
-    package_manager: *PackageManager,
+    package_manager: *PackageManager = &PackageManager.instance,
     callback: union(Task.Tag) {
         package_manifest: struct {
             loaded_manifest: ?Npm.PackageManifest = null,
@@ -586,7 +586,7 @@ const Task = struct {
     log: logger.Log,
     id: u64,
     err: ?anyerror = null,
-    package_manager: *PackageManager,
+    package_manager: *PackageManager = &PackageManager.instance,
 
     /// An ID that lets us register a callback without keeping the same pointer around
     pub const Id = struct {
@@ -3102,7 +3102,6 @@ pub const PackageManager = struct {
         try network_task.forTarball(
             this.allocator,
             .{
-                .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(
                     this.lockfile.str(&package.name),
                     *FileSystem.FilenameStore,
@@ -3403,7 +3402,6 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.allocator.create(Task) catch unreachable;
         task.* = Task{
-            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.package_manifest,
             .request = .{
@@ -3425,7 +3423,6 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.allocator.create(Task) catch unreachable;
         task.* = Task{
-            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.extract,
             .request = .{
@@ -3449,7 +3446,6 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.allocator.create(Task) catch unreachable;
         task.* = Task{
-            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.git_clone,
             .request = .{
@@ -3483,7 +3479,6 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.allocator.create(Task) catch unreachable;
         task.* = Task{
-            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.git_checkout,
             .request = .{
@@ -3524,13 +3519,11 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.allocator.create(Task) catch unreachable;
         task.* = Task{
-            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.local_tarball,
             .request = .{
                 .local_tarball = .{
                     .tarball = .{
-                        .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
                         .name = strings.StringOrTinyString.initAppendIfNeeded(
                             name,
                             *FileSystem.FilenameStore,
@@ -3892,7 +3885,6 @@ pub const PackageManager = struct {
 
                                     var network_task = this.getNetworkTask();
                                     network_task.* = .{
-                                        .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
                                         .callback = undefined,
                                         .task_id = task_id,
                                         .allocator = this.allocator,

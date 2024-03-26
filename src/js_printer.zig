@@ -2470,9 +2470,7 @@ fn NewPrinter(
                     }
                 },
                 .e_dot => |e| {
-                    // Ironic Zig compiler bug: e.optional_chain == null or e.optional_chain == .start causes broken LLVM IR
-                    // https://github.com/ziglang/zig/issues/6059
-                    const isOptionalChain = (e.optional_chain orelse js_ast.OptionalChain.ccontinue) == js_ast.OptionalChain.start;
+                    const isOptionalChain = e.optional_chain == .start;
 
                     var wrap = false;
                     if (e.optional_chain == null) {
@@ -2540,9 +2538,7 @@ fn NewPrinter(
 
                     p.printExpr(e.target, .postfix, flags);
 
-                    // Zig compiler bug: e.optional_chain == null or e.optional_chain == .start causes broken LLVM IR
-                    // https://github.com/ziglang/zig/issues/6059
-                    const is_optional_chain_start = (e.optional_chain orelse js_ast.OptionalChain.ccontinue) == js_ast.OptionalChain.start;
+                    const is_optional_chain_start = e.optional_chain == .start;
 
                     if (is_optional_chain_start) {
                         p.print("?.");

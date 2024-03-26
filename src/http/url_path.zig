@@ -58,8 +58,7 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
     var needs_redirect = false;
 
     if (strings.containsChar(decoded_pathname, '%')) {
-        // https://github.com/ziglang/zig/issues/14148
-        var possibly_encoded_pathname: []u8 = switch (decoded_pathname.len) {
+        var possibly_encoded_pathname = switch (decoded_pathname.len) {
             0...1024 => &temp_path_buf,
             else => &big_temp_path_buf,
         };

@@ -1399,7 +1399,7 @@ link: ## link a debug build of bun
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
 		-o $(DEBUG_BIN)/bun-debug
-		@rm -f $(DEBUG_BIN)/bun-debug.o.o 2> /dev/null # workaround for https://github.com/ziglang/zig/issues/14080
+		@rm -f $(DEBUG_BIN)/bun-debug.o.o 2> /dev/null # workaround for https://github.com/ziglang/zig/issues/13179
 
 link-no-jsc:
 	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) $(SYMBOLS) \
@@ -1429,7 +1429,7 @@ bun-link-lld-profile:
 		$(OPTIMIZATION_LEVEL) $(RELEASE_FLAGS)
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
-	@rm -f $(BUN_RELEASE_BIN).o.o # workaround for https://github.com/ziglang/zig/issues/14080
+	@rm -f $(BUN_RELEASE_BIN).o.o # workaround for https://github.com/ziglang/zig/issues/13179
 
 build-profile: build-obj bun-link-lld-profile bun-codesign-release-local
 
@@ -1441,7 +1441,7 @@ bun-link-lld-release:
 		$(OPTIMIZATION_LEVEL) $(RELEASE_FLAGS)
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
-	@rm -f $(BUN_RELEASE_BIN).o.o # workaround for https://github.com/ziglang/zig/issues/14080
+	@rm -f $(BUN_RELEASE_BIN).o.o # workaround for https://github.com/ziglang/zig/issues/13179
 
 bun-release-copy-obj:
 	cp $(BUN_RELEASE_BIN).o $(BUN_DEPLOY_DIR).o

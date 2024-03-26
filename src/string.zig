@@ -235,7 +235,7 @@ pub const StringImplAllocator = struct {
 
     pub fn free(
         ptr: *anyopaque,
-        buf: []u8,
+        buf: []const u8,
         _: u8,
         _: usize,
     ) void {

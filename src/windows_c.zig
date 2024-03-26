@@ -1426,3 +1426,5 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
     else
         Maybe(void).errno(rc, .NtSetInformationFile);
 }
+
+pub extern fn windows_enable_stdio_inheritance() void;

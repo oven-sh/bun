@@ -133,7 +133,7 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
 
 JsonWebKey CryptoKeyRSA::exportJwk() const
 {
-    JsonWebKey result;
+    JsonWebKey result {};
     result.kty = "RSA"_s;
     result.key_ops = usages();
     result.ext = extractable();

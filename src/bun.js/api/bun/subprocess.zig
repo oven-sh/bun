@@ -1157,7 +1157,7 @@ pub const Subprocess = struct {
                                     return error.UnexpectedCreatingStdin;
                                 },
                             }
-
+                            pipe.writer.setParent(pipe);
                             subprocess.weak_file_sink_stdin_ptr = pipe;
                             subprocess.flags.has_stdin_destructor_called = false;
 
@@ -1283,6 +1283,10 @@ pub const Subprocess = struct {
 
             return switch (this.*) {
                 .pipe => |pipe| {
+                    if (pipe.signal.ptr == @as(*anyopaque, @ptrCast(this))) {
+                        pipe.signal.clear();
+                    }
+
                     pipe.deref();
 
                     this.* = .{ .ignore = {} };

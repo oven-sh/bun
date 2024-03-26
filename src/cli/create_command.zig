@@ -109,8 +109,6 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     const npm_args = 2 * @as(usize, @intCast(@intFromBool(npm_client != null)));
     const total = count + npm_args;
     var argv = allocator.alloc(string, total) catch return;
-    var proc: std.ChildProcess = undefined;
-    defer if (argv.len > 32) allocator.free(argv);
 
     if (npm_client) |client| {
         argv[0] = client.bin;
@@ -146,19 +144,19 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     Output.disableBuffering();
     defer Output.enableBuffering();
 
-    proc = std.ChildProcess.init(argv, allocator);
-    proc.stdin_behavior = .Inherit;
-    proc.stdout_behavior = .Inherit;
-    proc.stderr_behavior = .Inherit;
-    proc.cwd = cwd;
+    _ = bun.spawnSync(&.{
+        .argv = argv,
+        .envp = null,
 
-    if (Environment.isWindows) {
-        bun.WindowsSpawnWorkaround.spawnWindows(&proc) catch return;
-    } else {
-        proc.spawn() catch return;
-    }
+        .cwd = cwd,
+        .stderr = .inherit,
+        .stdout = .inherit,
+        .stdin = .inherit,
 
-    _ = proc.wait() catch {};
+        .windows = if (Environment.isWindows) .{
+            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+        } else {},
+    }) catch return;
 }
 
 // We don't want to allocate memory each time
@@ -1427,10 +1425,6 @@ pub const CreateCommand = struct {
 
             Output.pretty("<r>\n", .{});
             Output.flush();
-
-            var process = std.ChildProcess.init(install_args, ctx.allocator);
-            process.cwd = destination;
-
             defer {
                 Output.printErrorln("\n", .{});
                 Output.printStartEnd(start_time, std.time.nanoTimestamp());
@@ -1441,13 +1435,19 @@ pub const CreateCommand = struct {
                 Output.flush();
             }
 
-            if (Environment.isWindows) {
-                try bun.WindowsSpawnWorkaround.spawnWindows(&process);
-            } else {
-                try process.spawn();
-            }
-            _ = try process.wait();
-            _ = try process.kill();
+            const process = try bun.spawnSync(&.{
+                .argv = install_args,
+                .envp = null,
+                .cwd = destination,
+                .stderr = .inherit,
+                .stdout = .inherit,
+                .stdin = .inherit,
+
+                .windows = if (Environment.isWindows) .{
+                    .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                } else {},
+            });
+            _ = try process.unwrap();
         }
 
         if (postinstall_tasks.items.len > 0) {

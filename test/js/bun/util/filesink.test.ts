@@ -1,6 +1,6 @@
-// @known-failing-on-windows: 1 failing
 import { ArrayBufferSink } from "bun";
 import { describe, expect, it } from "bun:test";
+import { isWindows } from "harness";
 import { mkfifo } from "mkfifo";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,7 +77,9 @@ describe("FileSink", () => {
   }
 
   for (let isPipe of [true, false] as const) {
-    describe(isPipe ? "pipe" : "file", () => {
+    // TODO: fix the `mkfifo` function for windows. They do have an API but calling it from bun:ffi didn't get great results.
+    // once #8166 is merged, this can be written using it's 'bun:iternals-for-testing' feature
+    describe.skipIf(isPipe && isWindows)(isPipe ? "pipe" : "file", () => {
       fixtures.forEach(([input, expected, label]) => {
         const getPathOrFd = () => (isPipe ? getFd(label, expected.byteLength) : getPath(label));
 

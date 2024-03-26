@@ -528,6 +528,7 @@ fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_m
         // and the directory is trying to be opened for iteration.
         .ACCESS_DENIED => return error.AccessDenied,
         .INVALID_PARAMETER => return error.BadPathName,
+        .SHARING_VIOLATION => return error.FileNotFound,
         else => return w.unexpectedStatus(rc),
     }
 }

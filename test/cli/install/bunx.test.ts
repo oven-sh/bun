@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterEach, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
+import { bunExe, bunEnv as env, isWindows } from "harness";
 import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -95,7 +95,6 @@ it("should output usage if no arguments are passed", async () => {
 });
 
 it("should work for @scoped packages", async () => {
-  await rm(join(await realpath(tmpdir()), "@withfig"), { force: true, recursive: true });
   // without cache
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "@withfig/autocomplete-tools", "--help"],
@@ -112,7 +111,7 @@ it("should work for @scoped packages", async () => {
   expect(err).not.toContain("panic:");
   expect(withoutCache.stdout).toBeDefined();
   let out = await new Response(withoutCache.stdout).text();
-  expect(out.trim()).toContain("Usage: @withfig/autocomplete-tool");
+  expect(out.trim()).toContain("Usage: @withfig/autocomplete-tools");
   expect(await withoutCache.exited).toBe(0);
 
   // cached
@@ -131,7 +130,7 @@ it("should work for @scoped packages", async () => {
   expect(err).not.toContain("panic:");
   expect(cached.stdout).toBeDefined();
   out = await new Response(cached.stdout).text();
-  expect(out.trim()).toContain("Usage: @withfig/autocomplete-tool");
+  expect(out.trim()).toContain("Usage: @withfig/autocomplete-tools");
   expect(await cached.exited).toBe(0);
 });
 
@@ -182,7 +181,7 @@ it("should work for github repository", async () => {
   expect(err).not.toContain("panic:");
   expect(withoutCache.stdout).toBeDefined();
   let out = await new Response(withoutCache.stdout).text();
-  expect(out.trim()).toContain("Usage: cowsay");
+  expect(out.trim()).toContain("Usage: " + (isWindows ? 'cli.js' : 'cowsay'));
   expect(await withoutCache.exited).toBe(0);
 
   // cached
@@ -201,7 +200,7 @@ it("should work for github repository", async () => {
   expect(err).not.toContain("panic:");
   expect(cached.stdout).toBeDefined();
   out = await new Response(cached.stdout).text();
-  expect(out.trim()).toContain("Usage: cowsay");
+  expect(out.trim()).toContain("Usage: " + (isWindows ? 'cli.js' : 'cowsay'));
   expect(await cached.exited).toBe(0);
 });
 

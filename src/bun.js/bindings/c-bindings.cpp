@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <sys/termios.h>
+#include <sys/ioctl.h>
 #else
 #include <uv.h>
 #include <windows.h>
@@ -481,3 +482,49 @@ extern "C" void bun_initialize_process()
 
     atexit(Bun__onExit);
 }
+
+#if OS(WINDOWS)
+extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
+{
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+#else
+
+static bool can_open_as_nonblocking_tty(int32_t fd)
+{
+    int result;
+#if OS(LINUX) || OS(FreeBSD)
+    int dummy = 0;
+
+    result = ioctl(fd, TIOCGPTN, &dummy) != 0;
+#elif OS(DARWIN)
+
+    char dummy[256];
+
+    result = ioctl(fd, TIOCPTYGNAME, &dummy) != 0;
+
+#else
+
+#error "TODO"
+
+#endif
+
+    return result;
+}
+
+extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
+{
+    if (!can_open_as_nonblocking_tty(fd)) {
+        return -1;
+    }
+
+    char pathbuf[PATH_MAX + 1];
+    if (ttyname_r(fd, pathbuf, sizeof(pathbuf)) != 0) {
+        return -1;
+    }
+
+    return open(pathbuf, mode | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+}
+
+#endif

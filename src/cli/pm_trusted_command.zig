@@ -349,7 +349,7 @@ pub const TrustCommand = struct {
                     }
 
                     switch (pm.options.log_level) {
-                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, info.scripts_list, log_level),
+                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, info.scripts_list, log_level, false),
                     }
 
                     if (pm.options.log_level.showProgress()) {

@@ -10,6 +10,8 @@ export const isPosix = isMacOS || isLinux;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 
+export const breakingChanges_1_0_0 = false;
+
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
   GITHUB_ACTIONS: "false",

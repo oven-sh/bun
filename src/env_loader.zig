@@ -1079,30 +1079,70 @@ pub const Map = struct {
 
     map: HashTable,
 
-    pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]u8 {
+    /// Creates a environment block for use in Posix Spawn APIs.
+    /// As in, a sentinel slice of sentinel string pointers.
+    pub fn createNullDelimitedEnvMap(this: *Map, alloc: std.mem.Allocator) ![:null]?[*:0]u8 {
         var env_map = &this.map;
 
-        const envp_count = env_map.count();
-        const envp_buf = try arena.allocSentinel(?[*:0]u8, envp_count, null);
+        var envp_count: usize = 0;
+        var total_bytes: usize = 0;
+        {
+            var it = env_map.iterator();
+            while (it.next()) |pair| {
+                // Allow var from .env.development or .env.production to be loaded again
+                if (!pair.value_ptr.conditional) {
+                    envp_count += 1;
+                    // env line is 'KEY=VALUE\x00'
+                    total_bytes += (pair.key_ptr.len + pair.value_ptr.value.len + "=\x00".len);
+                }
+            }
+        }
+        total_bytes += (envp_count + 1) * @sizeOf(?[*:0]u8); // +1 for the null ptr after the pointer list
+
+        const buf = try alloc.alignedAlloc(u8, @alignOf(?[*:0]u8), total_bytes);
+
+        const envp = envp: {
+            const p: [*]?[*:0]u8 = @ptrCast(buf.ptr);
+            p[envp_count] = null;
+            break :envp p[0..envp_count :null];
+        };
+
+        var fba = std.heap.FixedBufferAllocator.init(buf[@sizeOf(usize) * (envp_count + 1) ..]);
+        const string_alloc = fba.allocator();
+
         {
             var it = env_map.iterator();
             var i: usize = 0;
-            while (it.next()) |pair| : (i += 1) {
-                const env_buf = try arena.allocSentinel(u8, pair.key_ptr.len + pair.value_ptr.value.len + 1, 0);
-                bun.copy(u8, env_buf, pair.key_ptr.*);
-                env_buf[pair.key_ptr.len] = '=';
-                bun.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
-                envp_buf[i] = env_buf.ptr;
+            while (it.next()) |pair| {
+                // Allow var from .env.development or .env.production to be loaded again
+                if (!pair.value_ptr.conditional) {
+                    const variable_buf = string_alloc.allocSentinel(
+                        u8,
+                        pair.key_ptr.len + pair.value_ptr.value.len + 1,
+                        0,
+                    ) catch unreachable; // all bytes were pre-allocated.
+                    @memcpy(variable_buf[0..pair.key_ptr.len], pair.key_ptr.*);
+                    variable_buf[pair.key_ptr.len] = '=';
+                    @memcpy(variable_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
+                    envp[i] = variable_buf.ptr;
+                    i += 1;
+                }
             }
             if (comptime Environment.allow_assert) std.debug.assert(i == envp_count);
         }
-        return envp_buf;
+
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(fba.end_index == fba.buffer.len); // incorrect counting above. every pointer should be byte-aligned
+        }
+
+        return envp;
     }
 
     /// Returns a wrapper around the std.process.EnvMap that does not duplicate the memory of
     /// the keys and values, but instead points into the memory of the bun env map.
     ///
-    /// To prevent
+    /// To prevent mutation, the return value is a wrapper struct that can only
+    /// return a *const std.process.EnvMap.
     pub fn stdEnvMap(this: *Map, allocator: std.mem.Allocator) !StdEnvMapWrapper {
         var env_map = std.process.EnvMap.init(allocator);
 

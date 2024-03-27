@@ -226,6 +226,20 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
+  if (s->pending_handshake) {
+    s->pending_handshake = 0;
+    // if we have some pending handshake we cancel it and try to check the
+    // latest handshake error this way we will always call on_handshake with the
+    // latest error before closing this should always call
+    // secureConnection/secure before close if we remove this here, we will need
+    // to do this check on every on_close event on sockets, fetch etc and will
+    // increase complexity on a lot of places
+    if (context->on_handshake != NULL) {
+      struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
+      context->on_handshake(s, 0, verify_error, context->handshake_data);
+    }
+  }
+
   return (struct us_internal_ssl_socket_t *)us_socket_close(
       0, (struct us_socket_t *)s, code, reason);
 }
@@ -269,11 +283,6 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     s->pending_handshake = 0;
     s->received_ssl_shutdown = 1;
-    struct us_bun_verify_error_t verify_error = (struct us_bun_verify_error_t){
-        .error = 0, .code = NULL, .reason = NULL};
-    if (on_handshake != NULL) {
-      on_handshake(s, 0, verify_error, custom_data);
-    }
     us_internal_ssl_socket_close(s, 0, NULL);
     return;
   }
@@ -325,7 +334,10 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
   s->pending_handshake = 0;
-  SSL_free(s->ssl);
+  if (s->ssl) {
+    SSL_free(s->ssl);
+    s->ssl = NULL;
+  }
 
   return context->on_close(s, code, reason);
 }
@@ -363,7 +375,8 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
 
-  if (us_socket_is_closed(0, &s->s) || s->received_ssl_shutdown) {
+  if (!s || !s->ssl || us_socket_is_closed(0, &s->s) ||
+      s->received_ssl_shutdown) {
     return NULL;
   }
 

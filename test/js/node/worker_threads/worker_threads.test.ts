@@ -51,12 +51,12 @@ test("all worker_threads module properties are present", () => {
 
   expect(() => {
     // @ts-expect-error no args
-    wt.markAsUntransferable();
+    markAsUntransferable();
   }).toThrow("not yet implemented");
 
   expect(() => {
     // @ts-expect-error no args
-    wt.moveMessagePortToContext();
+    moveMessagePortToContext();
   }).toThrow("not yet implemented");
 });
 
@@ -128,7 +128,7 @@ test("threadId module and worker property is consistent", async () => {
   await worker2.terminate();
 });
 
-test("receiveMessageOnPort works across threads", async () => {
+test("receiveMessageOnPort works across workers", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url).href, {
     workerData: port2,

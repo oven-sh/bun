@@ -1,10 +1,8 @@
-// import type { Readable, Writable } from "node:stream";
-// import type { WorkerOptions } from "node:worker_threads";
+const EventEmitter = require("node:events");
+const { throwNotImplemented } = require("internal/shared");
+
 declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
-
-const EventEmitter = require("node:events");
-const { throwNotImplemented, warnNotImplementedOnce } = require("../internal/shared");
 
 const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
@@ -69,11 +67,16 @@ function injectFakeEmitter(Class) {
   };
 
   function EventClass(eventName) {
-    if (eventName === "error" || eventName === "messageerror") {
-      return ErrorEvent;
-    }
+    switch (eventName) {
+      case "error":
+      case "messageerror": {
+        return ErrorEvent;
+      }
 
-    return MessageEvent;
+      default: {
+        return MessageEvent;
+      }
+    }
   }
 
   Class.prototype.emit = function (event, ...args) {
@@ -182,7 +185,7 @@ function getEnvironmentData() {
   return process.env;
 }
 
-function setEnvironmentData(env: any) {
+function setEnvironmentData(env) {
   process.env = env;
 }
 
@@ -282,7 +285,7 @@ class Worker extends EventEmitter {
     return this.#worker.postMessage(...args);
   }
 
-  #onClose(e) {
+  #onClose(e: CloseEvent) {
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }

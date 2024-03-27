@@ -11,9 +11,6 @@ let x_dir: string;
 beforeEach(async () => {
   x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test")));
 });
-afterEach(async () => {
-  await rm(x_dir, { force: true, recursive: true });
-});
 
 it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
   const processes = Array.from({ length: 3 }, (_, i) => {

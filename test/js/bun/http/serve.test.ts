@@ -193,7 +193,7 @@ it("request.signal works in trivial case", async () => {
         });
         expect(didAbort).toBe(false);
         aborty.abort();
-        await Bun.sleep(20);
+        await Bun.sleep(2);
         return new Response("Test failed!");
       },
     },
@@ -204,7 +204,7 @@ it("request.signal works in trivial case", async () => {
       } catch (e: any) {
         expect(e.name).toBe("AbortError");
       }
-      await Bun.sleep(10);
+      await Bun.sleep(1);
 
       expect(didAbort).toBe(true);
     },

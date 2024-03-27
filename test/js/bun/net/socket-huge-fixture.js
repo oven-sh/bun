@@ -13,7 +13,7 @@ const { promise: serverPromise, resolve: serverResolve } = Promise.withResolvers
 
 var server = listen({
   port: 0,
-  hostname: "127.0.0.1",
+  hostname: "localhost",
   data: { sent: 0 },
   socket: {
     open(socket) {
@@ -40,7 +40,7 @@ var server = listen({
 
 const socket = await connect({
   port: server.port,
-  hostname: "127.0.0.1",
+  hostname: server.hostname,
   data: { received: 0 },
   socket: {
     open(socket) {

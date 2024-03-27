@@ -7,7 +7,7 @@ it("should coerce '0' to 0", async () => {
   const listener = Bun.listen({
     // @ts-expect-error
     port: "0",
-    hostname: "127.0.0.1",
+    hostname: "localhost",
     socket: {
       open() {},
       close() {},
@@ -22,7 +22,7 @@ it("should NOT coerce '-1234' to 1234", async () => {
     Bun.listen({
       // @ts-expect-error
       port: "-1234",
-      hostname: "127.0.0.1",
+      hostname: "localhost",
       socket: {
         open() {},
         close() {},
@@ -63,11 +63,11 @@ it("connect without top level await should keep process alive", async () => {
       open(socket) {},
       data(socket, data) {},
     },
-    hostname: "127.0.0.1",
+    hostname: "localhost",
     port: 0,
   });
   const proc = Bun.spawn({
-    cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port)],
+    cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port), server.hostname],
     cwd: import.meta.dir,
     env: bunEnv,
   });
@@ -116,7 +116,7 @@ it("should reject on connection error, calling both connectError() and rejecting
   var data = {};
   connect({
     data,
-    hostname: "127.0.0.1",
+    hostname: "localhost",
     port: 55555,
     socket: {
       connectError(socket, error) {
@@ -164,7 +164,7 @@ it("should not leak memory when connect() fails", async () => {
     var promises = new Array(quantity);
     for (let i = 0; i < quantity; i++) {
       promises[i] = connect({
-        hostname: "127.0.0.1",
+        hostname: "localhost",
         port: 55555,
         socket: {
           connectError(socket, error) {},
@@ -189,7 +189,7 @@ it("should handle connection error", done => {
   var data = {};
   connect({
     data,
-    hostname: "127.0.0.1",
+    hostname: "localhost",
     port: 55555,
     socket: {
       connectError(socket, error) {
@@ -244,11 +244,11 @@ it("socket.timeout works", async () => {
           }
         },
       },
-      hostname: "127.0.0.1",
+      hostname: "localhost",
       port: 0,
     });
     var client = await connect({
-      hostname: "127.0.0.1",
+      hostname: "localhost",
       port: server.port,
       socket: {
         timeout(socket) {

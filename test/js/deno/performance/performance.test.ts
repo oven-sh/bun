@@ -14,7 +14,6 @@ test({ permissions: { hrtime: false } }, async function performanceNow() {
     resolve();
   }, 50);
   await promise;
-  
   // on Windows we use libuv with can trigger 0-5ms earlier than expected
   assert(totalTime >= 45);
 });
@@ -94,7 +93,7 @@ test(function performanceMeasure() {
         assertEquals(measure2.startTime, 0);
         assertEquals(mark1.startTime, measure1.startTime);
         assertEquals(mark1.startTime, measure2.duration);
-          // on Windows we use libuv with can trigger 0-5ms earlier than expected
+        // on Windows we use libuv with can trigger 0-5ms earlier than expected
         assert(measure1.duration >= 95, `duration below 100ms: ${measure1.duration}`);
         assert(
           measure1.duration < (later - now) * 1.5,

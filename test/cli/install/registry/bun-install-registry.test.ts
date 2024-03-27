@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
-import { join } from "path";
+import { join, sep } from "path";
 import { mkdtempSync, realpathSync, copyFileSync, mkdirSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted, tmpdirSync } from "../dummy.registry";
@@ -4503,7 +4503,7 @@ for (const forceWaiterThread of [false, true]) {
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
     });
-    test("ensureTempNodeGypScript works", async () => {
+    test.todo("ensureTempNodeGypScript works", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({

@@ -281,7 +281,6 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
   int result = SSL_do_handshake(s->ssl);
 
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
-    s->pending_handshake = 0;
     s->received_ssl_shutdown = 1;
     us_internal_ssl_socket_close(s, 0, NULL);
     return;
@@ -334,10 +333,7 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
   s->pending_handshake = 0;
-  if (s->ssl) {
-    SSL_free(s->ssl);
-    s->ssl = NULL;
-  }
+  SSL_free(s->ssl);
 
   return context->on_close(s, code, reason);
 }
@@ -375,8 +371,7 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
 
-  if (!s || !s->ssl || us_socket_is_closed(0, &s->s) ||
-      s->received_ssl_shutdown) {
+  if (us_socket_is_closed(0, &s->s) || s->received_ssl_shutdown) {
     return NULL;
   }
 
@@ -977,7 +972,8 @@ long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
 
 struct us_bun_verify_error_t
 us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) ||
+      s->received_ssl_shutdown) {
     return (struct us_bun_verify_error_t){
         .error = 0, .code = NULL, .reason = NULL};
   }

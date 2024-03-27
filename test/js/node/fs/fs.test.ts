@@ -1,7 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
-import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -67,6 +67,40 @@ it("fs.openAsBlob", async () => {
 it("writing to 1, 2 are possible", () => {
   expect(fs.writeSync(1, Buffer.from("\nhello-stdout-test\n"))).toBe(19);
   expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);
+});
+
+// TODO: port node.js tests for these
+it("fs.readv returns object", async done => {
+  const fd = await promisify(fs.open)(import.meta.path, "r");
+  const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
+  fs.readv(fd, buffers, 0, (err, bytesRead, output) => {
+    promisify(fs.close)(fd);
+    if (err) {
+      done(err);
+      return;
+    }
+
+    expect(bytesRead).toBe(20);
+    expect(output).toEqual(buffers);
+    done();
+  });
+});
+
+it("fs.writev returns object", async done => {
+  const outpath = tempDirWithFiles("fswritevtest", { "a.txt": "b" });
+  const fd = await promisify(fs.open)(join(outpath, "b.txt"), "w");
+  const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
+  fs.writev(fd, buffers, 0, (err, bytesWritten, output) => {
+    promisify(fs.close)(fd);
+    if (err) {
+      done(err);
+      return;
+    }
+
+    expect(bytesWritten).toBe(20);
+    expect(output).toEqual(buffers);
+    done();
+  });
 });
 
 describe("FileHandle", () => {

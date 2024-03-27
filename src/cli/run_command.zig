@@ -456,7 +456,7 @@ pub const RunCommand = struct {
         // wrapper exe.  we build the full exe path even though we could do
         // a relative lookup, because in the case we do find it, we have to
         // generate this full path anyways.
-        if (Environment.isWindows and bun.strings.hasSuffixComptime(executable, ".exe")) {
+        if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path and bun.strings.hasSuffixComptime(executable, ".exe")) {
             std.debug.assert(std.fs.path.isAbsolute(executable));
 
             var wpath = bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable);
@@ -1512,7 +1512,7 @@ pub const RunCommand = struct {
         }
 
         // Run absolute/relative path
-        if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
+        if (std.fs.path.isAbsolute(script_name_to_search) or
             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
         {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
@@ -1531,7 +1531,6 @@ pub const RunCommand = struct {
 
         if (script_name_to_search.len == 1 and script_name_to_search[0] == '-') {
             // read from stdin
-
             var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
             var list = std.ArrayList(u8).init(stack_fallback.get());
             errdefer list.deinit();
@@ -1560,7 +1559,7 @@ pub const RunCommand = struct {
             return true;
         }
 
-        if (Environment.isWindows) try_bunx_file: {
+        if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path) try_bunx_file: {
             // Attempt to find a ".bunx" file on disk, and run it, skipping the
             // wrapper exe.  we build the full exe path even though we could do
             // a relative lookup, because in the case we do find it, we have to
@@ -1681,7 +1680,10 @@ pub const BunXFastPath = struct {
     var environment_buffer: bun.WPathBuffer = undefined;
 
     /// If this returns, it implies the fast path cannot be taken
-    fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+    fn tryLaunch(ctx_const: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+        if (!bun.FeatureFlags.windows_bunx_fast_path) return;
+
+        var ctx = ctx_const;
         std.debug.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
@@ -1706,6 +1708,7 @@ pub const BunXFastPath = struct {
             const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
             i += result.len + 1;
         }
+        ctx.passthrough = passthrough;
 
         const run_ctx = shim_impl.FromBunRunContext{
             .handle = handle,

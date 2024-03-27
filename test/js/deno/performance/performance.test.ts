@@ -12,9 +12,11 @@ test({ permissions: { hrtime: false } }, async function performanceNow() {
     const end = performance.now();
     totalTime = end - start;
     resolve();
-  }, 10);
+  }, 50);
   await promise;
-  assert(totalTime >= 10);
+  
+  // on Windows we use libuv with can trigger 0-5ms earlier than expected
+  assert(totalTime >= 45);
 });
 
 test(function timeOrigin() {
@@ -92,7 +94,8 @@ test(function performanceMeasure() {
         assertEquals(measure2.startTime, 0);
         assertEquals(mark1.startTime, measure1.startTime);
         assertEquals(mark1.startTime, measure2.duration);
-        assert(measure1.duration >= 100, `duration below 100ms: ${measure1.duration}`);
+          // on Windows we use libuv with can trigger 0-5ms earlier than expected
+        assert(measure1.duration >= 95, `duration below 100ms: ${measure1.duration}`);
         assert(
           measure1.duration < (later - now) * 1.5,
           `duration exceeds 150% of wallclock time: ${measure1.duration}ms vs ${later - now}ms`,

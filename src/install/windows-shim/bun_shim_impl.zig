@@ -786,10 +786,6 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         .hStdError = if (is_standalone) ProcessParameters.hStdError else bun.win32.STDERR_FD.cast(),
     };
 
-    _ = k32.SetHandleInformation(startup_info.hStdInput.?, w.HANDLE_FLAG_INHERIT, 1);
-    _ = k32.SetHandleInformation(startup_info.hStdOutput.?, w.HANDLE_FLAG_INHERIT, 1);
-    _ = k32.SetHandleInformation(startup_info.hStdError.?, w.HANDLE_FLAG_INHERIT, 1);
-
     inline for (.{ 0, 1 }) |attempt_number| iteration: {
         if (dbg)
             debug("lpCommandLine: {}\n", .{fmt16(std.mem.span(spawn_command_line))});

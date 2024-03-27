@@ -1,8 +1,7 @@
 Bun Shell makes shell scripting with JavaScript & TypeScript fun. It's a cross-platform bash-like shell with seamless JavaScript interop.
 
-{% callout type="note" %}
-**Alpha-quality software**: Bun Shell is an unstable API still under development. If you have feature requests or run into bugs, please open an issue. There may be breaking changes in the future.
-{% /callout %}
+> [!NOTE]  
+> **Alpha-quality software**: Bun Shell is an unstable API still under development. If you have feature requests or run into bugs, please open an issue. There may be breaking changes in the future.
 
 Quickstart:
 
@@ -406,7 +405,8 @@ For simple shell scripts, instead of `/bin/sh`, you can use Bun Shell to run she
 
 To do so, just run the script with `bun` on a file with the `.bun.sh` extension.
 
-```sh#script.bun.sh
+```sh
+# script.bun.sh
 echo "Hello World! pwd=$(pwd)"
 ```
 

@@ -116,6 +116,8 @@ const k32 = struct {
     const GetExitCodeProcess = w.kernel32.GetExitCodeProcess;
     /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
     const GetConsoleMode = w.kernel32.GetConsoleMode;
+    /// https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-sethandleinformation
+    const SetHandleInformation = w.kernel32.SetHandleInformation;
     /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
     extern "kernel32" fn SetConsoleMode(
         hConsoleHandle: w.HANDLE, // [in]
@@ -783,6 +785,10 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         .hStdOutput = if (is_standalone) ProcessParameters.hStdOutput else bun.win32.STDOUT_FD.cast(),
         .hStdError = if (is_standalone) ProcessParameters.hStdError else bun.win32.STDERR_FD.cast(),
     };
+
+    _ = k32.SetHandleInformation(startup_info.hStdInput.?, w.HANDLE_FLAG_INHERIT, 1);
+    _ = k32.SetHandleInformation(startup_info.hStdOutput.?, w.HANDLE_FLAG_INHERIT, 1);
+    _ = k32.SetHandleInformation(startup_info.hStdError.?, w.HANDLE_FLAG_INHERIT, 1);
 
     inline for (.{ 0, 1 }) |attempt_number| iteration: {
         if (dbg)

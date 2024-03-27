@@ -70,13 +70,11 @@ it("connect without top level await should keep process alive", async () => {
     cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port)],
     cwd: import.meta.dir,
     env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
   });
   await proc.exited;
   try {
     expect(proc.exitCode).toBe(0);
-    expect(await new Response(proc.stderr).text()).toContain("event loop was not killed");
+    expect(await new Response(proc.stdout).text()).toContain("event loop was not killed");
   } finally {
     server.stop();
   }

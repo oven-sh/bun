@@ -2,7 +2,7 @@
 const port = process.argv[2] ? parseInt(process.argv[2]) : null;
 await Bun.sleep(10);
 // failed connection
-console.error("test 1: failed connection");
+console.log("test 1: failed connection");
 try {
   const socket = await Bun.connect({
     hostname: "127.0.0.1",
@@ -12,7 +12,7 @@ try {
   socket.end();
 } catch (error) {}
 // failed connection tls
-console.error("test 2: failed connection [tls]");
+console.log("test 2: failed connection [tls]");
 try {
   const socket = await Bun.connect({
     hostname: "127.0.0.1",
@@ -24,7 +24,7 @@ try {
 } catch (error) {}
 if (port) {
   // successful connection
-  console.error("test 3: successful connection");
+  console.log("test 3: successful connection");
   const socket = await Bun.connect({
     hostname: "127.0.0.1",
     port,
@@ -33,7 +33,7 @@ if (port) {
   socket.end();
 
   // successful connection tls
-  console.error("test 4: successful connection [tls]");
+  console.log("test 4: successful connection [tls]");
   const socket2 = await Bun.connect({
     hostname: "127.0.0.1",
     port,
@@ -41,7 +41,7 @@ if (port) {
   });
   socket2.end();
 } else {
-  console.error("run with a port as an argument to try the success situation");
+  console.log("run with a port as an argument to try the success situation");
 }
-console.error("success: event loop was not killed");
+console.log("success: event loop was not killed");
 // })();

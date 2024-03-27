@@ -3,7 +3,7 @@ import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins, writeSheban
 import { join, sep } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
-import { readdirSorted } from "../dummy.registry";
+import { readdirSorted, tmpdirSync } from "../dummy.registry";
 import { tmpdir } from "os";
 import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
 
@@ -17,7 +17,7 @@ var port: number = 4873;
 var packageDir: string;
 
 beforeEach(async () => {
-  packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));
+  packageDir = tmpdirSync("bun-install-registry-" + testCounter++ + "-");
   await writeFile(
     join(packageDir, "bunfig.toml"),
     `

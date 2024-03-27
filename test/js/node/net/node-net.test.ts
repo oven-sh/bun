@@ -5,8 +5,9 @@ import { realpathSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { bunEnv, bunExe } from "harness";
+import { tmpdirSync } from "cli/install/dummy.registry";
 
-const socket_domain = mkdtempSync(join(realpathSync(tmpdir()), "node-net"));
+const socket_domain = tmpdirSync("node-net-");
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);

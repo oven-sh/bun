@@ -6,10 +6,11 @@ import { mkdtempSync, realpathSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawn } from "bun";
+import { tmpdirSync } from "cli/install/dummy.registry";
 
 describe("esbuild integration test", () => {
   test("install and use esbuild", async () => {
-    const packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-esbuild-test-"));
+    const packageDir = tmpdirSync("bun-esbuild-test-");
 
     await writeFile(
       join(packageDir, "package.json"),
@@ -53,7 +54,7 @@ describe("esbuild integration test", () => {
   });
 
   test("install and use estrella", async () => {
-    const packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-ebuild-estrella-test-"));
+    const packageDir = tmpdirSync("bun-ebuild-estrella-test-");
 
     await writeFile(
       join(packageDir, "package.json"),

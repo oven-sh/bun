@@ -320,8 +320,7 @@ $ xcode-select --install
 Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
 ```bash
-$ cmake -Bbuild -GNinja -DUSE_STATIC_LIBATOMIC=ON
-$ ninja -Cbuild
+$ bun setup -DUSE_STATIC_LIBATOMIC=OFF
 ```
 
 The built version of Bun may not work on other systems if compiled this way.

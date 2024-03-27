@@ -62,12 +62,11 @@ Plugins are primarily used to extend Bun with loaders for additional file types.
 
 ```ts#yamlPlugin.ts
 import { plugin } from "bun";
+import { load } from "js-yaml";
 
 plugin({
   name: "YAML",
-  async setup(build) {
-    const { load } = await import("js-yaml");
-
+  setup(build) {
     // when a .yaml file is imported...
     build.onLoad({ filter: /\.(yaml|yml)$/ }, async (args) => {
 
@@ -178,12 +177,11 @@ Loading a YAML file is useful, but plugins support more than just data loading. 
 
 ```ts#sveltePlugin.ts
 import { plugin } from "bun";
+import { compile } from "svelte/compiler";
 
 plugin({
   name: "svelte loader",
-  async setup(build) {
-    const { compile } = await import("svelte/compiler");
-
+  setup(build) {
     // when a .svelte file is imported...
     build.onLoad({ filter: /\.svelte$/ }, async ({ path }) => {
 

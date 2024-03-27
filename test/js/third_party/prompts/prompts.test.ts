@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import path from "path";
 import { bunExe, bunEnv } from "harness";
 
@@ -10,10 +9,11 @@ test("works with prompts", async () => {
     stdin: "pipe",
   });
 
+  await Bun.sleep(100);
   child.stdin.write("dylan\n");
-  Bun.sleepSync(100);
+  await Bun.sleep(100);
   child.stdin.write("999\n");
-  Bun.sleepSync(100);
+  await Bun.sleep(100);
   child.stdin.write("hi\n");
   expect(await child.exited).toBe(0);
 

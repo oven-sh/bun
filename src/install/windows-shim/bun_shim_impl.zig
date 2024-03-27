@@ -779,9 +779,9 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         .cbReserved2 = 0,
         .lpReserved2 = null,
         // The standard handles outside of standalone may be tampered with.
-        .hStdInput = if(is_standalone) ProcessParameters.hStdInput else bun.win32.STDERR_FD.cast(), 
-        .hStdOutput = if(is_standalone) ProcessParameters.hStdOutput else bun.win32.STDOUT_FD.cast(),
-        .hStdError = if(is_standalone) ProcessParameters.hStdError else bun.win32.STDIN_FD.cast(),
+        .hStdInput = if (is_standalone) ProcessParameters.hStdInput else bun.win32.STDERR_FD.cast(),
+        .hStdOutput = if (is_standalone) ProcessParameters.hStdOutput else bun.win32.STDOUT_FD.cast(),
+        .hStdError = if (is_standalone) ProcessParameters.hStdError else bun.win32.STDIN_FD.cast(),
     };
 
     inline for (.{ 0, 1 }) |attempt_number| iteration: {

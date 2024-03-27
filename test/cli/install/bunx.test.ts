@@ -12,9 +12,9 @@ let x_dir: string;
 beforeEach(async () => {
   x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test")));
 
-  const tmp = isWindows ? tmpdir() : '/tmp';
+  const tmp = isWindows ? tmpdir() : "/tmp";
   readdirSync(tmp).forEach(file => {
-    if (file.startsWith('bunx-')) {
+    if (file.startsWith("bunx-")) {
       rm(join(tmp, file), { recursive: true, force: true });
     }
   });
@@ -105,7 +105,7 @@ it("should output usage if no arguments are passed", async () => {
 it("should work for @scoped packages", async () => {
   // without cache
   const withoutCache = spawn({
-    cmd: [bunExe(), "--bun","x", "@withfig/autocomplete-tools", "--help"],
+    cmd: [bunExe(), "--bun", "x", "@withfig/autocomplete-tools", "--help"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -124,7 +124,7 @@ it("should work for @scoped packages", async () => {
 
   // cached
   const cached = spawn({
-    cmd: [bunExe(), "--bun","x", "@withfig/autocomplete-tools", "--help"],
+    cmd: [bunExe(), "--bun", "x", "@withfig/autocomplete-tools", "--help"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -138,7 +138,7 @@ it("should work for @scoped packages", async () => {
   expect(err).not.toContain("panic:");
   expect(cached.stdout).toBeDefined();
   out = await new Response(cached.stdout).text();
-  console.log({ out,err });
+  console.log({ out, err });
   expect(out.trim()).toContain("Usage: @withfig/autocomplete-tools");
   expect(await cached.exited).toBe(0);
 });

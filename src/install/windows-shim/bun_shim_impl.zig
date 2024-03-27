@@ -698,7 +698,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
             const length_of_filename_u8 = @intFromPtr(read_ptr) -
-                @intFromPtr(buf1_u8) - 2 * (nt_object_prefix.len - "\x00".len);
+                @intFromPtr(buf1_u8) - 2 * (nt_object_prefix.len + "\x00".len);
             const filename = buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8];
             if (dbg) {
                 const sliced = std.mem.bytesAsSlice(u16, filename);
@@ -778,9 +778,10 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         .wShowWindow = 0,
         .cbReserved2 = 0,
         .lpReserved2 = null,
-        .hStdInput = ProcessParameters.hStdInput,
-        .hStdOutput = ProcessParameters.hStdOutput,
-        .hStdError = ProcessParameters.hStdError,
+        // The standard handles outside of standalone may be tampered with.
+        .hStdInput = if(is_standalone) ProcessParameters.hStdInput else bun.win32.STDERR_FD.cast(), 
+        .hStdOutput = if(is_standalone) ProcessParameters.hStdOutput else bun.win32.STDOUT_FD.cast(),
+        .hStdError = if(is_standalone) ProcessParameters.hStdError else bun.win32.STDIN_FD.cast(),
     };
 
     inline for (.{ 0, 1 }) |attempt_number| iteration: {
@@ -924,6 +925,7 @@ pub const FromBunRunContext = struct {
 pub fn tryStartupFromBunJS(context: FromBunRunContext) void {
     assert(!std.mem.startsWith(u16, context.base_path, &nt_object_prefix));
     comptime assert(!is_standalone);
+    comptime assert(bun.FeatureFlags.windows_bunx_fast_path);
     launcher(.launch, context);
 }
 
@@ -958,6 +960,7 @@ pub const ReadWithoutLaunchResult = union {
 pub fn readWithoutLaunch(context: FromBunShellContext) ReadWithoutLaunchResult {
     assert(!std.mem.startsWith(u16, context.base_path, &nt_object_prefix));
     comptime assert(!is_standalone);
+    comptime assert(bun.FeatureFlags.windows_bunx_fast_path);
     return launcher(.read_without_launch, context);
 }
 

@@ -5,11 +5,19 @@ import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
+import { readdirSync } from "js/node/fs/export-star-from";
 
 let x_dir: string;
 
 beforeEach(async () => {
   x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test")));
+
+  const tmp = isWindows ? tmpdir() : '/tmp';
+  readdirSync(tmp).forEach(file => {
+    if (file.startsWith('bunx-')) {
+      rm(join(tmp, file), { recursive: true, force: true });
+    }
+  });
 });
 afterEach(async () => {
   await rm(x_dir, { force: true, recursive: true });
@@ -97,7 +105,7 @@ it("should output usage if no arguments are passed", async () => {
 it("should work for @scoped packages", async () => {
   // without cache
   const withoutCache = spawn({
-    cmd: [bunExe(), "x", "@withfig/autocomplete-tools", "--help"],
+    cmd: [bunExe(), "--bun","x", "@withfig/autocomplete-tools", "--help"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -116,7 +124,7 @@ it("should work for @scoped packages", async () => {
 
   // cached
   const cached = spawn({
-    cmd: [bunExe(), "x", "@withfig/autocomplete-tools", "--help"],
+    cmd: [bunExe(), "--bun","x", "@withfig/autocomplete-tools", "--help"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -130,6 +138,7 @@ it("should work for @scoped packages", async () => {
   expect(err).not.toContain("panic:");
   expect(cached.stdout).toBeDefined();
   out = await new Response(cached.stdout).text();
+  console.log({ out,err });
   expect(out.trim()).toContain("Usage: @withfig/autocomplete-tools");
   expect(await cached.exited).toBe(0);
 });
@@ -164,7 +173,6 @@ console.log(
 });
 
 it("should work for github repository", async () => {
-  await rm(join(await realpath(tmpdir()), "github:piuccio"), { force: true, recursive: true });
   // without cache
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
@@ -205,7 +213,6 @@ it("should work for github repository", async () => {
 });
 
 it("should work for github repository with committish", async () => {
-  await rm(join(await realpath(tmpdir()), "github:piuccio"), { force: true, recursive: true });
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
     cwd: x_dir,
@@ -221,6 +228,7 @@ it("should work for github repository with committish", async () => {
   expect(err).not.toContain("panic:");
   expect(withoutCache.stdout).toBeDefined();
   let out = await new Response(withoutCache.stdout).text();
+  if (!out) console.log(err);
   expect(out.trim()).toContain("hello bun!");
   expect(await withoutCache.exited).toBe(0);
 

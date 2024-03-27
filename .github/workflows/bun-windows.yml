@@ -439,7 +439,6 @@ jobs:
           BUN_PATH: release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe
         run: |
           cd test && node ./node_modules/verdaccio/bin/verdaccio -c cli/install/registry/verdaccio.yaml &
-          cd ..
           node packages/bun-internal-test/src/runner.node.mjs  || true
         shell: bash
       - uses: sarisia/actions-status-discord@v1

@@ -112,9 +112,8 @@ export function hideFromStackTrace(block: CallableFunction) {
 export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>): string {
   var fs = require("fs");
   var path = require("path");
-  var { tmpdir } = require("os");
 
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
+  const dir = tmpdirSync(basename + "_");
   for (const [name, contents] of Object.entries(files)) {
     if (typeof contents === "object") {
       const entries = Object.entries(contents);
@@ -498,6 +497,7 @@ function failTestsOnBlockingWriteCall() {
 failTestsOnBlockingWriteCall();
 
 import { heapStats } from "bun:jsc";
+import { tmpdirSync } from "cli/install/dummy.registry";
 export function dumpStats() {
   const stats = heapStats();
   const { objectTypeCounts, protectedObjectTypeCounts } = stats;

@@ -846,10 +846,6 @@ pub const AST = struct {
         brace_begin,
         brace_end,
         comma,
-        If,
-        Then,
-        Elif,
-        Else,
         cmd_subst: struct {
             script: Script,
             quoted: bool = false,
@@ -1577,8 +1573,8 @@ pub const Parser = struct {
                             break;
                         }
                     },
-                    .Text => |txtrng| {
-                        _ = self.expect(.Text);
+                    .SingleQuotedText, .DoubleQuotedText, .Text => |txtrng| {
+                        _ = self.advance();
                         const txt = self.text(txtrng);
                         try atoms.append(.{ .Text = txt });
                         if (next_delimits) {
@@ -1856,6 +1852,8 @@ pub const TokenTag = enum {
     CloseParen,
     Var,
     Text,
+    SingleQuotedText,
+    DoubleQuotedText,
     JSObjRef,
     DoubleBracketOpen,
     DoubleBracketClose,
@@ -1906,6 +1904,10 @@ pub const Token = union(TokenTag) {
 
     Var: TextRange,
     Text: TextRange,
+    /// Quotation information is lost from the lexer -> parser stage and it is
+    /// helpful to disambiguate from regular text and quoted text
+    SingleQuotedText: TextRange,
+    DoubleQuotedText: TextRange,
     JSObjRef: u32,
 
     DoubleBracketOpen,
@@ -1943,6 +1945,8 @@ pub const Token = union(TokenTag) {
             .CloseParen => "`)",
             .Var => strpool[self.Var.start..self.Var.end],
             .Text => strpool[self.Text.start..self.Text.end],
+            .SingleQuotedText => strpool[self.SingleQuotedText.start..self.SingleQuotedText.end],
+            .DoubleQuotedText => strpool[self.DoubleQuotedText.start..self.DoubleQuotedText.end],
             .JSObjRef => "JSObjRef",
             .DoubleBracketOpen => "[[",
             .DoubleBracketClose => "]]",
@@ -2510,13 +2514,19 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             if (start != end or
                 self.isImmediatelyEscapedQuote() // we want to preserve immediately escaped quotes like: ""
             ) {
-                try self.tokens.append(.{ .Text = .{ .start = start, .end = end } });
+                const tok: Token =
+                    switch (self.chars.state) {
+                    .Normal => @unionInit(Token, "Text", .{ .start = start, .end = end }),
+                    .Single => @unionInit(Token, "SingleQuotedText", .{ .start = start, .end = end }),
+                    .Double => @unionInit(Token, "DoubleQuotedText", .{ .start = start, .end = end }),
+                };
+                try self.tokens.append(tok);
                 if (add_delimiter) {
                     try self.tokens.append(.Delimit);
                 }
             } else if ((in_normal_space or in_redirect_operator) and self.tokens.items.len > 0 and
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
-                .Var, .Text, .BraceBegin, .Comma, .BraceEnd, .CmdSubstEnd => true,
+                .Var, .Text, .SingleQuotedText, .DoubleQuotedText, .BraceBegin, .Comma, .BraceEnd, .CmdSubstEnd => true,
                 else => false,
             }) {
                 try self.tokens.append(.Delimit);
@@ -3433,6 +3443,8 @@ pub const Test = struct {
 
         Var: []const u8,
         Text: []const u8,
+        SingleQuotedText: []const u8,
+        DoubleQuotedText: []const u8,
         JSObjRef: u32,
 
         DoubleBracketOpen,
@@ -3445,6 +3457,8 @@ pub const Test = struct {
             switch (the_token) {
                 .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
                 .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },
+                .SingleQuotedText => |txt| return .{ .SingleQuotedText = buf[txt.start..txt.end] },
+                .DoubleQuotedText => |txt| return .{ .DoubleQuotedText = buf[txt.start..txt.end] },
                 .JSObjRef => |val| return .{ .JSObjRef = val },
                 .Pipe => return .Pipe,
                 .DoublePipe => return .DoublePipe,
@@ -3467,6 +3481,11 @@ pub const Test = struct {
                 .CloseParen => return .CloseParen,
                 .DoubleBracketOpen => return .DoubleBracketOpen,
                 .DoubleBracketClose => return .DoubleBracketClose,
+                // .If => return .If,
+                // .Else => return .Else,
+                // .Elif => return .Elif,
+                // .Then => return .Then,
+                // .Fi => return .Fi,
                 .Delimit => return .Delimit,
                 .Eof => return .Eof,
             }

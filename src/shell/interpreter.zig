@@ -2070,10 +2070,6 @@ pub const Interpreter = struct {
                 .comma => {
                     str_list.append(',') catch bun.outOfMemory();
                 },
-                .If => str_list.appendSlice("if") catch bun.outOfMemory(),
-                .Else => str_list.appendSlice("else") catch bun.outOfMemory(),
-                .Elif => str_list.appendSlice("elif") catch bun.outOfMemory(),
-                .Then => str_list.appendSlice("then") catch bun.outOfMemory(),
                 .cmd_subst => {
                     // TODO:
                     // if the command substution is comprised of solely shell variable assignments then it should do nothing
@@ -2153,10 +2149,6 @@ pub const Interpreter = struct {
                     has_cmd_subst.* = true;
                     return 0;
                 },
-                .If => @tagName(.If).len,
-                .Else => @tagName(.Else).len,
-                .Elif => @tagName(.Elif).len,
-                .Then => @tagName(.Then).len,
             };
         }
 

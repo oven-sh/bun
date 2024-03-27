@@ -924,6 +924,27 @@ describe("if_clause", () => {
     .file("package.json", "lol")
     .stdout("okay\nmakes sense!\n")
     .runAsTest("multi statement in all branches");
+
+  ["if", "else", "elif", "then", "fi"].map(tok => {
+    TestBuilder.command`"${{ raw: tok }}"`
+      .stderr(`bun: command not found: ${tok}\n`)
+      .exitCode(1)
+      .runAsTest(`quoted ${tok} doesn't break`);
+
+    TestBuilder.command`echo ${{ raw: "lksdfjklsdjf" + tok }}`
+      .stdout(`lksdfjklsdjf${tok}\n`)
+      .runAsTest(`${tok} in script does not break parsing 1`);
+
+    TestBuilder.command`echo ${{ raw: "hi " + tok }}`
+      .stdout(`hi ${tok}\n`)
+      .runAsTest(`${tok} in script does not break parsing 2`);
+
+    TestBuilder.command`echo ${{ raw: tok + " hi" }}`
+      .stdout(`${tok} hi\n`)
+      .runAsTest(`${tok} in script does not break parsing 3`);
+  });
+
+  TestBuilder.command`echo fif hi`.stdout("fif hi\n").runAsTest("parsing edge case");
 });
 
 describe("condexprs", () => {

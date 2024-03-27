@@ -459,10 +459,7 @@ pub const RunCommand = struct {
         if (Environment.isWindows and bun.strings.hasSuffixComptime(executable, ".exe")) {
             std.debug.assert(std.fs.path.isAbsolute(executable));
 
-            // Using @constCast is safe because we know that
-            // `direct_launch_buffer` is the data destination that assumption is
-            // backed by the immediate assertion.
-            var wpath = @constCast(bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable));
+            var wpath = bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable);
             std.debug.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
 
             std.debug.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);

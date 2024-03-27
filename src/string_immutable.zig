@@ -1747,7 +1747,7 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
     return true;
 }
 
-pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
+pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]u8 {
     std.debug.assert(buf.len > 0);
     const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, utf16, false);
     std.debug.assert(encode_into_result.written < buf.len);
@@ -1755,7 +1755,7 @@ pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     return buf[0..encode_into_result.written :0];
 }
 
-pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     if (!std.fs.path.isAbsoluteWindows(utf8)) {
         return toWPathNormalized(wbuf, utf8);
     }
@@ -1764,14 +1764,14 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
 
-pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]const u16 {
+pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
     wbuf[0..bun.windows.nt_object_prefix.len].* = bun.windows.nt_object_prefix;
     @memcpy(wbuf[bun.windows.nt_object_prefix.len..][0..utf16.len], utf16);
     wbuf[utf16.len + bun.windows.nt_object_prefix.len] = 0;
     return wbuf[0 .. utf16.len + bun.windows.nt_object_prefix.len :0];
 }
 
-pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]const u16 {
+pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
     if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_object_prefix)) {
         @memcpy(wbuf[0..utf16.len], utf16);
         wbuf[utf16.len] = 0;
@@ -1783,13 +1783,13 @@ pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]const u16 {
 // These are the same because they don't have rules like needing a trailing slash
 pub const toNTDir = toNTPath;
 
-pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]u16 {
     std.debug.assert(wbuf.len > 4);
     wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
 
-pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]u16 {
     if (std.fs.path.isAbsoluteWindows(utf8)) {
         return toExtendedPathNormalized(wbuf, utf8);
     }
@@ -1797,7 +1797,7 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathNormalized(wbuf, utf8);
 }
 
-pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]u16 {
     var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
@@ -1827,7 +1827,7 @@ pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash:
     return utf8;
 }
 
-pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]u16 {
     var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
     var path_to_use = utf8;
 
@@ -1844,11 +1844,11 @@ pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWDirPath(wbuf, path_to_use);
 }
 
-pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return toWPathMaybeDir(wbuf, utf8, false);
 }
 
-pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return toWPathMaybeDir(wbuf, utf8, true);
 }
 
@@ -1869,7 +1869,7 @@ pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     }
 }
 
-pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
+pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u16 {
     std.debug.assert(wbuf.len > 0);
 
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(

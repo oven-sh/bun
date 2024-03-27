@@ -255,7 +255,7 @@ jobs:
       #     sudo bash -c 'echo "/cores/%e.%p.%t" > /proc/sys/kernel/core_pattern'
 
       - id: verdaccio
-         run: bun run verdaccio &
+        run: bun run verdaccio &
       - id: test
         name: Test (node runner)
         env:

@@ -408,7 +408,7 @@ jobs:
           bun install --cwd=test --verbose
           bun install --cwd=packages/bun-internal-test --verbose
       - id: verdaccio
-         run: bun run verdaccio &
+        run: bun run verdaccio &
       - id: test
         name: Test (node runner)
         env:

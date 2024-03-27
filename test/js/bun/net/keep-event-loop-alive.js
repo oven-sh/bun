@@ -1,6 +1,6 @@
-const port = process.argv[2] ? parseInt(process.argv[2]) : null;
-
 (async () => {
+  const port = process.argv[2] ? parseInt(process.argv[2]) : null;
+  await Bun.sleep(10);
   // failed connection
   console.log("test 1: failed connection");
   try {

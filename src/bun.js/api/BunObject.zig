@@ -4053,8 +4053,7 @@ pub const Timer = struct {
                 if (this.cancelled) {
                     _ = uv.uv_timer_stop(&this.timer);
                 }
-                // libuv runs on the same thread
-                return this.runFromJSThread();
+                this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
             }
 
             fn onRequest(req: *bun.io.Request) bun.io.Action {

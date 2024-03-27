@@ -1,8 +1,6 @@
 const port = process.argv[2] ? parseInt(process.argv[2]) : null;
-await Bun.sleep(10);
 
 (async () => {
-  console.time("keep-event-loop-alive");
   // failed connection
   console.log("test 1: failed connection");
   try {
@@ -46,5 +44,4 @@ await Bun.sleep(10);
     console.log("run with a port as an argument to try the success situation");
   }
   console.log("success: event loop was not killed");
-  console.timeEnd("keep-event-loop-alive");
 })();

@@ -395,13 +395,6 @@ jobs:
         # TODO: test baseline, disabled due to noise
         cpu: [haswell]
         arch: [x86_64]
-    services:
-      verdaccio:
-        image: verdaccio/verdaccio:5
-        ports:
-          - 4873:4873
-        volumes:
-          - test/cli/install/registry/verdaccio.yaml:/verdaccio/conf/config.yaml
     steps:
       - run: git config --global core.autocrlf false && git config --global core.eol lf
       - id: checkout
@@ -434,6 +427,15 @@ jobs:
           bun install --cwd=test --verbose
           bun install --cwd=packages/bun-internal-test --verbose
           cd ../..
+      - id: verdaccio
+        uses: JarvusInnovations/background-action@v1
+        with:
+          run: |
+            bun run verdaccio &
+          wait-on: |
+            http://localhost:4873
+          tail: true
+          wait-for: 2m
       - id: test
         name: Run tests
         env:

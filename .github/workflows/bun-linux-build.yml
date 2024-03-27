@@ -208,13 +208,6 @@ jobs:
           - tag: linux-x64-baseline
           # - tag: linux-x64-assertions
           # - tag: linux-x64-baseline-assertions
-    services:
-      verdaccio:
-        image: verdaccio/verdaccio:5
-        ports:
-          - 4873:4873
-        volumes:
-          - test/cli/install/registry/verdaccio.yaml:/verdaccio/conf/config.yaml
     steps:
       - id: checkout
         name: Checkout
@@ -261,6 +254,8 @@ jobs:
       #     # Core filenames will be of the form executable.pid.timestamp:
       #     sudo bash -c 'echo "/cores/%e.%p.%t" > /proc/sys/kernel/core_pattern'
 
+      - id: verdaccio
+         run: bun run verdaccio &
       - id: test
         name: Test (node runner)
         env:

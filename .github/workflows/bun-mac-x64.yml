@@ -376,13 +376,6 @@ jobs:
         include:
           - tag: bun-darwin-x64
             runner: macos-12-large
-    services:
-      verdaccio:
-        image: verdaccio/verdaccio:5
-        ports:
-          - 4873:4873
-        volumes:
-          - test/cli/install/registry/verdaccio.yaml:/verdaccio/conf/config.yaml
     steps:
       - id: checkout
         name: Checkout
@@ -414,6 +407,8 @@ jobs:
           bun install --verbose
           bun install --cwd=test --verbose
           bun install --cwd=packages/bun-internal-test --verbose
+      - id: verdaccio
+         run: bun run verdaccio &
       - id: test
         name: Test (node runner)
         env:

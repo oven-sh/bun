@@ -164,6 +164,8 @@ pub const disable_auto_js_to_ts_in_node_modules = true;
 
 pub const runtime_transpiler_cache = true;
 
+pub const windows_bunx_fast_path = false; // Disabled to simplify fixing the bunx issue
+
 pub const breaking_changes_1_1_0 = false;
 
 // This causes strange bugs where writing via console.log (sync) has a different

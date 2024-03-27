@@ -1270,13 +1270,14 @@ pub fn spawnProcessPosix(
                         return error.SystemResources;
                     }
 
-                    var before = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.GETFL);
-
-                    _ = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.SETFL, before | bun.C.FD_CLOEXEC);
+                    {
+                        const before = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.GETFD);
+                        _ = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.SETFD, before | std.os.FD_CLOEXEC);
+                    }
 
                     if (comptime Environment.isMac) {
                         // SO_NOSIGPIPE
-                        before = 1;
+                        const before: i32 = 1;
                         _ = std.c.setsockopt(fds_[if (i == 0) 1 else 0], std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, &before, @sizeOf(c_int));
                     }
 
@@ -1322,7 +1323,8 @@ pub fn spawnProcessPosix(
                 try to_close_on_error.append(fds[0]);
 
                 try actions.dup2(fds[1], fileno);
-                try actions.close(fds[1]);
+                if (fds[1] != fileno)
+                    try actions.close(fds[1]);
 
                 stdio.* = fds[0];
             },
@@ -1361,9 +1363,9 @@ pub fn spawnProcessPosix(
                     }
 
                     // enable non-block
-                    var before = std.c.fcntl(fds_[0], std.os.F.GETFL);
+                    var before = std.c.fcntl(fds_[0], std.os.F.GETFD);
 
-                    _ = std.c.fcntl(fds_[0], std.os.F.SETFL, before | std.os.O.NONBLOCK | bun.C.FD_CLOEXEC);
+                    _ = std.c.fcntl(fds_[0], std.os.F.SETFD, before | bun.C.FD_CLOEXEC);
 
                     if (comptime Environment.isMac) {
                         // SO_NOSIGPIPE
@@ -1377,7 +1379,8 @@ pub fn spawnProcessPosix(
                 try to_close_on_error.append(fds[0]);
 
                 try actions.dup2(fds[1], fileno);
-                try actions.close(fds[1]);
+                if (fds[1] != fileno)
+                    try actions.close(fds[1]);
                 try extra_fds.append(fds[0]);
             },
             .pipe => |fd| {

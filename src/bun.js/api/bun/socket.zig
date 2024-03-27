@@ -1038,18 +1038,8 @@ pub const Listener = struct {
             TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
 
             tls.doConnect(connection, socket_context) catch {
-                handlers_ptr.unprotect();
-                socket_context.deinit(true);
-                handlers.vm.allocator.destroy(handlers_ptr);
-                handlers.promise.deinit();
-                bun.default_allocator.destroy(tls);
-                const err = JSC.SystemError{
-                    .message = bun.String.static("Failed to connect"),
-                    .syscall = bun.String.static("connect"),
-                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
-                };
-                exception.* = err.toErrorInstance(globalObject).asObjectRef();
-                return .zero;
+                tls.handleConnectError(@intFromEnum(bun.C.SystemErrno.ECONNREFUSED));
+                return promise_value;
             };
             tls.poll_ref.ref(handlers.vm);
 
@@ -1069,18 +1059,8 @@ pub const Listener = struct {
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
 
             tcp.doConnect(connection, socket_context) catch {
-                handlers_ptr.unprotect();
-                socket_context.deinit(false);
-                handlers.vm.allocator.destroy(handlers_ptr);
-                handlers.promise.deinit();
-                bun.default_allocator.destroy(tcp);
-                const err = JSC.SystemError{
-                    .message = bun.String.static("Failed to connect"),
-                    .syscall = bun.String.static("connect"),
-                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
-                };
-                exception.* = err.toErrorInstance(globalObject).asObjectRef();
-                return .zero;
+                tcp.handleConnectError(@intFromEnum(bun.C.SystemErrno.ECONNREFUSED));
+                return promise_value;
             };
             tcp.poll_ref.ref(handlers.vm);
 
@@ -1253,8 +1233,7 @@ fn NewSocket(comptime ssl: bool) type {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }
         }
-        pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
-            JSC.markBinding(@src());
+        fn handleConnectError(this: *This, errno: c_int) void {
             log("onConnectError({d})", .{errno});
             if (this.detached) return;
             this.detached = true;
@@ -1310,6 +1289,10 @@ fn NewSocket(comptime ssl: bool) type {
                 promise.rejectOnNextTickAsHandled(globalObject, err_);
                 this.has_pending_activity.store(false, .Release);
             }
+        }
+        pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
+            JSC.markBinding(@src());
+            this.handleConnectError(errno);
         }
 
         pub fn markActive(this: *This) void {

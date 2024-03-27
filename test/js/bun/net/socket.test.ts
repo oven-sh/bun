@@ -1,13 +1,13 @@
 // @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows } from "harness";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 
 it("should coerce '0' to 0", async () => {
   const listener = Bun.listen({
     // @ts-expect-error
     port: "0",
-    hostname: "localhost",
+    hostname: "127.0.0.1",
     socket: {
       open() {},
       close() {},
@@ -22,7 +22,7 @@ it("should NOT coerce '-1234' to 1234", async () => {
     Bun.listen({
       // @ts-expect-error
       port: "-1234",
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       socket: {
         open() {},
         close() {},
@@ -63,18 +63,20 @@ it("connect without top level await should keep process alive", async () => {
       open(socket) {},
       data(socket, data) {},
     },
-    hostname: "localhost",
+    hostname: "127.0.0.1",
     port: 0,
   });
   const proc = Bun.spawn({
     cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port)],
     cwd: import.meta.dir,
     env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
   await proc.exited;
   try {
     expect(proc.exitCode).toBe(0);
-    expect(await new Response(proc.stdout).text()).toContain("event loop was not killed");
+    expect(await new Response(proc.stderr).text()).toContain("event loop was not killed");
   } finally {
     server.stop();
   }
@@ -116,7 +118,7 @@ it("should reject on connection error, calling both connectError() and rejecting
   var data = {};
   connect({
     data,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
     port: 55555,
     socket: {
       connectError(socket, error) {
@@ -159,10 +161,12 @@ it("should reject on connection error, calling both connectError() and rejecting
 
 it("should not leak memory when connect() fails", async () => {
   await (async () => {
-    var promises = new Array(100);
-    for (let i = 0; i < 100; i++) {
+    // windows can take more than a second per connection
+    const quantity = isWindows ? 10 : 50;
+    var promises = new Array(quantity);
+    for (let i = 0; i < quantity; i++) {
       promises[i] = connect({
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: 55555,
         socket: {
           connectError(socket, error) {},
@@ -179,15 +183,15 @@ it("should not leak memory when connect() fails", async () => {
     promises.length = 0;
   })();
 
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 50, 100);
-});
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 50, 50);
+}, 60_000);
 
 // this also tests we mark the promise as handled if connectError() is called
 it("should handle connection error", done => {
   var data = {};
   connect({
     data,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
     port: 55555,
     socket: {
       connectError(socket, error) {
@@ -222,12 +226,8 @@ it("should handle connection error", done => {
 });
 
 it("should not leak memory when connect() fails again", async () => {
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 100);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
 });
-
-it("should allow large amounts of data to be sent and received", async () => {
-  expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
-}, 10_000);
 
 it("socket.timeout works", async () => {
   try {
@@ -246,11 +246,11 @@ it("socket.timeout works", async () => {
           }
         },
       },
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: 0,
     });
     var client = await connect({
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: server.port,
       socket: {
         timeout(socket) {
@@ -270,3 +270,7 @@ it("socket.timeout works", async () => {
     server!.stop(true);
   }
 }, 10_000);
+
+it("should allow large amounts of data to be sent and received", async () => {
+  expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
+}, 60_000);

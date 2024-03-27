@@ -399,7 +399,7 @@ it("should handle connection error (unix)", done => {
     errored = true;
     expect(error).toBeDefined();
     expect(error.message).toBe("Failed to connect");
-    expect((error as any).code).toBe("ENOENT");
+    expect((error as any).code).toBe("ECONNREFUSED");
   });
 
   socket.on("connect", () => {

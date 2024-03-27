@@ -610,10 +610,7 @@ pub const ShellSubprocess = struct {
         cmd_parent: ?*ShellCmd = null,
 
         override_env: bool = false,
-        env_array: std.ArrayListUnmanaged(?[*:0]const u8) = .{
-            .items = &.{},
-            .capacity = 0,
-        },
+        env_array: std.ArrayListUnmanaged(?[*:0]const u8) = .{},
         cwd: []const u8,
         stdio: [3]Stdio = .{
             .ignore,
@@ -686,10 +683,7 @@ pub const ShellSubprocess = struct {
                 .arena = arena,
 
                 .override_env = false,
-                .env_array = .{
-                    .items = &.{},
-                    .capacity = 0,
-                },
+                .env_array = .{},
                 .cwd = event_loop.topLevelDir(),
                 .stdio = .{
                     .{ .ignore = {} },
@@ -698,7 +692,7 @@ pub const ShellSubprocess = struct {
                 },
                 .lazy = false,
                 .PATH = event_loop.env().get("PATH") orelse "",
-                .argv = undefined,
+                .argv = .{},
                 .detached = false,
                 // .ipc_mode = IPCMode.none,
                 // .ipc_callback = .zero,
@@ -708,6 +702,7 @@ pub const ShellSubprocess = struct {
                 out.stdio[1] = .{ .pipe = {} };
                 out.stdio[2] = .{ .pipe = {} };
             }
+
             return out;
         }
 
@@ -752,13 +747,11 @@ pub const ShellSubprocess = struct {
     pub fn spawnAsync(
         event_loop: JSC.EventLoopHandle,
         shellio: *ShellIO,
-        spawn_args_: SpawnArgs,
+        spawn_args: *SpawnArgs,
         out: **@This(),
     ) bun.shell.Result(void) {
         var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
-
-        var spawn_args = spawn_args_;
 
         _ = switch (spawnMaybeSyncImpl(
             .{
@@ -766,7 +759,7 @@ pub const ShellSubprocess = struct {
             },
             event_loop,
             arena.allocator(),
-            &spawn_args,
+            spawn_args,
             shellio,
             out,
         )) {
@@ -789,11 +782,36 @@ pub const ShellSubprocess = struct {
     ) bun.shell.Result(*@This()) {
         const is_sync = config.is_sync;
 
-        if (!spawn_args.override_env and spawn_args.env_array.items.len == 0) {
-            // spawn_args.env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
-            spawn_args.env_array.items = event_loop.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
-            spawn_args.env_array.capacity = spawn_args.env_array.items.len;
-        }
+        const override_env = !spawn_args.override_env and spawn_args.env_array.items.len == 0;
+        const env: bun.DotEnv.Map.NullDelimitedEnvMap = brk: {
+            if (override_env) {
+                break :brk event_loop.createNullDelimitedEnvMap(allocator) catch {
+                    return .{ .err = .{
+                        .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory(),
+                    } };
+                };
+            } else {
+                // Make sure this is a null-terminated
+                if (spawn_args.env_array.items.len == 0 or
+                    spawn_args.env_array.getLast() != null)
+                {
+                    spawn_args.argv.append(allocator, null) catch {
+                        return .{ .err = .{
+                            .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory(),
+                        } };
+                    };
+                }
+
+                break :brk .{
+                    .envp = spawn_args.env_array.items[0 .. spawn_args.env_array.items.len - 1 :null],
+                    // undefined is fine because `env.deinit` is only called if the `override_env` path is taken.
+                    .allocation_size = undefined,
+                };
+            }
+        };
+
+        // var overridden_env: bun
+        // defer if (override_env)
 
         var should_close_memfd = Environment.isLinux;
 
@@ -845,14 +863,14 @@ pub const ShellSubprocess = struct {
             return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
         };
 
-        spawn_args.env_array.append(allocator, null) catch {
-            return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
-        };
+        // spawn_args.env_array.append(allocator, null) catch {
+        //     return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
+        // };
 
         var spawn_result = switch (bun.spawn.spawnProcess(
             &spawn_options,
             @ptrCast(spawn_args.argv.items.ptr),
-            @ptrCast(spawn_args.env_array.items.ptr),
+            env.envp,
         ) catch |err| {
             return .{ .err = .{ .custom = std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)}) catch bun.outOfMemory() } };
         }) {

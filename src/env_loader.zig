@@ -1058,13 +1058,9 @@ pub const Map = struct {
     map: HashTable,
 
     /// Creates a environment block for use in Posix Spawn APIs.
-    /// As in, a sentinel slice of sentinel string pointers.
-    ///
-    /// TODO: the returned value of this is very hard to cleanup manually, and currently must be
-    /// backed by an arena allocator to avoid a memory leak. We use this in many places without
-    /// an area, so those usages are leaking here. Solution would be to make this return a struct
-    /// with a deinit that contained the allocation length.
-    pub fn createNullDelimitedEnvMap(this: *Map, alloc: std.mem.Allocator) ![:null]?[*:0]u8 {
+    /// The return value is a struct with a field '.envp' which can be passed to a posix api.
+    /// Call .deinit with the same allocator to free the memory.
+    pub fn createNullDelimitedEnvMap(this: *Map, alloc: std.mem.Allocator) !NullDelimitedEnvMap {
         var env_map = &this.map;
 
         var envp_count: usize = 0;
@@ -1077,12 +1073,17 @@ pub const Map = struct {
                 total_bytes += (pair.key_ptr.len + pair.value_ptr.len + "=\x00".len);
             }
         }
-        total_bytes += (envp_count + 1) * @sizeOf(?[*:0]u8); // +1 for the null ptr after the pointer list
+        total_bytes += (envp_count + 1) * @sizeOf(?[*:0]const u8); // +1 for the null ptr after the pointer list
 
-        const buf = try alloc.alignedAlloc(u8, @alignOf(?[*:0]u8), total_bytes);
+        // Instead of creating separate allocations for each string, let's allocate
+        // enough bytes for everything. The buffer contains the pointers, and then
+        // all the string bytes afterwards. For this to pass the ptrCast a few
+        // lines later, we have to make a pointer-aligned allocation.
+        const buf = try alloc.alignedAlloc(u8, @alignOf(?[*:0]const u8), total_bytes);
+        comptime std.debug.assert(@TypeOf(buf.ptr) == NullDelimitedEnvMap.BufPtrType);
 
         const envp = envp: {
-            const p: [*]?[*:0]u8 = @ptrCast(buf.ptr);
+            const p: [*]?[*:0]const u8 = @ptrCast(buf.ptr);
             p[envp_count] = null;
             break :envp p[0..envp_count :null];
         };
@@ -1110,10 +1111,65 @@ pub const Map = struct {
 
         if (comptime Environment.allow_assert) {
             std.debug.assert(fba.end_index == fba.buffer.len); // incorrect counting above. every pointer should be byte-aligned
+            std.debug.assert(@intFromPtr(envp.ptr) == @intFromPtr(buf.ptr));
         }
 
-        return envp;
+        return .{
+            .envp = envp,
+            // In order to properly free this, the Zig allocator must be passed
+            // the original slice it was given. The pointer is technically not
+            // enough information.
+            .allocation_size = total_bytes,
+        };
     }
+
+    /// Creates a environment block for use in Posix Spawn APIs. It is assumed that the caller
+    /// will want to add other strings to this block, **so there is no null terminator** in the
+    /// return value.
+    ///
+    /// If passing this into a Posix Spawn API, you will need to append a `null`, and then
+    /// use `list.items[0.. list.items.len - 1 :null]` to get a null-terminated array.
+    ///
+    /// Unlike `createNullDelimitedEnvMap`, this does a separate allocation for each string,
+    /// meaning you likely want to use an arena allocator for the input so you can quickly
+    /// free everything.
+    pub fn createEnvArrayList(this: *Map, alloc: std.mem.Allocator) !std.ArrayListUnmanaged(?[*:0]const u8) {
+        const envp_count = this.map.count();
+        // Allocate an extra entry so a caller that wants a null pointer does not have to resize the ArrayList.
+        var list = try std.ArrayListUnmanaged(?[*:0]const u8).initCapacity(alloc, envp_count + 1);
+        errdefer {
+            for (list.items) |item| {
+                alloc.free(bun.span(
+                    item orelse unreachable, // no null values are added
+                ));
+            }
+            list.deinit(alloc);
+        }
+
+        var it = this.map.iterator();
+        while (it.next()) |pair| {
+            const variable_buf = try alloc.allocSentinel(u8, pair.key_ptr.len + pair.value_ptr.len + 1, 0);
+            @memcpy(variable_buf[0..pair.key_ptr.len], pair.key_ptr.*);
+            variable_buf[pair.key_ptr.len] = '=';
+            @memcpy(variable_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.*);
+            list.appendAssumeCapacity(variable_buf.ptr);
+        }
+
+        return list;
+    }
+
+    pub const NullDelimitedEnvMap = struct {
+        envp: [:null]?[*:0]const u8,
+        allocation_size: usize,
+
+        const BufPtrType = [*]align(@alignOf(?[*:0]const u8)) u8;
+
+        pub inline fn deinit(this: NullDelimitedEnvMap, alloc: std.mem.Allocator) void {
+            alloc.free(
+                @as(BufPtrType, @ptrCast(this.envp.ptr))[0..this.allocation_size],
+            );
+        }
+    };
 
     /// Returns a wrapper around the std.process.EnvMap that does not duplicate the memory of
     /// the keys and values, but instead points into the memory of the bun env map.
@@ -1238,10 +1294,6 @@ pub const Map = struct {
     }
 
     pub inline fn putDefault(this: *Map, key: string, value: string) !void {
-        _ = try this.map.getOrPutValue(key, value);
-    }
-
-    pub inline fn getOrPut(this: *Map, key: string, value: string) !void {
         _ = try this.map.getOrPutValue(key, value);
     }
 

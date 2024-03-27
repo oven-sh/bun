@@ -10321,13 +10321,12 @@ pub const PackageManager = struct {
             try PATH.appendSlice(original_path);
         }
 
-        this_bundler.env.map.put("PATH", PATH.items) catch unreachable;
-
-        const envp = try this_bundler.env.map.createNullDelimitedEnvMap(this.allocator);
+        this_bundler.env.map.put("PATH", PATH.items) catch bun.outOfMemory();
+        const env = try this_bundler.env.map.createNullDelimitedEnvMap(this.allocator);
         try this_bundler.env.map.put("PATH", original_path);
         PATH.deinit();
 
-        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, env, log_level);
     }
 };
 

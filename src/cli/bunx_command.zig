@@ -602,10 +602,13 @@ pub const BunxCommand = struct {
         debug("installing package: {s}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
         this_bundler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true") catch bun.outOfMemory();
 
+        const envp = try this_bundler.env.map.createNullDelimitedEnvMap(bun.default_allocator);
+        defer envp.deinit(bun.default_allocator);
+
         const spawn_result = switch ((bun.spawnSync(&.{
             .argv = argv_to_use,
 
-            .envp = try this_bundler.env.map.createNullDelimitedEnvMap(bun.default_allocator),
+            .envp = envp.envp,
 
             .cwd = bunx_cache_dir,
             .stderr = .inherit,

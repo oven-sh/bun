@@ -3423,8 +3423,6 @@ pub const Interpreter = struct {
             var arena = &this.spawn_arena;
             var arena_allocator = arena.allocator();
             var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.event_loop, false);
-
-            spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
             spawn_args.cmd_parent = this;
             spawn_args.cwd = this.base.shell.cwdZ();
 
@@ -3608,7 +3606,7 @@ pub const Interpreter = struct {
                 .child = undefined,
                 .buffered_closed = buffered_closed,
             } };
-            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child)) {
+            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, &spawn_args, &this.exec.subproc.child)) {
                 .result => this.exec.subproc.child,
                 .err => |*e| {
                     this.base.throw(e);

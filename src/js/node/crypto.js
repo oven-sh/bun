@@ -7461,7 +7461,7 @@ var require__ = __commonJS({
       BlockHash = common.BlockHash,
       sha1_K = [1518500249, 1859775393, 2400959708, 3395469782];
     function SHA1() {
-      if (!(this instanceof SHA1)) return new SHA1();
+      if (!new.target) return new SHA1();
       BlockHash.$call(this),
         (this.h = [1732584193, 4023233417, 2562383102, 271733878, 3285377520]),
         (this.W = new Array(80));
@@ -7526,7 +7526,7 @@ var require__2 = __commonJS({
         3329325298,
       ];
     function SHA256() {
-      if (!(this instanceof SHA256)) return new SHA256();
+      if (!new.target) return new SHA256();
       BlockHash.$call(this),
         (this.h = [1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225]),
         (this.k = sha256_K),
@@ -7576,7 +7576,7 @@ var require__3 = __commonJS({
     var utils = require_utils4(),
       SHA256 = require__2();
     function SHA224() {
-      if (!(this instanceof SHA224)) return new SHA224();
+      if (!new.target) return new SHA224();
       SHA256.$call(this),
         (this.h = [3238371032, 914150663, 812702999, 4144912697, 4290775857, 1750603025, 1694076839, 3204075428]);
     }
@@ -7632,7 +7632,7 @@ var require__4 = __commonJS({
         3409855158, 1501505948, 4234509866, 1607167915, 987167468, 1816402316, 1246189591,
       ];
     function SHA512() {
-      if (!(this instanceof SHA512)) return new SHA512();
+      if (!new.target) return new SHA512();
       BlockHash.$call(this),
         (this.h = [
           1779033703, 4089235720, 3144134277, 2227873595, 1013904242, 4271175723, 2773480762, 1595750129, 1359893119,
@@ -7812,7 +7812,7 @@ var require__5 = __commonJS({
     var utils = require_utils4(),
       SHA512 = require__4();
     function SHA384() {
-      if (!(this instanceof SHA384)) return new SHA384();
+      if (!new.target) return new SHA384();
       SHA512.$call(this),
         (this.h = [
           3418070365, 3238371032, 1654270250, 914150663, 2438529370, 812702999, 355462360, 4144912697, 1731405415,
@@ -7855,7 +7855,7 @@ var require_ripemd = __commonJS({
       sum32_4 = utils.sum32_4,
       BlockHash = common.BlockHash;
     function RIPEMD160() {
-      if (!(this instanceof RIPEMD160)) return new RIPEMD160();
+      if (!new.target) return new RIPEMD160();
       BlockHash.$call(this),
         (this.h = [1732584193, 4023233417, 2562383102, 271733878, 3285377520]),
         (this.endian = "little");
@@ -7954,7 +7954,7 @@ var require_hmac = __commonJS({
     function Hmac(hash, key, enc) {
       key = exportIfKeyObject(key);
 
-      if (!(this instanceof Hmac)) return new Hmac(hash, key, enc);
+      if (!new.target) return new Hmac(hash, key, enc);
       (this.Hash = hash),
         (this.blockSize = hash.blockSize / 8),
         (this.outSize = hash.outSize / 8),
@@ -8965,7 +8965,7 @@ var require_hmac_drbg = __commonJS({
       utils = require_utils2(),
       assert = require_minimalistic_assert();
     function HmacDRBG(options) {
-      if (!(this instanceof HmacDRBG)) return new HmacDRBG(options);
+      if (!new.target) return new HmacDRBG(options);
       (this.hash = options.hash),
         (this.predResist = !!options.predResist),
         (this.outLen = this.hash.outSize),
@@ -9196,7 +9196,7 @@ var require_ec = __commonJS({
       KeyPair = require_key(),
       Signature = require_signature();
     function EC(options) {
-      if (!(this instanceof EC)) return new EC(options);
+      if (!new.target) return new EC(options);
       typeof options == "string" &&
         (assert(Object.prototype.hasOwnProperty.$call(curves, options), "Unknown curve " + options),
         (options = curves[options])),

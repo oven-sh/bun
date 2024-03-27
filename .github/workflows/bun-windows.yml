@@ -428,7 +428,10 @@ jobs:
           bun install --cwd=packages/bun-internal-test --verbose
           cd ../..
       - id: verdaccio
-        run: bun run verdaccio
+        run: |
+          cd test
+          # temp workaround
+          node .\node_modules\verdaccio\bin\verdaccio -c cli\install\registry\verdaccio.yaml &
       - id: test
         name: Run tests
         env:

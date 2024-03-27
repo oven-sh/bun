@@ -1177,6 +1177,7 @@ pub const EventLoop = struct {
                     any.drain();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
+                    bun.markPosixOnly();
                     var any: *TimerReference = task.get(TimerReference).?;
                     any.runFromJSThread();
                 },

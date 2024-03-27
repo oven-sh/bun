@@ -3797,7 +3797,8 @@ pub const Timer = struct {
             if (vm.isInspectorEnabled()) {
                 Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
             }
-
+            vm.eventLoop().enter();
+            defer vm.eventLoop().exit();
             const result = callback.callWithGlobalThis(
                 globalThis,
                 args,
@@ -4053,7 +4054,7 @@ pub const Timer = struct {
                 if (this.cancelled) {
                     _ = uv.uv_timer_stop(&this.timer);
                 }
-                this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+                this.runFromJSThread();
             }
 
             fn onRequest(req: *bun.io.Request) bun.io.Action {

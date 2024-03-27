@@ -1038,7 +1038,7 @@ pub const Listener = struct {
             TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
 
             tls.doConnect(connection, socket_context) catch {
-                tls.handleConnectError(@intFromEnum(bun.C.SystemErrno.ECONNREFUSED));
+                tls.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
                 return promise_value;
             };
             tls.poll_ref.ref(handlers.vm);
@@ -1059,7 +1059,7 @@ pub const Listener = struct {
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
 
             tcp.doConnect(connection, socket_context) catch {
-                tcp.handleConnectError(@intFromEnum(bun.C.SystemErrno.ECONNREFUSED));
+                tcp.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
                 return promise_value;
             };
             tcp.poll_ref.ref(handlers.vm);
@@ -1249,10 +1249,9 @@ fn NewSocket(comptime ssl: bool) type {
                 .errno = errno,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
-
                 // For some reason errno is 0 which causes this to be success.
-                // Unix socket case wont hit this callback because it instantly errors.
-                .code = bun.String.static("ECONNREFUSED"),
+                // Unix socket emits ENOENT
+                .code = if (errno == @intFromEnum(bun.C.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
                 // .code = bun.String.static(@tagName(bun.sys.getErrno(errno))),
                 // .code = bun.String.static(@tagName(@as(bun.C.E, @enumFromInt(errno)))),
             };

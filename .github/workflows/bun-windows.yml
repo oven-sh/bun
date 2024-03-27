@@ -431,7 +431,7 @@ jobs:
         run: |
           cd test
           # temp workaround
-          node .\node_modules\verdaccio\bin\verdaccio -c cli\install\registry\verdaccio.yaml &
+          node .\node_modules\verdaccio\bin\verdaccio -c cli\install\registry\verdaccio.yaml
       - id: test
         name: Run tests
         env:

@@ -3571,7 +3571,7 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JS
     JSValue path = JSValue::decode(arg1);
 
     if (path.isString()) {
-        StringView pathString = path.toWTFString(globalObject);
+        String pathString = path.toWTFString(globalObject);
         uint32_t length = pathString.length();
 
         if (length == 0) {
@@ -3640,13 +3640,8 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JS
                 jc = pathString.characterAt(j);
             }
 
-            StringView propNameStr = pathString.substring(i, j - i);
-
-            Identifier ident = propNameStr.is8Bit()
-                ? Identifier::fromString(vm, propNameStr.characters8(), propNameStr.length())
-                : Identifier::fromString(vm, propNameStr.characters16(), propNameStr.length());
-
-            PropertyName propName = PropertyName(ident);
+            String propNameStr = pathString.substring(i, j - i);
+            PropertyName propName = PropertyName(Identifier::fromString(vm, propNameStr));
 
             currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, propName);
             RETURN_IF_EXCEPTION(scope, {});

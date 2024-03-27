@@ -363,6 +363,7 @@ const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
+const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -432,6 +433,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellLsTask,
     ShellMkdirTask,
     ShellTouchTask,
+    ShellAsyncSubprocessDone,
     TimerReference,
 
     ProcessWaiterThreadTask,
@@ -883,6 +885,10 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
+                @field(Task.Tag, typeBaseName(@typeName(ShellAsyncSubprocessDone))) => {
+                    var shell_ls_task: *ShellAsyncSubprocessDone = task.get(ShellAsyncSubprocessDone).?;
+                    shell_ls_task.runFromMainThread();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(ShellIOWriterAsyncDeinit))) => {
                     var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
                     shell_ls_task.runFromMainThread();

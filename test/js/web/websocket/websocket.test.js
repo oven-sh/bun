@@ -94,7 +94,7 @@ describe("WebSocket", () => {
     } finally {
       server.stop(true);
     }
-  }, 20_000);
+  });
 
   it("rejectUnauthorized should reject self-sign certs when true/default", async () => {
     const server = Bun.serve({

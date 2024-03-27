@@ -1669,7 +1669,7 @@ pub const Parser = struct {
     fn match_if_clausetok(self: *Parser, toktag: IfClauseTok) bool {
         if (self.peek() == .Text and
             self.delimits(self.peek_n(1)) and
-            std.mem.eql(u8, self.text(self.peek().Text), @tagName(toktag)))
+            bun.strings.eql(u8, self.text(self.peek().Text), @tagName(toktag)))
         {
             _ = self.advance();
             _ = self.expect_delimit();
@@ -3481,11 +3481,6 @@ pub const Test = struct {
                 .CloseParen => return .CloseParen,
                 .DoubleBracketOpen => return .DoubleBracketOpen,
                 .DoubleBracketClose => return .DoubleBracketClose,
-                // .If => return .If,
-                // .Else => return .Else,
-                // .Elif => return .Elif,
-                // .Then => return .Then,
-                // .Fi => return .Fi,
                 .Delimit => return .Delimit,
                 .Eof => return .Eof,
             }

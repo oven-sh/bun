@@ -2375,7 +2375,7 @@ pub const Interpreter = struct {
                 return;
             }
 
-            @panic("Looks like you've got a bad case of undefined memory kid");
+            @panic("Expected Script to have a parent of type Interpreter or Expansion");
         }
 
         fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) void {
@@ -3266,8 +3266,15 @@ pub const Interpreter = struct {
             this.enqueueSelf();
         }
 
+        /// This function is purposefully empty as a hack to ensure Async runs in the background while appearing to
+        /// the parent that it is done immediately.
+        ///
+        /// For example, in a script like `sleep 1 & echo hello`, the `sleep 1` part needs to appear as done immediately so the parent doesn't wait for
+        /// it and instead immediately moves to executing the next command.
+        ///
+        /// Actual deinitialization is executed once this Async calls `this.base.interpreter.asyncCmdDone(this)`, where the interpreter will call `.actuallyDeinit()`
         pub fn deinit(this: *Async) void {
-            _ = this; // autofix
+            _ = this;
         }
 
         pub fn actuallyDeinit(this: *Async) void {
@@ -3674,7 +3681,7 @@ pub const Interpreter = struct {
                         return;
                     },
                     .waiting_write_err => return, // yield execution
-                    .done => std.debug.assert(false),
+                    .done => @panic("This code should not be reachable"),
                 }
             }
 

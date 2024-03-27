@@ -1,5 +1,6 @@
 import fs from "fs";
 import { itBundled, testForFile } from "../expectBundled";
+import { isWindows } from "harness";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
@@ -64,7 +65,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("loader/File", {
-    todo: process.platform === "win32", // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperdave)
     files: {
       "/entry.js": `
         import path from 'path';
@@ -85,7 +86,7 @@ describe("bundler", () => {
     },
   });
   itBundled("loader/FileMultipleNoCollision", {
-    todo: process.platform === "win32", // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperdave)
     files: {
       "/entry.js": /* js */ `
         import path from 'path';
@@ -111,7 +112,7 @@ describe("bundler", () => {
     },
   });
   itBundled("loader/FileMultipleNoCollisionAssetNames", {
-    todo: process.platform === "win32", // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperdave)
     files: {
       "/entry.js": /* js */ `
         import path from 'path';

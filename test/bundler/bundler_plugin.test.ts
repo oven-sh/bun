@@ -2,6 +2,7 @@ import assert from "assert";
 import dedent from "dedent";
 import path from "path";
 import { itBundled, testForFile } from "./expectBundled";
+import { isWindows } from "harness";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -513,7 +514,7 @@ describe("bundler", () => {
     };
   });
   itBundled("plugin/ManyFiles", ({ root }) => {
-    const FILES = process.platform === "win32" ? 50 : 200; // windows is slower at this
+    const FILES = isWindows ? 50 : 200; // windows is slower at this
     const create = (fn: (i: number) => string) => new Array(FILES).fill(0).map((_, i) => fn(i));
 
     let onResolveCount = 0;

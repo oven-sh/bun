@@ -1,7 +1,7 @@
 import { SpawnOptions, Subprocess, SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { tmpdir } from "os";
 import { join, sep, posix } from "path";
 
@@ -122,7 +122,7 @@ describe("bun run - < file-path.js", () => {
     require("fs").writeFileSync(file, code);
     try {
       let result;
-      if (process.platform === "win32") {
+      if (isWindows) {
         result = Bun.spawnSync(["powershell", "-c", `Get-Content ${file} | ${bunExe()} run -`], {
           env: bunEnv,
           stderr: "inherit",

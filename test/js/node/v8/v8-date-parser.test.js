@@ -21,7 +21,9 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-const todoOnWindows = process.platform === "win32" ? test.todo : test;
+import { isWindows } from "harness";
+
+const todoOnWindows = isWindows ? test.todo : test;
 
 if (typeof Bun !== "undefined") {
   const aggressiveGC = Bun.unsafe.gcAggressionLevel();

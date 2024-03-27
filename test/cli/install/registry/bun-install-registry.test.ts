@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins } from "harness";
 import { join } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -2017,11 +2017,11 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
     " 1 package installed",
   ]);
   expect(await exited).toBe(0);
-  const bin = process.platform === "win32" ? "what-bin.exe" : "what-bin";
+  const bin = isWindows ? "what-bin.exe" : "what-bin";
   expect(Bun.which("what-bin", { PATH: join(packageDir, "node_modules", ".bin") })).toBe(
     join(packageDir, "node_modules", ".bin", bin),
   );
-  if (process.platform === "win32") {
+  if (isWindows) {
     expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
   } else {
     expect(await file(join(packageDir, "node_modules", ".bin", bin)).text()).toContain("what-bin@1.5.0");
@@ -2055,7 +2055,7 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   expect(Bun.which("what-bin", { PATH: join(packageDir, "node_modules", ".bin") })).toBe(
     join(packageDir, "node_modules", ".bin", bin),
   );
-  if (process.platform === "win32") {
+  if (isWindows) {
     expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
   } else {
     expect(await file(join(packageDir, "node_modules", ".bin", "what-bin")).text()).toContain("what-bin@1.5.0");
@@ -2254,7 +2254,7 @@ test("missing package on reinstall, some with binaries", async () => {
   expect(await exists(join(packageDir, "node_modules", "one-fixed-dep", "package.json"))).toBe(true);
   expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin"))).toBe(true);
   expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "node_modules", "what-bin"))).toBe(true);
-  const bin = process.platform === "win32" ? "what-bin.exe" : "what-bin";
+  const bin = isWindows ? "what-bin.exe" : "what-bin";
   expect(Bun.which("what-bin", { PATH: join(packageDir, "node_modules", ".bin") })).toBe(
     join(packageDir, "node_modules", ".bin", bin),
   );
@@ -2723,7 +2723,7 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
-      const isWindows = process.platform === "win32";
+      const isWindows = isWindows;
       const what_bin_bins = !isWindows ? ["what-bin"] : ["what-bin.bunx", "what-bin.exe"];
       // prettier-ignore
       expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);

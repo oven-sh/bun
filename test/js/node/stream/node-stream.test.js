@@ -2,12 +2,10 @@ import { expect, describe, it } from "bun:test";
 import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
 import { join } from "path";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, isWindows } from "harness";
 import { tmpdir } from "node:os";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { spawn } from "node:child_process";
-
-const isWindows = process.platform === "win32";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {

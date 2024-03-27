@@ -1,9 +1,7 @@
 import { spawnSync } from "bun";
 import { it, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
-
-const isWindows = process.platform === "win32";
 
 it("setTimeout", async () => {
   var lastID = -1;

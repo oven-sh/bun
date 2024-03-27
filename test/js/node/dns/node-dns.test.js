@@ -1,11 +1,10 @@
 import { describe, expect, test, it } from "bun:test";
+import { isWindows } from "harness";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
-
-const isWindows = process.platform === "win32";
 
 // TODO:
 test("it exists", () => {

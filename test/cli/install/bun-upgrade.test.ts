@@ -1,13 +1,13 @@
 import { spawn } from "bun";
 import { afterEach, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
+import { bunExe, bunEnv as env, isWindows } from "harness";
 import { mkdtemp, realpath, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { copyFileSync } from "js/node/fs/export-star-from";
 
 let run_dir: string;
-let exe_name: string = "bun-debug" + (process.platform === "win32" ? ".exe" : "");
+let exe_name: string = "bun-debug" + (isWindows ? ".exe" : "");
 
 beforeEach(async () => {
   run_dir = await realpath(

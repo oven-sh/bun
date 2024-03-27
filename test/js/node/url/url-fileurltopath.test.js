@@ -1,8 +1,7 @@
 import { describe, test } from "bun:test";
+import { isWindows } from "harness";
 import assert from "node:assert";
 import url, { URL } from "node:url";
-
-const isWindows = process.platform === "win32";
 
 describe("url.fileURLToPath", () => {
   function testInvalidArgs(...args) {

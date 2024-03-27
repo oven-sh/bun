@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink } from "harness";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, isWindows } from "harness";
 import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
 import { join, sep } from "path";
 import {
@@ -21,7 +21,6 @@ expect.extend({
   toBeValidBin,
   toHaveBins,
   toHaveWorkspaceLink: async function (package_dir: string, [link, real]: [string, string]) {
-    const isWindows = process.platform === "win32";
     if (!isWindows) {
       // expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBeWorkspaceLink(join("..", "bar"));
       // expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
@@ -32,7 +31,6 @@ expect.extend({
     }
   },
   toHaveWorkspaceLink2: async function (package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
-    const isWindows = process.platform === "win32";
     if (!isWindows) {
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", realPosix));
     } else {

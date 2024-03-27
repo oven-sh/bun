@@ -2,6 +2,7 @@ import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
 import { Database } from "bun:sqlite";
+import { isWindows } from "harness";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -33,7 +34,7 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: process.platform === "win32", // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperdave)
     compile: true,
     files: {
       "/entry.ts": `

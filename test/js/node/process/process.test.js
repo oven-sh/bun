@@ -335,7 +335,7 @@ describe("process.cpuUsage", () => {
   });
 
   // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
-  it.skipIf(process.platform === "win32")("works with diff", () => {
+  it.skipIf(isWindows)("works with diff", () => {
     const init = process.cpuUsage();
     init.system = 1;
     init.user = 1;
@@ -344,7 +344,7 @@ describe("process.cpuUsage", () => {
     expect(delta.system).toBeGreaterThan(0);
   });
 
-  it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
+  it.skipIf(isWindows)("works with diff of different structure", () => {
     const init = {
       user: 0,
       system: 0,
@@ -442,7 +442,7 @@ describe("signal", () => {
     const ret = process.kill(child.pid, "SIGTERM");
     expect(ret).toBe(true);
     await prom;
-    if (process.platform === "win32") {
+    if (isWindows) {
       expect(child.exitCode).toBe(1);
     } else {
       expect(child.signalCode).toBe("SIGTERM");
@@ -461,7 +461,7 @@ describe("signal", () => {
     process._kill(child.pid, SIGKILL);
     await prom;
 
-    if (process.platform === "win32") {
+    if (isWindows) {
       expect(child.exitCode).toBe(1);
     } else {
       expect(child.signalCode).toBe("SIGKILL");

@@ -1,11 +1,12 @@
 import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
+import { isWindows } from "harness";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("npm/ReactSSR", {
-    todo: process.platform === "win32", // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperdave)
     install: ["react@next", "react-dom@next"],
     files: {
       "/entry.tsx": /* tsx */ `

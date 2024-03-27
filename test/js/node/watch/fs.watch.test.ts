@@ -1,6 +1,6 @@
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
-import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
+import { tempDirWithFiles, bunRun, bunRunAsScript, isWindows } from "harness";
 import { pathToFileURL } from "bun";
 
 import { describe, expect, test } from "bun:test";
@@ -23,8 +23,6 @@ const testDir = tempDirWithFiles("watch", {
   "sym.txt": "hello",
   [encodingFileName]: "hello",
 });
-
-const isWindows = process.platform === "win32";
 
 describe("fs.watch", () => {
   test("non-persistent watcher should not block the event loop", done => {

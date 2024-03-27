@@ -1,11 +1,10 @@
 import { file, readableStreamToArrayBuffer, readableStreamToArray, readableStreamToText, ArrayBufferSink } from "bun";
 import { expect, it, beforeEach, afterEach, describe, test } from "bun:test";
+import { isWindows } from "harness";
 import { mkfifo } from "mkfifo";
 import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "os";
-
-const isWindows = process.platform === "win32";
 
 it("TransformStream", async () => {
   // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream

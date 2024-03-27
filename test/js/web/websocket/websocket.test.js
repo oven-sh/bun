@@ -1,11 +1,10 @@
 import { describe, it, expect } from "bun:test";
-import { bunExe, bunEnv, gc } from "harness";
+import { bunExe, bunEnv, gc, isWindows } from "harness";
 import { readFileSync } from "fs";
 import { join, resolve } from "path";
 import process from "process";
 
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
-const isWindows = process.platform === "win32";
 
 describe("WebSocket", () => {
   it("should connect", async () => {

@@ -4,7 +4,7 @@
  *
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
-import { tempDirWithFiles } from "harness";
+import { isWindows, tempDirWithFiles } from "harness";
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
 import { $ } from "bun";
 import path from "path";
@@ -18,7 +18,7 @@ const fileExists = async (path: string): Promise<boolean> =>
 $.nothrow();
 
 const BUN = process.argv0;
-const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
+const DEV_NULL = isWindows ? "NUL" : "/dev/null";
 
 describe("bunshell rm", () => {
   TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`

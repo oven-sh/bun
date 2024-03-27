@@ -374,6 +374,7 @@ jobs:
             **[View build output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
 
             [Commit ${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})
+
   macOS-test:
     name: Tests ${{matrix.tag}}
     runs-on: ${{ matrix.runner }}
@@ -391,6 +392,13 @@ jobs:
         include:
           - tag: bun-darwin-aarch64
             runner: macos-13-xlarge
+    services:
+      verdaccio:
+        image: verdaccio/verdaccio:5
+        ports:
+          - 4873:4873
+        volumes:
+          - test/cli/install/registry/verdaccio.yaml:/verdaccio/conf/config.yaml
     steps:
       - id: checkout
         name: Checkout
@@ -422,8 +430,6 @@ jobs:
           bun install --verbose
           bun install --cwd=test --verbose
           bun install --cwd=packages/bun-internal-test --verbose
-      - id: verdaccio
-        run: bun run verdaccio &
       - id: test
         name: Test (node runner)
         env:

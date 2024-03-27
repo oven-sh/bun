@@ -863,10 +863,6 @@ pub const ShellSubprocess = struct {
             return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
         };
 
-        // spawn_args.env_array.append(allocator, null) catch {
-        //     return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
-        // };
-
         var spawn_result = switch (bun.spawn.spawnProcess(
             &spawn_options,
             @ptrCast(spawn_args.argv.items.ptr),

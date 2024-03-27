@@ -1305,7 +1305,7 @@ pub const Fetch = struct {
                     error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
                     error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
 
-                    else => |e| bun.String.createFormat("fetch() failed with {s}. For more information, pass `verbose: true` in the second argument to fetch()", .{@errorName(e)}) catch bun.outOfMemory(),
+                    else => |e| bun.String.createFormat("{s} fetching {}. For more information, pass `verbose: true` in the second argument to fetch()", .{@errorName(e), bun.fmt.quote(this.url) }) catch bun.outOfMemory(),
                 },
                 .path = path,
             };

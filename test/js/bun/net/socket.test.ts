@@ -248,7 +248,7 @@ it("socket.timeout works", async () => {
       port: 0,
     });
     var client = await connect({
-      hostname: "localhost",
+      hostname: server.hostname,
       port: server.port,
       socket: {
         timeout(socket) {

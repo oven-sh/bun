@@ -1153,7 +1153,7 @@ pub const Map = struct {
             if (i + 7 >= result.len) return error.TooManyEnvironmentVariables;
             result[i] = '=';
             i += 1;
-            i += bun.strings.convertUTF8toUTF16InBuffer(result[i..], pair.value_ptr.*.value).len;
+            i += bun.strings.convertUTF8toUTF16InBuffer(result[i..], pair.value_ptr.*).len;
             if (i + 5 >= result.len) return error.TooManyEnvironmentVariables;
             result[i] = 0;
             i += 1;

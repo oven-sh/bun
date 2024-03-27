@@ -769,7 +769,7 @@ pub const VirtualMachine = struct {
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
             if (Environment.isWindows) {
-                this.initIPCInstance(kv.value.value);
+                this.initIPCInstance(kv.value);
             } else if (std.fmt.parseInt(i32, kv.value, 10) catch null) |fd| {
                 this.initIPCInstance(bun.toFD(fd));
             } else {

@@ -169,7 +169,7 @@ These environment variables are read by Bun and configure aspects of its behavio
 ---
 
 - `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD`
-- If `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD=1`, then `bun --watch` will not clear the console on reload
+- If `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD=true`, then `bun --watch` will not clear the console on reload
 
 ---
 

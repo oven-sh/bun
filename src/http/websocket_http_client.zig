@@ -961,9 +961,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         const WebSocket = @This();
 
         pub usingnamespace bun.New(@This());
-        fn isDeadPtr(ptr: *WebSocket) bool {
-            return @intFromPtr(ptr) == 1;
-        }
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             const vm = global.bunVM();
             const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));

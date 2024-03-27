@@ -37,7 +37,7 @@ async function createServer(cert: TLSOptions, callback: (port: number) => Promis
 it("can handle multiple requests with non native checkServerIdentity", async () => {
   async function request() {
     let called = false;
-    const result = await fetch("https://www.bun.sh", {
+    const result = await fetch("https://www.example.com", {
       keepalive: false,
       tls: {
         checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {

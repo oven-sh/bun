@@ -39,7 +39,6 @@ describe("WebSocket", () => {
     });
     ws.close();
     await closed;
-    Bun.gc(true);
     server.stop(true);
     Bun.gc(true);
   });
@@ -55,7 +54,6 @@ describe("WebSocket", () => {
     });
 
     ws.close();
-    Bun.gc(true);
     await closed;
     Bun.gc(true);
   });
@@ -90,10 +88,9 @@ describe("WebSocket", () => {
         });
 
         ws.close();
-        Bun.gc(true);
         await closed;
-        Bun.gc(true);
       }
+      Bun.gc(true);
     } finally {
       server.stop(true);
     }
@@ -589,7 +586,7 @@ describe("websocket in subprocess", () => {
       },
     });
     const subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", server.url.href],
+      cmd: [bunExe(), join(import.meta.dir, "websocket-subprocess.ts"), server.url.href],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",

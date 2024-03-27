@@ -3233,11 +3233,13 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
             if (bun.FeatureFlags.use_simdutf) {
                 log("UTF16 {d} -> UTF8 {d}", .{ utf16.len, out_len });
                 if (remaining.len >= out_len) {
-                    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(trimmed, remaining);
+                    // using trimmed on windows can give us STATUS_STACK_BUFFER_OVERRUN
+                    const read = if (Environment.isWindows) utf16 else trimmed;
+                    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(read, remaining);
                     if (result.status == .surrogate) break :brk;
 
                     return EncodeIntoResult{
-                        .read = @as(u32, @truncate(trimmed.len)),
+                        .read = @as(u32, @truncate(read.len)),
                         .written = @as(u32, @truncate(result.count)),
                     };
                 }

@@ -123,7 +123,7 @@ pub const LifecycleScriptSubprocess = struct {
         this.current_script_index = next_script_index;
         this.has_called_process_exit = false;
 
-        const shell_bin = bun.CLI.RunCommand.findShell(env.get("PATH") orelse "", cwd) orelse null;
+        const shell_bin = if (Environment.isWindows) null else bun.CLI.RunCommand.findShell(env.get("PATH") orelse "", cwd) orelse null;
 
         var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.script.len + 1);
         defer copy_script.deinit();
@@ -134,7 +134,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const lifecycle_script_path, var lifecycle_script_file = if (Environment.isWindows or shell_bin == null) blk: {
+        const lifecycle_script_path, var lifecycle_script_file = if (shell_bin == null) blk: {
             const tempdir = this.manager.getTemporaryDirectory();
             var lifecycle_script_name = bun.span(try bun.fs.FileSystem.instance.tmpname("lifecycle-script", &path_buf, 12345));
             @memcpy(path_buf[lifecycle_script_name.len..].ptr, ".bun.sh\x00");

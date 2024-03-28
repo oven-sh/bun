@@ -1,4 +1,5 @@
 import { expect, it } from "bun:test";
+import { isWindows } from "harness";
 
 it("performance.now() should be monotonic", () => {
   const first = performance.now();
@@ -7,14 +8,25 @@ it("performance.now() should be monotonic", () => {
   const fourth = performance.now();
   const fifth = performance.now();
   const sixth = performance.now();
-  expect(first < second).toBe(true);
-  expect(second < third).toBe(true);
-  expect(third < fourth).toBe(true);
-  expect(fourth < fifth).toBe(true);
-  expect(fifth < sixth).toBe(true);
-  expect(Bun.nanoseconds() > 0).toBe(true);
-  expect(Bun.nanoseconds() > sixth).toBe(true);
-  expect(typeof Bun.nanoseconds() === "number").toBe(true);
+  if (isWindows) {
+    // Timer precision is monotonic on Windows, but it is 100ns of precision
+    // making it extremely easy to hit overlapping timer values here.
+    expect(first).toBeLessThanOrEqual(second);
+    expect(second).toBeLessThanOrEqual(third);
+    expect(third).toBeLessThanOrEqual(fourth);
+    expect(fourth).toBeLessThanOrEqual(fifth);
+    expect(fifth).toBeLessThanOrEqual(sixth);
+    Bun.sleepSync(0.001);
+  } else {
+    expect(first).toBeLessThan(second);
+    expect(second).toBeLessThan(third);
+    expect(third).toBeLessThan(fourth);
+    expect(fourth).toBeLessThan(fifth);
+    expect(fifth).toBeLessThan(sixth);
+  }
+  expect(Bun.nanoseconds()).toBeGreaterThan(0);
+  expect(Bun.nanoseconds()).toBeGreaterThan(sixth);
+  expect(Bun.nanoseconds()).toBeNumber(true);
 });
 
 it("performance.timeOrigin + performance.now() should be similar to Date.now()", () => {

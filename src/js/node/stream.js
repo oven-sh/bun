@@ -3424,6 +3424,7 @@ var require_readable = __commonJS({
 });
 
 // node_modules/readable-stream/lib/internal/streams/writable.js
+var errorOrDestroy;
 var require_writable = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/writable.js"(exports, module) {
     "use strict";
@@ -3453,7 +3454,7 @@ var require_writable = __commonJS({
       ERR_STREAM_WRITE_AFTER_END,
       ERR_UNKNOWN_ENCODING,
     } = require_errors().codes;
-    var { errorOrDestroy } = destroyImpl;
+    ({ errorOrDestroy } = destroyImpl);
 
     function Writable(options = {}) {
       const isDuplex = this instanceof require_duplex();
@@ -5325,23 +5326,6 @@ function createNativeStreamReadable(Readable) {
       }
 
       return this.#internalRead(this.#getRemainingChunk(maxToRead), ptr);
-      // const internalReadRes = this.#internalRead(
-      //   this.#getRemainingChunk(),
-      //   ptr,
-      // );
-      // // REVERT ME
-      // const wrap = new Promise((resolve) => {
-      //   if (!this.internalReadRes?.then) {
-      //     debug("internalReadRes not promise");
-      //     resolve(internalReadRes);
-      //     return;
-      //   }
-      //   internalReadRes.then((result) => {
-      //     debug("internalReadRes done");
-      //     resolve(result);
-      //   });
-      // });
-      // return wrap;
     }
 
     #internalConstruct(ptr) {
@@ -5510,7 +5494,7 @@ var Writable = require_writable();
 var Duplex = require_duplex();
 
 const _pathOrFdOrSink = Symbol("pathOrFdOrSink");
-const _fileSink = Symbol("fileSink");
+const { fileSinkSymbol: _fileSink } = require("internal/shared");
 const _native = Symbol("native");
 
 function NativeWritable(pathOrFdOrSink, options = {}) {
@@ -5519,7 +5503,6 @@ function NativeWritable(pathOrFdOrSink, options = {}) {
   this[_native] = true;
 
   this._construct = NativeWritable_internalConstruct;
-  this._destroy = NativeWritable_internalDestroy;
   this._final = NativeWritable_internalFinal;
   this._write = NativeWritablePrototypeWrite;
 
@@ -5596,7 +5579,7 @@ NativeWritable.prototype.end = function end(chunk, encoding, cb, native) {
   return WritablePrototypeEnd.$call(this, chunk, encoding, cb, native ?? this[_native]);
 };
 
-function NativeWritable_internalDestroy(error, cb) {
+NativeWritable.prototype._destroy = function (error, cb) {
   const w = this._writableState;
   const r = this._readableState;
 
@@ -5614,7 +5597,7 @@ function NativeWritable_internalDestroy(error, cb) {
   if (w?.closeEmitted || r?.closeEmitted) {
     this.emit("close");
   }
-}
+};
 
 function NativeWritable_internalFinal(cb) {
   var sink = this[_fileSink];

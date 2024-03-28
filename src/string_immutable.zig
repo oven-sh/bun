@@ -2493,8 +2493,8 @@ pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
 
 pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8) !Escaped(u8) {
     const Scalar = struct {
-        pub const lengths: [std.math.maxInt(u8)]u4 = brk: {
-            var values: [std.math.maxInt(u8)]u4 = undefined;
+        pub const lengths: [std.math.maxInt(u8) + 1]u4 = brk: {
+            var values: [std.math.maxInt(u8) + 1]u4 = undefined;
             for (values, 0..) |_, i| {
                 switch (i) {
                     '"' => {
@@ -2833,8 +2833,8 @@ fn Escaped(comptime T: type) type {
 
 pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16) !Escaped(u16) {
     const Scalar = struct {
-        pub const lengths: [std.math.maxInt(u8)]u4 = brk: {
-            var values: [std.math.maxInt(u8)]u4 = undefined;
+        pub const lengths: [std.math.maxInt(u8) + 1]u4 = brk: {
+            var values: [std.math.maxInt(u8) + 1]u4 = undefined;
             for (values, 0..) |_, i| {
                 values[i] = switch (i) {
                     '"' => "&quot;".len,
@@ -3062,7 +3062,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                             break :scan_and_allocate_lazily;
                         },
                         128...std.math.maxInt(u16) => {
-                            const cp = utf16Codepoint([]const u16, ptr[0..2]);
+                            const cp = utf16Codepoint([]const u16, ptr[0..if (ptr + 1 == end) 1 else 2]);
 
                             ptr += @as(u16, cp.len);
                         },
@@ -3096,7 +3096,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                         ptr += 1;
                     },
                     128...std.math.maxInt(u16) => {
-                        const cp = utf16Codepoint([]const u16, ptr[0..2]);
+                        const cp = utf16Codepoint([]const u16, ptr[0..if (ptr + 1 == end) 1 else 2]);
 
                         buf.appendSlice(ptr[0..@as(usize, cp.len)]) catch unreachable;
                         ptr += @as(u16, cp.len);

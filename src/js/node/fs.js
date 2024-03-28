@@ -97,6 +97,10 @@ class FSWatcher extends EventEmitter {
 //   close();
 // }
 
+function openAsBlob(path, options) {
+  return Promise.$resolve(Bun.file(path, options));
+}
+
 class StatWatcher extends EventEmitter {
   // _handle: StatWatcherHandle;
 
@@ -328,44 +332,39 @@ var access = function access(...args) {
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = fs.rmSync.bind(fs),
   rmdirSync = fs.rmdirSync.bind(fs),
-  writev = (fd, buffers, position, callback) => {
+  writev = function writev(fd, buffers, position, callback) {
     if (typeof position === "function") {
       callback = position;
       position = null;
     }
 
-    queueMicrotask(() => {
-      try {
-        var written = fs.writevSync(fd, buffers, position);
-      } catch (e) {
-        callback(e);
-      }
+    if (!$isCallable(callback)) {
+      throw new TypeError("callback must be a function");
+    }
 
-      callback(null, written, buffers);
-    });
+    fs.writev(fd, buffers, position).$then(bytesWritten => callback(null, bytesWritten, buffers), callback);
   },
   writevSync = fs.writevSync.bind(fs),
-  readv = (fd, buffers, position, callback) => {
+  readv = function readv(fd, buffers, position, callback) {
     if (typeof position === "function") {
       callback = position;
       position = null;
     }
 
-    queueMicrotask(() => {
-      try {
-        var written = fs.readvSync(fd, buffers, position);
-      } catch (e) {
-        callback(e);
-      }
+    if (!$isCallable(callback)) {
+      throw new TypeError("callback must be a function");
+    }
 
-      callback(null, written, buffers);
-    });
+    fs.readv(fd, buffers, position).$then(bytesRead => callback(null, bytesRead, buffers), callback);
   },
   readvSync = fs.readvSync.bind(fs),
   Dirent = fs.Dirent,
   Stats = fs.Stats,
   watch = function watch(path, options, listener) {
     return new FSWatcher(path, options, listener);
+  },
+  opendir = function opendir(...args) {
+    callbackify(promises.opendir, args);
   };
 
 // TODO: make symbols a separate export somewhere
@@ -513,6 +512,9 @@ var defaultReadStreamOptions = {
   autoDestroy: true,
 };
 
+let { FileHandle, kRef, kUnref, kFd } = promises.$data;
+let kHandle = Symbol("kHandle");
+
 var ReadStreamClass;
 
 ReadStream = (function (InternalReadStream) {
@@ -550,7 +552,7 @@ ReadStream = (function (InternalReadStream) {
         start = defaultReadStreamOptions.start,
         end = defaultReadStreamOptions.end,
         autoDestroy = defaultReadStreamOptions.autoClose,
-        fs = defaultReadStreamOptions.fs,
+        fs: overridden_fs = defaultReadStreamOptions.fs,
         highWaterMark = defaultReadStreamOptions.highWaterMark,
         fd = defaultReadStreamOptions.fd,
       } = options;
@@ -561,11 +563,22 @@ ReadStream = (function (InternalReadStream) {
 
       // This is kinda hacky but we create a temporary object to assign props that we will later pull into the `this` context after we call super
       var tempThis = {};
+      let handle = null;
       if (fd != null) {
         if (typeof fd !== "number") {
-          throw new TypeError("Expected options.fd to be a number");
+          if (fd instanceof FileHandle) {
+            tempThis.fd = fd[kFd];
+            if (tempThis.fd < 0) {
+              throw new Error("Expected a valid file descriptor");
+            }
+            fd[kRef]();
+            handle = fd;
+          } else {
+            throw new TypeError("Expected options.fd to be a number or FileHandle");
+          }
+        } else {
+          tempThis.fd = tempThis[readStreamPathOrFdSymbol] = fd;
         }
-        tempThis.fd = tempThis[readStreamPathOrFdSymbol] = fd;
         tempThis.autoClose = false;
       } else if (typeof pathOrFd === "string") {
         if (pathOrFd.startsWith("file://")) {
@@ -590,8 +603,9 @@ ReadStream = (function (InternalReadStream) {
       // If fd not open for this file, open it
       if (tempThis.fd === undefined) {
         // NOTE: this fs is local to constructor, from options
-        tempThis.fd = fs.openSync(pathOrFd, flags, mode);
+        tempThis.fd = overridden_fs.openSync(pathOrFd, flags, mode);
       }
+
       // Get FileRef from fd
       var fileRef = Bun.file(tempThis.fd);
 
@@ -600,8 +614,7 @@ ReadStream = (function (InternalReadStream) {
       var stream = fileRef.stream();
       var ptr = stream.$bunNativePtr;
       if (!ptr) {
-        $debug("no native readable stream");
-        throw new Error("no native readable stream");
+        throw new Error("Failed to get internal stream controller. This is a bug in Bun");
       }
 
       super(ptr, {
@@ -615,8 +628,7 @@ ReadStream = (function (InternalReadStream) {
 
       // Assign the tempThis props to this
       Object.assign(this, tempThis);
-      this.#fileRef = fileRef;
-
+      this.#handle = handle;
       this.end = end;
       this._read = this.#internalRead;
       this.start = start;
@@ -641,8 +653,11 @@ ReadStream = (function (InternalReadStream) {
       if (start !== undefined) {
         this.pos = start;
       }
+
+      $assert(overridden_fs);
+      this.#fs = overridden_fs;
     }
-    #fileRef;
+    #handle;
     #fs;
     file;
     path;
@@ -671,16 +686,24 @@ ReadStream = (function (InternalReadStream) {
     }
 
     _destroy(err, cb) {
-      super._destroy(err, cb);
       try {
-        var fd = this.fd;
         this[readStreamPathFastPathSymbol] = false;
+        var handle = this.#handle;
+        if (handle) {
+          handle[kUnref]();
+          this.fd = null;
+          this.#handle = null;
+          super._destroy(err, cb);
+          return;
+        }
 
+        var fd = this.fd;
         if (!fd) {
-          cb(err);
+          super._destroy(err, cb);
         } else {
+          $assert(this.#fs);
           this.#fs.close(fd, er => {
-            cb(er || err);
+            super._destroy(er || err, cb);
           });
           this.fd = null;
         }
@@ -744,7 +767,7 @@ ReadStream = (function (InternalReadStream) {
     #internalRead(n) {
       // pos is the current position in the file
       // by default, if a start value is provided, pos starts at this.start
-      var { pos, end, bytesRead, fd, encoding } = this;
+      var { pos, end, bytesRead, fd } = this;
 
       n =
         pos !== undefined // if there is a pos, then we are reading from that specific position in the file
@@ -891,11 +914,22 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
   } = options;
 
   var tempThis = {};
+  var handle = null;
   if (fd != null) {
     if (typeof fd !== "number") {
-      throw new Error("Expected options.fd to be a number");
+      if (fd instanceof FileHandle) {
+        tempThis.fd = fd[kFd];
+        if (tempThis.fd < 0) {
+          throw new Error("Expected a valid file descriptor");
+        }
+        fd[kRef]();
+        handle = fd;
+      } else {
+        throw new TypeError("Expected options.fd to be a number or FileHandle");
+      }
+    } else {
+      tempThis.fd = fd;
     }
-    tempThis.fd = fd;
     tempThis[_writeStreamPathFastPathSymbol] = false;
   } else if (typeof path === "string") {
     if (path.length === 0) {
@@ -952,6 +986,7 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
 
   this.start = start;
   this[_fs] = fs;
+  this[kHandle] = handle;
   this.flags = flags;
   this.mode = mode;
   this.bytesWritten = 0;
@@ -973,6 +1008,7 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
 
   return this;
 });
+
 const NativeWritable = Stream.NativeWritable;
 const WriteStreamPrototype = (WriteStream.prototype = Object.create(NativeWritable.prototype));
 
@@ -1047,10 +1083,18 @@ function WriteStream_handleWrite(er, bytes) {
 
 function WriteStream_internalClose(err, cb) {
   this[_writeStreamPathFastPathSymbol] = false;
+  var handle = this[kHandle];
+  if (handle) {
+    handle[kUnref]();
+    this.fd = null;
+    this[kHandle] = null;
+    NativeWritable.prototype._destroy.$apply(this, err, cb);
+    return;
+  }
   var fd = this.fd;
   this[_fs].close(fd, er => {
     this.fd = null;
-    cb(err || er);
+    NativeWritable.prototype._destroy.$apply(this, er || err, cb);
   });
 }
 
@@ -1067,7 +1111,7 @@ WriteStreamPrototype._construct = function _construct(callback) {
 
 WriteStreamPrototype._destroy = function _destroy(err, cb) {
   if (this.fd === null) {
-    return cb(err);
+    return NativeWritable.prototype._destroy.$apply(this, err, cb);
   }
 
   if (this[kIoDone]) {
@@ -1132,10 +1176,6 @@ WriteStreamPrototype.end = function end(chunk, encoding, cb) {
   return NativeWritable.prototype.end.$call(this, chunk, encoding, cb, native);
 };
 
-WriteStreamPrototype._destroy = function _destroy(err, cb) {
-  this.close(err, cb);
-};
-
 function WriteStream_errorOrDestroy(err) {
   var {
     _readableState: r = { destroyed: false, autoDestroy: false },
@@ -1155,25 +1195,6 @@ function createWriteStream(path, options) {
   return new WriteStream(path, options);
 }
 
-// NOTE: This was too smart and doesn't actually work
-// WriteStream = Object.defineProperty(
-//   function WriteStream(path, options) {
-//     var _InternalWriteStream = getLazyWriteStream();
-//     return new _InternalWriteStream(path, options);
-//   },
-//   Symbol.hasInstance,
-//   { value: (instance) => instance[writeStreamSymbol] === true },
-// );
-
-// ReadStream = Object.defineProperty(
-//   function ReadStream(path, options) {
-//     var _InternalReadStream = getLazyReadStream();
-//     return new _InternalReadStream(path, options);
-//   },
-//   Symbol.hasInstance,
-//   { value: (instance) => instance[readStreamSymbol] === true },
-// );
-
 Object.defineProperties(fs, {
   createReadStream: {
     value: createReadStream,
@@ -1187,20 +1208,12 @@ Object.defineProperties(fs, {
   WriteStream: {
     value: WriteStream,
   },
-  // ReadStream: {
-  //   get: () => getLazyReadStream(),
-  // },
-  // WriteStream: {
-  //   get: () => getLazyWriteStream(),
-  // },
 });
 
 // lol
-// @ts-ignore
 realpath.native = realpath;
 realpathSync.native = realpathSync;
 
-let lazy_cpSync = null;
 // attempt to use the native code version if possible
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
@@ -1210,8 +1223,7 @@ function cpSync(src, dest, options) {
     throw new TypeError("options must be an object");
   }
   if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    if (!lazy_cpSync) lazy_cpSync = require("../internal/fs/cp-sync");
-    return lazy_cpSync(src, dest, options);
+    return require("../internal/fs/cp-sync")(src, dest, options);
   }
   return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
@@ -1338,6 +1350,8 @@ export default {
   writevSync,
   fdatasync,
   fdatasyncSync,
+  openAsBlob,
+  opendir,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,

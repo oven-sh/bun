@@ -71,7 +71,6 @@ public:
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(this->globalObject->debugger());
         if (debugger) {
             debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& done) -> void {
-                Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject.debugger());
                 Bun__tickWhilePaused(&done);
             };
         }

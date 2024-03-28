@@ -179,7 +179,7 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
 } // namespace Zig
 
 namespace Bun {
-    
+
 JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
@@ -188,14 +188,12 @@ JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
         globalObject,
         (unsigned)0,
         Zig::createPath(globalObject, false),
-        false
-    );
+        false);
     binding->putByIndexInline(
         globalObject,
         (unsigned)1,
         Zig::createPath(globalObject, true),
-        false
-    );
+        false);
     return binding;
 }
 

@@ -321,9 +321,6 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
 }
 
 export function getMaxFD(): number {
-  if (isWindows) {
-    return 0;
-  }
   const maxFD = openSync("/dev/null", "r");
   closeSync(maxFD);
   return maxFD;
@@ -522,5 +519,66 @@ export function fillRepeating(dstBuffer: NodeJS.TypedArray, start: number, end: 
     dstBuffer.copyWithin(p, start, sLen); // internal copy
     p += sLen; // add current length to offset
     sLen <<= 1; // double length for next segment
+  }
+}
+
+function makeFlatPropertyMap(opts: object) {
+  // return all properties of opts as paths for nested objects with dot notation
+  // like { a: { b: 1 } } => { "a.b": 1 }
+  // combining names of nested objects with dot notation
+  // infinitely deep
+  const ret: any = {};
+  function recurse(obj: object, path = "") {
+    for (const [key, value] of Object.entries(obj)) {
+      if (value === undefined) continue;
+
+      if (value && typeof value === "object") {
+        recurse(value, path ? `${path}.${key}` : key);
+      } else {
+        ret[path ? `${path}.${key}` : key] = value;
+      }
+    }
+  }
+
+  recurse(opts);
+  return ret;
+}
+
+export function toTOMLString(opts: object) {
+  // return a TOML string of the given options
+  const props = makeFlatPropertyMap(opts);
+  let ret = "";
+  for (const [key, value] of Object.entries(props)) {
+    if (value === undefined) continue;
+    ret += `${key} = ${JSON.stringify(value)}` + "\n";
+  }
+  return ret;
+}
+
+export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
+  var decoder = new (require("string_decoder").StringDecoder)("utf8");
+  var str = "";
+  for await (const chunk of iter) {
+    str += decoder.write(chunk);
+    let i = str.indexOf("\n");
+    while (i >= 0) {
+      yield str.slice(0, i);
+      str = str.slice(i + 1);
+      i = str.indexOf("\n");
+    }
+  }
+
+  str += decoder.end();
+  {
+    let i = str.indexOf("\n");
+    while (i >= 0) {
+      yield str.slice(0, i);
+      str = str.slice(i + 1);
+      i = str.indexOf("\n");
+    }
+  }
+
+  if (str.length > 0) {
+    yield str;
   }
 }

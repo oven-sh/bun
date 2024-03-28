@@ -55,6 +55,11 @@ class EventTarget;
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
 
+#if OS(WINDOWS)
+#include <uv.h>
+extern "C" uv_loop_t* Bun__ZigGlobalObject__uvLoop(void* /* BunVM */);
+#endif
+
 namespace Zig {
 
 class JSCStackTrace;
@@ -300,6 +305,12 @@ public:
     void visitGeneratedLazyClasses(GlobalObject*, Visitor&);
 
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
+#if OS(WINDOWS)
+    uv_loop_t* uvLoop() const
+    {
+        return Bun__ZigGlobalObject__uvLoop(m_bunVM);
+    }
+#endif
     bool isThreadLocalDefaultGlobalObject = false;
 
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
@@ -342,8 +353,11 @@ public:
 
         Bun__BodyValueBufferer__onRejectStream,
         Bun__BodyValueBufferer__onResolveStream,
+
+        Bun__onResolveEntryPointResult,
+        Bun__onRejectEntryPointResult,
     };
-    static constexpr size_t promiseFunctionsSize = 24;
+    static constexpr size_t promiseFunctionsSize = 26;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 

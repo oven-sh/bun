@@ -198,6 +198,10 @@ class BunWebSocket extends EventEmitter {
   }
 
   ping(data, mask, cb) {
+    if (this.#ws.readyState === 0) {
+      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
+    }
+
     if (typeof data === "function") {
       cb = data;
       data = mask = undefined;
@@ -211,7 +215,11 @@ class BunWebSocket extends EventEmitter {
     try {
       this.#ws.ping(data);
     } catch (error) {
-      typeof cb === "function" && cb(error);
+      if (typeof cb === "function") {
+        cb(error);
+        return;
+      }
+      this.emit("error", error);
       return;
     }
 
@@ -219,6 +227,10 @@ class BunWebSocket extends EventEmitter {
   }
 
   pong(data, mask, cb) {
+    if (this.#ws.readyState === 0) {
+      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
+    }
+
     if (typeof data === "function") {
       cb = data;
       data = mask = undefined;
@@ -232,7 +244,11 @@ class BunWebSocket extends EventEmitter {
     try {
       this.#ws.pong(data);
     } catch (error) {
-      typeof cb === "function" && cb(error);
+      if (typeof cb === "function") {
+        cb(error);
+        return;
+      }
+      this.emit("error", error);
       return;
     }
 
@@ -526,13 +542,27 @@ class BunWebSocketMocked extends EventEmitter {
     const open = this.#open.bind(this);
     const close = this.#close.bind(this);
     const drain = this.#drain.bind(this);
+    const ping = this.#ping.bind(this);
+    const pong = this.#pong.bind(this);
 
     this[kBunInternals] = {
       message, // a message is received
       open, // a socket is opened
       close, // a socket is closed
       drain, // the socket is ready to receive more data
+      ping, // a ping is received
+      pong, // a pong is received
     };
+  }
+
+  #ping(ws, data) {
+    this.#ws = ws;
+    this.emit("ping", data);
+  }
+
+  #pong(ws, data) {
+    this.#ws = ws;
+    this.emit("pong", data);
   }
 
   #message(ws, message) {
@@ -579,20 +609,70 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   #drain(ws) {
-    const chunk = this.#enquedMessages[0];
-    if (chunk) {
+    let chunk;
+    while ((chunk = this.#enquedMessages[0]) && this.#state === 1) {
       const [data, compress, cb] = chunk;
       const written = ws.send(data, compress);
-      if (written == -1) {
+      if (written < 1) {
         // backpressure wait until next drain event
         return;
       }
 
-      typeof cb === "function" && cb();
-
       this.#bufferedAmount -= chunk.length;
       this.#enquedMessages.shift();
+
+      typeof cb === "function" && queueMicrotask(cb);
     }
+  }
+
+  ping(data, mask, cb) {
+    if (this.#state === 0) {
+      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
+    }
+
+    if (typeof data === "function") {
+      cb = data;
+      data = mask = undefined;
+    } else if (typeof mask === "function") {
+      cb = mask;
+      mask = undefined;
+    }
+
+    if (typeof data === "number") data = data.toString();
+
+    try {
+      this.#ws.ping(data);
+    } catch (error) {
+      typeof cb === "function" && cb(error);
+      return;
+    }
+
+    typeof cb === "function" && cb();
+  }
+
+  pong(data, mask, cb) {
+    if (this.#state === 0) {
+      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
+    }
+
+    if (typeof data === "function") {
+      cb = data;
+      data = mask = undefined;
+    } else if (typeof mask === "function") {
+      cb = mask;
+      mask = undefined;
+    }
+
+    if (typeof data === "number") data = data.toString();
+
+    try {
+      this.#ws.pong(data);
+    } catch (error) {
+      typeof cb === "function" && cb(error);
+      return;
+    }
+
+    typeof cb === "function" && cb();
   }
 
   send(data, opts, cb) {
@@ -606,7 +686,7 @@ class BunWebSocketMocked extends EventEmitter {
         return;
       }
 
-      typeof cb === "function" && cb();
+      typeof cb === "function" && process.nextTick(cb);
     } else if (this.#state === 0) {
       // not connected yet
       this.#enquedMessages.push([data, opts?.compress, cb]);

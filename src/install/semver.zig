@@ -63,12 +63,6 @@ pub const String = extern struct {
         }
     }
 
-    pub fn isUndefined(this: *const String) bool {
-        const num: u64 = undefined;
-        const bytes = @as(u64, @bitCast(this.bytes));
-        return @as(u63, @truncate(bytes)) == @as(u63, @truncate(num));
-    }
-
     pub const Formatter = struct {
         str: *const String,
         buf: string,

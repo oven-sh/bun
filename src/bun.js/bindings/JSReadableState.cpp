@@ -395,7 +395,6 @@ JSC::EncodedJSValue JSReadableStateConstructor::construct(JSC::JSGlobalObject* l
         return JSValue::encode(jsUndefined());
     }
     JSValue optionsVal = callFrame->uncheckedArgument(0);
-    JSValue streamVal = callFrame->uncheckedArgument(1);
     JSValue isDuplexVal = callFrame->uncheckedArgument(2);
 
     bool isDuplex;

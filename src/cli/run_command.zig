@@ -882,7 +882,7 @@ pub const RunCommand = struct {
                 }
             }
 
-            this_bundler.runEnvLoader(true) catch {};
+            this_bundler.runEnvLoader(false) catch {};
         }
 
         this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;

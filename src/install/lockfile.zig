@@ -1112,7 +1112,7 @@ pub const Printer = struct {
         };
 
         env_loader.loadProcess();
-        try env_loader.load(entries_option.entries, &[_][]u8{}, .production, false);
+        try env_loader.load(entries_option.entries, &[_][]u8{}, .production, true);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,

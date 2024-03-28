@@ -6672,7 +6672,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(entries_option.entries, &[_][]u8{}, .production, false);
+        try env.load(entries_option.entries, &[_][]u8{}, .production, true);
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 

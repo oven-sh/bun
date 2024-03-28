@@ -707,7 +707,6 @@ pub const ModuleLoader = struct {
     transpile_source_code_arena: ?*bun.ArenaAllocator = null,
     eval_source: ?*logger.Source = null,
 
-    const debug = Output.scoped(.ModuleLoader, true);
     pub var is_allowed_to_use_internal_testing_apis = false;
 
     /// This must be called after calling transpileSourceCode

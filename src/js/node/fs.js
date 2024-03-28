@@ -5,9 +5,11 @@ const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 
+// Private exports
+const { FileHandle, kRef, kUnref, kFd, fs } = promises.$data;
+
 // reusing a different private symbol
 // this points to `node_fs_binding.zig`'s `createBinding` function.
-const fs = promises.$lazy;
 const constants = $processBindingConstants.fs;
 
 var _writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
@@ -512,7 +514,6 @@ var defaultReadStreamOptions = {
   autoDestroy: true,
 };
 
-let { FileHandle, kRef, kUnref, kFd } = promises.$data;
 let kHandle = Symbol("kHandle");
 
 var ReadStreamClass;

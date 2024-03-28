@@ -182,7 +182,6 @@ namespace Bun {
 
 JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
 {
-    JSC::VM& vm = globalObject->vm();
     auto binding = constructEmptyArray(globalObject, nullptr, 2);
     binding->putByIndexInline(
         globalObject,

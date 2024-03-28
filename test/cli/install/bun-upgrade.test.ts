@@ -15,9 +15,6 @@ beforeEach(async () => {
   );
   copyFileSync(bunExe(), join(run_dir, exe_name));
 });
-afterEach(async () => {
-  await rm(run_dir, { force: true, recursive: true });
-});
 
 it("two invalid arguments, should display error message and suggest command", async () => {
   console.log(run_dir, exe_name);

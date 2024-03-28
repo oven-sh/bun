@@ -18,7 +18,6 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(remove_dir, { force: true, recursive: true });
   await dummyAfterEach();
 });
 

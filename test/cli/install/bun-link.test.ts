@@ -28,7 +28,6 @@ beforeEach(async () => {
   await dummyBeforeEach();
 });
 afterEach(async () => {
-  await rm(link_dir, { force: true, recursive: true });
   await dummyAfterEach();
 });
 

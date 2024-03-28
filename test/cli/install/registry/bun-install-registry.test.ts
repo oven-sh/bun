@@ -51,10 +51,6 @@ registry = "http://localhost:${port}/"
   );
 });
 
-afterEach(async () => {
-  0 && (await rm(packageDir, { force: true, recursive: true }));
-});
-
 describe.each(["--production", "without --production"])("%s", flag => {
   const prod = flag === "--production";
   const order = ["devDependencies", "dependencies"];

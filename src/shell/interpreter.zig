@@ -9017,6 +9017,20 @@ pub const Interpreter = struct {
                         }
                     }
                 }
+
+                if (bun.Environment.isWindows) {
+                    // This might happen if the file descriptor points to NUL.
+                    // On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so
+                    // `this.writer.start()` will try to open it as a tty with
+                    // uv_tty_init, but this returns EBADF. As a workaround,
+                    // we'll try opening the file descriptor as a file.
+                    if (e.getErrno() == .BADF) {
+                        this.flags.pollable = false;
+                        this.flags.nonblocking = false;
+                        this.flags.is_socket = false;
+                        return this.writer.startWithFile(this.fd);
+                    }
+                }
                 return .{ .err = e };
             }
             if (comptime bun.Environment.isPosix) {

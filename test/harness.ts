@@ -168,8 +168,13 @@ export function bunTest(file: string, env?: Record<string, string>) {
   };
 }
 
-export function bunRunAsScript(dir: string, script: string, env?: Record<string, string>) {
-  const result = Bun.spawnSync([bunExe(), `run`, `${script}`], {
+export function bunRunAsScript(
+  dir: string,
+  script: string,
+  env?: Record<string, string | undefined>,
+  execArgv?: string[],
+) {
+  const result = Bun.spawnSync([bunExe(), ...(execArgv ?? []), `run`, `${script}`], {
     cwd: dir,
     env: {
       ...bunEnv,

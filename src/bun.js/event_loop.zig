@@ -2172,7 +2172,7 @@ pub const EventLoopHandle = union(enum) {
         this.loop().unref();
     }
 
-    pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
+    pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) !bun.DotEnv.Map.NullDelimitedEnvMap {
         return switch (this) {
             .js => this.js.virtual_machine.bundler.env.map.createNullDelimitedEnvMap(alloc),
             .mini => this.mini.env.?.map.createNullDelimitedEnvMap(alloc),

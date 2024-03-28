@@ -2112,10 +2112,7 @@ pub const PackageManager = struct {
         const init_cwd_gop = try this.env.map.getOrPutWithoutValue("INIT_CWD");
         if (!init_cwd_gop.found_existing) {
             init_cwd_gop.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_gop.key_ptr.*);
-            init_cwd_gop.value_ptr.* = .{
-                .value = try ctx.allocator.dupe(u8, FileSystem.instance.top_level_dir),
-                .conditional = false,
-            };
+            init_cwd_gop.value_ptr.* = try ctx.allocator.dupe(u8, FileSystem.instance.top_level_dir);
         }
 
         this.env.loadCCachePath(this_bundler.fs);
@@ -6672,7 +6669,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(entries_option.entries, &[_][]u8{}, .production);
+        try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
@@ -10324,13 +10321,12 @@ pub const PackageManager = struct {
             try PATH.appendSlice(original_path);
         }
 
-        this_bundler.env.map.put("PATH", PATH.items) catch unreachable;
-
-        const envp = try this_bundler.env.map.createNullDelimitedEnvMap(this.allocator);
+        this_bundler.env.map.put("PATH", PATH.items) catch bun.outOfMemory();
+        const env = try this_bundler.env.map.createNullDelimitedEnvMap(this.allocator);
         try this_bundler.env.map.put("PATH", original_path);
         PATH.deinit();
 
-        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, env, log_level);
     }
 };
 

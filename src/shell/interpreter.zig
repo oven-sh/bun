@@ -1043,7 +1043,7 @@ pub const Interpreter = struct {
             var iter = env_loader.iterator();
 
             while (iter.next()) |entry| {
-                const value = EnvStr.initSlice(entry.value_ptr.value);
+                const value = EnvStr.initSlice(entry.value_ptr.*);
                 const key = EnvStr.initSlice(entry.key_ptr.*);
                 export_env.insert(key, value);
             }
@@ -3423,8 +3423,6 @@ pub const Interpreter = struct {
             var arena = &this.spawn_arena;
             var arena_allocator = arena.allocator();
             var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.event_loop, false);
-
-            spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
             spawn_args.cmd_parent = this;
             spawn_args.cwd = this.base.shell.cwdZ();
 

@@ -25,7 +25,7 @@ pub const LifecycleScriptSubprocess = struct {
     stderr: OutputReader = OutputReader.init(@This()),
     has_called_process_exit: bool = false,
     manager: *PackageManager,
-    envp: [:null]?[*:0]u8,
+    env: bun.DotEnv.Map.NullDelimitedEnvMap,
 
     timer: ?Timer = null,
 
@@ -174,7 +174,7 @@ pub const LifecycleScriptSubprocess = struct {
         };
 
         this.remaining_fds = 0;
-        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp)).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.env.envp)).unwrap();
 
         if (comptime Environment.isPosix) {
             if (spawned.stdout) |stdout| {
@@ -391,18 +391,19 @@ pub const LifecycleScriptSubprocess = struct {
             this.stderr.deinit();
         }
 
+        this.env.deinit(this.manager.allocator);
         this.destroy();
     }
 
     pub fn spawnPackageScripts(
         manager: *PackageManager,
         list: Lockfile.Package.Scripts.List,
-        envp: [:null]?[*:0]u8,
+        env: bun.DotEnv.Map.NullDelimitedEnvMap,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
         var lifecycle_subprocess = LifecycleScriptSubprocess.new(.{
             .manager = manager,
-            .envp = envp,
+            .env = env,
             .scripts = list,
             .package_name = list.package_name,
         });

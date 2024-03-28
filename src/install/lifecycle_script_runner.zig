@@ -142,7 +142,6 @@ pub const LifecycleScriptSubprocess = struct {
 
             const lifecycle_script_file = try tempdir.createFile(lifecycle_script_name, .{});
             errdefer lifecycle_script_file.close();
-            bun.path.platformToPosixInPlace(u8, combined_script);
             try lifecycle_script_file.writeAll(combined_script);
             const lifecycle_script_path = try bun.getFdPath(lifecycle_script_file.handle, &path_buf2);
             path_buf2[lifecycle_script_path.len] = 0;

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <sys/termios.h>
+#include <sys/ioctl.h>
 #else
 #include <uv.h>
 #include <windows.h>
@@ -193,7 +194,12 @@ extern "C" void windows_enable_stdio_inheritance()
 // close_range is glibc > 2.33, which is very new
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
+// https://github.com/oven-sh/bun/issues/9669
+#ifdef __NR_close_range
     return syscall(__NR_close_range, start, end, flags);
+#else
+    return ENOSYS;
+#endif
 }
 
 static void unset_cloexec(int fd)
@@ -408,7 +414,7 @@ extern "C" void bun_initialize_process()
     // This is less of an issue for macOS due to posix_spawn
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
     // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
-    bun_close_range(0, ~0U, CLOSE_RANGE_CLOEXEC);
+    bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
 
 #if OS(LINUX) || OS(DARWIN)
@@ -481,3 +487,49 @@ extern "C" void bun_initialize_process()
 
     atexit(Bun__onExit);
 }
+
+#if OS(WINDOWS)
+extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
+{
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+#else
+
+static bool can_open_as_nonblocking_tty(int32_t fd)
+{
+    int result;
+#if OS(LINUX) || OS(FreeBSD)
+    int dummy = 0;
+
+    result = ioctl(fd, TIOCGPTN, &dummy) != 0;
+#elif OS(DARWIN)
+
+    char dummy[256];
+
+    result = ioctl(fd, TIOCPTYGNAME, &dummy) != 0;
+
+#else
+
+#error "TODO"
+
+#endif
+
+    return result;
+}
+
+extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
+{
+    if (!can_open_as_nonblocking_tty(fd)) {
+        return -1;
+    }
+
+    char pathbuf[PATH_MAX + 1];
+    if (ttyname_r(fd, pathbuf, sizeof(pathbuf)) != 0) {
+        return -1;
+    }
+
+    return open(pathbuf, mode | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+}
+
+#endif

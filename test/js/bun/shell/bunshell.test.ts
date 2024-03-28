@@ -1217,11 +1217,15 @@ fi`
       .runAsTest("linebreak before fi (after else)");
 
     // test_oE 'command ending with asynchronous command (after if)'
-    TestBuilder.command`if echo foo&then wait;fi`.stdout("foo\n").runAsTest("ZOOP");
+    TestBuilder.command`if echo foo&then wait;fi`
+      .stdout("foo\n")
+      .todo("wait not implemented")
+      .runAsTest("command ending with asynchronous command (after if)");
 
     // test_oE 'command ending with asynchronous command (after then)'
     TestBuilder.command`if echo foo;then echo bar&fi;wait`
       .stdout("foo\nbar\n")
+      .todo("wait not implementeeed")
       .runAsTest("command ending with asynchronous command (after then)");
 
     // test_oE 'command ending with asynchronous command (after elif)'

@@ -1,11 +1,12 @@
 (async () => {
   const port = process.argv[2] ? parseInt(process.argv[2]) : null;
+  const hostname = process.argv[3] ? process.argv[3] : "localhost";
   await Bun.sleep(10);
   // failed connection
   console.log("test 1: failed connection");
   try {
     const socket = await Bun.connect({
-      hostname: "localhost",
+      hostname: hostname,
       port: 9999,
       socket: { data() {} },
     });
@@ -15,7 +16,7 @@
   console.log("test 2: failed connection [tls]");
   try {
     const socket = await Bun.connect({
-      hostname: "localhost",
+      hostname: hostname,
       port: 9999,
       socket: { data() {} },
       tls: true,
@@ -26,7 +27,7 @@
     // successful connection
     console.log("test 3: successful connection");
     const socket = await Bun.connect({
-      hostname: "localhost",
+      hostname: hostname,
       port,
       socket: { data() {} },
     });
@@ -35,7 +36,7 @@
     // successful connection tls
     console.log("test 4: successful connection [tls]");
     const socket2 = await Bun.connect({
-      hostname: "localhost",
+      hostname: hostname,
       port,
       socket: { data() {} },
     });

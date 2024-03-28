@@ -1925,7 +1925,8 @@ pub const VirtualMachine = struct {
         }
 
         const old_log = jsc_vm.log;
-        var log = logger.Log.init(jsc_vm.allocator);
+        // the logger can end up being called on another thread, it must not use threadlocal Heap Allocator
+        var log = logger.Log.init(bun.default_allocator);
         defer log.deinit();
         jsc_vm.log = &log;
         jsc_vm.bundler.resolver.log = &log;

@@ -3388,9 +3388,21 @@ var require_readable = __commonJS({
     };
 
     Readable.fromWeb = function (readableStream, options) {
+      // We cache .stream() calls for file descriptors
+      // This won't create a new ReadableStream each time.
+      let bunStdinStream = Bun.stdin.stream();
+      if (readableStream === bunStdinStream) {
+        return bunStdinStream;
+      }
+
       return webStreamsAdapters.newStreamReadableFromReadableStream(readableStream, options);
     };
     Readable.toWeb = function (streamReadable, options) {
+      // Workaround for https://github.com/oven-sh/bun/issues/9041
+      if (streamReadable === process.stdin) {
+        return Bun.stdin.stream();
+      }
+
       return webStreamsAdapters.newReadableStreamFromStreamReadable(streamReadable, options);
     };
     Readable.wrap = function (src, options) {

@@ -194,7 +194,12 @@ extern "C" void windows_enable_stdio_inheritance()
 // close_range is glibc > 2.33, which is very new
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
+// https://github.com/oven-sh/bun/issues/9669
+#ifdef __NR_close_range
     return syscall(__NR_close_range, start, end, flags);
+#else
+    return ENOSYS;
+#endif
 }
 
 static void unset_cloexec(int fd)

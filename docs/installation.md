@@ -34,6 +34,10 @@ $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 $ proto install bun
 ```
 
+```bash#Nix
+$ nix-shell -p bun
+```
+
 {% /codetabs %}
 
 ### Windows

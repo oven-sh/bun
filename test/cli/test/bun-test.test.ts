@@ -850,6 +850,395 @@ describe("bun test", () => {
     test.todo("check formatting for %p", () => {});
   });
 
+  describe("test()", () => {
+    test("should run a test", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test("test #1", () => {});
+        `,
+      });
+      expect(stderr).toContain("test #1");
+    });
+    test("should run a test without a title", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test(() => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("UnreachableError");
+    });
+  });
+
+  describe("test.skip()", () => {
+    test("should skip a test", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.skip("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+  });
+
+  describe("test.skipIf()", () => {
+    test.each(["true", "1", "{}", '"true"'])("should skip a test with a truthy condition: %s", truthy => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.skipIf(${truthy})("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+
+    test.each(["false", "0", '""'])("should not skip a test with a falsey condition: %s", falsey => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.skipIf(${falsey})("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).toContain("UnreachableError");
+    });
+  });
+
+  describe("test.if()", () => {
+    test.each(["true", "1", "{}", '"true"'])("should run a test with a truthy condition: %s", truthy => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.if(${truthy})("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).toContain("UnreachableError");
+    });
+
+    test.each(["false", "0", '""'])("should not run a test with a falsey condition: %s", falsey => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.if(${falsey})("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+  });
+
+  describe("test.todo()", () => {
+    test("should not run a todo by default", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.todo("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+
+    test("should run a todo when enabled", () => {
+      const stderr = runTest({
+        args: ["--todo"],
+        input: `
+          import { test, expect } from "bun:test";
+          test.todo("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).toContain("UnreachableError");
+    });
+  });
+
+  describe("test.todoIf()", () => {
+    test.each(["true", "1", "{}", '"true"'])("should not run a todo with a truthy condition: %s", truthy => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.todoIf(${truthy})("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+
+    test.each(["false", "0", '""'])("should run a todo with a falsey condition: %s", falsey => {
+      const stderr = runTest({
+        args: ["--todo"],
+        input: `
+          import { test, expect } from "bun:test";
+          test.todoIf(${falsey})("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).toContain("UnreachableError");
+    });
+  });
+
+  describe("test.fixme()", () => {
+    test("should run the test and pass", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.fixme("test #1", () => {});
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).toContain("1 pass");
+    });
+
+    test("should run the test and fail", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.fixme("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).toContain("UnreachableError");
+      expect(stderr).toContain("0 fail");
+      expect(stderr).toContain("1 fixme");
+    });
+  });
+
+  describe("test.fixmeIf()", () => {
+    test.each(["true", "1", "{}", '"true"'])("should run a fixme with a truthy condition: %s", truthy => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.fixmeIf(${truthy})("test #1", () => {
+            expect.unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).toContain("UnreachableError");
+      expect(stderr).toContain("1 fixme");
+      expect(stderr).toContain("0 fail");
+    });
+
+    test.each(["false", "0", '""'])("should not run a fixme with a falsey condition: %s", falsey => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test.fixmeIf(${falsey})("test #1", () => {
+            expect().unreachable();
+          });
+        `,
+      });
+      expect(stderr).toContain("test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+  });
+
+  describe("describe.skip()", () => {
+    test("should skip a describe", () => {
+      const stderr = runTest({
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.skip("describe #1", () => {
+            test("test #1", () => {
+              expect.unreachable();
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+  });
+
+  describe("describe.skipIf()", () => {
+    test.each(["true", "1", "{}", '"true"'])("should skip a describe with a truthy condition: %s", truthy => {
+      const stderr = runTest({
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.skipIf(${truthy})("describe #1", () => {
+            test("test #1", () => {
+              expect.unreachable();
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+
+    test.each(["false", "0", '""'])("should not skip a describe with a falsey condition: %s", falsey => {
+      const stderr = runTest({
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.skipIf(${falsey})("describe #1", () => {
+            test("test #1", () => {
+              expect.unreachable();
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).toContain("UnreachableError");
+    });
+  });
+
+  describe("describe.if()", () => {
+    test.each(["true", "1", "{}", '"true"'])("should run a describe with a truthy condition: %s", truthy => {
+      const stderr = runTest({
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.if(${truthy})("describe #1", () => {
+            test("test #1", () => {
+              expect.unreachable();
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).toContain("UnreachableError");
+    });
+
+    test.each(["false", "0", '""'])("should not run a describe with a falsey condition: %s", falsey => {
+      const stderr = runTest({
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.if(${falsey})("describe #1", () => {
+            test("test #1", () => {
+              expect.unreachable();
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+  });
+
+  describe("describe.todo()", () => {
+    test("should not run a todo by default", () => {
+      const stderr = runTest({
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.todo("describe #1", () => {
+            test("test #1", () => {
+              expect.unreachable();
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+
+    test("should run a todo when enabled", () => {
+      const stderr = runTest({
+        args: ["--todo"],
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.todo("describe #1", () => {
+            test("test #1", () => {
+              expect.unreachable();
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).toContain("UnreachableError");
+    });
+  });
+
+  describe("describe.todoIf()", () => {
+    test.each(["true", "1", "{}", '"true"'])("should not run a todo with a truthy condition: %s", truthy => {
+      const stderr = runTest({
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.todoIf(${truthy})("describe #1", () => {
+            test("test #1", () => {
+              expect.unreachable();
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).not.toContain("UnreachableError");
+    });
+
+    test.each(["false", "0", '""'])("should run a todo with a falsey condition: %s", falsey => {
+      const stderr = runTest({
+        args: ["--todo"],
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.todoIf(${falsey})("describe #1", () => {
+            test("test #1", () => {
+              expect.unreachable();
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).toContain("UnreachableError");
+    });
+  });
+
+  describe("describe.fixme()", () => {
+    test("should run the describe and pass", () => {
+      const stderr = runTest({
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.fixme("describe #1", () => {
+            test("test #1", () => {});
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).toContain("1 pass");
+    });
+
+    test("should run the describe and fail", () => {
+      const stderr = runTest({
+        input: `
+          import { describe, test, expect } from "bun:test";
+          describe.fixme("describe #1", () => {
+            test("test #1", () => {
+              expect.unreachable();
+            });
+          });
+        `,
+      });
+      expect(stderr).toContain("describe #1 > test #1");
+      expect(stderr).toContain("UnreachableError");
+      expect(stderr).toContain("0 fail");
+      expect(stderr).toContain("1 fixme");
+    });
+  });
+
   test("path to a non-test.ts file will work", () => {
     const stderr = runTest({
       args: ["./index.ts"],

@@ -945,6 +945,344 @@ describe("if_clause", () => {
   });
 
   TestBuilder.command`echo fif hi`.stdout("fif hi\n").runAsTest("parsing edge case");
+
+  describe("ported from posix shell tests", () => {
+    // test_oE 'execution path of if, true'
+    TestBuilder.command`if echo foo; then echo bar; fi`.stdout("foo\nbar\n").runAsTest("execution path of if, true");
+
+    // test_oE 'execution path of if, false'
+    TestBuilder.command`if ! echo foo; then echo bar; fi`
+      .stdout("foo\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if, false");
+
+    // test_oE 'execution path of if-else, true'
+    TestBuilder.command`if echo foo; then echo bar; else echo baz; fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("execution path of if-else, true");
+
+    // test_oE 'execution path of if-else, false'
+    TestBuilder.command`if ! echo foo; then echo bar; else echo baz; fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-else, false");
+
+    // test_oE 'execution path of if-elif, true'
+    TestBuilder.command`if echo 1; then echo 2; elif echo 3; then echo 4; fi`
+      .stdout("1\n2\n")
+      .runAsTest("execution path of if-elif, true");
+
+    // test_oE 'execution path of if-elif, false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif echo 3; then echo 4; fi`
+      .stdout("1\n3\n4\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif, false-true");
+
+    // test_oE 'execution path of if-elif, false-false'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; fi`
+      .stdout("1\n3\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif, false-false");
+
+    // test_oE 'execution path of if-elif-else, true'
+    TestBuilder.command`if echo 1; then echo 2; elif echo 3; then echo 4; else echo 5; fi`
+      .stdout("1\n2\n")
+      .runAsTest("execution path of if-elif-else, true");
+
+    // test_oE 'execution path of if-elif-else, false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif echo 3; then echo 4; else echo 5; fi`
+      .stdout("1\n3\n4\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-else, false-true");
+
+    // test_oE 'execution path of if-elif-else, false-false'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; else echo 5; fi`
+      .stdout("1\n3\n5\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-else, false-false");
+
+    // test_oE 'execution path of if-elif-elif, true'
+    TestBuilder.command`if echo 1; then echo 2; elif echo 3; then echo 4; elif echo 5; then echo 6; fi`
+      .stdout("1\n2\n")
+      .runAsTest("execution path of if-elif-elif, true");
+
+    // test_oE 'execution path of if-elif-elif, false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif echo 3; then echo 4; elif echo 5; then echo 6; fi`
+      .stdout("1\n3\n4\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif, false-true");
+
+    // test_oE 'execution path of if-elif-elif, false-false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; elif echo 5; then echo 6; fi`
+      .stdout("1\n3\n5\n6\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif, false-false-true");
+
+    // test_oE 'execution path of if-elif-elif, false-false-false'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; elif ! echo 5; then echo 6; fi`
+      .stdout("1\n3\n5\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif, false-false-false");
+
+    // test_oE 'execution path of if-elif-elif-else, true'
+    TestBuilder.command`if echo 1; then echo 2; elif echo 3; then echo 4; elif echo 5; then echo 6; else echo 7; fi`
+      .stdout("1\n2\n")
+      .runAsTest("execution path of if-elif-elif-else, true");
+
+    // test_oE 'execution path of if-elif-elif-else, false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif echo 3; then echo 4; elif echo 5; then echo 6; else echo 7; fi`
+      .stdout("1\n3\n4\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif-else, false-true");
+
+    // test_oE 'execution path of if-elif-elif-else, false-false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; elif echo 5; then echo 6; else echo 7; fi`
+      .stdout("1\n3\n5\n6\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif-else, false-false-true");
+
+    // test_oE 'execution path of if-elif-elif-else, false-false-false'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; elif ! echo 5; then echo 6; else echo 7; fi`
+      .stdout("1\n3\n5\n7\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif-else, false-false-false");
+
+    const exit = (code: number): { raw: string } => ({
+      raw:
+        process.platform !== "win32"
+          ? `bash -c 'exit $1' -- ${code}`
+          : `BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.exit(${code})'`,
+    });
+
+    // test_x -e 0 'exit status of if, true-true'
+    TestBuilder.command`if ${exit(0)}; then ${exit(0)}; fi`.exitCode(0).runAsTest("exit status of if, true-true");
+    // test_x -e 1 'exit status of if, true-false'
+    TestBuilder.command`if ${exit(0)}; then ${exit(1)}; fi`.exitCode(1).runAsTest("exit status of if, true-false");
+
+    // test_x -e 0 'exit status of if, false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; fi`.exitCode(0).runAsTest("exit status of if, false");
+
+    // test_x -e 0 'exit status of if-else, true-true'
+    TestBuilder.command`if ${exit(0)}; then ${exit(0)}; else ${exit(1)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-else, true-true");
+
+    // test_x -e 1 'exit status of if-else, true-false'
+    TestBuilder.command`if ${exit(0)}; then ${exit(1)}; else ${exit(2)}; fi`
+      .exitCode(1)
+      .runAsTest("exit status of if-else, true-false");
+
+    // test_x -e 0 'exit status of if-else, false-true'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; else ${exit(0)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-else, false-true");
+
+    // test_x -e 2 'exit status of if-else, false-false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(0)}; else ${exit(2)}; fi`
+      .exitCode(2)
+      .runAsTest("exit status of if-else, false-false");
+
+    // test_x -e 0 'exit status of if-elif, true-true'
+    TestBuilder.command`if ${exit(0)}; then ${exit(0)}; elif ${exit(1)}; then ${exit(2)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif, true-true");
+
+    // test_x -e 1 'exit status of if-elif, true-false'
+    TestBuilder.command`if ${exit(0)}; then ${exit(1)}; elif ${exit(2)}; then ${exit(3)}; fi`
+      .exitCode(1)
+      .runAsTest("exit status of if-elif, true-false");
+
+    // test_x -e 0 'exit status of if-elif, false-true-true'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(0)}; then ${exit(0)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif, false-true-true");
+
+    // test_x -e 3 'exit status of if-elif, false-true-false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(0)}; then ${exit(3)}; fi`
+      .exitCode(3)
+      .runAsTest("exit status of if-elif, false-true-false");
+
+    // test_x -e 0 'exit status of if-elif-elif-else, true-true'
+    TestBuilder.command`if ${exit(0)}; then ${exit(0)}; elif ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; else ${exit(5)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif-elif-else, true-true");
+
+    // test_x -e 11 'exit status of if-elif-elif-else, true-false'
+    TestBuilder.command`if ${exit(0)}; then ${exit(11)}; elif ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; else ${exit(5)}; fi`
+      .exitCode(11)
+      .runAsTest("exit status of if-elif-elif-else, true-false");
+
+    // test_x -e 0 'exit status of if-elif-elif-else, false-true-true'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(0)}; then ${exit(0)}; elif ${exit(3)}; then ${exit(4)}; else ${exit(5)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif-elif-else, false-true-true");
+
+    // test_x -e 13 'exit status of if-elif-elif-else, false-true-false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(0)}; then ${exit(13)}; elif ${exit(3)}; then ${exit(4)}; else ${exit(5)}; fi`
+      .exitCode(13)
+      .runAsTest("exit status of if-elif-elif-else, false-true-false");
+
+    // test_x -e 0 'exit status of if-elif-elif-else, false-false-true-true'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; elif ${exit(0)}; then ${exit(0)}; else ${exit(5)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif-elif-else, false-false-true-true");
+
+    // test_x -e 5 'exit status of if-elif-elif-else, false-false-true-false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; elif ${exit(0)}; then ${exit(5)}; else ${exit(6)}; fi`
+      .exitCode(5)
+      .runAsTest("exit status of if-elif-elif-else, false-false-true-false");
+
+    // test_x -e 0 'exit status of if-elif-elif-else, false-false-false-true'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; elif ${exit(5)}; then ${exit(6)}; else ${exit(0)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif-elif-else, false-false-false-true");
+
+    // test_x -e 7 'exit status of if-elif-elif-else, false-false-false-false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; elif ${exit(5)}; then ${exit(6)}; else ${exit(7)}; fi`
+      .exitCode(7)
+      .runAsTest("exit status of if-elif-elif-else, false-false-false-false");
+
+    // test_oE 'linebreak after if'
+    TestBuilder.command`if
+echo foo;then echo bar;fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("linebreak after if");
+
+    // test_oE 'linebreak before then (after if)'
+    TestBuilder.command`if echo foo
+then echo bar;fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("linebreak before then (after if)");
+
+    // test_oE 'linebreak after then (after if)'
+    TestBuilder.command`if echo foo;then
+echo bar;fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("linebreak after then (after if)");
+
+    // test_oE 'linebreak before fi (after then)'
+    TestBuilder.command`if echo foo;then echo bar
+fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("linebreak before fi (after then)");
+
+    // test_oE 'linebreak before elif'
+    TestBuilder.command`if ! echo foo;then echo bar
+elif echo baz;then echo qux;fi`
+      .stdout("foo\nbaz\nqux\n")
+      .todo("! not supported")
+      .runAsTest("linebreak before elif");
+
+    // test_oE 'linebreak after elif'
+    TestBuilder.command`if ! echo foo;then echo bar;elif
+echo baz;then echo qux;fi`
+      .stdout("foo\nbaz\nqux\n")
+      .todo("! not supported")
+      .runAsTest("linebreak after elif");
+
+    // test_oE 'linebreak before then (after elif)'
+    TestBuilder.command`if ! echo foo;then echo bar;elif echo baz
+then echo qux;fi`
+      .stdout("foo\nbaz\nqux\n")
+      .todo("! not supported")
+      .runAsTest("linebreak before then (after elif)");
+
+    // test_oE 'linebreak after then (after elif)'
+    TestBuilder.command`if ! echo foo;then echo bar;elif echo baz;then
+echo qux;fi`
+      .stdout("foo\nbaz\nqux\n")
+      .todo("! not supported")
+      .runAsTest("linebreak after then (after elif)");
+
+    // test_oE 'linebreak before else'
+    TestBuilder.command`if ! echo foo;then echo bar
+else echo baz;fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("linebreak before else");
+
+    // test_oE 'linebreak after else'
+    TestBuilder.command`if ! echo foo;then echo bar;else
+echo baz;fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("linebreak after else");
+
+    // test_oE 'linebreak before fi (after else)'
+    TestBuilder.command`if ! echo foo;then echo bar;else echo baz
+fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("linebreak before fi (after else)");
+
+    // test_oE 'command ending with asynchronous command (after if)'
+    TestBuilder.command`if echo foo&then wait;fi`.stdout("foo\n").runAsTest("ZOOP");
+
+    // test_oE 'command ending with asynchronous command (after then)'
+    TestBuilder.command`if echo foo;then echo bar&fi;wait`
+      .stdout("foo\nbar\n")
+      .runAsTest("command ending with asynchronous command (after then)");
+
+    // test_oE 'command ending with asynchronous command (after elif)'
+    TestBuilder.command`if ! echo foo;then echo bar;elif echo baz&then wait;fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("command ending with asynchronous command (after elif)");
+
+    // test_oE 'command ending with asynchronous command (after else)'
+    TestBuilder.command`if ! echo foo;then echo bar;elif ! echo baz;then echo qux;else echo quux;fi;wait`
+      .stdout("foo\nbaz\nquux\n")
+      .todo("! not supported")
+      .runAsTest("command ending with asynchronous command (after else)");
+
+    // test_oE 'more than one inner command'
+    TestBuilder.command`if echo 1; echo 2
+echo 3; ! echo 4; then echo x1; echo x2
+echo x3; echo x4; elif echo 5; echo 6
+echo 7; echo 8; then echo 9; echo 10
+echo 11; echo 12; else echo x5; echo x6
+echo x7; echo x8; fi`
+      .stdout("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n")
+      .todo("! not supported")
+      .runAsTest("more than one inner command");
+
+    // test_oE 'nest between if and then'
+    TestBuilder.command`if { echo foo; } then echo bar; fi`.stdout("foo\nbar\n").runAsTest("nest between if and then");
+
+    // test_oE 'nest between then and fi'
+    TestBuilder.command`if echo foo; then { echo bar; } fi`.stdout("foo\nbar\n").runAsTest("nest between then and fi");
+
+    // test_oE 'nest between then and elif'
+    TestBuilder.command`if echo foo; then { echo bar; } elif echo baz; then echo qux; fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("nest between then and elif");
+
+    // test_oE 'nest between elif and then'
+    TestBuilder.command`if echo foo; then echo bar; elif { echo baz; } then echo qux; fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("nest between elif and then");
+
+    // test_oE 'nest between then and else'
+    TestBuilder.command`if ! echo foo; then { echo bar; } else echo baz; fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("nest between then and else");
+
+    // test_oE 'nest between then and else'
+    TestBuilder.command`if ! echo foo; then echo bar; else { echo baz; } fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("nest between then and else");
+
+    // test_oE 'redirection on if'
+    TestBuilder.command`if echo foo
+then echo bar
+else echo baz
+fi >redir_out
+cat redir_out`
+      .stdout("foo\nbar\n")
+      .runAsTest("redirection on if");
+  });
 });
 
 describe("condexprs", () => {

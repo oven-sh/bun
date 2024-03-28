@@ -1669,7 +1669,7 @@ pub const Parser = struct {
     fn match_if_clausetok(self: *Parser, toktag: IfClauseTok) bool {
         if (self.peek() == .Text and
             self.delimits(self.peek_n(1)) and
-            bun.strings.eql(u8, self.text(self.peek().Text), @tagName(toktag)))
+            bun.strings.eql(self.text(self.peek().Text), @tagName(toktag)))
         {
             _ = self.advance();
             _ = self.expect_delimit();

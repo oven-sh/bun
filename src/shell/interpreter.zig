@@ -3655,16 +3655,30 @@ pub const Interpreter = struct {
                                 // if succesful, execute the elif's then branch
                                 // otherwise, move to the next elif, or to the final else if it exists
                                 .elif => {
+                                    if (this.state.exec.last_exit_code == 0) {
+                                        this.state.exec.stmts = this.node.else_parts.getConst(this.state.exec.state.elif.idx + 1);
+                                        this.state.exec.stmt_idx = 0;
+                                        this.state.exec.state = .then;
+                                        continue;
+                                    }
+
                                     this.state.exec.state.elif.idx += 2;
+
+                                    if (this.state.exec.state.elif.idx >= this.node.else_parts.len()) {
+                                        this.parent.childDone(this, 0);
+                                        return;
+                                    }
+
                                     if (this.state.exec.state.elif.idx == this.node.else_parts.len() -| 1) {
                                         this.state.exec.state = .@"else";
                                         this.state.exec.stmt_idx = 0;
                                         this.state.exec.stmts = this.node.else_parts.lastUncheckedConst();
                                         continue;
                                     }
+
                                     this.state.exec.stmt_idx = 0;
                                     this.state.exec.stmts = this.node.else_parts.getConst(this.state.exec.state.elif.idx);
-                                    return;
+                                    continue;
                                 },
                                 .@"else" => {
                                     this.parent.childDone(this, this.state.exec.last_exit_code);
@@ -3708,21 +3722,13 @@ pub const Interpreter = struct {
                 .cond => this.next(),
                 .then => this.next(),
                 .elif => {
-                    if (exit_code == 0) {
-                        exec.state = .then;
-                        exec.stmts = &this.node.then;
-                        exec.stmt_idx = 0;
-                        this.next();
-                        return;
-                    }
-                    exec.state.elif.idx += 2;
-                    if (exec.state.elif.idx == this.node.else_parts.len() -| 1) {
-                        exec.state = .@"else";
-                        exec.stmt_idx = 0;
-                        exec.stmts = this.node.else_parts.lastUncheckedConst();
-                        this.next();
-                        return;
-                    }
+                    // if (exit_code == 0) {
+                    //     exec.stmts = this.node.else_parts.getConst(exec.state.elif.idx + 1);
+                    //     exec.state = .then;
+                    //     exec.stmt_idx = 0;
+                    //     this.next();
+                    //     return;
+                    // }
                     this.next();
                     return;
                 },

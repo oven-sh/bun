@@ -185,10 +185,10 @@ class Database {
     var filename = typeof filenameGiven === "string" ? filenameGiven.trim() : ":memory:";
     var flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
     if (typeof options === "object" && options) {
-      flags = 0;
-
       if (options.readonly) {
         flags = constants.SQLITE_OPEN_READONLY;
+      } else {
+        flags = constants.SQLITE_OPEN_READWRITE;
       }
 
       if ("readOnly" in options) throw new TypeError('Misspelled option "readOnly" should be "readonly"');

@@ -64,7 +64,7 @@ describe("fd leak", () => {
       Bun.gc(true);
       const fd = openSync(devNull, "r");
       closeSync(fd);
-      expect(Math.abs(fd - baseline)).toBeLessThanOrEqual(threshold);
+      expect(fd - baseline).toBeLessThanOrEqual(threshold);
     }, 100_000);
   }
 

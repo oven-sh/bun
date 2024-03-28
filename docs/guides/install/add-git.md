@@ -26,9 +26,18 @@ Bun supports a number of protocols for specifying Git dependencies.
 
 ```sh
 $ bun add git+https://github.com/lodash/lodash.git
-$ bun add git+ssh://github.com/lodash/lodash.git#4.17.21
+$ bun add git+ssh://github.com/lodash/lodash.git
 $ bun add git@github.com:lodash/lodash.git
 $ bun add github:colinhacks/zod
+```
+
+---
+
+Bun allows you to specify the tag / release or commit Id as well.
+
+```sh
+$ bun add github:lodash/lodash#4.0.0
+$ bun add github:lodash/lodash#c7c70a7
 ```
 
 ---

@@ -700,6 +700,21 @@ class BunWebSocketMocked extends EventEmitter {
       this.#ws.close(code, reason);
     }
   }
+
+  terminate() {
+    if (this.#state === 3) return;
+    if (this.#state === 0) {
+      const msg = "WebSocket was closed before the connection was established";
+      abortHandshake(this, this._req, msg);
+      return;
+    }
+
+    if (this.#ws) {
+      this.#state = WebSocket.CLOSING;
+      this.#ws.terminate();
+    }
+  }
+
   get binaryType() {
     return this.#binaryType;
   }

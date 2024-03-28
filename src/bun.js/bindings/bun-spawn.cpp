@@ -121,7 +121,7 @@ extern "C" ssize_t posix_spawn_bun(
                     // Remove the O_CLOEXEC flag
                     // If we don't do this, then the process will have an already-closed file descriptor
                     int mask = fcntl(action.fds[0], F_GETFD, 0);
-                    mask ^= FD_CLOEXEC;
+                    mask &= ~FD_CLOEXEC;
                     fcntl(action.fds[0], F_SETFD, mask);
 
                     if (errno != 0) {

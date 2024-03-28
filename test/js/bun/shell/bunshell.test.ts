@@ -7,7 +7,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm } from "fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat } from "fs/promises";
 import { bunEnv, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
@@ -828,12 +828,16 @@ describe("deno_task", () => {
     await writer.flush()
     `;
 
-    const runnerCode = /* ts */ `await Bun.$\`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${$.escape(writerCode)} | cat\``;
-    const { stdout, stderr, exitCode } = await $`${BUN} -e ${runnerCode}`.env(bunEnv);
+    const tmpdir = TestBuilder.tmpdir();
+    // Redirect to file descriptor so we don't write ~1 million 'a's to terminal
+    const { stdout, stderr, exitCode } = await $`${BUN} -e ${writerCode} > ${tmpdir}/output.txt`.env(bunEnv);
 
     expect(stderr.length).toEqual(0);
+    expect(stdout.length).toEqual(0);
     expect(exitCode).toEqual(0);
-    expect(stdout.length).toEqual(128 * 1024 * 10);
+
+    const s = await stat(`${tmpdir}/output.txt`);
+    expect(s.size).toEqual(10 * 128 * 1024);
   });
 
   // https://github.com/oven-sh/bun/issues/9458

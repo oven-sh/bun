@@ -1,9 +1,10 @@
 import { test, expect, describe } from "bun:test";
+import { isBunCI } from "harness";
 import { MongoClient } from "mongodb";
 
 const CONNECTION_STRING = process.env.TLS_MONGODB_DATABASE_URL;
 
-const it = CONNECTION_STRING ? test : test.skip;
+const it = CONNECTION_STRING ? test : test.skipIf(!isBunCI);
 
 describe("mongodb", () => {
   it("should connect and inpect", async () => {

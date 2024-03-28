@@ -9,6 +9,7 @@ export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
+export const isBunCI = process.env.BUN_CI === "1";
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -20,6 +21,8 @@ export const bunEnv: NodeJS.ProcessEnv = {
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
 };
+
+delete bunEnv.BUN_CI;
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
@@ -389,16 +392,24 @@ export async function describeWithContainer(
   fn: (port: number) => void,
 ) {
   describe(label, () => {
-    const docker = dockerExe();
-    if (!docker) {
-      test.skip(`docker is not installed, skipped: ${image}`, () => {});
-      return;
-    }
     const { arch, platform } = process;
     if ((archs && !archs?.includes(arch)) || platform === "win32") {
       test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
       return false;
     }
+
+    const docker = dockerExe();
+    if (!docker) {
+      if (isBunCI) {
+        test(label, () => {
+          throw new Error("Docker is not installed on CI but is required for this test");
+        });
+        return;
+      }
+      test.skip(`docker is not installed, skipped: ${image}`, () => {});
+      return;
+    }
+
     let containerId: string;
     {
       const envs = Object.entries(env).map(([k, v]) => `-e${k}=${v}`);

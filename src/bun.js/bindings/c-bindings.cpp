@@ -194,7 +194,12 @@ extern "C" void windows_enable_stdio_inheritance()
 // close_range is glibc > 2.33, which is very new
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
+// https://github.com/oven-sh/bun/issues/9669
+#ifdef __NR_close_range
     return syscall(__NR_close_range, start, end, flags);
+#else
+    return ENOSYS;
+#endif
 }
 
 static void unset_cloexec(int fd)
@@ -409,7 +414,7 @@ extern "C" void bun_initialize_process()
     // This is less of an issue for macOS due to posix_spawn
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
     // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
-    bun_close_range(0, ~0U, CLOSE_RANGE_CLOEXEC);
+    bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
 
 #if OS(LINUX) || OS(DARWIN)

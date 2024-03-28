@@ -14,13 +14,14 @@ test("09041", async () => {
     cmd: [bunExe(), "test"],
     cwd: out,
     env: bunEnv,
-    stdio: ["ignore", "pipe", "inherit"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
 
   expect(await exited).toBe(0);
   const err = await new Response(stderr).text();
   expect(err).toContain("1 pass");
   expect(err).toContain("0 fail");
-
+  const std = await new Response(stdout).text();
   await rm(out, { force: true, recursive: true });
+  expect(std.length).toBeGreaterThan(65 * 1024);
 }, 10000);

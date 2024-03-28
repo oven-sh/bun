@@ -2,7 +2,10 @@ import { $ } from "bun";
 import {join } from 'path';
 test("09041", async () => {
   const buffer = Buffer.alloc(1024 * 1024);
-  buffer.fill("1234567890");
+  let i = 0;
+  while (i < 1024 * 1024) {
+    i += buffer.write(Number(i).toString(10), i);
+  }
   const buns = Array.from(
     { length: 5 },
     () => $`${process.argv0} run ${join(import.meta.dir, "09041-fixture.mjs")} < ${buffer}`,

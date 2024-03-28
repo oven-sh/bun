@@ -824,8 +824,8 @@ describe("deno_task", () => {
     const buf = new Uint8Array(128 * 1024).fill('a'.charCodeAt(0))
     for (let i = 0; i < 10; i++) {
       writer.write(buf);
+      await writer.flush();
     }
-    await writer.flush()
     `;
 
     const tmpdir = TestBuilder.tmpdir();
@@ -841,10 +841,8 @@ describe("deno_task", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/9458
-  test(
-    "input",
-    async () => {
-      const inputCode = /* ts */ `
+  test("input", async () => {
+    const inputCode = /* ts */ `
     const downArrow = '\\x1b[B';
     const enterKey = '\\x0D';
     await Bun.sleep(100)
@@ -855,48 +853,29 @@ describe("deno_task", () => {
     writer.flush()
     `;
 
-      const code = /* ts */ `
-    const { select } = require('@inquirer/prompts');
-
-    async function run() {
-      const foobar = await select({
-        message: 'Foo or Bar',
-        choices: [
-          { name: 'Foo', value: 'foo' },
-          { name: 'Bar', value: 'bar' },
-        ],
-      });
-      console.error('Choice:', foobar);
-    }
-
-    run();
+    const code = /* ts */ `
+    import { expect } from 'bun:test'
+    const expected = [
+      '\\x1b[B',
+      '\\x0D'
+    ]
+    let i = 0
+    const writer = Bun.stdout.writer();
+    process.stdin.on("data", async chunk => {
+      const input = chunk.toString();
+      expect(input).toEqual(expected[i++])
+      writer.write(input)
+      await writer.flush()
+    });
     `;
 
-      const packagejson = `
-    {
-      "name": "stuff",
-      "module": "index.ts",
-      "type": "module",
-      "devDependencies": {
-        "@types/bun": "latest"
-      },
-      "peerDependencies": {
-        "typescript": "^5.0.0"
-      },
-      "dependencies": {
-        "@inquirer/prompts": "v4.3.0"
-      }
-    }
-    `;
+    const { stdout, stderr, exitCode } =
+      await Bun.$`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${inputCode} | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code}`;
 
-      await TestBuilder.command`echo ${packagejson} > package.json; BUN_DEBUG_QUIET_LOGS=1 ${BUN} i &> /dev/null; BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${inputCode} | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code}`
-        .ensureTempDir()
-        .stdout(() => {})
-        .stderr("Choice: bar\n")
-        .run();
-    },
-    15 * 1000,
-  );
+    expect(exitCode).toBe(0);
+    expect(stderr.length).toBe(0);
+    expect(stdout.toString()).toEqual("\x1b[B\x0D");
+  });
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {

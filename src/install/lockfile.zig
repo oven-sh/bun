@@ -562,12 +562,14 @@ pub const Tree = struct {
             if (dep.name_hash != dependency.name_hash) continue;
             const mismatch = builder.resolutions[dep_id] != package_id;
 
-            if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
-                if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
-                    return hoisted; // 2
-                }
+            if (comptime as_defined) {
+                if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
+                    if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
+                        return hoisted; // 2
+                    }
 
-                return dependency_loop; // 3
+                    return dependency_loop; // 3
+                }
             }
 
             if (mismatch and !dependency.behavior.isPeer()) {
@@ -617,6 +619,7 @@ pub fn maybeCloneFilteringRootPackages(
     old: *Lockfile,
     features: Features,
     exact_versions: bool,
+    comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
     const old_root_dependencies_list = old.packages.items(.dependencies)[0];
     var old_root_resolutions = old.packages.items(.resolutions)[0];
@@ -634,7 +637,7 @@ pub fn maybeCloneFilteringRootPackages(
 
     if (!any_changes) return old;
 
-    return try old.clean(&.{}, exact_versions);
+    return try old.clean(&.{}, exact_versions, log_level);
 }
 
 fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequest, exact_versions: bool) !void {
@@ -712,6 +715,7 @@ pub fn clean(
     old: *Lockfile,
     updates: []PackageManager.UpdateRequest,
     exact_versions: bool,
+    comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
     // This is wasteful, but we rarely log anything so it's fine.
     var log = logger.Log.init(bun.default_allocator);
@@ -722,7 +726,7 @@ pub fn clean(
         log.deinit();
     }
 
-    return old.cleanWithLogger(updates, &log, exact_versions);
+    return old.cleanWithLogger(updates, &log, exact_versions, log_level);
 }
 
 pub fn cleanWithLogger(
@@ -730,7 +734,10 @@ pub fn cleanWithLogger(
     updates: []PackageManager.UpdateRequest,
     log: *logger.Log,
     exact_versions: bool,
+    comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
+    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start() else {};
+
     const old_trusted_dependencies = old.trusted_dependencies;
     const old_scripts = old.scripts;
     // We will only shrink the number of packages here.
@@ -871,6 +878,14 @@ pub fn cleanWithLogger(
                 }
             }
         }
+    }
+
+    if (comptime log_level.isVerbose()) {
+        Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {}\n", .{
+            old.packages.len,
+            new.packages.len,
+            bun.fmt.fmtDurationOneDecimal(timer.read()),
+        });
     }
 
     return new;

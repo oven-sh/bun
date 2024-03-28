@@ -599,7 +599,7 @@ pub const TextDecoder = struct {
         };
 
         if (arguments.len > 1 and arguments[1].isObject()) {
-            if (arguments[1].get(globalThis, "stream")) |stream| {
+            if (arguments[1].fastGet(globalThis, .stream)) |stream| {
                 if (stream.coerce(bool, globalThis)) {
                     return this.decodeSlice(globalThis, array_buffer.slice(), true);
                 }

@@ -324,8 +324,6 @@ void JSCryptoKey::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 bool JSCryptoKeyOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, const char** reason)
 {
-    auto* jsCryptoKey = jsCast<JSCryptoKey*>(handle.slot()->asCell());
-    CryptoKey* owner = &jsCryptoKey->wrapped();
     if (UNLIKELY(reason))
         *reason = "Reachable from CryptoKey";
     return visitor.containsOpaqueRoot(context);

@@ -308,7 +308,7 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::ed25519PublicFromPrivate(const KeyMateri
 
     ED25519_keypair_from_seed(publicKey.data(), privateKey, seed.data());
 
-    return WTFMove(publicKey);
+    return publicKey;
 }
 
 CryptoKeyOKP::KeyMaterial CryptoKeyOKP::x25519PublicFromPrivate(const KeyMaterial& privateKey)
@@ -317,7 +317,7 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::x25519PublicFromPrivate(const KeyMateria
 
     X25519_public_from_private(publicKey.data(), privateKey.data());
 
-    return WTFMove(publicKey);
+    return publicKey;
 }
 
 CryptoKeyOKP::KeyMaterial CryptoKeyOKP::ed25519PrivateFromSeed(KeyMaterial&& seed)
@@ -327,7 +327,7 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::ed25519PrivateFromSeed(KeyMaterial&& see
 
     ED25519_keypair_from_seed(publicKey, privateKey.data(), seed.data());
 
-    return WTFMove(privateKey);
+    return privateKey;
 }
 
 String CryptoKeyOKP::generateJwkX() const
@@ -338,10 +338,10 @@ String CryptoKeyOKP::generateJwkX() const
     ASSERT(type() == CryptoKeyType::Private);
 
     if (namedCurve() == NamedCurve::Ed25519)
-        return Bun::base64URLEncodeToString(WTFMove(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data))));
+        return Bun::base64URLEncodeToString(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
 
     ASSERT(namedCurve() == NamedCurve::X25519);
-    return Bun::base64URLEncodeToString(WTFMove(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data))));
+    return Bun::base64URLEncodeToString(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
 }
 
 CryptoKeyOKP::KeyMaterial CryptoKeyOKP::platformExportRaw() const

@@ -1651,7 +1651,6 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -1676,12 +1675,13 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
 
 #if OS(WINDOWS)
-    // Node.js docs - https://nodejs.org/api/process.html#a-note-on-process-io
-    // > Files: synchronous on Windows and POSIX
-    // > TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
-    // > Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
-    // > Synchronous writes avoid problems such as output written with console.log() or console.error() being unexpectedly interleaved, or not written at all if process.exit() is called before an asynchronous write completes. See process.exit() for more information.
-    Bun__ForceFileSinkToBeSynchronousOnWindows(globalThis, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+        Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject);
+        // Node.js docs - https://nodejs.org/api/process.html#a-note-on-process-io
+        // > Files: synchronous on Windows and POSIX
+        // > TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
+        // > Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
+        // > Synchronous writes avoid problems such as output written with console.log() or console.error() being unexpectedly interleaved, or not written at all if process.exit() is called before an asynchronous write completes. See process.exit() for more information.
+        Bun__ForceFileSinkToBeSynchronousOnWindows(globalThis, JSValue::encode(resultObject->getIndex(globalObject, 1)));
 #endif
 
     return resultObject->getIndex(globalObject, 0);
@@ -2368,11 +2368,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubEmptyFunction, (JSGlobalObject * globalObje
 JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
-}
-
-static JSValue Process_stubEmptyObject(VM& vm, JSObject* processObject)
-{
-    return JSC::constructEmptyObject(processObject->globalObject());
 }
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)

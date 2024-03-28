@@ -3039,9 +3039,24 @@ pub const FileSink = struct {
 
     pub fn setup(this: *FileSink, options: *const StreamStart.FileSinkOptions) JSC.Maybe(void) {
         // TODO: this should be concurrent.
+        var isatty: ?bool = null;
+        var is_nonblocking_tty = false;
         const fd = switch (switch (options.input_path) {
             .path => |path| bun.sys.openA(path.slice(), options.flags(), options.mode),
-            .fd => |fd_| bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync_on_windows) std.os.O.NONBLOCK else 0),
+            .fd => |fd_| brk: {
+                if (comptime Environment.isPosix and FeatureFlags.nonblocking_stdout_and_stderr_on_posix) {
+                    if (bun.FDTag.get(fd_) != .none) {
+                        const rc = bun.C.open_as_nonblocking_tty(@intCast(fd_.cast()), std.os.O.WRONLY);
+                        if (rc > -1) {
+                            isatty = true;
+                            is_nonblocking_tty = true;
+                            break :brk JSC.Maybe(bun.FileDescriptor){ .result = bun.toFD(rc) };
+                        }
+                    }
+                }
+
+                break :brk bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync_on_windows) std.os.O.NONBLOCK else 0);
+            },
         }) {
             .err => |err| return .{ .err = err },
             .result => |fd| fd,
@@ -3054,13 +3069,22 @@ pub const FileSink = struct {
                     return .{ .err = err };
                 },
                 .result => |stat| {
-                    this.pollable = bun.sys.isPollable(stat.mode) or std.os.isatty(fd.int());
+                    this.pollable = bun.sys.isPollable(stat.mode);
+                    if (!this.pollable and isatty == null) {
+                        isatty = std.os.isatty(fd.int());
+                    }
+
+                    if (isatty) |is| {
+                        if (is)
+                            this.pollable = true;
+                    }
+
                     this.fd = fd;
                     this.is_socket = std.os.S.ISSOCK(stat.mode);
-                    this.nonblocking = this.pollable and switch (options.input_path) {
+                    this.nonblocking = is_nonblocking_tty or (this.pollable and switch (options.input_path) {
                         .path => true,
                         .fd => |fd_| bun.FDTag.get(fd_) == .none,
-                    };
+                    });
                 },
             }
         } else if (comptime Environment.isWindows) {
@@ -3399,47 +3423,62 @@ pub const FileReader = struct {
             file_type: bun.io.FileType = .file,
         };
 
-        pub fn openFileBlob(
-            file: *Blob.FileStore,
-        ) JSC.Maybe(OpenedFileBlob) {
+        pub fn openFileBlob(file: *Blob.FileStore) JSC.Maybe(OpenedFileBlob) {
             var this = OpenedFileBlob{ .fd = bun.invalid_fd };
             var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var is_nonblocking_tty = false;
 
-            const fd = if (file.pathlike != .path)
-                // We will always need to close the file descriptor.
-                // switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
-                //     if (comptime Environment.isPosix) {
-                //         if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
-                //             break :brk std.os.O.NONBLOCK;
-                //         }
-                //     }
+            const fd = if (file.pathlike == .fd)
+                if (file.pathlike.fd.isStdio()) brk: {
+                    if (comptime Environment.isPosix) {
+                        const rc = bun.C.open_as_nonblocking_tty(@intCast(file.pathlike.fd.int()), std.os.O.RDONLY);
+                        if (rc > -1) {
+                            is_nonblocking_tty = true;
+                            file.is_atty = true;
+                            break :brk bun.toFD(rc);
+                        }
+                    }
+                    break :brk file.pathlike.fd;
+                } else switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
+                    if (comptime Environment.isPosix) {
+                        if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
+                            break :brk std.os.O.NONBLOCK;
+                        }
+                    }
 
-                //     break :brk 0;
-                // })) {
-                //     .result => |_fd| if (Environment.isWindows) bun.toLibUVOwnedFD(_fd) else _fd,
-                //     .err => |err| {
-                //         return .{ .err = err.withFd(file.pathlike.fd) };
-                //     },
-                // }
-                file.pathlike.fd
+                    break :brk 0;
+                })) {
+                    .result => |fd| switch (bun.sys.toLibUVOwnedFD(fd, .dup, .close_on_fail)) {
+                        .result => |owned_fd| owned_fd,
+                        .err => |err| {
+                            return .{ .err = err };
+                        },
+                    },
+                    .err => |err| {
+                        return .{ .err = err.withFd(file.pathlike.fd) };
+                    },
+                }
             else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
-                .result => |_fd| _fd,
+                .result => |fd| fd,
                 .err => |err| {
                     return .{ .err = err.withPath(file.pathlike.path.slice()) };
                 },
             };
 
             if (comptime Environment.isPosix) {
-                if ((file.is_atty orelse false) or (fd.int() < 3 and std.os.isatty(fd.cast())) or (file.pathlike == .fd and bun.FDTag.get(file.pathlike.fd) != .none and std.os.isatty(file.pathlike.fd.cast()))) {
+                if ((file.is_atty orelse false) or
+                    (fd.int() < 3 and std.os.isatty(fd.cast())) or
+                    (file.pathlike == .fd and
+                    bun.FDTag.get(file.pathlike.fd) != .none and
+                    std.os.isatty(file.pathlike.fd.cast())))
+                {
                     // var termios = std.mem.zeroes(std.os.termios);
                     // _ = std.c.tcgetattr(fd.cast(), &termios);
                     // bun.C.cfmakeraw(&termios);
                     // _ = std.c.tcsetattr(fd.cast(), std.os.TCSA.NOW, &termios);
                     file.is_atty = true;
                 }
-            }
 
-            if (comptime Environment.isPosix) {
                 const stat: bun.Stat = switch (Syscall.fstat(fd)) {
                     .result => |result| result,
                     .err => |err| {
@@ -3453,9 +3492,20 @@ pub const FileReader = struct {
                     return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
                 }
 
-                this.pollable = bun.sys.isPollable(stat.mode) or (file.is_atty orelse false);
-                this.file_type = if (bun.S.ISFIFO(stat.mode)) .pipe else if (bun.S.ISSOCK(stat.mode)) .socket else .file;
-                this.nonblocking = this.pollable and !(file.is_atty orelse false);
+                this.pollable = bun.sys.isPollable(stat.mode) or is_nonblocking_tty or (file.is_atty orelse false);
+                this.file_type = if (bun.S.ISFIFO(stat.mode))
+                    .pipe
+                else if (bun.S.ISSOCK(stat.mode))
+                    .socket
+                else
+                    .file;
+
+                // pretend it's a non-blocking pipe if it's a TTY
+                if (is_nonblocking_tty and this.file_type != .socket) {
+                    this.file_type = .nonblocking_pipe;
+                }
+
+                this.nonblocking = is_nonblocking_tty or (this.pollable and !(file.is_atty orelse false));
 
                 if (this.nonblocking and this.file_type == .pipe) {
                     this.file_type = .nonblocking_pipe;
@@ -3508,6 +3558,7 @@ pub const FileReader = struct {
                             return .{ .err = err };
                         },
                         .result => |opened| {
+                            std.debug.assert(opened.fd.isValid());
                             this.fd = opened.fd;
                             pollable = opened.pollable;
                             file_type = opened.file_type;

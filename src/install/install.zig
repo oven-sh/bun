@@ -301,7 +301,7 @@ const NetworkTask = struct {
         name: string,
         allocator: std.mem.Allocator,
         scope: *const Npm.Registry.Scope,
-        loaded_manifest: ?Npm.PackageManifest,
+        loaded_manifest: ?*const Npm.PackageManifest,
         warn_on_error: bool,
     ) !void {
         this.url_buf = blk: {
@@ -337,6 +337,21 @@ const NetworkTask = struct {
 
                 return error.InvalidURL;
             }
+
+            if (!(tmp.hasPrefixComptime("https://") or tmp.hasPrefixComptime("http://"))) {
+                const msg = .{
+                    .fmt = "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                    .args = .{tmp},
+                };
+
+                if (warn_on_error)
+                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
+                else
+                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
+
+                return error.InvalidURL;
+            }
+
             // This actually duplicates the string! So we defer deref the WTF managed one above.
             break :blk try tmp.toOwnedSlice(allocator);
         };
@@ -408,7 +423,7 @@ const NetworkTask = struct {
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
-                .loaded_manifest = loaded_manifest,
+                .loaded_manifest = if (loaded_manifest) |manifest| manifest.* else null,
             },
         };
 
@@ -448,6 +463,16 @@ const NetworkTask = struct {
             );
         } else {
             this.url_buf = tarball_url;
+        }
+
+        if (!(strings.hasPrefixComptime(this.url_buf, "https://") or strings.hasPrefixComptime(this.url_buf, "http://"))) {
+            const msg = .{
+                .fmt = "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
+                .args = .{ bun.fmt.QuotedFormatter{ .text = this.url_buf }, bun.fmt.QuotedFormatter{ .text = tarball.name.slice() } },
+            };
+
+            this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
+            return error.InvalidURL;
         }
 
         this.response_buffer = try MutableString.init(allocator, 0);
@@ -1251,6 +1276,7 @@ pub const PackageInstall = struct {
 
                 var in_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
                 var out_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
+                var copy_file_state: bun.CopyFileState = .{};
 
                 while (try walker.next()) |entry| {
                     if (entry.kind != .file) continue;
@@ -1301,7 +1327,7 @@ pub const PackageInstall = struct {
                             _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                         }
 
-                        bun.copyFile(in_file.handle, outfile.handle) catch |err| {
+                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
                             progress_.root.end();
 
                             progress_.refresh();
@@ -3875,7 +3901,7 @@ pub const PackageManager = struct {
                                         name_str,
                                         this.allocator,
                                         this.scopeForPackageName(name_str),
-                                        loaded_manifest,
+                                        if (loaded_manifest) |*manifest| manifest else null,
                                         dependency.behavior.isOptional() or !this.options.do.install_peer_dependencies,
                                     );
                                     this.enqueueNetworkTask(network_task);
@@ -9157,6 +9183,7 @@ pub const PackageManager = struct {
             this.lockfile = try this.lockfile.maybeCloneFilteringRootPackages(
                 this.options.local_package_features,
                 this.options.enable.exact_versions,
+                log_level,
             );
         }
 
@@ -9548,16 +9575,19 @@ pub const PackageManager = struct {
             .auto,
         );
 
-        // might need to read scripts from disk if we are migrating from package-lock.json
+        const buf = this.lockfile.buffers.string_bytes.items;
+        // need to clone because this is a copy before Lockfile.cleanWithLogger
+        const name = this.allocator.dupe(u8, root_package.name.slice(buf)) catch bun.outOfMemory();
+        const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
 
         if (root_package.scripts.hasAny()) {
             const add_node_gyp_rebuild_script = root_package.scripts.install.isEmpty() and root_package.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
 
             this.root_lifecycle_scripts = root_package.scripts.createList(
                 this.lockfile,
-                this.lockfile.buffers.string_bytes.items,
-                strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
-                root_package.name.slice(this.lockfile.buffers.string_bytes.items),
+                buf,
+                top_level_dir_without_trailing_slash,
+                name,
                 .root,
                 add_node_gyp_rebuild_script,
             );
@@ -9566,9 +9596,9 @@ pub const PackageManager = struct {
                 // no scripts exist but auto node gyp script needs to be added
                 this.root_lifecycle_scripts = root_package.scripts.createList(
                     this.lockfile,
-                    this.lockfile.buffers.string_bytes.items,
-                    strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
-                    root_package.name.slice(this.lockfile.buffers.string_bytes.items),
+                    buf,
+                    top_level_dir_without_trailing_slash,
+                    name,
                     .root,
                     true,
                 );
@@ -9926,6 +9956,7 @@ pub const PackageManager = struct {
             manager.package_json_updates,
             manager.log,
             manager.options.enable.exact_versions,
+            log_level,
         );
         if (manager.lockfile.packages.len > 0) {
             root = manager.lockfile.packages.get(0);
@@ -9942,14 +9973,18 @@ pub const PackageManager = struct {
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
-        {
-            // append scripts to lockfile before generating new metahash
-            manager.loadRootLifecycleScripts(root);
-
+        // append scripts to lockfile before generating new metahash
+        manager.loadRootLifecycleScripts(root);
+        defer {
             if (manager.root_lifecycle_scripts) |root_scripts| {
-                root_scripts.appendToLockfile(manager.lockfile);
+                manager.allocator.free(root_scripts.package_name);
             }
+        }
 
+        if (manager.root_lifecycle_scripts) |root_scripts| {
+            root_scripts.appendToLockfile(manager.lockfile);
+        }
+        {
             const packages = manager.lockfile.packages.slice();
             for (packages.items(.resolution), packages.items(.meta), packages.items(.scripts)) |resolution, meta, scripts| {
                 if (resolution.tag == .workspace) {

@@ -118,6 +118,7 @@ pub const Tag = enum(u8) {
     realpath,
     futime,
     pidfd_open,
+    poll,
 
     kevent,
     kqueue,
@@ -409,6 +410,24 @@ pub fn chdir(destination: anytype) Maybe(void) {
     }
 
     return Maybe(void).todo();
+}
+
+pub fn sendfile(src: bun.FileDescriptor, dest: bun.FileDescriptor, len: usize) Maybe(usize) {
+    while (true) {
+        const rc = std.os.linux.sendfile(
+            dest.cast(),
+            src.cast(),
+            null,
+            // we set a maximum to avoid EINVAL
+            @min(len, std.math.maxInt(i32) - 1),
+        );
+        if (Maybe(usize).errnoSysFd(rc, .sendfile, src)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return .{ .result = rc };
+    }
 }
 
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
@@ -772,6 +791,8 @@ pub fn openFileAtWindowsNtPath(
     };
     var io: windows.IO_STATUS_BLOCK = undefined;
 
+    var attributes: w.DWORD = w.FILE_ATTRIBUTE_NORMAL;
+
     while (true) {
         const rc = windows.ntdll.NtCreateFile(
             &result,
@@ -779,7 +800,7 @@ pub fn openFileAtWindowsNtPath(
             &attr,
             &io,
             null,
-            w.FILE_ATTRIBUTE_NORMAL,
+            attributes,
             w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
             disposition,
             options,
@@ -801,6 +822,25 @@ pub fn openFileAtWindowsNtPath(
             } else {
                 log("NtCreateFile({}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             }
+        }
+
+        if (rc == .ACCESS_DENIED and
+            attributes == w.FILE_ATTRIBUTE_NORMAL and
+            (access_mask & (w.GENERIC_READ | w.GENERIC_WRITE)) == w.GENERIC_WRITE)
+        {
+            // > If CREATE_ALWAYS and FILE_ATTRIBUTE_NORMAL are specified,
+            // > CreateFile fails and sets the last error to ERROR_ACCESS_DENIED
+            // > if the file exists and has the FILE_ATTRIBUTE_HIDDEN or
+            // > FILE_ATTRIBUTE_SYSTEM attribute. To avoid the error, specify the
+            // > same attributes as the existing file.
+            //
+            // The above also applies to NtCreateFile. In order to make this work,
+            // we retry but only in the case that the file was opened for writing.
+            //
+            // See https://github.com/oven-sh/bun/issues/6820
+            //     https://github.com/libuv/libuv/pull/3380
+            attributes = w.FILE_ATTRIBUTE_HIDDEN;
+            continue;
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -1004,9 +1044,11 @@ pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.F
 }
 
 pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    // TODO(@paperdave): this should not need to use libuv
     if (comptime Environment.isWindows) {
         return sys_uv.open(file_path, flags, perm);
     }
+
     // this is what open() does anyway.
     return openat(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
 }
@@ -2036,12 +2078,13 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
             w.TRUE,
             w.DUPLICATE_SAME_ACCESS,
         );
-        log("dup({d}) = {d}", .{ fd.cast(), out });
         if (out == 0) {
             if (Maybe(bun.FileDescriptor).errnoSysFd(0, .dup, fd)) |err| {
+                log("dup({}) = {}", .{ fd, err });
                 return err;
             }
         }
+        log("dup({}) = {}", .{ fd, bun.toFD(target) });
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
 
@@ -2197,6 +2240,28 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
     return write(fd, buf);
 }
 
+pub fn getFileSize(fd: bun.FileDescriptor) Maybe(usize) {
+    if (Environment.isWindows) {
+        var size: windows.LARGE_INTEGER = undefined;
+        if (windows.GetFileSizeEx(fd.cast(), &size) == windows.FALSE) {
+            const err = Error.fromCode(windows.getLastErrno(), .fstat);
+            log("GetFileSizeEx({}) = {s}", .{ fd, err.name() });
+            return .{ .err = err };
+        }
+        log("GetFileSizeEx({}) = {d}", .{ fd, size });
+        return .{ .result = @intCast(@max(size, 0)) };
+    }
+
+    switch (fstat(fd)) {
+        .result => |*stat_| {
+            return .{ .result = @intCast(@max(stat_.size, 0)) };
+        },
+        .err => |err| {
+            return .{ .err = err };
+        },
+    }
+}
+
 pub fn isPollable(mode: mode_t) bool {
     return os.S.ISFIFO(mode) or os.S.ISSOCK(mode);
 }
@@ -2317,4 +2382,79 @@ pub const File = struct {
         // TODO: probably return the error? we have a lot of code paths which do not so we are keeping for now
         _ = This.close(self.handle);
     }
+
+    pub fn getEndPos(self: File) Maybe(usize) {
+        return getFileSize(self.handle);
+    }
+
+    pub const ReadToEndResult = struct {
+        bytes: std.ArrayList(u8) = std.ArrayList(u8).init(default_allocator),
+        err: ?Error = null,
+    };
+    pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8)) Maybe(usize) {
+        const size = switch (this.getEndPos()) {
+            .err => |err| {
+                return .{ .err = err };
+            },
+            .result => |s| s,
+        };
+
+        list.ensureUnusedCapacity(size + 16) catch bun.outOfMemory();
+
+        var total: i64 = 0;
+        while (true) {
+            if (list.unusedCapacitySlice().len == 0) {
+                list.ensureUnusedCapacity(16) catch bun.outOfMemory();
+            }
+
+            switch (bun.sys.pread(this.handle, list.unusedCapacitySlice(), total)) {
+                .err => |err| {
+                    return .{ .err = err };
+                },
+                .result => |bytes_read| {
+                    if (bytes_read == 0) {
+                        break;
+                    }
+
+                    list.items.len += bytes_read;
+                    total += @intCast(bytes_read);
+                },
+            }
+        }
+
+        return .{ .result = @intCast(total) };
+    }
+    pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
+        var list = std.ArrayList(u8).init(allocator);
+        return switch (readToEndWithArrayList(this, &list)) {
+            .err => |err| .{ .err = err, .bytes = list },
+            .result => .{ .err = null, .bytes = list },
+        };
+    }
 };
+
+pub inline fn toLibUVOwnedFD(
+    maybe_windows_fd: bun.FileDescriptor,
+    comptime syscall: Syscall.Tag,
+    comptime error_case: enum { close_on_fail, leak_fd_on_fail },
+) Maybe(bun.FileDescriptor) {
+    if (!Environment.isWindows) {
+        return .{ .result = maybe_windows_fd };
+    }
+
+    return .{
+        .result = bun.toLibUVOwnedFD(maybe_windows_fd) catch |err| switch (err) {
+            error.SystemFdQuotaExceeded => {
+                if (error_case == .close_on_fail) {
+                    _ = close(maybe_windows_fd);
+                }
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(bun.C.E.MFILE),
+                        .syscall = syscall,
+                    },
+                };
+            },
+        },
+    };
+}

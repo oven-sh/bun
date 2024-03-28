@@ -841,8 +841,10 @@ describe("deno_task", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/9458
-  test("input", async () => {
-    const inputCode = /* ts */ `
+  test(
+    "input",
+    async () => {
+      const inputCode = /* ts */ `
     const downArrow = '\\x1b[B';
     const enterKey = '\\x0D';
     await Bun.sleep(100)
@@ -853,7 +855,7 @@ describe("deno_task", () => {
     writer.flush()
     `;
 
-    const code = /* ts */ `
+      const code = /* ts */ `
     const { select } = require('@inquirer/prompts');
 
     async function run() {
@@ -870,7 +872,7 @@ describe("deno_task", () => {
     run();
     `;
 
-    const packagejson = `
+      const packagejson = `
     {
       "name": "stuff",
       "module": "index.ts",
@@ -887,12 +889,14 @@ describe("deno_task", () => {
     }
     `;
 
-    await TestBuilder.command`echo ${packagejson} > package.json; BUN_DEBUG_QUIET_LOGS=1 ${BUN} i &> /dev/null; BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${inputCode} | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code}`
-      .ensureTempDir()
-      .stdout(() => {})
-      .stderr("Choice: bar\n")
-      .run();
-  });
+      await TestBuilder.command`echo ${packagejson} > package.json; BUN_DEBUG_QUIET_LOGS=1 ${BUN} i &> /dev/null; BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${inputCode} | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code}`
+        .ensureTempDir()
+        .stdout(() => {})
+        .stderr("Choice: bar\n")
+        .run();
+    },
+    15 * 1000,
+  );
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {

@@ -1128,6 +1128,27 @@ declare module "bun:test" {
      */
     toThrow(expected?: unknown): void;
     /**
+     * Asserts that a function throws an error.
+     *
+     * - If expected is a `string` or `RegExp`, it will check the `message` property.
+     * - If expected is an `Error` object, it will check the `name` and `message` properties.
+     * - If expected is an `Error` constructor, it will check the class of the `Error`.
+     * - If expected is not provided, it will check if anything as thrown.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrowError("Oops!");
+     * expect(fail).toThrowError(/oops/i);
+     * expect(fail).toThrowError(Error);
+     * expect(fail).toThrowError();
+     *
+     * @param expected the expected error, error message, or error pattern
+     * @alias toThrow
+     */
+    toThrowError(expected?: unknown): void;
+    /**
      * Asserts that a value matches a regular expression or includes a substring.
      *
      * @example
@@ -1412,20 +1433,45 @@ declare module "bun:test" {
     toHaveBeenCalled(): void;
     /**
      * Ensures that a mock function is called an exact number of times.
+     * @alias toHaveBeenCalled
+     */
+    toBeCalled(): void;
+    /**
+     * Ensures that a mock function is called an exact number of times.
      */
     toHaveBeenCalledTimes(expected: number): void;
     /**
      * Ensure that a mock function is called with specific arguments.
+     * @alias toHaveBeenCalledTimes
+     */
+    toBeCalledTimes(expected: number): void;
+    /**
+     * Ensure that a mock function is called with specific arguments.
      */
     toHaveBeenCalledWith(...expected: unknown[]): void;
+    /**
+     * Ensure that a mock function is called with specific arguments.
+     * @alias toHaveBeenCalledWith
+     */
+    toBeCalledWith(...expected: unknown[]): void;
     /**
      * Ensure that a mock function is called with specific arguments for the last call.
      */
     toHaveBeenLastCalledWith(...expected: unknown[]): void;
     /**
      * Ensure that a mock function is called with specific arguments for the nth call.
+     * @alias toHaveBeenCalledWith
+     */
+    lastCalledWith(...expected: unknown[]): void;
+    /**
+     * Ensure that a mock function is called with specific arguments for the nth call.
      */
     toHaveBeenNthCalledWith(n: number, ...expected: unknown[]): void;
+    /**
+     * Ensure that a mock function is called with specific arguments for the nth call.
+     * @alias toHaveBeenCalledWith
+     */
+    nthCalledWith(n: number, ...expected: unknown[]): void;
   }
 
   /**

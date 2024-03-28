@@ -1387,34 +1387,17 @@ pub const PackageInstall = struct {
         if (comptime Environment.isWindows) {
             var fd_path_buf: bun.PathBuffer = undefined;
 
-            // buf[0] = '\\';
-            // buf[1] = '\\';
-            // buf[2] = '?';
-            // buf[3] = '\\';
-            // const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
-            // strings.copyU8IntoU16(buf[4..], dest_path);
-            // buf[dest_path.len + 4] = '\\';
-            // to_copy_buf = buf[dest_path.len + 5 ..];
-
-            // buf2[0] = '\\';
-            // buf2[1] = '\\';
-            // buf2[2] = '?';
-            // buf2[3] = '\\';
-            // const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
-            // strings.copyU8IntoU16(buf2[4..], cache_path);
-            // buf2[cache_path.len + 4] = '\\';
-            // to_copy_buf2 = buf2[cache_path.len + 5 ..];
-
-            // TODO(dylan-conway): find out why //?/ isn't working
+            buf[0..4].* = bun.windows.nt_maxpath_prefix;
             const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
-            strings.copyU8IntoU16(&buf, dest_path);
-            buf[dest_path.len] = '\\';
-            to_copy_buf = buf[dest_path.len + 1 ..];
+            strings.copyU8IntoU16(buf[4..], dest_path);
+            buf[dest_path.len + 4] = '\\';
+            to_copy_buf = buf[dest_path.len + 5 ..];
 
+            buf2[0..4].* = bun.windows.nt_maxpath_prefix;
             const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
-            strings.copyU8IntoU16(&buf2, cache_path);
-            buf2[cache_path.len] = '\\';
-            to_copy_buf2 = buf2[cache_path.len + 1 ..];
+            strings.copyU8IntoU16(buf2[4..], cache_path);
+            buf2[cache_path.len + 4] = '\\';
+            to_copy_buf2 = buf2[cache_path.len + 5 ..];
         }
 
         const FileCopier = struct {

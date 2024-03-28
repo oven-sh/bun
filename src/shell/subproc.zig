@@ -795,7 +795,7 @@ pub const ShellSubprocess = struct {
                 if (spawn_args.env_array.items.len == 0 or
                     spawn_args.env_array.getLast() != null)
                 {
-                    spawn_args.argv.append(allocator, null) catch {
+                    spawn_args.env_array.append(allocator, null) catch {
                         return .{ .err = .{
                             .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory(),
                         } };

@@ -10,6 +10,7 @@ import { copyFileSync, mkdirSync } from "fs";
 // well as bun_shim_impl.exe works in various edge cases. There are many fast
 // paths for many many cases.
 describe.if(isWindows)("windows bin linking shim should work", async () => {
+  if (!isWindows) return;
   const port: number = 4873;
   const packageDir = tmpdirSync("bun-install-windowsshim-");
   await writeFile(

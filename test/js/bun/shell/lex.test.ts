@@ -68,7 +68,7 @@ describe("lex shell", () => {
       { "Text": "foo" },
       { "Var": "NICE" },
       { "Text": "good" },
-      { "Text": "NICE" },
+      { "DoubleQuotedText": "NICE" },
       { "Eof": {} },
     ];
     const result = JSON.parse($.lex`echo foo"$NICE"good"NICE"`);
@@ -89,7 +89,7 @@ describe("lex shell", () => {
       { "Semicolon": {} },
       { "Text": "echo" },
       { "Delimit": {} },
-      { "Text": "NICE;" },
+      { "DoubleQuotedText": "NICE;" },
       { "Eof": {} },
     ];
     const result = JSON.parse($.lex`echo foo; bar baz; echo "NICE;"`);
@@ -116,7 +116,7 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Text": "FULLNAME=" },
       { "Var": "NAME" },
-      { "Text": " radisic" },
+      { "DoubleQuotedText": " radisic" },
       { "Delimit": {} },
       { "Text": "LOL=" },
       { "Delimit": {} },
@@ -732,7 +732,7 @@ describe("lex shell", () => {
 
     test("Unexpected EOF", async () => {
       await TestBuilder.command`echo hi |`.error("Unexpected EOF").run();
-      await TestBuilder.command`echo hi &`.error("Unexpected EOF").run();
+      await TestBuilder.command`echo hi &`.stdout("hi\n").run();
     });
 
     test("Unclosed subshell", async () => {

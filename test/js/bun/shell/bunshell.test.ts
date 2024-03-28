@@ -819,6 +819,169 @@ describe("deno_task", () => {
   });
 });
 
+describe("if_clause", () => {
+  TestBuilder.command`
+  if
+    echo cond;
+  then
+    echo then;
+  elif
+    echo elif;
+  then
+    echo elif then;
+  else
+    echo else;
+  fi`
+    .stdout("cond\nthen\n")
+    .runAsTest("basic");
+
+  TestBuilder.command`
+  if
+    echo cond
+  then
+    echo then
+  elif
+    echo elif
+  then
+    echo elif then
+  else
+    echo else
+  fi`
+    .stdout("cond\nthen\n")
+    .runAsTest("basic without semicolon");
+
+  TestBuilder.command`
+  if
+    lkfjslkdjfsldf
+  then
+    echo shouldnt see this
+  else
+    echo okay here
+  fi`
+    .stdout("okay here\n")
+    .stderr("bun: command not found: lkfjslkdjfsldf\n")
+    .runAsTest("else basic");
+
+  TestBuilder.command`
+  if
+    lkfjslkdjfsldf
+  then
+    echo shouldnt see this
+  elif
+    sdfkjsldf
+  then
+    echo shouldnt see this either
+  else
+    echo okay here
+  fi`
+    .stdout("okay here\n")
+    .stderr("bun: command not found: lkfjslkdjfsldf\nbun: command not found: sdfkjsldf\n")
+    .runAsTest("else");
+
+  TestBuilder.command`
+  if
+    echo hi
+  then
+    echo hey
+  else
+    echo uh oh
+  fi | cat
+  `
+    .stdout("hi\nhey\n")
+    .runAsTest("in pipeline");
+
+  TestBuilder.command`if echo hi; then echo lmao; fi && echo nice`
+    .stdout("hi\nlmao\nnice\n")
+    .runAsTest("no else, cond true");
+
+  TestBuilder.command`if BUNISBAD; then echo not true; fi && echo bun is good`
+    .stdout("bun is good\n")
+    .stderr("bun: command not found: BUNISBAD\n")
+    .runAsTest("no else, cond false");
+
+  TestBuilder.command`if [[ -f package.json ]]
+  then
+    a
+    b
+  else
+    c
+  fi`
+    .exitCode(1)
+    .file("package.json", "lol")
+    .stderr("bun: command not found: a\nbun: command not found: b\n")
+    .runAsTest("multi statement then");
+
+  TestBuilder.command`if
+    [[ -f package.json ]]
+    [[ -f lkdfjlskdf ]]
+  then
+    echo yeah...
+    echo nope!
+  else
+    echo okay
+    echo makes sense!
+  fi`
+    .file("package.json", "lol")
+    .stdout("okay\nmakes sense!\n")
+    .runAsTest("multi statement in all branches");
+
+  ["if", "else", "elif", "then", "fi"].map(tok => {
+    TestBuilder.command`"${{ raw: tok }}"`
+      .stderr(`bun: command not found: ${tok}\n`)
+      .exitCode(1)
+      .runAsTest(`quoted ${tok} doesn't break`);
+
+    TestBuilder.command`echo ${{ raw: "lksdfjklsdjf" + tok }}`
+      .stdout(`lksdfjklsdjf${tok}\n`)
+      .runAsTest(`${tok} in script does not break parsing 1`);
+
+    TestBuilder.command`echo ${{ raw: "hi " + tok }}`
+      .stdout(`hi ${tok}\n`)
+      .runAsTest(`${tok} in script does not break parsing 2`);
+
+    TestBuilder.command`echo ${{ raw: tok + " hi" }}`
+      .stdout(`${tok} hi\n`)
+      .runAsTest(`${tok} in script does not break parsing 3`);
+  });
+
+  TestBuilder.command`echo fif hi`.stdout("fif hi\n").runAsTest("parsing edge case");
+});
+
+describe("condexprs", () => {
+  TestBuilder.command`[[ -f package.json ]] && echo yes!`.file("package.json", "hi").stdout("yes!\n").runAsTest("-f");
+  TestBuilder.command`[[ -f mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-f non-existent");
+
+  TestBuilder.command`[[ -d mydir ]] && echo yes!`.directory("mydir").stdout("yes!\n").runAsTest("-d");
+  TestBuilder.command`[[ -d mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-d non-existent");
+
+  TestBuilder.command`[[ -c /dev/null ]] && echo yes!`.stdout("yes!\n").runAsTest("-c");
+  TestBuilder.command`[[ -c lol ]] && echo yes!`.exitCode(1).file("lol", "lol").runAsTest("-c not character device");
+  TestBuilder.command`[[ -c mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-c non-existent");
+
+  TestBuilder.command`FOO=""; [[ -z $FOO ]] && echo yes!`.stdout("yes!\n").runAsTest("-z");
+  TestBuilder.command`[[ -z "skldjfldsf" ]] && echo yes!`.exitCode(1).runAsTest("-z fail");
+
+  TestBuilder.command`FOO="lkjdflskdjf"; [[ -n $FOO ]] && echo yes!`.stdout("yes!\n").runAsTest("-n");
+  TestBuilder.command`FOO="" [[ -n $FOO ]] && echo yes!`.exitCode(1).runAsTest("-n fail");
+
+  TestBuilder.command`[[ -n hey ]] | echo hi | cat`.stdout("hi\n").runAsTest("precedence: pipeline");
+});
+
+describe("async", () => {
+  TestBuilder.command`echo hi && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${/* ts */ `await Bun.sleep(500); console.log('noice')`} &; echo hello`
+    .stdout("hi\nhello\nnoice\n")
+    .runAsTest("basic");
+
+  TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${/* ts */ `await Bun.sleep(500); console.log('noice')`} | cat &; echo hello`
+    .stdout("hello\nnoice\n")
+    .runAsTest("pipeline");
+
+  TestBuilder.command`echo start > output.txt & cat output.txt`
+    .file("output.txt", "hey")
+    .stdout(s => expect(s).toBeOneOf(["hey", "start\n"]))
+    .runAsTest("background_execution_with_output_redirection");
+});
+
 function stringifyBuffer(buffer: Uint8Array): string {
   const sentinel = sentinelByte(buffer);
   const str = new TextDecoder().decode(buffer.slice(0, sentinel));

@@ -14,6 +14,7 @@ const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = @import("root").bun.JSC;
 const Shimmer = JSC.Shimmer;
+const ConsoleObject = JSC.ConsoleObject;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
 const MutableString = bun.MutableString;
@@ -2117,15 +2118,15 @@ pub const JSPromise = extern struct {
             };
         }
 
-        pub fn get(this: *Strong) *JSC.JSPromise {
+        pub fn get(this: *const Strong) *JSC.JSPromise {
             return this.strong.get().?.asPromise().?;
         }
 
-        pub fn value(this: *Strong) JSValue {
+        pub fn value(this: *const Strong) JSValue {
             return this.strong.get().?;
         }
 
-        pub fn valueOrEmpty(this: *Strong) JSValue {
+        pub fn valueOrEmpty(this: *const Strong) JSValue {
             return this.strong.get() orelse .zero;
         }
 
@@ -3607,8 +3608,8 @@ pub const JSValue = enum(JSValueReprInt) {
                     return this.asInt32();
                 }
 
-                if (this.isNumber()) {
-                    return @as(i32, @truncate(this.coerceDoubleTruncatingIntoInt64()));
+                if (this.getNumber()) |num| {
+                    return coerceJSValueDoubleTruncatingT(i32, num);
                 }
 
                 return this.coerceToInt32(globalThis);
@@ -4074,6 +4075,22 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    pub fn print(
+        this: JSValue,
+        globalObject: *JSGlobalObject,
+        message_type: ConsoleObject.MessageType,
+        message_level: ConsoleObject.MessageLevel,
+    ) void {
+        JSC.ConsoleObject.messageWithTypeAndLevel(
+            undefined,
+            message_type,
+            message_level,
+            globalObject,
+            &[_]JSC.JSValue{this},
+            1,
+        );
+    }
+
     /// Create a JSValue string from a zig format-print (fmt + args)
     pub fn printString(globalThis: *JSGlobalObject, comptime stack_buffer_size: usize, comptime fmt: []const u8, args: anytype) !JSValue {
         var stack_fallback = std.heap.stackFallback(stack_buffer_size, globalThis.allocator());
@@ -4167,21 +4184,28 @@ pub const JSValue = enum(JSValueReprInt) {
         return jsNumberFromDouble(@floatFromInt(i));
     }
 
-    pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
-        const double_value = this.asDouble();
+    fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
+        return coerceJSValueDoubleTruncatingTT(T, T, num);
+    }
 
-        if (std.math.isNan(double_value))
-            return std.math.minInt(i64);
-
-        // coerce NaN or Infinity to either -maxInt or maxInt
-        if (std.math.isInf(double_value)) {
-            return if (double_value < 0) @as(i64, std.math.minInt(i64)) else @as(i64, std.math.maxInt(i64));
+    fn coerceJSValueDoubleTruncatingTT(comptime T: type, comptime Out: type, num: f64) Out {
+        if (std.math.isNan(num)) {
+            return 0;
         }
 
-        return @as(
-            i64,
-            @intFromFloat(double_value),
-        );
+        if (num <= std.math.minInt(T) or std.math.isNegativeInf(num)) {
+            return std.math.minInt(T);
+        }
+
+        if (num >= std.math.maxInt(T) or std.math.isPositiveInf(num)) {
+            return std.math.maxInt(T);
+        }
+
+        return @intFromFloat(num);
+    }
+
+    pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
+        return coerceJSValueDoubleTruncatingT(i64, this.asNumber());
     }
 
     /// Decimal values are truncated without rounding.
@@ -4964,6 +4988,22 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    /// Check if the JSValue is either a signed 32-bit integer or a double and
+    /// return the value as a f64
+    ///
+    /// This does not call `valueOf` on the JSValue
+    pub fn getNumber(this: JSValue) ?f64 {
+        if (this.isInt32()) {
+            return @as(f64, @floatFromInt(this.asInt32()));
+        }
+
+        if (isNumber(this)) {
+            return asDouble(this);
+        }
+
+        return null;
+    }
+
     pub fn asNumber(this: JSValue) f64 {
         if (this.isInt32()) {
             return @as(f64, @floatFromInt(this.asInt32()));
@@ -5029,16 +5069,7 @@ pub const JSValue = enum(JSValueReprInt) {
         if (comptime bun.Environment.allow_assert) {
             std.debug.assert(this.isNumber());
         }
-        const double = this.asDouble();
-        if (std.math.isPositiveInf(double)) {
-            return std.math.maxInt(i52);
-        } else if (std.math.isNegativeInf(double)) {
-            return std.math.minInt(i52);
-        } else if (std.math.isNan(double)) {
-            return 0;
-        }
-
-        return @as(i64, @intFromFloat(@max(@min(double, std.math.maxInt(i52)), std.math.minInt(i52))));
+        return coerceJSValueDoubleTruncatingTT(i52, i64, this.asNumber());
     }
 
     pub fn toInt32(this: JSValue) i32 {
@@ -5046,8 +5077,8 @@ pub const JSValue = enum(JSValueReprInt) {
             return asInt32(this);
         }
 
-        if (this.isNumber()) {
-            return @as(i32, @intCast(@min(@max(this.asInt52(), std.math.minInt(i32)), std.math.maxInt(i32))));
+        if (this.getNumber()) |num| {
+            return coerceJSValueDoubleTruncatingT(i32, num);
         }
 
         if (comptime bun.Environment.allow_assert) {
@@ -5355,7 +5386,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
         const External = extern struct {
             bytes: ?[*]const u8,
-            size: isize,
+            size: usize,
             handle: ?*anyopaque,
         };
 
@@ -5369,7 +5400,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub inline fn serialize(this: JSValue, global: *JSGlobalObject) ?SerializedScriptValue {
         const value = Bun__serializeJSValue(global, this);
         return if (value.bytes) |bytes|
-            .{ .data = bytes[0..@intCast(value.size)], .handle = value.handle.? }
+            .{ .data = bytes[0..value.size], .handle = value.handle.? }
         else
             null;
     }

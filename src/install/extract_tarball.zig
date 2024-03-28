@@ -309,7 +309,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
     if (basename.len != name.len and !this.resolution.tag.isGit()) {
-        cache_dir.makeDir(std.mem.trim(u8, name[0 .. name.len - basename.len], "/")) catch {};
+        cache_dir.makePath(std.mem.trim(u8, name[0 .. name.len - basename.len], "/")) catch {};
     }
 
     // Now that we've extracted the archive, we rename.
@@ -451,7 +451,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 /// Opens the dir if the path already exists and is a directory.
 /// This function is not atomic, and if it returns an error, the file system may
 /// have been modified regardless.
-fn makeOpenPathAccessMaskW(self: std.fs.Dir, sub_path: []const u8, access_mask: u32, no_follow: bool) std.os.OpenError!std.fs.Dir {
+fn makeOpenPathAccessMaskW(self: std.fs.Dir, sub_path: []const u8, access_mask: u32, no_follow: bool) !std.fs.Dir {
     var it = try std.fs.path.componentIterator(sub_path);
     // If there are no components in the path, then create a dummy component with the full path.
     var component = it.last() orelse std.fs.path.NativeUtf8ComponentIterator.Component{
@@ -483,7 +483,7 @@ const MakeOpenDirAccessMaskWOptions = struct {
     create_disposition: u32,
 };
 
-fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_mask: u32, flags: MakeOpenDirAccessMaskWOptions) std.os.OpenError!std.fs.Dir {
+fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_mask: u32, flags: MakeOpenDirAccessMaskWOptions) !std.fs.Dir {
     var result = std.fs.Dir{
         .fd = undefined,
     };
@@ -528,6 +528,7 @@ fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_m
         // and the directory is trying to be opened for iteration.
         .ACCESS_DENIED => return error.AccessDenied,
         .INVALID_PARAMETER => return error.BadPathName,
+        .SHARING_VIOLATION => return error.SharingViolation,
         else => return w.unexpectedStatus(rc),
     }
 }

@@ -385,13 +385,17 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
-// pub fn getGlobalExitCodeForPipeFailure() u8 {
-//     if (VirtualMachine.is_main_thread_vm) {
-//         return VirtualMachine.get().exit_handler.exit_code;
-//     }
+const WindowsOnly = struct {
+    pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.C) *bun.windows.libuv.Loop {
+        return jsc_vm.uvLoop();
+    }
+};
 
-//     return 0;
-// }
+comptime {
+    if (Environment.isWindows) {
+        @export(WindowsOnly.Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
+    }
+}
 
 pub const ExitHandler = struct {
     exit_code: u8 = 0,
@@ -576,6 +580,11 @@ pub const VirtualMachine = struct {
     rare_data: ?*JSC.RareData = null,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
+    entry_point_result: struct {
+        value: JSC.Strong = .{},
+        cjs_set_value: bool = false,
+    } = .{},
+
     auto_install_dependencies: bool = false,
 
     onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
@@ -901,8 +910,35 @@ pub const VirtualMachine = struct {
         return .running;
     }
 
+    pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
+        if (this.module_loader.eval_source) |eval_source| {
+            var specifier_str = specifier.toBunString(this.global);
+            defer specifier_str.deref();
+            return specifier_str.eqlUTF8(eval_source.path.text);
+        }
+
+        return false;
+    }
+
+    pub fn setEntryPointEvalResultESM(this: *VirtualMachine, result: JSValue) callconv(.C) void {
+        // allow esm evaluate to set value multiple times
+        if (!this.entry_point_result.cjs_set_value) {
+            this.entry_point_result.value.set(this.global, result);
+        }
+    }
+
+    pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callconv(.C) void {
+        if (!this.entry_point_result.value.has()) {
+            this.entry_point_result.value.set(this.global, value);
+            this.entry_point_result.cjs_set_value = true;
+        }
+    }
+
     comptime {
         @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
+        @export(setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" });
+        @export(setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
+        @export(specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     }
 
     pub fn onExit(this: *VirtualMachine) void {
@@ -1183,7 +1219,7 @@ pub const VirtualMachine = struct {
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
-            .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
+            .origin_timer = std.time.Timer.start() catch @panic("Timers are not supported on this system."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
@@ -1226,6 +1262,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             false,
+            false,
             null,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1251,6 +1288,10 @@ pub const VirtualMachine = struct {
         env_loader: ?*DotEnv.Loader = null,
         store_fd: bool = false,
         smol: bool = false,
+
+        // --print needs the result from evaluating the main module
+        eval: bool = false,
+
         graph: ?*bun.StandaloneModuleGraph = null,
         debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
     };
@@ -1336,6 +1377,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             opts.smol,
+            opts.eval,
             null,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1483,6 +1525,7 @@ pub const VirtualMachine = struct {
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
             worker.mini,
+            opts.eval,
             worker.cpp_worker,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1514,7 +1557,7 @@ pub const VirtualMachine = struct {
                 .source_url = bun.String.init(source_url),
                 .hash = 0,
                 .allocator = null,
-                .needs_deref = false,
+                .source_code_needs_deref = false,
             };
         }
         var source = this.refCountedString(code, hash_, !add_double_ref);
@@ -1529,7 +1572,7 @@ pub const VirtualMachine = struct {
             .source_url = bun.String.init(source_url),
             .hash = source.hash,
             .allocator = source,
-            .needs_deref = false,
+            .source_code_needs_deref = false,
         };
     }
 
@@ -1583,35 +1626,35 @@ pub const VirtualMachine = struct {
             return builtin;
         }
 
-        var virtual_source: ?*logger.Source = null;
-
-        var display_specifier = _specifier.toUTF8(bun.default_allocator);
+        const display_specifier = _specifier.toUTF8(bun.default_allocator);
         defer display_specifier.deinit();
-        var specifier_clone = _specifier.toUTF8(bun.default_allocator);
+        const specifier_clone = _specifier.toUTF8(bun.default_allocator);
         defer specifier_clone.deinit();
         var display_slice = display_specifier.slice();
         const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
         const path = Fs.Path.init(specifier_clone.slice());
-        var loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
-            if (strings.eqlLong(specifier, jsc_vm.main, true)) {
-                break :brk options.Loader.js;
+        const loader, const virtual_source = brk: {
+            if (jsc_vm.module_loader.eval_source) |eval_source| {
+                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+                    break :brk .{ .tsx, eval_source };
+                }
+                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
+                    break :brk .{ .tsx, eval_source };
+                }
             }
 
-            break :brk options.Loader.file;
+            break :brk .{
+                jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk2: {
+                    if (strings.eqlLong(specifier, jsc_vm.main, true)) {
+                        break :brk2 options.Loader.js;
+                    }
+                    break :brk2 options.Loader.file;
+                },
+                null,
+            };
         };
-
-        if (jsc_vm.module_loader.eval_script) |eval_script| {
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_script;
-                loader = .tsx;
-            }
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                virtual_source = eval_script;
-                loader = .tsx;
-            }
-        }
 
         // .print_source, which is used by exceptions avoids duplicating the entire source code
         // but that means we have to be careful of the lifetime of the source code
@@ -1686,7 +1729,7 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = result.path;
             return;
-        } else if (jsc_vm.module_loader.eval_script != null and
+        } else if (jsc_vm.module_loader.eval_source != null and
             (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]")) or
             strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
         {

@@ -733,6 +733,22 @@ describe("deno_task", () => {
       .stderr("Stdout\nStderr\n")
       .quiet()
       .runAsTest("redirect stdout to stderr quiet");
+
+    TestBuilder.command`echo hi > /dev/null`.quiet().runAsTest("redirect /dev/null");
+
+    TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Hello friends')"} > /dev/null`
+      .quiet()
+      .runAsTest("subproc redirect /dev/null");
+
+    const code = /* ts */ `
+      import { $ } from 'bun'
+
+      await $\`echo Bunception!\`
+      `;
+
+    TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code} > /dev/null`
+      .quiet()
+      .runAsTest("bunception redirect /dev/null");
   });
 
   describe("pwd", async () => {
@@ -777,8 +793,7 @@ describe("deno_task", () => {
 
   test("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
-    const code = /* ts */ `
-    import { $ } from 'bun'
+    const code = /* ts */ `import { $ } from 'bun'
 
     $.throws(true)
 
@@ -786,7 +801,7 @@ describe("deno_task", () => {
       await $\`somecommandthatdoesnotexist\`
     }
 
-    someFunction()
+    await someFunction()
     `;
 
     const [_, lineNr] = code
@@ -799,6 +814,79 @@ describe("deno_task", () => {
     await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code} 2>&1`
       .exitCode(1)
       .stdout(s => expect(s).toInclude(`[eval]:${lineNr}`))
+      .run();
+  });
+
+  test("big_data", async () => {
+    const writerCode = /* ts */ `
+
+    const writer = Bun.stdout.writer();
+    const buf = new Uint8Array(128 * 1024).fill('a'.charCodeAt(0))
+    for (let i = 0; i < 10; i++) {
+      writer.write(buf);
+    }
+    await writer.flush()
+    `;
+
+    const runnerCode = /* ts */ `await Bun.$\`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${$.escape(writerCode)} | cat\``;
+    const { stdout, stderr, exitCode } = await $`${BUN} -e ${runnerCode}`.env(bunEnv);
+
+    expect(stderr.length).toEqual(0);
+    expect(exitCode).toEqual(0);
+    expect(stdout.length).toEqual(128 * 1024 * 10);
+  });
+
+  // https://github.com/oven-sh/bun/issues/9458
+  test("input", async () => {
+    const inputCode = /* ts */ `
+    const downArrow = '\\x1b[B';
+    const enterKey = '\\x0D';
+    await Bun.sleep(100)
+    const writer = Bun.stdout.writer();
+    writer.write(downArrow)
+    await Bun.sleep(100)
+    writer.write(enterKey)
+    writer.flush()
+    `;
+
+    const code = /* ts */ `
+    const { select } = require('@inquirer/prompts');
+
+    async function run() {
+      const foobar = await select({
+        message: 'Foo or Bar',
+        choices: [
+          { name: 'Foo', value: 'foo' },
+          { name: 'Bar', value: 'bar' },
+        ],
+      });
+      console.error('Choice:', foobar);
+    }
+
+    run();
+    `;
+
+    const packagejson = `
+    {
+      "name": "stuff",
+      "module": "index.ts",
+      "type": "module",
+      "devDependencies": {
+        "@types/bun": "latest"
+      },
+      "peerDependencies": {
+        "typescript": "^5.0.0"
+      },
+      "dependencies": {
+        "@inquirer/prompts": "v4.3.0"
+      }
+    }
+    `;
+
+    await TestBuilder.command`echo ${packagejson} > package.json; BUN_DEBUG_QUIET_LOGS=1 ${BUN} i &> /dev/null; BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${inputCode} | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code}`
+      .ensureTempDir()
+      .stdout(() => {})
+      .stderr("Choice: bar\n")
       .run();
   });
 });

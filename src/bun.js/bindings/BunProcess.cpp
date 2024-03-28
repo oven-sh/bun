@@ -702,8 +702,6 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
         return;
 
-    SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
-
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
     if (UNLIKELY(!context))
         return;
@@ -839,7 +837,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #else
             if (signalNumber != SIGKILL) { // windows has no SIGSTOP
 #endif
-                uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
 
                 if (isAdded) {
                     if (!signalToContextIdsMap->contains(signalNumber)) {
@@ -875,10 +872,11 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     }
                 } else {
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
-                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
+
 #if !OS(WINDOWS)
                         signal(signalNumber, SIG_DFL);
 #else
+                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                         Bun__UVSignalHandle__close(signal_handle.handle);
 #endif
                         signalToContextIdsMap->remove(signalNumber);
@@ -1256,8 +1254,6 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
     // }
     auto constructUserLimits = [&]() -> JSValue {
         JSC::JSObject* userLimits = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 11);
-
-        rusage usage;
 
         static constexpr int resourceLimits[] = {
             RLIMIT_CORE,
@@ -1648,6 +1644,9 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
     return hrtime;
 }
 
+#if OS(WINDOWS)
+extern "C" void Bun__ForceFileSinkToBeSynchronousOnWindows(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+#endif
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
 {
     auto& vm = globalObject->vm();
@@ -1657,7 +1656,6 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(fd));
 
-    auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
@@ -1673,7 +1671,20 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
         return {};
     }
 
-    return result;
+    ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
+    JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
+
+#if OS(WINDOWS)
+        Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject);
+        // Node.js docs - https://nodejs.org/api/process.html#a-note-on-process-io
+        // > Files: synchronous on Windows and POSIX
+        // > TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
+        // > Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
+        // > Synchronous writes avoid problems such as output written with console.log() or console.error() being unexpectedly interleaved, or not written at all if process.exit() is called before an asynchronous write completes. See process.exit() for more information.
+        Bun__ForceFileSinkToBeSynchronousOnWindows(globalThis, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+#endif
+
+    return resultObject->getIndex(globalObject, 0);
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -1696,12 +1707,10 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = Bun__getDefaultGlobal();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(STDIN_FILENO));
 
-    auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
@@ -2359,11 +2368,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubEmptyFunction, (JSGlobalObject * globalObje
 JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
-}
-
-static JSValue Process_stubEmptyObject(VM& vm, JSObject* processObject)
-{
-    return JSC::constructEmptyObject(processObject->globalObject());
 }
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)

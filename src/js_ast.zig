@@ -397,7 +397,7 @@ pub const Binding = struct {
                         if (b.has_spread and i == exprs.len - 1) {
                             break :convert Expr.init(E.Spread, E.Spread{ .value = expr }, expr.loc);
                         } else if (item.default_value) |default| {
-                            break :convert Expr.assign(expr, default, wrapper.allocator);
+                            break :convert Expr.assign(expr, default);
                         } else {
                             break :convert expr;
                         }
@@ -2676,11 +2676,11 @@ pub const Stmt = struct {
 
     pub const Batcher = bun.Batcher(Stmt);
 
-    pub fn assign(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
+    pub fn assign(a: Expr, b: Expr) Stmt {
         return Stmt.alloc(
             S.SExpr,
             S.SExpr{
-                .value = Expr.assign(a, b, allocator),
+                .value = Expr.assign(a, b),
             },
             a.loc,
         );
@@ -4680,7 +4680,7 @@ pub const Expr = struct {
         return false;
     }
 
-    pub fn assign(a: Expr, b: Expr, _: std.mem.Allocator) Expr {
+    pub fn assign(a: Expr, b: Expr) Expr {
         return init(E.Binary, E.Binary{
             .op = .bin_assign,
             .left = a,

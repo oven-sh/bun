@@ -567,7 +567,7 @@ ZIG_DECL JSC__JSValue Reader__intptr__slowpath(JSC__JSGlobalObject* arg0, JSC__J
 
 #pragma mark - Zig::GlobalObject
 
-CPP_DECL JSC__JSGlobalObject* Zig__GlobalObject__create(void* arg0, int32_t arg1, bool arg2, void* arg3);
+CPP_DECL JSC__JSGlobalObject* Zig__GlobalObject__create(void* arg0, int32_t arg1, bool arg2, bool arg3, void* arg4);
 CPP_DECL void* Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject* arg0);
 CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* arg0, void* arg1);
 
@@ -870,5 +870,14 @@ CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC__GetterSetter *arg);
 
 CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter *arg);
 CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter *arg);
+
+#endif
+
+// handwritten
+
+#ifdef __cplusplus
+
+CPP_DECL JSC__JSValue Bun__onResolveEntryPointResult(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+CPP_DECL JSC__JSValue Bun__onRejectEntryPointResult(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
 
 #endif

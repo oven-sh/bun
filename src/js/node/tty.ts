@@ -25,8 +25,7 @@ Object.defineProperty(ReadStream, "prototype", {
     const Prototype = Object.create(require("node:fs").ReadStream.prototype);
 
     Prototype.setRawMode = function (flag) {
-      const mode = flag ? 1 : 0;
-      const err = ttySetMode(this.fd, mode);
+      const err = ttySetMode(this.fd, !!flag);
       if (err) {
         this.emit("error", new Error("setRawMode failed with errno: " + err));
         return this;
@@ -102,9 +101,7 @@ function WriteStream(fd) {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
   if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
-  const stream = require("node:fs").WriteStream.$call(this, "", {
-    fd,
-  });
+  const stream = require("node:fs").WriteStream.$call(this, "", { fd });
 
   stream.columns = undefined;
   stream.rows = undefined;
@@ -139,17 +136,16 @@ Object.defineProperty(WriteStream, "prototype", {
       }
     };
 
-    var readline = undefined;
     WriteStream.prototype.clearLine = function (dir, cb) {
-      return (readline ??= require("node:readline")).clearLine(this, dir, cb);
+      return require("node:readline").clearLine(this, dir, cb);
     };
 
     WriteStream.prototype.clearScreenDown = function (cb) {
-      return (readline ??= require("node:readline")).clearScreenDown(this, cb);
+      return require("node:readline").clearScreenDown(this, cb);
     };
 
     WriteStream.prototype.cursorTo = function (x, y, cb) {
-      return (readline ??= require("node:readline")).cursorTo(this, x, y, cb);
+      return require("node:readline").cursorTo(this, x, y, cb);
     };
 
     // The `getColorDepth` API got inspired by multiple sources such as
@@ -280,7 +276,7 @@ Object.defineProperty(WriteStream, "prototype", {
     };
 
     WriteStream.prototype.moveCursor = function (dx, dy, cb) {
-      return (readline ??= require("node:readline")).moveCursor(this, dx, dy, cb);
+      return require("node:readline").moveCursor(this, dx, dy, cb);
     };
 
     return Real;

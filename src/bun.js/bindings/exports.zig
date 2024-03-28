@@ -45,9 +45,10 @@ pub const ZigGlobalObject = extern struct {
         console: *anyopaque,
         context_id: i32,
         mini_mode: bool,
+        eval_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
-        const global = shim.cppFn("create", .{ console, context_id, mini_mode, worker_ptr });
+        const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
         Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
@@ -183,10 +184,18 @@ pub const ResolvedSource = extern struct {
     pub const name = "ResolvedSource";
     pub const namespace = shim.namespace;
 
+    /// Specifier's lifetime is the caller from C++
+    /// https://github.com/oven-sh/bun/issues/9521
     specifier: bun.String = bun.String.empty,
     source_code: bun.String = bun.String.empty,
+
+    /// source_url is eventually deref'd on success
     source_url: bun.String = bun.String.empty,
+
+    // this pointer is unused and shouldn't exist
     commonjs_exports: ?[*]ZigString = null,
+
+    // This field is used to indicate whether it's a CommonJS module or ESM
     commonjs_exports_len: u32 = 0,
 
     hash: u32 = 0,
@@ -194,7 +203,9 @@ pub const ResolvedSource = extern struct {
     allocator: ?*anyopaque = null,
 
     tag: Tag = Tag.javascript,
-    needs_deref: bool = true,
+
+    /// This is for source_code
+    source_code_needs_deref: bool = true,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
@@ -1179,7 +1178,7 @@ it("request body and signal life cycle", async () => {
     expect(true).toBe(true);
     server.stop(true);
   }
-});
+}, 30_000);
 
 it("propagates content-type from a Bun.file()'s file path in fetch()", async () => {
   const body = Bun.file(import.meta.dir + "/fetch.js.txt");

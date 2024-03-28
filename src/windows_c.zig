@@ -1275,6 +1275,7 @@ pub fn renameAtW(
             std.debug.assert(!std.fs.path.isAbsoluteWindowsWTF16(new_path_w));
         }
     }
+
     const src_fd = switch (bun.sys.openFileAtWindows(
         old_dir_fd,
         old_path_w,
@@ -1425,3 +1426,5 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
     else
         Maybe(void).errno(rc, .NtSetInformationFile);
 }
+
+pub extern fn windows_enable_stdio_inheritance() void;

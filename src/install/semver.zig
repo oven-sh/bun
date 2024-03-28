@@ -63,12 +63,6 @@ pub const String = extern struct {
         }
     }
 
-    pub fn isUndefined(this: *const String) bool {
-        const num: u64 = undefined;
-        const bytes = @as(u64, @bitCast(this.bytes));
-        return @as(u63, @truncate(bytes)) == @as(u63, @truncate(num));
-    }
-
     pub const Formatter = struct {
         str: *const String,
         buf: string,
@@ -78,6 +72,16 @@ pub const String = extern struct {
             try writer.writeAll(str.slice(formatter.buf));
         }
     };
+
+    pub fn Sorter(comptime direction: enum { asc, desc }) type {
+        return struct {
+            lhs_buf: []const u8,
+            rhs_buf: []const u8,
+            pub fn lessThan(this: @This(), lhs: String, rhs: String) bool {
+                return lhs.order(&rhs, this.lhs_buf, this.rhs_buf) == if (comptime direction == .asc) .lt else .gt;
+            }
+        };
+    }
 
     pub inline fn order(
         lhs: *const String,

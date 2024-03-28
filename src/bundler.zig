@@ -1278,6 +1278,7 @@ pub const Bundler = struct {
         inject_jest_globals: bool = false,
         set_breakpoint_on_first_line: bool = false,
         emit_decorator_metadata: bool = false,
+        remove_cjs_module_wrapper: bool = false,
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
@@ -1429,6 +1430,7 @@ pub const Bundler = struct {
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;
                 opts.features.dead_code_elimination = bundler.options.dead_code_elimination;
+                opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);

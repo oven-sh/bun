@@ -132,6 +132,10 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         std.debug.assert(FDImpl.decode(fd).kind == kind);
     }
 
+    pub fn cwd() FileDescriptor {
+        return toFD(std.fs.cwd().fd);
+    }
+
     pub fn isStdio(fd: FileDescriptor) bool {
         // fd.assertValid();
         const decoded = FDImpl.decode(fd);
@@ -964,6 +968,8 @@ pub const disableCopyFileRangeSyscall = CopyFile.disableCopyFileRangeSyscall;
 pub const can_use_ioctl_ficlone = CopyFile.can_use_ioctl_ficlone;
 pub const disable_ioctl_ficlone = CopyFile.disable_ioctl_ficlone;
 pub const copyFile = CopyFile.copyFile;
+pub const copyFileWithState = CopyFile.copyFileWithState;
+pub const CopyFileState = CopyFile.CopyFileState;
 
 pub fn parseDouble(input: []const u8) !f64 {
     if (comptime Environment.isWasm) {
@@ -1016,6 +1022,10 @@ pub const SignalCode = enum(u8) {
         }
 
         return null;
+    }
+
+    pub fn valid(value: SignalCode) bool {
+        return @intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS) and @intFromEnum(value) >= @intFromEnum(SignalCode.SIGHUP);
     }
 
     /// Shell scripts use exit codes 128 + signal number
@@ -1521,6 +1531,7 @@ pub fn reloadProcess(
         Output.disableBuffering();
         Output.resetTerminalAll();
     }
+    Output.Source.Stdio.restore();
     const bun = @This();
 
     if (comptime Environment.isWindows) {
@@ -1880,13 +1891,13 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
 ///
 /// On windows, this file descriptor will always be backed by libuv, so calling .close() is safe.
-pub inline fn toLibUVOwnedFD(fd: anytype) FileDescriptor {
+pub inline fn toLibUVOwnedFD(fd: anytype) !FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
-            FDImpl.System => FDImpl.fromSystem(fd).makeLibUVOwned(),
+            FDImpl.System => try FDImpl.fromSystem(fd).makeLibUVOwned(),
             FDImpl.UV => FDImpl.fromUV(fd),
-            FileDescriptor => FDImpl.decode(fd).makeLibUVOwned(),
+            FileDescriptor => try FDImpl.decode(fd).makeLibUVOwned(),
             FDImpl => fd.makeLibUVOwned(),
             else => @compileError("toLibUVOwnedFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
@@ -1915,6 +1926,20 @@ pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
             FileDescriptor => FDImpl.decode(fd),
             else => @compileError("uvfdcast() does not support type \"" ++ @typeName(T) ++ "\""),
         });
+
+        // Specifically allow these anywhere:
+        if (fd == win32.STDIN_FD) {
+            return 0;
+        }
+
+        if (fd == win32.STDOUT_FD) {
+            return 1;
+        }
+
+        if (fd == win32.STDERR_FD) {
+            return 2;
+        }
+
         if (Environment.allow_assert) {
             if (decoded.kind != .uv) {
                 std.debug.panic("uvfdcast({}) called on an windows handle", .{decoded});
@@ -1979,9 +2004,9 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
-var _argv: [][:0]u8 = &[_][:0]u8{};
+var _argv: [][:0]const u8 = &[_][:0]const u8{};
 
-pub inline fn argv() [][:0]u8 {
+pub inline fn argv() [][:0]const u8 {
     return _argv;
 }
 
@@ -2036,6 +2061,7 @@ pub const win32 = struct {
     pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
         // this process will be the parent of the child process that actually runs the script
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
+        C.windows_enable_stdio_inheritance();
         while (true) {
             spawnWatcherChild(allocator, &procinfo) catch |err| {
                 Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
@@ -2046,8 +2072,11 @@ pub const win32 = struct {
             var exit_code: w.DWORD = 0;
             if (w.kernel32.GetExitCodeProcess(procinfo.hProcess, &exit_code) == 0) {
                 const err = windows.GetLastError();
+                _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
                 Output.panic("Failed to get exit code of child process: {s}\n", .{@tagName(err)});
             }
+            _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
+
             // magic exit code to indicate that the child process should be re-spawned
             if (exit_code == watcher_reload_exit) {
                 continue;
@@ -2119,6 +2148,7 @@ pub const win32 = struct {
             .hStdOutput = std.io.getStdOut().handle,
             .hStdError = std.io.getStdErr().handle,
         };
+        @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(
             image_pathZ.ptr,
             w.kernel32.GetCommandLineW(),
@@ -2134,6 +2164,7 @@ pub const win32 = struct {
         if (rc == 0) {
             Output.panic("Unexpected error while reloading process\n", .{});
         }
+        _ = std.os.windows.ntdll.NtClose(procinfo.hThread);
     }
 };
 
@@ -2156,7 +2187,17 @@ pub const FDTag = enum {
     stdout,
     pub fn get(fd_: anytype) FDTag {
         const fd = toFD(fd_);
+        const T = @TypeOf(fd_);
         if (comptime Environment.isWindows) {
+            if (@typeInfo(T) == .Int or @typeInfo(T) == .ComptimeInt) {
+                switch (fd_) {
+                    0 => return .stdin,
+                    1 => return .stdout,
+                    2 => return .stderr,
+                    else => {},
+                }
+            }
+
             if (fd == win32.STDOUT_FD) {
                 return .stdout;
             } else if (fd == win32.STDERR_FD) {
@@ -2577,12 +2618,12 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
 
         pub fn ref(self: *T) void {
-            log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+            if (comptime Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
-            log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+            if (comptime Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
             self.ref_count -= 1;
 
             if (self.ref_count == 0) {
@@ -2775,6 +2816,6 @@ pub fn linuxKernelVersion() Semver.Version {
     return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
 }
 
-pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");
-
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
+
+pub const spawnSync = @This().spawn.sync.spawn;

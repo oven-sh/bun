@@ -55,6 +55,11 @@ class EventTarget;
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
 
+#if OS(WINDOWS)
+#include <uv.h>
+extern "C" uv_loop_t* Bun__ZigGlobalObject__uvLoop(void* /* BunVM */);
+#endif
+
 namespace Zig {
 
 class JSCStackTrace;
@@ -92,6 +97,9 @@ public:
     // Make binding code generation easier.
     GlobalObject* globalObject() { return this; }
 
+    GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable*);
+    GlobalObject(JSC::VM& vm, JSC::Structure* structure, uint32_t, const JSC::GlobalObjectMethodTable*);
+
     DOMGuardedObjectSet& guardedObjects() WTF_REQUIRES_LOCK(m_gcLock) { return m_guardedObjects; }
 
     const DOMGuardedObjectSet& guardedObjects() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
@@ -107,14 +115,28 @@ public:
 
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure);
+        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &s_globalObjectMethodTable);
         ptr->finishCreation(vm);
         return ptr;
     }
 
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId)
     {
-        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId);
+        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, &s_globalObjectMethodTable);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
+    {
+        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, methodTable);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable)
+    {
+        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, methodTable);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -169,6 +191,7 @@ public:
     static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSModuleRecord*, JSC::JSValue);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
+
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
@@ -282,6 +305,12 @@ public:
     void visitGeneratedLazyClasses(GlobalObject*, Visitor&);
 
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
+#if OS(WINDOWS)
+    uv_loop_t* uvLoop() const
+    {
+        return Bun__ZigGlobalObject__uvLoop(m_bunVM);
+    }
+#endif
     bool isThreadLocalDefaultGlobalObject = false;
 
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
@@ -322,8 +351,11 @@ public:
 
         Bun__BodyValueBufferer__onRejectStream,
         Bun__BodyValueBufferer__onResolveStream,
+
+        Bun__onResolveEntryPointResult,
+        Bun__onRejectEntryPointResult,
     };
-    static constexpr size_t promiseFunctionsSize = 24;
+    static constexpr size_t promiseFunctionsSize = 26;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -452,8 +484,6 @@ private:
     void finishCreation(JSC::VM&);
     friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
     WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;
-    GlobalObject(JSC::VM& vm, JSC::Structure* structure);
-    GlobalObject(JSC::VM& vm, JSC::Structure* structure, uint32_t);
     std::unique_ptr<WebCore::DOMConstructors> m_constructors;
     uint8_t m_worldIsNormal;
     JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
@@ -554,6 +584,17 @@ private:
 
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
     WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
+};
+
+class EvalGlobalObject : public GlobalObject {
+public:
+    static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
+    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
+
+    EvalGlobalObject(JSC::VM& vm, JSC::Structure* structure)
+        : GlobalObject(vm, structure, &s_globalObjectMethodTable)
+    {
+    }
 };
 
 } // namespace Zig

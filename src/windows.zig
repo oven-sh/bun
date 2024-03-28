@@ -3020,6 +3020,13 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .FILE_IS_A_DIRECTORY => .ISDIR,
         .OBJECT_PATH_NOT_FOUND => .NOENT,
         .OBJECT_NAME_NOT_FOUND => .NOENT,
+        .NOT_A_DIRECTORY => .NOTDIR,
+        .RETRY => .AGAIN,
+        .FILE_TOO_LARGE => .@"2BIG",
+        .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
+            bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
+            break :brk .INVAL;
+        } else .INVAL,
 
         else => |t| {
             // if (bun.Environment.isDebug) {

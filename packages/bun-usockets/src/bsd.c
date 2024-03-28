@@ -573,7 +573,12 @@ static int bsd_create_unix_socket_address(const char *path, size_t path_len, int
     server_address->sun_family = AF_UNIX;
 
     if (path_len == 0) {
-        errno = ENOENT;
+        #if defined(_WIN32)
+            // simulate ENOENT
+            SetLastError(ERROR_PATH_NOT_FOUND);
+        #else
+            errno = ENOENT;
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -632,7 +637,13 @@ static int bsd_create_unix_socket_address(const char *path, size_t path_len, int
     #endif
 
     if (path_len >= sizeof(server_address->sun_path)) {
-        errno = ENAMETOOLONG;
+        #if defined(_WIN32)
+            // simulate ENAMETOOLONG
+            SetLastError(ERROR_FILENAME_EXCED_RANGE);    
+        #else
+            errno = ENAMETOOLONG;
+        #endif
+        
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -663,7 +674,15 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
 #endif
 
     if (bind(listenFd, (struct sockaddr *)server_address, addrlen) || listen(listenFd, 512)) {
+        #if defined(_WIN32)
+          int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
+        #endif
         bsd_close_socket(listenFd);
+        #if defined(_WIN32)
+            if (shouldSimulateENOENT) {
+                SetLastError(ERROR_PATH_NOT_FOUND);
+            }
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -705,7 +724,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     }
 
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
-    struct addrinfo *listenAddr;
+    struct addrinfo *listenAddr = NULL;
     for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
@@ -957,7 +976,15 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
     }
 
     if (connect(fd, (struct sockaddr *)server_address, addrlen) != 0 && errno != EINPROGRESS) {
+        #if defined(_WIN32)
+          int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
+        #endif
         bsd_close_socket(fd);
+        #if defined(_WIN32)
+            if (shouldSimulateENOENT) {
+                SetLastError(ERROR_PATH_NOT_FOUND);
+            }
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
 

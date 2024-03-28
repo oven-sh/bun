@@ -2033,9 +2033,9 @@ pub const posix = struct {
 
 pub const win32 = struct {
     const w = std.os.windows;
-    pub var STDOUT_FD: FileDescriptor = undefined;
-    pub var STDERR_FD: FileDescriptor = undefined;
-    pub var STDIN_FD: FileDescriptor = undefined;
+    pub var STDOUT_FD = invalid_fd;
+    pub var STDERR_FD = invalid_fd;
+    pub var STDIN_FD = invalid_fd;
 
     const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
     // magic exit code to indicate to the watcher manager that the child process should be re-spawned

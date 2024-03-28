@@ -1,6 +1,6 @@
 // @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 
 it("should coerce '0' to 0", async () => {
@@ -67,7 +67,7 @@ it("connect without top level await should keep process alive", async () => {
     port: 0,
   });
   const proc = Bun.spawn({
-    cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port), server.hostname],
+    cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port)],
     cwd: import.meta.dir,
     env: bunEnv,
   });
@@ -159,10 +159,8 @@ it("should reject on connection error, calling both connectError() and rejecting
 
 it("should not leak memory when connect() fails", async () => {
   await (async () => {
-    // windows can take more than a second per connection
-    const quantity = isWindows ? 10 : 50;
-    var promises = new Array(quantity);
-    for (let i = 0; i < quantity; i++) {
+    var promises = new Array(100);
+    for (let i = 0; i < 100; i++) {
       promises[i] = connect({
         hostname: "localhost",
         port: 55555,
@@ -181,8 +179,8 @@ it("should not leak memory when connect() fails", async () => {
     promises.length = 0;
   })();
 
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 50, 50);
-}, 60_000);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 50, 100);
+});
 
 // this also tests we mark the promise as handled if connectError() is called
 it("should handle connection error", done => {
@@ -224,8 +222,12 @@ it("should handle connection error", done => {
 });
 
 it("should not leak memory when connect() fails again", async () => {
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 100);
 });
+
+it("should allow large amounts of data to be sent and received", async () => {
+  expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
+}, 10_000);
 
 it("socket.timeout works", async () => {
   try {
@@ -248,7 +250,7 @@ it("socket.timeout works", async () => {
       port: 0,
     });
     var client = await connect({
-      hostname: server.hostname,
+      hostname: "localhost",
       port: server.port,
       socket: {
         timeout(socket) {
@@ -268,7 +270,3 @@ it("socket.timeout works", async () => {
     server!.stop(true);
   }
 }, 10_000);
-
-it("should allow large amounts of data to be sent and received", async () => {
-  expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
-}, 60_000);

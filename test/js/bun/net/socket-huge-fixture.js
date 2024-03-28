@@ -19,19 +19,14 @@ var server = listen({
     open(socket) {
       console.time("send 1 GB (server)");
       socket.data.sent = socket.write(huge);
-      if (socket.data.sent === huge.length) {
-        console.timeEnd("send 1 GB (server)");
-        socket.shutdown();
-        serverResolve();
-      }
     },
     async drain(socket) {
       socket.data.sent += socket.write(huge.subarray(socket.data.sent));
-      // console.error("Sent", socket.data.sent, "bytes");
 
       if (socket.data.sent === huge.length) {
         console.timeEnd("send 1 GB (server)");
         socket.shutdown();
+        server.stop(true);
         serverResolve();
       }
     },
@@ -40,7 +35,7 @@ var server = listen({
 
 const socket = await connect({
   port: server.port,
-  hostname: server.hostname,
+  hostname: "localhost",
   data: { received: 0 },
   socket: {
     open(socket) {
@@ -50,7 +45,7 @@ const socket = await connect({
 
     data(socket, data) {
       socket.data.received += data.length;
-      // console.error("Received", data.length, "bytes");
+      console.log("Received", data.length, "bytes");
       received.update(data);
 
       if (socket.data.received === huge.length) {
@@ -63,7 +58,7 @@ const socket = await connect({
 });
 
 await Promise.all([clientPromise, serverPromise]);
-server.stop(true);
+server.stop();
 socket.end();
 
 if (received.digest("hex") !== Bun.SHA256.hash(huge, "hex")) {

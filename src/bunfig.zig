@@ -567,7 +567,6 @@ pub const Bunfig = struct {
                     if (_bun.get("packages")) |expr| {
                         try this.expect(expr, .e_object);
                         var valid_count: usize = 0;
-                        Analytics.Features.always_bundle = true;
 
                         const object = expr.data.e_object;
                         const properties = object.properties.slice();
@@ -692,7 +691,7 @@ pub const Bunfig = struct {
                 } else {
                     this.ctx.debug.macros = .{ .map = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source) };
                 }
-                Analytics.Features.macros = true;
+                Analytics.Features.macros += 1;
             }
 
             if (json.get("external")) |expr| {
@@ -752,7 +751,7 @@ pub const Bunfig = struct {
                 };
             }
 
-            Analytics.Features.bunfig = true;
+            Analytics.Features.bunfig += 1;
         }
 
         pub fn expect(this: *Parser, expr: js_ast.Expr, token: js_ast.Expr.Tag) !void {

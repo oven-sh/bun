@@ -222,16 +222,6 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        // Set NODE_ENV to a value if something else hadn't already set it
-        const node_env_entry = try b.env.map.getOrPutWithoutValue("NODE_ENV");
-        if (!node_env_entry.found_existing) {
-            node_env_entry.key_ptr.* = try b.env.allocator.dupe(u8, node_env_entry.key_ptr.*);
-            node_env_entry.value_ptr.* = .{
-                .value = try b.env.allocator.dupe(u8, "development"),
-                .conditional = false,
-            };
-        }
-
         b.configureRouter(false) catch {
             failWithBuildError(vm);
         };

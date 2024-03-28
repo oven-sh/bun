@@ -277,12 +277,12 @@ describe("WebSocketServer", () => {
     await promise;
   });
 
-  it('sockets can be terminated', async () => {
+  it("sockets can be terminated", async () => {
     const wss = new WebSocketServer({ port: 0 });
     const { resolve, reject, promise } = Promise.withResolvers();
 
-    wss.on('connection', ws => {
-      ws.on('close', () => {
+    wss.on("connection", ws => {
+      ws.on("close", () => {
         resolve();
       });
       try {
@@ -292,7 +292,7 @@ describe("WebSocketServer", () => {
       }
     });
 
-    new WebSocket('ws://localhost:' + wss.address().port);
+    new WebSocket("ws://localhost:" + wss.address().port);
     await promise;
   });
 });

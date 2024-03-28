@@ -2181,7 +2181,7 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
     InternalFieldTuple* asyncContextData = nullptr;
     if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(jsObject)) {
         jsObject = jsCast<JSC::JSObject*>(wrapper->callback.get());
-        asyncContextData = globalObject->m_asyncContextData.get();
+        asyncContextData = globalObject->asyncContextData();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());
     }
@@ -2965,7 +2965,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__J
         globalObject->queueMicrotask(
             globalObject->performMicrotaskFunction(),
             globalObject->rejectPromiseFunction(),
-            globalObject->m_asyncContextData.get()->getInternalField(0),
+            globalObject->asyncContextData()->getInternalField(0),
             promise,
             value);
         RETURN_IF_EXCEPTION(scope, void());
@@ -5196,7 +5196,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     JSValue microtaskArgs[] = {
         JSValue::decode(JSValue1),
-        globalObject->m_asyncContextData.get()->getInternalField(0),
+        globalObject->asyncContextData()->getInternalField(0),
         JSValue::decode(JSValue3),
         JSValue::decode(JSValue4)
     };

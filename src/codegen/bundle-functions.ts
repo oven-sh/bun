@@ -1,17 +1,16 @@
-import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
-import path from "path";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import path from "node:path";
 import { sliceSourceCode } from "./builtin-parser";
 import { applyGlobalReplacements, define } from "./replacements";
-import { cap, fmtCPPString, low, writeIfNotChanged } from "./helpers";
+import { alphanumComparator, cap, fmtCPPString, hasTsExt, low, writeIfChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 
 console.log("Bundling Bun builtin functions...");
 
+const EOL = "\n";
 const PARALLEL = false;
 const KEEP_TMP = true;
-
-const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
 
 if (!CMAKE_BUILD_ROOT) {
@@ -23,10 +22,7 @@ const SRC_DIR = path.join(import.meta.dir, "../js/builtins");
 const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "./codegen");
 const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "./tmp_functions");
 
-const {
-  //
-  requireTransformer,
-} = createInternalModuleRegistry(path.join(import.meta.dir, "../js"));
+const { requireTransformer } = createInternalModuleRegistry(path.join(import.meta.dir, "../js"));
 
 mkdirSync(TMP_DIR, { recursive: true });
 
@@ -60,11 +56,11 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
 
   contents = applyGlobalReplacements(contents);
 
-  // first approach doesnt work perfectly because we actually need to split each function declaration
+  // first approach doesn't work perfectly because we actually need to split each function declaration
   // and then compile those separately
 
   const consumeWhitespace = /^\s*/;
-  const consumeTopLevelContent = /^(\/\*|\/\/|type|import|interface|\$|export (?:async )?function|(?:async )?function)/;
+  const consumeTopLevelContent = /^(?:\/\*|\/\/|type|import|interface|\$|(?:export )?(?:async )?function)/;
   const consumeEndOfType = /;|.(?=export|type|interface|\$|\/\/|\/\*|function)/;
 
   const functions: ParsedBuiltin[] = [];
@@ -77,37 +73,37 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     if (!contents.length) break;
     const match = contents.match(consumeTopLevelContent);
     if (!match) {
-      throw new SyntaxError("Could not process input:\n" + contents.slice(0, contents.indexOf("\n")));
+      throw new SyntaxError(`Could not process input:${EOL}${contents.slice(0, contents.indexOf(EOL))}`);
     }
-    contents = contents.slice(match.index!);
-    if (match[1] === "import") {
+    contents = contents.slice(match.index);
+    if (match[0] === "import") {
       // TODO: we may want to do stuff with these
       const i = contents.indexOf(";");
       contents = contents.slice(i + 1);
-    } else if (match[1] === "/*") {
+    } else if (match[0] === "/*") {
       const i = contents.indexOf("*/") + 2;
       internal ||= contents.slice(0, i).includes("@internal");
       contents = contents.slice(i);
-    } else if (match[1] === "//") {
-      const i = contents.indexOf("\n") + 1;
+    } else if (match[0] === "//") {
+      const i = contents.indexOf(EOL) + 1;
       internal ||= contents.slice(0, i).includes("@internal");
       contents = contents.slice(i);
-    } else if (match[1] === "type" || match[1] === "export type") {
+    } else if (match[0] === "type" || match[0] === "export type") {
       const i = contents.search(consumeEndOfType);
       contents = contents.slice(i + 1);
-    } else if (match[1] === "interface") {
+    } else if (match[0] === "interface") {
       contents = sliceSourceCode(contents, false).rest;
-    } else if (match[1] === "$") {
-      const directive = contents.match(/^\$([a-zA-Z0-9]+)(?:\s*=\s*([^\r\n]+?))?\s*;?\r?\n/);
+    } else if (match[0] === "$") {
+      const directive = contents.match(/^\$(\w+)(?:\s*=\s*([^\r\n]+?))?\s*;?\r?\n/);
       if (!directive) {
-        throw new SyntaxError("Could not parse directive:\n" + contents.slice(0, contents.indexOf("\n")));
+        throw new SyntaxError(`Could not parse directive:${EOL}${contents.slice(0, contents.indexOf(EOL))}`);
       }
       const name = directive[1];
       let value;
       try {
         value = directive[2] ? JSON.parse(directive[2]) : true;
       } catch (error) {
-        throw new SyntaxError("Could not parse directive value " + directive[2] + " (must be JSON parsable)");
+        throw new SyntaxError(`Could not parse directive value ${directive[2]} (must be JSON parsable)`);
       }
       if (name === "constructor") {
         directives.ConstructAbility = "CanConstruct";
@@ -118,12 +114,12 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
         directives[name] = value;
       }
       contents = contents.slice(directive[0].length);
-    } else if (match[1] === "export function" || match[1] === "export async function") {
+    } else if (match[0] === "export function" || match[0] === "export async function") {
       const declaration = contents.match(
-        /^export\s+(async\s+)?function\s+([a-zA-Z0-9]+)\s*\(([^)]*)\)(?:\s*:\s*([^{\n]+))?\s*{?/,
+        /^export\s+(async\s+)?function\s+([$\w]+)\s*\(([^)]*)\)(?:\s*:\s*([^\r\n{]+))?\s*{?/,
       );
       if (!declaration)
-        throw new SyntaxError("Could not parse function declaration:\n" + contents.slice(0, contents.indexOf("\n")));
+        throw new SyntaxError(`Could not parse function declaration:${EOL}${contents.slice(0, contents.indexOf(EOL))}`);
 
       const async = !!declaration[1];
       const name = declaration[2];
@@ -135,7 +131,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       }
 
       const { result, rest } = sliceSourceCode(contents.slice(declaration[0].length - 1), true, x =>
-        requireTransformer(x, SRC_DIR + "/" + basename),
+        requireTransformer(x, `${SRC_DIR}/${basename}`),
       );
 
       functions.push({
@@ -147,11 +143,11 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       });
       contents = rest;
       directives = {};
-    } else if (match[1] === "function" || match[1] === "async function") {
-      const fnname = contents.match(/^function ([a-zA-Z0-9]+)\(([^)]*)\)(?:\s*:\s*([^{\n]+))?\s*{?/)![1];
-      throw new SyntaxError("All top level functions must be exported: " + fnname);
+    } else if (match[0] === "function" || match[0] === "async function") {
+      const fnName = contents.match(/^function ([$\w]+)/)?.[1] ?? "anonymous";
+      throw new SyntaxError(`All top level functions must be exported: ${fnName}`);
     } else {
-      throw new Error("TODO: parse " + match[1]);
+      throw new Error(`TODO: parse ${match[1]}`);
     }
   }
 
@@ -186,15 +182,15 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       minify: { syntax: true, whitespace: false },
     });
     if (!build.success) {
-      throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");
+      throw new AggregateError(build.logs, `Failed bundling builtin function ${fn.name} from ${basename}.ts`);
     }
     if (build.outputs.length !== 1) {
       throw new Error("expected one output");
     }
     const output = await build.outputs[0].text();
-    let usesDebug = output.includes("$debug_log");
-    let usesAssert = output.includes("$assert");
-    const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
+    const usesDebug = output.includes("$debug_log");
+    const usesAssert = output.includes("$assert");
+    const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)?.[1] ?? "";
     const finalReplacement =
       (fn.directives.sloppy
         ? captured
@@ -206,8 +202,8 @@ $$capture_start$$(${fn.async ? "async " : ""}${
           )
       )
         .replace(/^\((async )?function\(/, "($1function (")
-        .replace(/__intrinsic__/g, "@")
-        .replace(/__no_intrinsic__/g, "") + "\n";
+        .replaceAll("__intrinsic__", "@")
+        .replaceAll("__no_intrinsic__", "") + EOL;
 
     bundledFunctions.push({
       name: fn.name,
@@ -229,14 +225,12 @@ $$capture_start$$(${fn.async ? "async " : ""}${
   }
 
   return {
-    functions: bundledFunctions.sort((a, b) => a.name.localeCompare(b.name)),
+    functions: bundledFunctions.sort((a, b) => alphanumComparator(a.name, b.name)),
     internal,
   };
 }
 
-const filesToProcess = readdirSync(SRC_DIR)
-  .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
-  .sort();
+const filesToProcess = readdirSync(SRC_DIR).filter(hasTsExt).sort(alphanumComparator);
 
 const files: Array<{ basename: string; functions: BundledBuiltin[]; internal: boolean }> = [];
 async function processFile(x: string) {
@@ -247,7 +241,7 @@ async function processFile(x: string) {
       ...(await processFileSplit(path.join(SRC_DIR, x))),
     });
   } catch (error) {
-    console.error("Failed to process file: " + basename + ".ts");
+    console.error(`Failed to process file: ${basename}.ts`);
     console.error(error);
     process.exit(1);
   }
@@ -276,10 +270,10 @@ namespace WebCore {
 `;
 
 for (const { basename, functions } of files) {
-  bundledCPP += `/* ${basename}.ts */\n`;
+  bundledCPP += `/* ${basename}.ts */${EOL}`;
   const lowerBasename = low(basename);
   for (const fn of functions) {
-    const [code, count] = fmtCPPString(fn.source, true);
+    const { 0: code, 1: count } = fmtCPPString(fn.source, true);
     const name = `${lowerBasename}${cap(fn.name)}Code`;
     bundledCPP += `// ${fn.name}
 const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
@@ -314,7 +308,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm)
 
 for (const { basename, internal } of files) {
   if (internal) {
-    bundledCPP += `    , m_${low(basename)}(vm)\n`;
+    bundledCPP += `    , m_${low(basename)}(vm)${EOL}`;
   }
 }
 
@@ -328,7 +322,7 @@ void JSBuiltinInternalFunctions::visit(Visitor& visitor)
 {
 `;
 for (const { basename, internal } of files) {
-  if (internal) bundledCPP += `    m_${low(basename)}.visit(visitor);\n`;
+  if (internal) bundledCPP += `    m_${low(basename)}.visit(visitor);${EOL}`;
 }
 
 bundledCPP += `
@@ -345,7 +339,7 @@ SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(Zig::GlobalObject& glo
 
 for (const { basename, internal } of files) {
   if (internal) {
-    bundledCPP += `    m_${low(basename)}.init(globalObject);\n`;
+    bundledCPP += `    m_${low(basename)}.init(globalObject);${EOL}`;
   }
 }
 
@@ -394,8 +388,7 @@ class FunctionExecutable;
 namespace WebCore {
 `;
 for (const { basename, functions, internal } of files) {
-  bundledHeader += `/* ${basename}.ts */
-`;
+  bundledHeader += `/* ${basename}.ts */${EOL}`;
   const lowerBasename = low(basename);
 
   for (const fn of functions) {
@@ -411,20 +404,20 @@ extern const JSC::ImplementationVisibility s_${name}ImplementationVisibility;
 
 `;
   }
-  bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_DATA(macro) \\\n`;
+  bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_DATA(macro) \\${EOL}`;
   for (const fn of functions) {
-    bundledHeader += `    macro(${fn.name}, ${lowerBasename}${cap(fn.name)}, ${fn.params.length}) \\\n`;
+    bundledHeader += `    macro(${fn.name}, ${lowerBasename}${cap(fn.name)}, ${fn.params.length}) \\${EOL}`;
   }
-  bundledHeader += "\n";
-  bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(macro) \\\n`;
+  bundledHeader += EOL;
+  bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(macro) \\${EOL}`;
   for (const fn of functions) {
     const name = `${lowerBasename}${cap(fn.name)}Code`;
-    bundledHeader += `    macro(${name}, ${fn.name}, ${fn.overriddenName}, s_${name}Length) \\\n`;
+    bundledHeader += `    macro(${name}, ${fn.name}, ${fn.overriddenName}, s_${name}Length) \\${EOL}`;
   }
-  bundledHeader += "\n";
-  bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(macro) \\\n`;
+  bundledHeader += EOL;
+  bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(macro) \\${EOL}`;
   for (const fn of functions) {
-    bundledHeader += `    macro(${fn.name}) \\\n`;
+    bundledHeader += `    macro(${fn.name}) \\${EOL}`;
   }
   bundledHeader += `
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \\
@@ -534,7 +527,7 @@ public:
 `;
 
 for (const { basename } of files) {
-  bundledHeader += `        , m_${low(basename)}Builtins(m_vm)\n`;
+  bundledHeader += `        , m_${low(basename)}Builtins(m_vm)${EOL}`;
 }
 
 bundledHeader += `
@@ -543,7 +536,7 @@ bundledHeader += `
 
 for (const { basename, internal } of files) {
   if (internal) {
-    bundledHeader += `        m_${low(basename)}Builtins.exportNames();\n`;
+    bundledHeader += `        m_${low(basename)}Builtins.exportNames();${EOL}`;
   }
 }
 
@@ -553,7 +546,7 @@ bundledHeader += `    }
 for (const { basename } of files) {
   bundledHeader += `    ${basename}BuiltinsWrapper& ${low(basename)}Builtins() { return m_${low(
     basename,
-  )}Builtins; }\n`;
+  )}Builtins; }${EOL}`;
 }
 
 bundledHeader += `
@@ -562,7 +555,7 @@ private:
 `;
 
 for (const { basename } of files) {
-  bundledHeader += `    ${basename}BuiltinsWrapper m_${low(basename)}Builtins;\n`;
+  bundledHeader += `    ${basename}BuiltinsWrapper m_${low(basename)}Builtins;${EOL}`;
 }
 
 bundledHeader += `;
@@ -578,7 +571,7 @@ public:
 
 for (const { basename, internal } of files) {
   if (internal) {
-    bundledHeader += `    ${basename}BuiltinFunctions& ${low(basename)}() { return m_${low(basename)}; }\n`;
+    bundledHeader += `    ${basename}BuiltinFunctions& ${low(basename)}() { return m_${low(basename)}; }${EOL}`;
   }
 }
 
@@ -589,7 +582,7 @@ private:
 
 for (const { basename, internal } of files) {
   if (internal) {
-    bundledHeader += `    ${basename}BuiltinFunctions m_${low(basename)};\n`;
+    bundledHeader += `    ${basename}BuiltinFunctions m_${low(basename)};${EOL}`;
   }
 }
 
@@ -599,8 +592,8 @@ bundledHeader += `
 } // namespace WebCore
 `;
 
-writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.h"), bundledHeader);
-writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.cpp"), bundledCPP);
+writeIfChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.h"), bundledHeader);
+writeIfChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.cpp"), bundledCPP);
 
 // Generate TS types
 let dts = `// Generated by \`bun src/js/builtins/codegen\`
@@ -610,17 +603,17 @@ type RemoveThis<F> = F extends (this: infer T, ...args: infer A) => infer R ? (.
 
 for (const { basename, functions, internal } of files) {
   if (internal) {
-    dts += `\n// ${basename}.ts\n`;
+    dts += `${EOL}// ${basename}.ts${EOL}`;
     for (const fn of functions) {
       dts += `declare const \$${fn.name}: RemoveThis<typeof import("${path.relative(
         CODEGEN_DIR,
         path.join(SRC_DIR, basename),
-      )}")[${JSON.stringify(fn.name)}]>;\n`;
+      )}")[${JSON.stringify(fn.name)}]>;${EOL}`;
     }
   }
 }
 
-writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.d.ts"), dts);
+writeIfChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.d.ts"), dts);
 
 const totalJSSize = files.reduce(
   (acc, { functions }) => acc + functions.reduce((acc, fn) => acc + fn.source.length, 0),

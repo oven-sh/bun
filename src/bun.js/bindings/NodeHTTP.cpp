@@ -261,7 +261,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
     JSValue requestValue = callFrame->argument(0);
     JSObject* objectValue = callFrame->argument(1).getObject();
 
-    JSC::InternalFieldTuple* tuple = JSC::InternalFieldTuple::create(vm, globalObject->m_internalFieldTupleStructure.get());
+    JSC::InternalFieldTuple* tuple = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
 
     JSValue headersValue = JSValue();
     JSValue urlValue = JSValue();

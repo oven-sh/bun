@@ -84,7 +84,7 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 
     if (!isEmpty()) {
         if (mustResetContext) {
-            globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+            globalObject->asyncContextData()->putInternalField(vm, 0, jsUndefined());
         }
         auto* drainFn = internalField(2).get().getObject();
 

@@ -1,14 +1,23 @@
 // This script is run when you change anything in src/js/*
-import fs from "fs";
-import { writeFile, rm, mkdir } from "fs/promises";
-import path from "path";
-import { sliceSourceCode } from "./builtin-parser";
-import { cap, declareASCIILiteral, readdirRecursive, resolveSyncOrNull, writeIfNotChanged } from "./helpers";
-import { createAssertClientJS, createLogClientJS } from "./client-js";
+import fs from "node:fs";
+import { writeFile, mkdir } from "node:fs/promises";
 import { builtinModules } from "node:module";
+import path from "node:path";
+import { sliceSourceCode } from "./builtin-parser";
+import {
+  declareASCIILiteral,
+  idToEnumName,
+  idToPublicSpecifierOrEnumName,
+  matchAllNonIdentCharsRegExp,
+  replaceScriptExtWithDotJS,
+  trimScriptExt,
+  writeIfChanged,
+} from "./helpers";
+import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { define } from "./replacements";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 
+const EOL = "\n";
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
@@ -62,10 +71,9 @@ async function retry(n, fn) {
 
 // Preprocess builtins
 const bundledEntryPoints: string[] = [];
-for (let i = 0; i < moduleList.length; i++) {
+for (let i = 0, { length } = moduleList; i < length; i += 1) {
   try {
-    let input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
-
+    const input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
     const scannedImports = t.scanImports(input);
     for (const imp of scannedImports) {
       if (imp.kind === "import-statement") {
@@ -83,23 +91,22 @@ for (let i = 0; i < moduleList.length; i++) {
       }
     }
 
-    let importStatements: string[] = [];
-
+    const importStatements: string[] = [];
     const processed = sliceSourceCode(
       "{" +
         input
           .replace(
-            /\bimport(\s*type)?\s*(\{[^}]*\}|(\*\s*as)?\s[a-zA-Z0-9_$]+)\s*from\s*['"][^'"]+['"]/g,
+            /\bimport(\s*type)?\s*(\{[^}]*\}|(\*\s*as)?\s[$\w]+)\s*from\s*['"][^'"]+['"]/g,
             stmt => (importStatements.push(stmt), ""),
           )
-          .replace(/export\s*{\s*}\s*;/g, ""),
+          .replace(/export\s*\{\s*\}\s*;/g, ""),
       true,
       x => requireTransformer(x, moduleList[i]),
     );
     let fileToTranspile = `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from src/js/${moduleList[i]}
-${importStatements.join("\n")}
+${importStatements.join(EOL)}
 
 ${processed.result.slice(1).trim()}
 $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
@@ -107,25 +114,19 @@ $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
 
     // Attempt to optimize "$exports = ..." to a variableless return
     // otherwise, declare $exports so it works.
-    let exportOptimization = false;
+    const { length: oldLength } = fileToTranspile;
     fileToTranspile = fileToTranspile.replace(
-      /__intrinsic__exports\s*=\s*(.*|.*\{[^\}]*}|.*\([^\)]*\))\n+\s*\$\$EXPORT\$\$\(__intrinsic__exports\).\$\$EXPORT_END\$\$;/,
-      (_, a) => {
-        exportOptimization = true;
-        return "$$EXPORT$$(" + a.replace(/;$/, "") + ").$$EXPORT_END$$;";
-      },
+      /__intrinsic__exports\s*=\s*([^\r\n;]+?|.*\{[^\}]*\}|.*\([^\)]*\))(?:\r?\n)+\s*\$\$EXPORT\$\$\(__intrinsic__exports\)/,
+      "$$EXPORT$$($1)",
     );
-    if (!exportOptimization) {
-      fileToTranspile = `var $;` + fileToTranspile.replaceAll("__intrinsic__exports", "$");
+    if (oldLength === fileToTranspile.length) {
+      fileToTranspile = `var $;${fileToTranspile.replaceAll("__intrinsic__exports", "$")}`;
     }
     const outputPath = path.join(TMP_DIR, moduleList[i].slice(0, -3) + ".ts");
-
     await mkdir(path.dirname(outputPath), { recursive: true });
     if (!fs.existsSync(path.dirname(outputPath))) {
       verbose("directory did not exist after mkdir twice:", path.dirname(outputPath));
     }
-    // await Bun.sleep(10);
-
     try {
       await writeFile(outputPath, fileToTranspile);
       if (!fs.existsSync(outputPath)) {
@@ -139,7 +140,7 @@ $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
         await writeFile(outputPath, fileToTranspile);
         if (!fs.existsSync(outputPath)) {
           verbose("file did not exist after write:", outputPath);
-          throw new Error("file did not exist after write: " + outputPath);
+          throw new Error(`file did not exist after write: ${outputPath}`);
         }
         verbose("wrote to", outputPath, "successfully later");
       });
@@ -212,38 +213,31 @@ for (const entrypoint of bundledEntryPoints) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
   const file = Bun.file(path.join(TMP_DIR, "modules_out", file_path));
   const output = await file.text();
-  let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
-  let usesDebug = output.includes("$debug_log");
-  let usesAssert = output.includes("$assert");
+  let captured = `(function (){${output.replace(`// @bun${EOL}`, "").trim()}})`;
+  const usesDebug = output.includes("$debug_log");
+  const usesAssert = output.includes("$assert");
   captured =
     captured
-      .replace(
-        `var __require = (id) => {
-  return import.meta.require(id);
-};`,
-        "",
-      )
-      .replace(/var\s*__require\s*=\s*\(?id\)?\s*=>\s*{\s*return\s*import.meta.require\(id\)\s*};?/, "")
-      .replace(/var __require=\(?id\)?=>import.meta.require\(id\);?/, "")
-      .replace(/\$\$EXPORT\$\$\((.*)\).\$\$EXPORT_END\$\$;/, "return $1")
-      .replace(/]\s*,\s*__(debug|assert)_end__\)/g, ")")
-      .replace(/]\s*,\s*__debug_end__\)/g, ")")
+      .replace(/var\s+__require\s*=\s*\(?id\)?\s*=>\s*\{\s*return\s*import\.meta\.require\(id\);?\s*};?/, "")
+      .replace(/var\s+__require\s*=\s*\(?id\)?\s*=>\s*import\.meta\.require\(id\);?/, "")
+      .replace(/\$\$EXPORT\$\$\((.*)\)\.\$\$EXPORT_END\$\$;/, "return $1")
+      .replace(/]\s*,\s*__(?:assert|debug)_end__\)/g, ")")
       // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
-      .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
+      .replace(/\bimport\.meta\.require\(([^)]+)\)/g, (expr, specifier) => {
         throw new Error(`Builtin Bundler: do not use import.meta.require() (in ${file_path}))`);
       })
-      .replace(/__intrinsic__/g, "@")
-      .replace(/__no_intrinsic__/g, "") + "\n";
+      .replaceAll("__intrinsic__", "@")
+      .replaceAll("__no_intrinsic__", "") + EOL;
   captured = captured.replace(
-    /function\s*\(.*?\)\s*{/,
+    /function\s*\([^)]*\)\s*\{/,
     '$&"use strict";' +
       (usesDebug
         ? createLogClientJS(
             file_path.replace(".js", ""),
-            idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, ""),
+            idToPublicSpecifierOrEnumName(file_path).replace(/^(?:bun|node):/, ""),
           )
         : "") +
-      (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, "")) : ""),
+      (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^(?:bun|node):/, "")) : ""),
   );
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -253,51 +247,20 @@ for (const entrypoint of bundledEntryPoints) {
 
 mark("Postprocesss modules");
 
-function idToEnumName(id: string) {
-  return id
-    .replace(/\.[mc]?[tj]s$/, "")
-    .replace(/[^a-zA-Z0-9]+/g, " ")
-    .split(" ")
-    .map(x => (["jsc", "ffi", "vm", "tls", "os", "ws", "fs", "dns"].includes(x) ? x.toUpperCase() : cap(x)))
-    .join("");
-}
-
-function idToPublicSpecifierOrEnumName(id: string) {
-  id = id.replace(/\.[mc]?[tj]s$/, "");
-  if (id.startsWith("node/")) {
-    return "node:" + id.slice(5).replaceAll(".", "/");
-  } else if (id.startsWith("bun/")) {
-    return "bun:" + id.slice(4).replaceAll(".", "/");
-  } else if (id.startsWith("internal/")) {
-    return "internal:" + id.slice(9).replaceAll(".", "/");
-  } else if (id.startsWith("thirdparty/")) {
-    return id.slice(11).replaceAll(".", "/");
-  }
-  return idToEnumName(id);
-}
-
 // This is a file with a single macro that is used in defining InternalModuleRegistry.h
-writeIfNotChanged(
+writeIfChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+numberOfModules.h"),
-  `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}\n`,
+  `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}${EOL}`,
 );
 
-// This code slice is used in InternalModuleRegistry.h for inlining the enum. I dont think we
-// actually use this enum but it's probably a good thing to include.
-writeIfNotChanged(
+// This code slice is used in InternalModuleRegistry.h for inlining the enum.
+writeIfChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+enum.h"),
-  `${
-    moduleList
-      .map((id, n) => {
-        return `${idToEnumName(id)} = ${n},`;
-      })
-      .join("\n") + "\n"
-  }
-`,
+  `${moduleList.map((id, n) => `${idToEnumName(id)} = ${n},`).join(EOL)}${EOL}`,
 );
 
 // This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
-writeIfNotChanged(
+writeIfChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+createInternalModuleById.h"),
   `// clang-format off
 JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id)
@@ -305,16 +268,17 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
   switch (id) {
     // JS internal modules
     ${moduleList
-      .map((id, n) => {
+      .map(id => {
         return `case Field::${idToEnumName(id)}: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-        id.replace(/\.[mc]?[tj]s$/, ".js"),
-      )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-        .replace(/\.[mc]?[tj]s$/, "")
-        .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
+        replaceScriptExtWithDotJS(id),
+      )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${trimScriptExt(id).replace(
+        matchAllNonIdentCharsRegExp,
+        "/",
+      )}"_s);
     }`;
       })
-      .join("\n    ")}
+      .join(`${EOL}    `)}
     default: {
       __builtin_unreachable();
     }
@@ -329,7 +293,7 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
 // We cannot use ASCIILiteral's `_s` operator for the module source code because for long
 // strings it fails a constexpr assert. Instead, we do that assert in JS before we format the string
 if (!debug) {
-  writeIfNotChanged(
+  writeIfChanged(
     path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
     `// clang-format off
 #pragma once
@@ -344,27 +308,27 @@ namespace InternalModuleRegistryConstants {
       }
       return declareASCIILiteral(`${idToEnumName(id)}Code`, out);
     })
-    .join("\n")}
+    .join(EOL)}
 }
 }`,
   );
 } else {
   // In debug builds, we write empty strings to prevent recompilation. These are loaded from disk instead.
-  writeIfNotChanged(
+  writeIfChanged(
     path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
     `// clang-format off
 #pragma once
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList.map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`).join("\n")}
+  ${moduleList.map(id => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`).join(EOL)}
 }
 }`,
   );
 }
 
 // This is a generated enum for zig code (exports.zig)
-writeIfNotChanged(
+writeIfChanged(
   path.join(CODEGEN_DIR, "ResolvedSourceTag.zig"),
   `// zig fmt: off
 pub const ResolvedSourceTag = enum(u32) {
@@ -379,17 +343,17 @@ pub const ResolvedSourceTag = enum(u32) {
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
-${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
+${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join(EOL)}
     // Native modules run through a different system using ESM registry.
 ${Object.entries(nativeModuleIds)
   .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
-  .join("\n")}
+  .join(EOL)}
 };
 `,
 );
 
 // This is a generated enum for c++ code (headers-handwritten.h)
-writeIfNotChanged(
+writeIfChanged(
   path.join(CODEGEN_DIR, "SyntheticModuleType.h"),
   `enum SyntheticModuleType : uint32_t {
     JavaScript = 0,
@@ -403,25 +367,25 @@ writeIfNotChanged(
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
     InternalModuleRegistryFlag = 1 << 9,
-${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("\n")}
+${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join(EOL)}
     
     // Native modules run through the same system, but with different underlying initializers.
     // They also have bit 10 set to differentiate them from JS builtins.
     NativeModuleFlag = (1 << 10) | (1 << 9),
 ${Object.entries(nativeModuleEnumToId)
   .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
-  .join("\n")}
+  .join(EOL)}
 };
 
 `,
 );
 
 // This is used in ModuleLoader.cpp to link to all the headers for native modules.
-writeIfNotChanged(
+writeIfChanged(
   path.join(CODEGEN_DIR, "NativeModuleImpl.h"),
-  Object.values(nativeModuleEnums)
+  `${Object.values(nativeModuleEnums)
     .map(value => `#include "../../bun.js/modules/${value}Module.h"`)
-    .join("\n") + "\n",
+    .join(EOL)}${EOL}`,
 );
 
 // This is used for debug builds for the base path for dynamic loading

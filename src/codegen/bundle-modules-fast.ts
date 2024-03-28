@@ -1,8 +1,9 @@
 // This script is run when you change anything in src/js/*
-import path from "path";
-import { cap, writeIfNotChanged } from "./helpers";
+import path from "node:path";
+import { idToPublicSpecifierOrEnumName, writeIfChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 
+const EOL = "\n";
 const BASE = path.join(import.meta.dir, "../js");
 const CMAKE_BUILD_ROOT = process.argv[2];
 
@@ -26,31 +27,8 @@ const {
   nativeModuleIds,
 } = createInternalModuleRegistry(BASE);
 
-function idToEnumName(id: string) {
-  return id
-    .replace(/\.[mc]?[tj]s$/, "")
-    .replace(/[^a-zA-Z0-9]+/g, " ")
-    .split(" ")
-    .map(x => (["jsc", "ffi", "vm", "tls", "os", "ws", "fs", "dns"].includes(x) ? x.toUpperCase() : cap(x)))
-    .join("");
-}
-
-function idToPublicSpecifierOrEnumName(id: string) {
-  id = id.replace(/\.[mc]?[tj]s$/, "");
-  if (id.startsWith("node/")) {
-    return "node:" + id.slice(5).replaceAll(".", "/");
-  } else if (id.startsWith("bun/")) {
-    return "bun:" + id.slice(4).replaceAll(".", "/");
-  } else if (id.startsWith("internal/")) {
-    return "internal:" + id.slice(9).replaceAll(".", "/");
-  } else if (id.startsWith("thirdparty/")) {
-    return id.slice(11).replaceAll(".", "/");
-  }
-  return idToEnumName(id);
-}
-
 // This is a generated enum for zig code (exports.zig)
-writeIfNotChanged(
+writeIfChanged(
   path.join(CODEGEN_DIR, "ResolvedSourceTag.zig"),
   `// zig fmt: off
 pub const ResolvedSourceTag = enum(u32) {
@@ -65,11 +43,11 @@ pub const ResolvedSourceTag = enum(u32) {
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
-${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
+${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join(EOL)}
     // Native modules run through a different system using ESM registry.
 ${Object.entries(nativeModuleIds)
   .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
-  .join("\n")}
+  .join(EOL)}
 };
 `,
 );

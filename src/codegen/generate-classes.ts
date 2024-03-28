@@ -1,7 +1,7 @@
 // @ts-nocheck
 import path from "path";
 import type { Field, ClassDefinition } from "./class-definitions";
-import { writeIfNotChanged } from "./helpers";
+import { writeIfChanged } from "./helpers";
 import { camelCase, pascalCase } from "change-case";
 
 const files = process.argv.slice(2);
@@ -2022,7 +2022,7 @@ function writeCppSerializers() {
   return output;
 }
 
-await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.zig`, [
+await writeIfChanged(`${outBase}/ZigGeneratedClasses.zig`, [
   ZIG_GENERATED_CLASSES_HEADER,
 
   ...classes.map(a => generateZig(a.name, a).trim()).join("\n"),
@@ -2036,35 +2036,35 @@ comptime {
 ]);
 if (!process.env.ONLY_ZIG) {
   const allHeaders = classes.map(a => generateHeader(a.name, a));
-  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
+  await writeIfChanged(`${outBase}/ZigGeneratedClasses.h`, [
     GENERATED_CLASSES_HEADER[0],
     ...[...new Set(extraIncludes.map(a => `#include "${a}";` + "\n"))],
     GENERATED_CLASSES_HEADER[1],
     ...allHeaders,
     GENERATED_CLASSES_FOOTER,
   ]);
-  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.cpp`, [
+  await writeIfChanged(`${outBase}/ZigGeneratedClasses.cpp`, [
     GENERATED_CLASSES_IMPL_HEADER,
     ...classes.map(a => generateImpl(a.name, a)),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
   ]);
-  await writeIfNotChanged(
+  await writeIfChanged(
     `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
     classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),
   );
 
-  await writeIfNotChanged(
+  await writeIfChanged(
     `${outBase}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
     classes.map(a => [`std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`].join("\n")),
   );
 
-  await writeIfNotChanged(
+  await writeIfChanged(
     `${outBase}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
     classes.map(a => [`std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`].join("\n")),
   );
 
-  await writeIfNotChanged(
+  await writeIfChanged(
     `${outBase}/ZigGeneratedClasses+lazyStructureImpl.h`,
     initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
   );

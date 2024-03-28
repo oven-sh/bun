@@ -109,7 +109,6 @@ const {
   SetPrototypeValues,
   String,
   StringPrototypeCharCodeAt,
-  StringPrototypeCodePointAt,
   StringPrototypeIncludes,
   StringPrototypeIndexOf,
   StringPrototypeLastIndexOf,

@@ -1,14 +1,14 @@
-import fs from "fs";
-import path from "path";
-import { readdirRecursive, resolveSyncOrNull } from "./helpers";
+import fs from "node:fs";
+import path from "node:path";
+import { alphanumComparator, hasJsExt, hasTsExt, readdirRecursive, resolveSyncOrNull } from "./helpers";
 
 export function createInternalModuleRegistry(basedir: string) {
+  const sliceStart = basedir.length + 1;
   const moduleList = ["bun", "node", "thirdparty", "internal"]
     .flatMap(dir => readdirRecursive(path.join(basedir, dir)))
-    .filter(file => file.endsWith(".js") || (file.endsWith(".ts") && !file.endsWith(".d.ts")))
-    .map(file => file.slice(basedir.length + 1))
-    .map(x => x.replaceAll("\\", "/"))
-    .sort();
+    .filter(filePath => hasJsExt(filePath) || hasTsExt(filePath))
+    .map(filePath => filePath.slice(sliceStart).replaceAll("\\", "/"))
+    .sort(alphanumComparator);
 
   // Create the Internal Module Registry
   const internalRegistry = new Map();
@@ -28,7 +28,7 @@ export function createInternalModuleRegistry(basedir: string) {
 
   // Native Module registry
   const nativeModuleH = fs.readFileSync(path.join(basedir, "../bun.js/modules/_NativeModule.h"), "utf8");
-  const nativeModuleDefine = nativeModuleH.match(/BUN_FOREACH_NATIVE_MODULE\(macro\)\s*\\\n((.*\\\n)*\n)/);
+  const nativeModuleDefine = nativeModuleH.match(/BUN_FOREACH_NATIVE_MODULE\(macro\)\s*\\\r?\n((.*\\\r?\n)*\r?\n)/);
   if (!nativeModuleDefine) {
     throw new Error(
       "Could not find BUN_FOREACH_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
@@ -38,8 +38,8 @@ export function createInternalModuleRegistry(basedir: string) {
   const nativeModuleIds: Record<string, number> = {};
   const nativeModuleEnums: Record<string, string> = {};
   const nativeModuleEnumToId: Record<string, number> = {};
-  for (const [_, idString, enumValue] of nativeModuleDefine[0].matchAll(/macro\((.*?),(.*?)\)/g)) {
-    const processedIdString = JSON.parse(idString.trim().replace(/_s$/, ""));
+  for (const { 1: idString, 2: enumValue } of nativeModuleDefine[0].matchAll(/macro\(([^)]+),([^)]+)\)/g)) {
+    const processedIdString = idString.trim().replace(/_s$/, "").slice(1, -1);
     const processedEnumValue = enumValue.trim();
     const processedNumericId = nextNativeModuleId++;
     nativeModuleIds[processedIdString] = processedNumericId;
@@ -52,15 +52,16 @@ export function createInternalModuleRegistry(basedir: string) {
   }
 
   function codegenRequireNativeModule(id: string) {
-    return `(__intrinsic__requireNativeModule(${id.replace(/node:/, "")}))`;
+    return `(__intrinsic__requireNativeModule(${JSON.stringify(id.replace(/^node:/, ""))}))`;
   }
 
   const requireTransformer = (specifier: string, from: string) => {
     const directMatch = internalRegistry.get(specifier);
-    if (directMatch) return codegenRequireId(`${directMatch}/*${specifier}*/`);
-
+    if (directMatch) {
+      return codegenRequireId(`${directMatch}/*${specifier}*/`);
+    }
     if (specifier in nativeModuleIds) {
-      return codegenRequireNativeModule(JSON.stringify(specifier));
+      return codegenRequireNativeModule(specifier);
     }
 
     const relativeMatch =

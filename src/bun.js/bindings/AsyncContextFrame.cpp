@@ -36,7 +36,7 @@ JSC::Structure* AsyncContextFrame::createStructure(JSC::VM& vm, JSC::JSGlobalObj
 
 JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject, JSValue callback)
 {
-    JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+    JSValue context = globalObject->asyncContextData()->getInternalField(0);
 
     // If there is no async context, do not snapshot the callback.
     if (context.isUndefined()) {
@@ -77,7 +77,7 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     InternalFieldTuple* asyncContextData = nullptr;                          \
     if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(functionObject)) { \
         functionObject = jsCast<JSC::JSObject*>(wrapper->callback.get());    \
-        asyncContextData = global->m_asyncContextData.get();                 \
+        asyncContextData = global->asyncContextData();                       \
         restoreAsyncContext = asyncContextData->getInternalField(0);         \
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());   \
     }                                                                        \

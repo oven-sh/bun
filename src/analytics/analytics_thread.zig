@@ -64,6 +64,9 @@ pub const Features = struct {
     pub var lockfile_migration_from_package_lock: usize = 0;
     pub var git_dependencies: usize = 0;
     pub var WebSocket: usize = 0;
+    pub var @"Bun.stdin": usize = 0;
+    pub var @"Bun.stdout": usize = 0;
+    pub var @"Bun.stderr": usize = 0;
     pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
 
     pub fn formatter() Formatter {
@@ -101,10 +104,20 @@ pub const Features = struct {
             }
 
             var builtins = builtin_modules.iterator();
-            while (builtins.next()) |key| {
-                try writer.writeAll("\"");
-                try writer.writeAll(@tagName(key));
+            if (builtins.next()) |first| {
+                try writer.writeAll("\nBuiltins: \"");
+                try writer.writeAll(@tagName(first));
                 try writer.writeAll("\" ");
+
+                while (builtins.next()) |key| {
+                    try writer.writeAll("\"");
+                    try writer.writeAll(@tagName(key));
+                    try writer.writeAll("\" ");
+                }
+
+                try writer.writeAll("\n");
+            } else {
+                try writer.writeAll("\n");
             }
         }
     };

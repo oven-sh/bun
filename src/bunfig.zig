@@ -163,6 +163,8 @@ pub const Bunfig = struct {
         }
 
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
+            Analytics.Features.bunfig += 1;
+
             const json = this.json;
             var allocator = this.allocator;
 
@@ -750,8 +752,6 @@ pub const Bunfig = struct {
                     .loaders = loader_values,
                 };
             }
-
-            Analytics.Features.bunfig += 1;
         }
 
         pub fn expect(this: *Parser, expr: js_ast.Expr, token: js_ast.Expr.Tag) !void {

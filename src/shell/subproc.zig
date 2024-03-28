@@ -747,9 +747,10 @@ pub const ShellSubprocess = struct {
     pub fn spawnAsync(
         event_loop: JSC.EventLoopHandle,
         shellio: *ShellIO,
-        spawn_args: *SpawnArgs,
+        spawn_args: SpawnArgs,
         out: **@This(),
     ) bun.shell.Result(void) {
+        var cloned_spawn_args = spawn_args;
         var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
@@ -759,7 +760,7 @@ pub const ShellSubprocess = struct {
             },
             event_loop,
             arena.allocator(),
-            spawn_args,
+            &cloned_spawn_args,
             shellio,
             out,
         )) {
@@ -809,9 +810,7 @@ pub const ShellSubprocess = struct {
                 };
             }
         };
-
-        // var overridden_env: bun
-        // defer if (override_env)
+        defer if (override_env) env.deinit(allocator);
 
         var should_close_memfd = Environment.isLinux;
 

@@ -3698,7 +3698,7 @@ pub const Interpreter = struct {
                 .child = undefined,
                 .buffered_closed = buffered_closed,
             } };
-            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, &spawn_args, &this.exec.subproc.child)) {
+            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child)) {
                 .result => this.exec.subproc.child,
                 .err => |*e| {
                     this.base.throw(e);

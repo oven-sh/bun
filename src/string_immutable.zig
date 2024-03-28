@@ -698,12 +698,12 @@ pub inline fn endsWith(self: string, str: string) bool {
     return str.len == 0 or @call(bun.callmod_inline, std.mem.endsWith, .{ u8, self, str });
 }
 
-pub inline fn endsWithGeneric(comptime T: type, self: []const T, str: []const T) bool {
-    return str.len == 0 or @call(bun.callmod_inline, std.mem.endsWith, .{ T, self, str });
-}
-
 pub inline fn endsWithComptime(self: string, comptime str: anytype) bool {
     return self.len >= str.len and eqlComptimeIgnoreLen(self[self.len - str.len .. self.len], comptime str);
+}
+
+pub inline fn endsWithGenericComptime(comptime T: type, self: []const T, comptime str: []const T) bool {
+    return self.len >= str.len and @call(bun.callmod_inline, eqlComptimeCheckLenWithType, .{ T, self[self.len - str.len .. self.len], str, false });
 }
 
 pub inline fn startsWithChar(self: string, char: u8) bool {
@@ -5395,6 +5395,15 @@ pub fn convertUTF8toUTF16InBuffer(
     if (input.len == 0) return buf[0..0];
     const result = bun.simdutf.convert.utf8.to.utf16.le(input, buf);
     return buf[0..result];
+}
+
+pub fn convertUTF8toUTF16InBufferZ(
+    buf: []u16,
+    input: []const u8,
+) [:0]u16 {
+    const converted = convertUTF8toUTF16InBuffer(buf, input);
+    buf[converted.len] = 0;
+    return buf[0..converted.len :0];
 }
 
 pub fn convertUTF16toUTF8InBuffer(

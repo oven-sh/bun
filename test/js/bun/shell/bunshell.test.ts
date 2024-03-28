@@ -829,7 +829,7 @@ describe("deno_task", () => {
     `;
 
     const tmpdir = TestBuilder.tmpdir();
-    // Redirect to file descriptor so we don't write ~1 million 'a's to terminal
+    // I think writing 1mb of 'a's to the terminal breaks CI so redirect to a FD instead
     const { stdout, stderr, exitCode } = await $`${BUN} -e ${writerCode} > ${tmpdir}/output.txt`.env(bunEnv);
 
     expect(stderr.length).toEqual(0);

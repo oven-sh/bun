@@ -84,8 +84,6 @@ const win_extensions = .{
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by whichWin)
 fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: bool) ?[:0]const u16 {
-
-
     if (check_windows_extensions) {
         buf[path_size] = '.';
         buf[path_size + 1 + 3] = 0;

@@ -468,13 +468,22 @@ pub const Loader = struct {
         dir: *Fs.FileSystem.DirEntry,
         env_files: []const []const u8,
         comptime suffix: DotEnvFileSuffix,
+        is_script_runner: bool,
     ) !void {
         const start = std.time.nanoTimestamp();
 
         if (env_files.len > 0) {
             try this.loadExplicitFiles(env_files);
         } else {
-            try this.loadDefaultFiles(dir, suffix);
+            // Do not automatically load .env files in `bun run <script>`
+            // Instead, it is the responsibility of the script's instance of `bun` to load .env,
+            // so that if the script runner is NODE_ENV=development, but the script is
+            // "NODE_ENV=production bun ...", there should be no development env loaded.
+            //
+            // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
+            // for more details on how this edge case works.
+            if (!is_script_runner)
+                try this.loadDefaultFiles(dir, suffix);
         }
 
         if (!this.quiet) this.printLoaded(start);
@@ -492,7 +501,7 @@ pub const Loader = struct {
                 var iter = std.mem.splitBackwardsScalar(u8, arg_value, ',');
                 while (iter.next()) |file_path| {
                     if (file_path.len > 0) {
-                        try this.loadEnvFileDynamic(file_path, false, true);
+                        try this.loadEnvFileDynamic(file_path, false);
                         Analytics.Features.dotenv = true;
                     }
                 }
@@ -514,19 +523,19 @@ pub const Loader = struct {
         switch (comptime suffix) {
             .development => {
                 if (dir.hasComptimeQuery(".env.development.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.development.local", false, true);
+                    try this.loadEnvFile(dir_handle, ".env.development.local", false);
                     Analytics.Features.dotenv = true;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.production.local", false, true);
+                    try this.loadEnvFile(dir_handle, ".env.production.local", false);
                     Analytics.Features.dotenv = true;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.test.local", false, true);
+                    try this.loadEnvFile(dir_handle, ".env.test.local", false);
                     Analytics.Features.dotenv = true;
                 }
             },
@@ -534,7 +543,7 @@ pub const Loader = struct {
 
         if (comptime suffix != .@"test") {
             if (dir.hasComptimeQuery(".env.local")) {
-                try this.loadEnvFile(dir_handle, ".env.local", false, false);
+                try this.loadEnvFile(dir_handle, ".env.local", false);
                 Analytics.Features.dotenv = true;
             }
         }
@@ -542,26 +551,26 @@ pub const Loader = struct {
         switch (comptime suffix) {
             .development => {
                 if (dir.hasComptimeQuery(".env.development")) {
-                    try this.loadEnvFile(dir_handle, ".env.development", false, true);
+                    try this.loadEnvFile(dir_handle, ".env.development", false);
                     Analytics.Features.dotenv = true;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production")) {
-                    try this.loadEnvFile(dir_handle, ".env.production", false, true);
+                    try this.loadEnvFile(dir_handle, ".env.production", false);
                     Analytics.Features.dotenv = true;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test")) {
-                    try this.loadEnvFile(dir_handle, ".env.test", false, true);
+                    try this.loadEnvFile(dir_handle, ".env.test", false);
                     Analytics.Features.dotenv = true;
                 }
             },
         }
 
         if (dir.hasComptimeQuery(".env")) {
-            try this.loadEnvFile(dir_handle, ".env", false, false);
+            try this.loadEnvFile(dir_handle, ".env", false);
             Analytics.Features.dotenv = true;
         }
     }
@@ -636,7 +645,6 @@ pub const Loader = struct {
         dir: std.fs.Dir,
         comptime base: string,
         comptime override: bool,
-        comptime conditional: bool,
     ) !void {
         if (@field(this, base) != null) {
             return;
@@ -714,7 +722,6 @@ pub const Loader = struct {
             this.map,
             override,
             false,
-            conditional,
         );
 
         @field(this, base) = source;
@@ -724,7 +731,6 @@ pub const Loader = struct {
         this: *Loader,
         file_path: []const u8,
         comptime override: bool,
-        comptime conditional: bool,
     ) !void {
         if (this.custom_files_loaded.contains(file_path)) {
             return;
@@ -786,7 +792,6 @@ pub const Loader = struct {
             this.map,
             override,
             false,
-            conditional,
         );
 
         try this.custom_files_loaded.put(file_path, source);
@@ -1011,7 +1016,6 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
-        comptime conditional: bool,
     ) void {
         var count = map.map.count();
         while (this.pos < this.src.len) {
@@ -1032,7 +1036,7 @@ const Parser = struct {
             }
             entry.value_ptr.* = .{
                 .value = allocator.dupe(u8, value) catch unreachable,
-                .conditional = conditional,
+                .conditional = false,
             };
         }
         if (comptime !is_process) {
@@ -1044,7 +1048,7 @@ const Parser = struct {
                     allocator.free(entry.value_ptr.value);
                     entry.value_ptr.* = .{
                         .value = allocator.dupe(u8, value) catch unreachable,
-                        .conditional = conditional,
+                        .conditional = false,
                     };
                 }
             }
@@ -1057,10 +1061,9 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
-        comptime conditional: bool,
     ) void {
         var parser = Parser{ .src = source.contents };
-        parser._parse(allocator, map, override, is_process, conditional);
+        parser._parse(allocator, map, override, is_process);
     }
 };
 
@@ -1108,10 +1111,7 @@ pub const Map = struct {
 
         var iter = this.map.iterator();
         while (iter.next()) |entry| {
-            // Allow var from .env.development or .env.production to be loaded again
-            if (!entry.value_ptr.conditional) {
-                try env_map.hash_map.put(entry.key_ptr.*, entry.value_ptr.value);
-            }
+            try env_map.hash_map.put(entry.key_ptr.*, entry.value_ptr.value);
         }
 
         return .{ .unsafe_map = env_map };

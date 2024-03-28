@@ -168,7 +168,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        const writer_: std.fs.File.Writer = Output.errorWriter();
+        const writer_ = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
         var writer = buffered_writer.writer();
         defer buffered_writer.flush() catch unreachable;
@@ -185,7 +185,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
         // when the tests fail, we want to repeat the failures at the end
@@ -218,7 +218,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
         // If you do it.only, don't report the skipped tests because its pretty noisy
@@ -242,7 +242,8 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var writer_ = Output.errorWriter();
+
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
         // when the tests skip, we want to repeat the failures at the end
@@ -438,7 +439,6 @@ const Scanner = struct {
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
                 const child_dir = bun.openDirAbsolute(path2) catch continue;
                 path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
-                FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch bun.outOfMemory();
             }
         }

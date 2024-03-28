@@ -854,7 +854,7 @@ pub fn inspect(
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
-    ConsoleObject.format(
+    ConsoleObject.format2(
         .Debug,
         globalThis,
         @as([*]const JSValue, @ptrCast(&value)),
@@ -980,7 +980,53 @@ pub fn getMain(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
-    return ZigString.init(globalThis.bunVM().main).toValueGC(globalThis);
+    const vm = globalThis.bunVM();
+
+    // Attempt to use the resolved filesystem path
+    // This makes `eval('require.main === module')` work when the main module is a symlink.
+    // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
+    use_resolved_path: {
+        if (vm.main_resolved_path.isEmpty()) {
+            // If it's from eval, don't try to resolve it.
+            if (strings.hasSuffixComptime(vm.main, "[eval]")) {
+                break :use_resolved_path;
+            }
+            if (strings.hasSuffixComptime(vm.main, "[stdin]")) {
+                break :use_resolved_path;
+            }
+
+            const fd = bun.sys.openatA(
+                if (comptime Environment.isWindows) bun.invalid_fd else bun.toFD(std.fs.cwd().fd),
+                vm.main,
+
+                // Open with the minimum permissions necessary for resolving the file path.
+                if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY,
+
+                0,
+            ).unwrap() catch break :use_resolved_path;
+
+            defer _ = bun.sys.close(fd);
+            if (comptime Environment.isWindows) {
+                var wpath: bun.WPathBuffer = undefined;
+                const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;
+                vm.main_resolved_path = bun.String.createUTF16(fdpath);
+            } else {
+                var path: bun.PathBuffer = undefined;
+                const fdpath = bun.getFdPath(fd, &path) catch break :use_resolved_path;
+
+                // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
+                if (bun.String.tryCreateAtom(fdpath)) |atom| {
+                    vm.main_resolved_path = atom;
+                } else {
+                    vm.main_resolved_path = bun.String.createUTF8(fdpath);
+                }
+            }
+        }
+
+        return vm.main_resolved_path.toJS(globalThis);
+    }
+
+    return ZigString.init(vm.main).toValueGC(globalThis);
 }
 
 pub fn getAssetPrefix(
@@ -2979,6 +3025,10 @@ pub fn serve(
             return .undefined;
         }
 
+        if (globalObject.hasException()) {
+            return .zero;
+        }
+
         break :brk config_;
     };
 
@@ -3747,7 +3797,8 @@ pub const Timer = struct {
             if (vm.isInspectorEnabled()) {
                 Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
             }
-
+            vm.eventLoop().enter();
+            defer vm.eventLoop().exit();
             const result = callback.callWithGlobalThis(
                 globalThis,
                 args,
@@ -4003,8 +4054,7 @@ pub const Timer = struct {
                 if (this.cancelled) {
                     _ = uv.uv_timer_stop(&this.timer);
                 }
-                // libuv runs on the same thread
-                return this.runFromJSThread();
+                this.runFromJSThread();
             }
 
             fn onRequest(req: *bun.io.Request) bun.io.Action {
@@ -4096,6 +4146,8 @@ pub const Timer = struct {
                 _ = this.scheduled_count.fetchAdd(1, .Monotonic);
                 const ms: usize = @max(interval orelse this.interval, 1);
                 if (Environment.isWindows) {
+                    // we MUST update the timer so we avoid early firing
+                    uv.uv_update_time(uv.Loop.get());
                     if (uv.uv_timer_start(&this.timer, TimerReference.onUVRequest, @intCast(ms), 0) != 0) @panic("unable to start timer");
                     return;
                 }

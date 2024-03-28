@@ -824,6 +824,8 @@ function urlToHttpOptions(url) {
 
 const pathToFileURL = $lazy("pathToFileURL");
 const fileURLToPath = $lazy("fileURLToPath");
+const domainToASCII = $lazy("domainToASCII");
+const domainToUnicode = $lazy("domainToUnicode");
 
 export default {
   parse: urlParse,
@@ -836,4 +838,6 @@ export default {
   pathToFileURL,
   fileURLToPath,
   urlToHttpOptions,
+  domainToASCII,
+  domainToUnicode,
 };

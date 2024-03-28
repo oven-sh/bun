@@ -402,17 +402,17 @@ pub const Bundler = struct {
             const buster_name = name: {
                 if (std.fs.path.isAbsolute(entry_point)) {
                     if (std.fs.path.dirname(entry_point)) |dir| {
-                        // With trailing slash
-                        break :name if (dir.len == 1) dir else entry_point[0 .. dir.len + 1];
+                        // Normalized with trailing slash
+                        break :name bun.strings.normalizeSlashesOnly(&cache_bust_buf, dir, std.fs.path.sep);
                     }
                 }
 
                 var parts = [_]string{
                     entry_point,
-                    "../",
+                    bun.pathLiteral(".."),
                 };
 
-                break :name bun.path.joinAbsStringBufZTrailingSlash(
+                break :name bun.path.joinAbsStringBufZ(
                     bundler.fs.top_level_dir,
                     &cache_bust_buf,
                     &parts,
@@ -540,7 +540,7 @@ pub const Bundler = struct {
                     this.options.setProduction(true);
                 }
 
-                if (!has_production_env and this.options.isTest()) {
+                if (this.options.isTest() or this.env.isTest()) {
                     try this.env.load(dir, this.options.env.files, .@"test");
                 } else if (this.options.production) {
                     try this.env.load(dir, this.options.env.files, .production);
@@ -1028,7 +1028,7 @@ pub const Bundler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                var file: std.fs.File = undefined;
+                var file: bun.sys.File = undefined;
 
                 if (Outstream == std.fs.Dir) {
                     const output_dir = outstream;
@@ -1036,9 +1036,9 @@ pub const Bundler = struct {
                     if (std.fs.path.dirname(file_path.pretty)) |dirname| {
                         try output_dir.makePath(dirname);
                     }
-                    file = try output_dir.createFile(file_path.pretty, .{});
+                    file = bun.sys.File.from(try output_dir.createFile(file_path.pretty, .{}));
                 } else {
-                    file = outstream;
+                    file = bun.sys.File.from(outstream);
                 }
 
                 const CSSBuildContext = struct {
@@ -1046,7 +1046,7 @@ pub const Bundler = struct {
                 };
                 const build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
 
-                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, std.fs.File.Writer));
+                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, bun.sys.File.Writer));
                 const CSSWriter = Css.NewWriter(
                     BufferedWriter.Writer,
                     @TypeOf(&bundler.linker),
@@ -1278,6 +1278,7 @@ pub const Bundler = struct {
         inject_jest_globals: bool = false,
         set_breakpoint_on_first_line: bool = false,
         emit_decorator_metadata: bool = false,
+        remove_cjs_module_wrapper: bool = false,
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
@@ -1429,6 +1430,7 @@ pub const Bundler = struct {
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;
                 opts.features.dead_code_elimination = bundler.options.dead_code_elimination;
+                opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
@@ -1844,7 +1846,7 @@ pub const Bundler = struct {
         const did_start = false;
 
         if (bundler.options.output_dir_handle == null) {
-            const outstream = std.io.getStdOut();
+            const outstream = bun.sys.File.from(std.io.getStdOut());
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {

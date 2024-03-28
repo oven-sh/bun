@@ -9,6 +9,18 @@ const Fs = @import("../fs.zig");
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
+pub fn z(input: []const u8, output: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+    if (input.len > bun.MAX_PATH_BYTES) {
+        if (comptime bun.Environment.allow_assert) @panic("path too long");
+        return "";
+    }
+
+    @memcpy(output[0..input.len], input);
+    output[input.len] = 0;
+
+    return output[0..input.len :0];
+}
+
 inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, input: []const []const u8) bool {
     comptime var string_index = 1;
 
@@ -749,7 +761,7 @@ pub fn normalizeStringGenericTZ(
         } else if (path_.len > 0 and options.isSeparator(path_[0])) {
             buf[buf_i] = options.separator;
             buf_i += 1;
-            dotdot = 1;
+            dotdot = buf_i;
             path_begin = 1;
         }
     }
@@ -781,6 +793,10 @@ pub fn normalizeStringGenericTZ(
             r += 1;
             buf[buf_i] = options.separator;
             buf_i += 1;
+
+            // win32.resolve("C:\\Users\\bun", "C:\\Users\\bun", "/..\\bar")
+            // should be "C:\\bar" not "C:bar"
+            dotdot = buf_i;
         }
     }
 
@@ -910,7 +926,7 @@ pub const Platform = enum {
 
     pub fn getSeparatorFunc(comptime _platform: Platform) IsSeparatorFunc {
         switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+            .auto => @compileError("unreachable"),
             .loose => {
                 return isSepAny;
             },
@@ -925,7 +941,7 @@ pub const Platform = enum {
 
     pub fn getSeparatorFuncT(comptime _platform: Platform) IsSeparatorFuncT {
         switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+            .auto => @compileError("unreachable"),
             .loose => {
                 return isSepAnyT;
             },
@@ -940,7 +956,7 @@ pub const Platform = enum {
 
     pub fn getLastSeparatorFunc(comptime _platform: Platform) LastSeparatorFunction {
         switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+            .auto => @compileError("unreachable"),
             .loose => {
                 return lastIndexOfSeparatorLoose;
             },
@@ -955,7 +971,7 @@ pub const Platform = enum {
 
     pub fn getLastSeparatorFuncT(comptime _platform: Platform) LastSeparatorFunctionT {
         switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+            .auto => @compileError("unreachable"),
             .loose => {
                 return lastIndexOfSeparatorLooseT;
             },
@@ -974,7 +990,7 @@ pub const Platform = enum {
 
     pub inline fn isSeparatorT(comptime _platform: Platform, comptime T: type, char: T) bool {
         switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+            .auto => @compileError("unreachable"),
             .loose => {
                 return isSepAnyT(T, char);
             },
@@ -1085,10 +1101,10 @@ pub fn normalizeStringBuf(
     str: []const u8,
     buf: []u8,
     comptime allow_above_root: bool,
-    comptime _platform: Platform,
+    comptime platform: Platform,
     comptime preserve_trailing_slash: bool,
 ) []u8 {
-    return normalizeStringBufT(u8, str, buf, allow_above_root, _platform, preserve_trailing_slash);
+    return normalizeStringBufT(u8, str, buf, allow_above_root, platform, preserve_trailing_slash);
 }
 
 pub fn normalizeStringBufT(
@@ -1096,12 +1112,10 @@ pub fn normalizeStringBufT(
     str: []const T,
     buf: []T,
     comptime allow_above_root: bool,
-    comptime _platform: Platform,
+    comptime platform: Platform,
     comptime preserve_trailing_slash: bool,
 ) []T {
-    const platform = comptime _platform.resolve();
-
-    switch (comptime platform) {
+    switch (comptime platform.resolve()) {
         .auto => @compileError("unreachable"),
 
         .windows => {
@@ -1184,7 +1198,7 @@ pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
 
 pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
     const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
-    std.debug.assert(bun.isSliceInBuffer(u8, joined, buf));
+    std.debug.assert(bun.isSliceInBuffer(joined, buf));
     const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
     buf[joined.len + start_offset] = 0;
     return buf[start_offset..][0..joined.len :0];
@@ -2209,6 +2223,23 @@ pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
     while (std.mem.indexOfScalarPos(T, path_buffer, idx, std.fs.path.sep)) |index| : (idx = index + 1) {
         path_buffer[index] = '/';
     }
+}
+
+pub fn pathToPosixInPlace(comptime T: type, path: []T) void {
+    var idx: usize = 0;
+    while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_windows)) |index| : (idx = index + 1) {
+        path[index] = '/';
+    }
+}
+
+pub fn pathToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {
+    var idx: usize = 0;
+    while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_windows)) |index| : (idx = index + 1) {
+        @memcpy(buf[idx..index], path[idx..index]);
+        buf[index] = std.fs.path.sep_posix;
+    }
+    @memcpy(buf[idx..path.len], path[idx..path.len]);
+    return buf[0..path.len];
 }
 
 pub fn platformToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {

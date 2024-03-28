@@ -160,6 +160,7 @@ x64
 /.cache
 /src/deps/libuv
 /build-*/
+/kcov-out
 
 .vs
 

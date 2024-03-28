@@ -2,6 +2,9 @@ import { spawnSync } from "bun";
 import { it, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "node:path";
+
+const isWindows = process.platform === "win32";
+
 it("setTimeout", async () => {
   var lastID = -1;
   const result = await new Promise((resolve, reject) => {
@@ -148,16 +151,18 @@ it("Bun.sleep propagates exceptions", async () => {
 });
 
 it("Bun.sleep works with a Date object", async () => {
+  const offset = isWindows ? 100 : 10;
   const now = performance.now();
   var ten_ms = new Date();
-  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
-  expect(performance.now() - now).toBeGreaterThan(11);
+  expect(Math.ceil(performance.now() - now)).toBeGreaterThan(offset);
 });
 
 it("Bun.sleep(Date) fulfills after Date", async () => {
+  const offset = isWindows ? 100 : 10;
   let ten_ms = new Date();
-  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
   let now = new Date();
   expect(+now).toBeGreaterThanOrEqual(+ten_ms);
@@ -309,5 +314,5 @@ it("setTimeout CPU usage #7790", async () => {
   const code = await process.exited;
   expect(code).toBe(0);
   const stats = process.resourceUsage();
-  expect(stats.cpuTime.user / BigInt(1e6)).toBeLessThan(1);
+  expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
 });

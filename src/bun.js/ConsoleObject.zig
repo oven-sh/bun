@@ -35,6 +35,8 @@ writer: BufferedWriter,
 
 counts: Counter = .{},
 
+pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {}
+
 pub fn init(error_writer: Output.WriterType, writer: Output.WriterType) ConsoleObject {
     return ConsoleObject{
         .error_writer = BufferedWriter{ .unbuffered_writer = error_writer },
@@ -83,7 +85,7 @@ pub fn messageWithTypeAndLevel(
     //message_level: u32,
     level: MessageLevel,
     global: *JSGlobalObject,
-    vals: [*]JSValue,
+    vals: [*]const JSValue,
     len: usize,
 ) callconv(.C) void {
     if (comptime is_bindgen) {
@@ -195,7 +197,7 @@ pub fn messageWithTypeAndLevel(
     }
 
     if (print_length > 0)
-        format(
+        format2(
             level,
             global,
             vals,
@@ -619,11 +621,13 @@ const TablePrinter = struct {
 
 pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject) void {
     var holder = ZigException.Holder.init();
-
+    var vm = VirtualMachine.get();
+    defer holder.deinit(vm);
     const exception = holder.zigException();
+
     var err = ZigString.init("trace output").toErrorInstance(global);
     err.toZigException(global, exception);
-    VirtualMachine.get().remapZigException(exception, err, null);
+    vm.remapZigException(exception, err, null, &holder.need_to_clear_parser_arena_on_deinit);
 
     if (Output.enable_ansi_colors_stderr)
         VirtualMachine.printStackTrace(
@@ -650,7 +654,7 @@ pub const FormatOptions = struct {
     max_depth: u16 = 2,
 };
 
-pub fn format(
+pub fn format2(
     level: MessageLevel,
     global: *JSGlobalObject,
     vals: [*]const JSValue,
@@ -680,7 +684,10 @@ pub fn format(
         const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
 
         var unbuffered_writer = if (comptime Writer != RawWriter)
-            writer.context.unbuffered_writer.context.writer()
+            if (@hasDecl(@TypeOf(writer.context.unbuffered_writer.context), "quietWriter"))
+                writer.context.unbuffered_writer.context.quietWriter()
+            else
+                writer.context.unbuffered_writer.context.writer()
         else
             writer;
 
@@ -1226,7 +1233,13 @@ pub const Formatter = struct {
         var i: u32 = 0;
         var len: u32 = @as(u32, @truncate(slice.len));
         var any_non_ascii = false;
+        var hit_percent = false;
         while (i < len) : (i += 1) {
+            if (hit_percent) {
+                i = 0;
+                hit_percent = false;
+            }
+
             switch (slice[i]) {
                 '%' => {
                     i += 1;
@@ -1251,6 +1264,7 @@ pub const Formatter = struct {
                     any_non_ascii = false;
                     slice = slice[@min(slice.len, i + 1)..];
                     i = 0;
+                    hit_percent = true;
                     len = @as(u32, @truncate(slice.len));
                     const next_value = this.remaining_values[0];
                     this.remaining_values = this.remaining_values[1..];
@@ -1626,8 +1640,11 @@ pub const Formatter = struct {
                 } else if (Environment.isDebug and is_private_symbol) {
                     this.addForNewLine(1 + "$:".len + key.len);
                     writer.print(
-                        comptime Output.prettyFmt("<r><magenta>${any}<r><d>:<r> ", enable_ansi_colors),
-                        .{key},
+                        comptime Output.prettyFmt("<r><magenta>{s}{any}<r><d>:<r> ", enable_ansi_colors),
+                        .{
+                            if (key.len > 0 and key.charAt(0) == '#') "" else "$",
+                            key,
+                        },
                     );
                 } else {
                     this.addForNewLine(1 + "[Symbol()]:".len + key.len);
@@ -2451,7 +2468,7 @@ pub const Formatter = struct {
                                 comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                 .{},
                             );
-                            const data = value.get(this.globalThis, "data").?;
+                            const data = value.fastGet(this.globalThis, .data).?;
                             const tag = Tag.getAdvanced(data, this.globalThis, .{ .hide_global = true });
                             if (tag.cell.isStringLike()) {
                                 this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);

@@ -1,8 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import npmStringWidth from "string-width";
 
-const bun_has_stringwidth = "stringWidth" in Bun;
-
 expect.extend({
   toMatchNPMStringWidth(received: string) {
     const width = npmStringWidth(received, { countAnsiEscapeCodes: true });
@@ -20,7 +18,7 @@ expect.extend({
   },
 });
 
-test.skipIf(!bun_has_stringwidth)("stringWidth", () => {
+test("stringWidth", () => {
   expect(undefined).toMatchNPMStringWidth();
   expect("").toMatchNPMStringWidth();
   expect("a").toMatchNPMStringWidth();
@@ -40,7 +38,7 @@ test.skipIf(!bun_has_stringwidth)("stringWidth", () => {
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
   describe(matcher, () => {
-    test.skipIf(!bun_has_stringwidth)("ansi colors", () => {
+    test("ansi colors", () => {
       expect("\u001b[31m")[matcher]();
       expect("\u001b[31ma")[matcher]();
       expect("\u001b[31mab")[matcher]();
@@ -85,7 +83,7 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
 }
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
-  test.skipIf(!bun_has_stringwidth)("leading non-ansi characters in UTF-16 string seems to fail", () => {
+  test("leading non-ansi characters in UTF-16 string seems to fail", () => {
     expect("\x1b[31mhshh🌎")[matcher]();
     expect("a\x1b[31mhshh🌎")[matcher]();
     expect("a\x1b[31mhshh🌎a")[matcher]();
@@ -93,7 +91,7 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
 }
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
-  test.skipIf(!bun_has_stringwidth)("upstream", () => {
+  test("upstream", () => {
     expect("abcde")[matcher]();
     expect("古池や")[matcher]();
     expect("あいうabc")[matcher]();
@@ -126,7 +124,7 @@ test("ambiguousIsNarrow=false", () => {
 });
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
-  test.skipIf(!bun_has_stringwidth)("ignores control characters", () => {
+  test("ignores control characters", () => {
     expect(String.fromCodePoint(0))[matcher]();
     expect(String.fromCodePoint(31))[matcher]();
     expect(String.fromCodePoint(127))[matcher]();
@@ -137,13 +135,13 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
 }
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
-  test.skipIf(!bun_has_stringwidth)("handles combining characters", () => {
+  test("handles combining characters", () => {
     expect("x\u0300")[matcher]();
   });
 }
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
-  test.skipIf(!bun_has_stringwidth)("handles ZWJ characters", () => {
+  test("handles ZWJ characters", () => {
     expect("👶")[matcher]();
     expect("👶🏽")[matcher]();
     expect("aa👶🏽aa")[matcher]();

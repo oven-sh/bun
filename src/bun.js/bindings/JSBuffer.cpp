@@ -70,6 +70,8 @@ using namespace WebCore;
 
 JSC_DECLARE_HOST_FUNCTION(constructJSBuffer);
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_alloc);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafe);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafeSlow);
@@ -92,6 +94,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
+#pragma clang diagnostic pop
 
 static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
@@ -361,12 +364,6 @@ static inline JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGl
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
 }
 
-// new Buffer(size)
-static inline JSC::EncodedJSValue constructBufferFromLength(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
-{
-    return jsBufferConstructorFunction_allocUnsafeBody(lexicalGlobalObject, callFrame);
-}
-
 static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -392,6 +389,7 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
             break;
         }
         default: {
+            result = 0;
             break;
         }
         }
@@ -414,6 +412,7 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
             break;
         }
         default: {
+            result = 0;
             break;
         }
         }
@@ -435,7 +434,6 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
 static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg0, JSValue arg1)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    uint32_t offset = 0;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -523,17 +521,19 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             auto* start = uint8Array->typedVector();
             auto* head = start;
             size_t remain = uint8Array->byteLength();
+            length = std::min(length, remain);
+
             memmove(head, view->vector(), length);
             remain -= length;
             head += length;
-            while (remain >= length) {
-                memcpy(head, start, length);
+            while (remain >= length && length > 0) {
+                memmove(head, start, length);
                 remain -= length;
                 head += length;
                 length <<= 1;
             }
             if (remain > 0) {
-                memcpy(head, start, remain);
+                memmove(head, start, remain);
             }
         } else {
             auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
@@ -643,7 +643,6 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
 
-    uint32_t offset = 0;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -868,7 +867,6 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* encoding_ = callFrame->argument(0).toStringOrNull(lexicalGlobalObject);
     if (!encoding_)
         return JSValue::encode(jsBoolean(false));
@@ -1202,17 +1200,19 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
             return JSC::JSValue::encode(jsUndefined());
         }
 
+        length = std::min(length, remain);
+
         memmove(head, view->vector(), length);
         remain -= length;
         head += length;
-        while (remain >= length) {
-            memcpy(head, startPtr, length);
+        while (remain >= length && length > 0) {
+            memmove(head, startPtr, length);
             remain -= length;
             head += length;
             length <<= 1;
         }
         if (remain > 0) {
-            memcpy(head, startPtr, remain);
+            memmove(head, startPtr, remain);
         }
     } else {
         auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
@@ -2017,7 +2017,6 @@ void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {
     Base::finishCreation(vm);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-    auto clientData = WebCore::clientData(vm);
     reifyStaticProperties(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
 }
 
@@ -2028,20 +2027,6 @@ const ClassInfo JSBufferPrototype::s_info = {
     "Uint8Array"_s,
     &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype)
 };
-
-static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAlloc(jsBufferConstructorAllocWithoutTypeChecks,
-    JSBufferConstructor::info(),
-    JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::Heap),
-    JSC::SpecUint8Array, JSC::SpecInt32Only);
-
-static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsafe(jsBufferConstructorAllocUnsafeWithoutTypeChecks,
-    JSBufferConstructor::info(),
-    JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::Heap),
-    JSC::SpecUint8Array, JSC::SpecInt32Only);
-static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsafeSlow(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks,
-    JSBufferConstructor::info(),
-    JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::Heap),
-    JSC::SpecUint8Array, JSC::SpecInt32Only);
 
 /* Source for JSBuffer.lut.h
 @begin jsBufferConstructorTable

@@ -5,7 +5,6 @@ const { Duplex, Readable, Writable } = require("node:stream");
 const { getHeader, setHeader, assignHeaders: assignHeadersFast } = $lazy("http");
 
 const GlobalPromise = globalThis.Promise;
-let warnNotImplementedOnce;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
  * True if val contains an invalid field-vchar
@@ -226,11 +225,6 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
-    if (!warnNotImplementedOnce) {
-      ({ warnNotImplementedOnce } = require("internal/shared"));
-    }
-
-    warnNotImplementedOnce("Socket in HTTP setTimeout");
     return this;
   }
 
@@ -437,6 +431,7 @@ function Server(options, callback) {
   return this;
 }
 Object.setPrototypeOf((Server.prototype = {}), EventEmitter.prototype);
+Server.prototype.constructor = Server; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(Server, EventEmitter);
 
 Server.prototype.ref = function () {
@@ -538,6 +533,12 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
         drain(ws) {
           ws.data.drain(ws);
         },
+        ping(ws, data) {
+          ws.data.ping(ws, data);
+        },
+        pong(ws, data) {
+          ws.data.pong(ws, data);
+        },
       },
       // Be very careful not to access (web) Request object
       // properties:
@@ -609,10 +610,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
 };
 
 Server.prototype.setTimeout = function (msecs, callback) {
-  if (!warnNotImplementedOnce) {
-    ({ warnNotImplementedOnce } = require("internal/shared"));
-  }
-  warnNotImplementedOnce("Server.setTimeout");
+  // TODO:
   return this;
 };
 
@@ -663,9 +661,6 @@ function assignHeaders(object, req) {
     assignHeadersSlow(object, req);
     return false;
   }
-}
-function destroyBodyStreamNT(bodyStream) {
-  bodyStream.destroy();
 }
 
 var defaultIncomingOpts = { type: "request" };
@@ -732,6 +727,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
 }
 
 Object.setPrototypeOf((IncomingMessage.prototype = {}), Readable.prototype);
+IncomingMessage.prototype.constructor = IncomingMessage; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(IncomingMessage, Readable);
 
 IncomingMessage.prototype._construct = function (callback) {
@@ -758,7 +754,6 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     if (self[abortedSymbol]) return;
     if (done) {
       self.push(null);
-      process.nextTick(destroyBodyStreamNT, self);
       break;
     }
     for (var v of value) {
@@ -857,11 +852,7 @@ Object.defineProperty(IncomingMessage.prototype, "socket", {
 });
 
 IncomingMessage.prototype.setTimeout = function (msecs, callback) {
-  if (!warnNotImplementedOnce) {
-    ({ warnNotImplementedOnce } = require("internal/shared"));
-  }
-  warnNotImplementedOnce("IncomingMessage.setTimeout");
-
+  // TODO:
   return this;
 };
 
@@ -947,6 +938,7 @@ function OutgoingMessage(options) {
 }
 
 Object.setPrototypeOf((OutgoingMessage.prototype = {}), Writable.prototype);
+OutgoingMessage.prototype.constructor = OutgoingMessage; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(OutgoingMessage, Writable);
 
 // Express "compress" package uses this
@@ -1151,6 +1143,7 @@ function ServerResponse(req, reply) {
   if (req.method === "HEAD") this._hasBody = false;
 }
 Object.setPrototypeOf((ServerResponse.prototype = {}), OutgoingMessage.prototype);
+ServerResponse.prototype.constructor = ServerResponse; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(ServerResponse, OutgoingMessage);
 
 // Express "compress" package uses this
@@ -1284,11 +1277,7 @@ ServerResponse.prototype.writeContinue = function (callback) {
 };
 
 ServerResponse.prototype.setTimeout = function (msecs, callback) {
-  if (!warnNotImplementedOnce) {
-    ({ warnNotImplementedOnce } = require("internal/shared"));
-  }
-
-  warnNotImplementedOnce("ServerResponse.setTimeout");
+  // TODO:
   return this;
 };
 
@@ -1457,21 +1446,35 @@ class ClientRequest extends OutgoingMessage {
       url = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`;
     }
     try {
-      //@ts-ignore
-      this.#fetchRequest = fetch(url, {
+      const fetchOptions: any = {
         method,
         headers: this.getHeaders(),
         body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
         redirect: "manual",
-        verbose: !!$debug,
         signal: this[kAbortController].signal,
-        proxy: proxy,
 
         // Timeouts are handled via this.setTimeout.
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
-      })
+      };
+
+      if (!!$debug) {
+        fetchOptions.verbose = true;
+      }
+
+      if (proxy) {
+        fetchOptions.proxy = proxy;
+      }
+
+      const socketPath = this.#socketPath;
+
+      if (socketPath) {
+        fetchOptions.unix = socketPath;
+      }
+
+      //@ts-ignore
+      this.#fetchRequest = fetch(url, fetchOptions)
         .then(response => {
           const prevIsHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = response.url.startsWith("https:");
@@ -1674,7 +1677,7 @@ class ClientRequest extends OutgoingMessage {
     this.#host = host;
     this.#protocol = protocol;
 
-    var timeout = options.timeout;
+    const timeout = options.timeout;
     if (timeout !== undefined && timeout !== 0) {
       this.setTimeout(timeout, undefined);
     }
@@ -1733,8 +1736,19 @@ class ClientRequest extends OutgoingMessage {
 
     // this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
-    var { signal: _signal, ...optsWithoutSignal } = options;
+    const { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
+
+    // needs to run on the next tick so that consumer has time to register the event handler
+    // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L353
+    // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L865
+    process.nextTick(() => {
+      // this will be FakeSocket since we use fetch() atm under the hood.
+      // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
+      if (this.destroyed) return;
+      if (this.listenerCount("socket") === 0) return;
+      this.emit("socket", this.socket);
+    });
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

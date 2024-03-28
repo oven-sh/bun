@@ -37,7 +37,7 @@ on:
 jobs:
   macOS-zig:
     name: macOS Zig Object
-    runs-on: med-ubuntu
+    runs-on: namespace-profile-zig-build
     if: github.repository_owner == 'oven-sh'
     strategy:
       matrix:
@@ -50,12 +50,6 @@ jobs:
       # - name: Checkout submodules
       #   run: git submodule update --init --recursive --depth=1 --progress --force
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        id: buildx
-        with:
-          install: true
-
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -65,7 +59,6 @@ jobs:
 
       - name: Compile Zig Object
         uses: docker/build-push-action@v5
-        if: runner.arch == 'X64'
         with:
           context: .
           push: false
@@ -88,6 +81,7 @@ jobs:
         with:
           name: ${{ matrix.tag }}
           path: ${{runner.temp}}/release/bun-zig.o
+          if-no-files-found: "error"
 
   macOS-dependencies:
     name: macOS Dependencies
@@ -169,6 +163,7 @@ jobs:
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
+          if-no-files-found: "error"
 
   macOS-cpp:
     name: macOS C++
@@ -228,6 +223,7 @@ jobs:
 
           cmake -S $SOURCE_DIR -B $OBJ_DIR \
             -G Ninja \
+            -DUSE_LTO=ON \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUN_CPP_ONLY=1 \
             -DNO_CONFIGURE_DEPENDS=1
@@ -239,6 +235,7 @@ jobs:
         with:
           name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a
+          if-no-files-found: "error"
   macOS-link:
     name: macOS Link
     runs-on: ${{ matrix.runner }}
@@ -312,6 +309,7 @@ jobs:
           cmake $SRC_DIR \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LTO=ON \
             -DBUN_LINK_ONLY=1 \
             -DBUN_ZIG_OBJ="${{ runner.temp }}/release/bun-zig.o" \
             -DBUN_CPP_ARCHIVE="${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a" \
@@ -334,10 +332,12 @@ jobs:
         with:
           name: ${{matrix.tag}}-profile
           path: ${{runner.temp}}/link-build/${{matrix.tag}}-profile.zip
+          if-no-files-found: "error"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{matrix.tag}}
           path: ${{runner.temp}}/link-build/${{matrix.tag}}.zip
+          if-no-files-found: "error"
       - name: Release
         id: release
         uses: ncipollo/release-action@v1

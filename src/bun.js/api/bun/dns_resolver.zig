@@ -125,7 +125,7 @@ const LibInfo = struct {
             request.backend.libinfo.file_poll.?.registerWithFd(
                 this.vm.event_loop_handle.?,
                 .machport,
-                true,
+                .one_shot,
                 bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
             ) == .result,
         );
@@ -1962,6 +1962,9 @@ pub const DNSResolver = struct {
 
     pub fn onDNSPollUv(watcher: [*c]bun.windows.libuv.uv_poll_t, status: c_int, events: c_int) callconv(.C) void {
         const poll = UvDnsPoll.fromPoll(watcher);
+        const vm = poll.parent.vm;
+        vm.eventLoop().enter();
+        defer vm.eventLoop().exit();
         // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
         const channel = poll.parent.channel.?;
         if (status < 0) {

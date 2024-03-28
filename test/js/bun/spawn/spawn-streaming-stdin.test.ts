@@ -1,61 +1,68 @@
-// @known-failing-on-windows: 1 failing
-import { it, test, expect } from "bun:test";
 import { spawn } from "bun";
-import { bunExe, bunEnv, gcTick } from "harness";
+import { expect, test } from "bun:test";
 import { closeSync, openSync } from "fs";
-import { tmpdir, devNull } from "node:os";
+import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount } from "harness";
+import { devNull } from "node:os";
 import { join } from "path";
-import { unlinkSync } from "node:fs";
 
 const N = 100;
+const concurrency = 16;
+const delay = 8 * 12;
+
 test("spawn can write to stdin multiple chunks", async () => {
+  const interval = setInterval(dumpStats, 1000).unref();
+
   const maxFD = openSync(devNull, "w");
-  for (let i = 0; i < N; i++) {
-    var exited;
-    await (async function () {
-      const tmperr = join(tmpdir(), "stdin-repro-error.log." + i);
 
-      const proc = spawn({
-        cmd: [bunExe(), import.meta.dir + "/stdin-repro.js"],
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: Bun.file(tmperr),
-        env: bunEnv,
-      });
-      exited = proc.exited;
-      var counter = 0;
-      var inCounter = 0;
-      var chunks: any[] = [];
-      const prom = (async function () {
-        try {
-          for await (var chunk of proc.stdout) {
-            chunks.push(chunk);
+  var remaining = N;
+  while (remaining > 0) {
+    const proms = new Array(concurrency);
+    for (let i = 0; i < concurrency; i++) {
+      proms[i] = (async function () {
+        const proc = spawn({
+          cmd: [bunExe(), join(import.meta.dir, "stdin-repro.js")],
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "inherit",
+          env: { ...bunEnv },
+        });
+
+        const prom2 = (async function () {
+          let inCounter = 0;
+          while (true) {
+            proc.stdin!.write("Wrote to stdin!\n");
+            await proc.stdin!.flush();
+            await Bun.sleep(delay);
+
+            if (inCounter++ === 6) break;
           }
-        } catch (e: any) {
-          console.log(e.stack);
-          throw e;
-        }
+          await proc.stdin!.end();
+          return inCounter;
+        })();
+
+        const prom = (async function () {
+          let chunks: any[] = [];
+
+          try {
+            for await (var chunk of proc.stdout) {
+              chunks.push(chunk);
+            }
+          } catch (e: any) {
+            console.log(e.stack);
+            throw e;
+          }
+
+          return Buffer.concat(chunks).toString().trim();
+        })();
+
+        const [chunks, , exitCode] = await Promise.all([prom, prom2, proc.exited]);
+
+        expect(chunks).toBe("Wrote to stdin!\n".repeat(7).trim());
+        expect(exitCode).toBe(0);
       })();
-
-      const prom2 = (async function () {
-        while (true) {
-          proc.stdin!.write("Wrote to stdin!\n");
-          inCounter++;
-          await new Promise(resolve => setTimeout(resolve, 8));
-
-          if (inCounter === 4) break;
-        }
-        await proc.stdin!.end();
-      })();
-
-      await Promise.all([prom, prom2]);
-      expect(Buffer.concat(chunks).toString().trim()).toBe("Wrote to stdin!\n".repeat(4).trim());
-      await proc.exited;
-
-      try {
-        unlinkSync(tmperr);
-      } catch (e) {}
-    })();
+    }
+    await Promise.all(proms);
+    remaining -= concurrency;
   }
 
   closeSync(maxFD);
@@ -64,4 +71,10 @@ test("spawn can write to stdin multiple chunks", async () => {
 
   // assert we didn't leak any file descriptors
   expect(newMaxFD).toBe(maxFD);
-}, 20_000);
+  clearInterval(interval);
+  await expectMaxObjectTypeCount(expect, "ReadableStream", 10);
+  await expectMaxObjectTypeCount(expect, "ReadableStreamDefaultReader", 10);
+  await expectMaxObjectTypeCount(expect, "ReadableByteStreamController", 10);
+  await expectMaxObjectTypeCount(expect, "Subprocess", 5);
+  dumpStats();
+}, 60_000);

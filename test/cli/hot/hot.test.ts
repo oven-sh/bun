@@ -33,12 +33,16 @@ it("should hot reload when file is overwritten", async () => {
       writeFileSync(root, readFileSync(root, "utf-8"));
     }
 
+    var str = "";
     for await (const line of runner.stdout) {
-      var str = new TextDecoder().decode(line);
+      str += new TextDecoder().decode(line);
       var any = false;
+      if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
       for (let line of str.split("\n")) {
         if (!line.includes("[#!root]")) continue;
         reloadCounter++;
+        str = "";
 
         if (reloadCounter === 3) {
           runner.unref();
@@ -96,12 +100,16 @@ it("should recover from errors", async () => {
       }
     })();
 
+    var str = "";
     for await (const line of runner.stdout) {
-      var str = new TextDecoder().decode(line);
+      str += new TextDecoder().decode(line);
       var any = false;
+      if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
       for (let line of str.split("\n")) {
         if (!line.includes("[#!root]")) continue;
         reloadCounter++;
+        str = "";
 
         if (reloadCounter === 3) {
           runner.unref();
@@ -156,24 +164,22 @@ it("should not hot reload when a random file is written", async () => {
       writeFileSync(root + ".another.yet.js", code);
       unlinkSync(root + ".another.yet.js");
     }
-    var waiter = new Promise<void>((resolve, reject) => {
-      setTimeout(async () => {
-        resolve();
-      }, 50);
-    });
     var finished = false;
     await Promise.race([
-      waiter,
+      Bun.sleep(200),
       (async () => {
         if (finished) {
           return;
         }
+        var str = "";
         for await (const line of runner.stdout) {
           if (finished) {
             return;
           }
 
-          var str = new TextDecoder().decode(line);
+          str += new TextDecoder().decode(line);
+          if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
           for (let line of str.split("\n")) {
             if (!line.includes("[#!root]")) continue;
             if (finished) {
@@ -182,6 +188,7 @@ it("should not hot reload when a random file is written", async () => {
             await onReload();
 
             reloadCounter++;
+            str = "";
             expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
           }
         }
@@ -221,12 +228,16 @@ it("should hot reload when a file is deleted and rewritten", async () => {
       writeFileSync(root, contents);
     }
 
+    var str = "";
     for await (const line of runner.stdout) {
-      var str = new TextDecoder().decode(line);
+      str += new TextDecoder().decode(line);
       var any = false;
+      if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
       for (let line of str.split("\n")) {
         if (!line.includes("[#!root]")) continue;
         reloadCounter++;
+        str = "";
 
         if (reloadCounter === 3) {
           runner.unref();
@@ -277,12 +288,16 @@ it("should hot reload when a file is renamed() into place", async () => {
       await 1;
     }
 
+    var str = "";
     for await (const line of runner.stdout) {
-      var str = new TextDecoder().decode(line);
+      str += new TextDecoder().decode(line);
       var any = false;
+      if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
       for (let line of str.split("\n")) {
         if (!line.includes("[#!root]")) continue;
         reloadCounter++;
+        str = "";
 
         if (reloadCounter === 3) {
           runner.unref();

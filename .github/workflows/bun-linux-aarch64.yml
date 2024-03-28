@@ -9,6 +9,7 @@ on:
     branches:
       - main
     paths:
+      - ".github/workflows/bun-linux-aarch64.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -17,11 +18,11 @@ on:
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
-      - ".github/workflows/bun-linux-aarch64.yml"
   pull_request:
     branches:
       - main
     paths:
+      - ".github/workflows/bun-linux-aarch64.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -30,7 +31,6 @@ on:
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
-      - ".github/workflows/bun-linux-aarch64.yml"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -117,10 +117,12 @@ jobs:
         with:
           name: bun-${{matrix.tag}}-profile
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip
+          if-no-files-found: "error"
       - uses: actions/upload-artifact@v4
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+          if-no-files-found: "error"
       - name: Release
         id: release
         uses: ncipollo/release-action@v1

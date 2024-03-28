@@ -1131,7 +1131,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
 
             this->incPendingActivityCount();
 
-            context->postTask([this, name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            context->postTask([name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 size_t length = buffer->byteLength();
                 auto* globalObject = context.jsGlobalObject();
                 JSUint8Array* uint8array = JSUint8Array::create(
@@ -1452,7 +1452,7 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     }
 
     m_state = CLOSED;
-    scriptExecutionContext()->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+    scriptExecutionContext()->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         protectedThis->decPendingActivityCount();
     });
 }

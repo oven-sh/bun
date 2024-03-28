@@ -17,6 +17,13 @@ pub const Encoding = enum {
     utf16,
 };
 
+/// Returned by classification functions that do not discriminate between utf8 and ascii.
+pub const EncodingNonAscii = enum {
+    utf8,
+    utf16,
+    latin1,
+};
+
 pub inline fn containsChar(self: string, char: u8) bool {
     return indexOfChar(self, char) != null;
 }
@@ -735,6 +742,20 @@ pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
     return href;
 }
 
+/// This will remove ONE trailing slash at the end of a string,
+/// but on Windows it will not remove the \ in "C:\"
+pub fn pathWithoutTrailingSlashOne(str: []const u8) []const u8 {
+    return if (str.len > 0 and charIsAnySlash(str[str.len - 1]))
+        if (Environment.isWindows and str.len == 3 and str[1] == ':')
+            // Preserve "C:\"
+            str
+        else
+            // Remove one slash
+            str[0 .. str.len - 1]
+    else
+        str;
+}
+
 pub fn withoutLeadingSlash(this: string) []const u8 {
     return std.mem.trimLeft(u8, this, "/");
 }
@@ -1033,8 +1054,8 @@ pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) 
     return buf;
 }
 
-pub inline fn joinAlloc(allocator: std.mem.Allocator, strs: anytype) ![]u8 {
-    const buf = try allocator.alloc(u8, len: {
+pub inline fn concatAllocT(comptime T: type, allocator: std.mem.Allocator, strs: anytype) ![]T {
+    const buf = try allocator.alloc(T, len: {
         var len: usize = 0;
         inline for (strs) |s| {
             len += s.len;
@@ -1042,28 +1063,24 @@ pub inline fn joinAlloc(allocator: std.mem.Allocator, strs: anytype) ![]u8 {
         break :len len;
     });
 
-    var remain = buf;
-    inline for (strs) |s| {
-        if (s.len > 0) {
-            @memcpy(remain, s);
-            remain = remain[s.len..];
-        }
-    }
-
-    return buf;
+    return concatBufT(T, buf, strs) catch |e| switch (e) {
+        error.NoSpaceLeft => unreachable, // exact size calculated
+    };
 }
 
-pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
+pub inline fn concatBufT(comptime T: type, out: []T, strs: anytype) ![]T {
     var remain = out;
-    var count: usize = 0;
-    inline for (0..parts_len) |i| {
-        const part = parts[i];
-        bun.copy(u8, remain, part);
-        remain = remain[part.len..];
-        count += part.len;
+    var n: usize = 0;
+    inline for (strs) |s| {
+        if (s.len > remain.len) {
+            return error.NoSpaceLeft;
+        }
+        @memcpy(remain.ptr, s);
+        remain = remain[s.len..];
+        n += s.len;
     }
 
-    return out[0..count];
+    return out[0..n];
 }
 
 pub fn index(self: string, str: string) i32 {
@@ -1778,17 +1795,8 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var path_to_use = utf8;
 
-    if (bun.strings.containsChar(utf8, '/')) {
-        @memcpy(renormalized[0..utf8.len], utf8);
-        for (renormalized[0..utf8.len]) |*c| {
-            if (c.* == '/') {
-                c.* = '\\';
-            }
-        }
-        path_to_use = renormalized[0..utf8.len];
-    }
+    var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
     if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
@@ -1796,6 +1804,23 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     }
 
     return toWPath(wbuf, path_to_use);
+}
+
+pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash: u8) []const u8 {
+    comptime std.debug.assert(desired_slash == '/' or desired_slash == '\\');
+    const undesired_slash = if (desired_slash == '/') '\\' else '/';
+
+    if (bun.strings.containsChar(utf8, undesired_slash)) {
+        @memcpy(buf[0..utf8.len], utf8);
+        for (buf[0..utf8.len]) |*c| {
+            if (c.* == undesired_slash) {
+                c.* = desired_slash;
+            }
+        }
+        return buf[0..utf8.len];
+    }
+
+    return utf8;
 }
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
@@ -1829,12 +1854,12 @@ pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
             isWindowsAbsolutePathMissingDriveLetter(T, path))
         {
             std.debug.panic("Internal Error: Do not pass posix paths to Windows APIs, was given '{s}'" ++ if (Environment.isDebug) " (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)" else ". Please open an issue on GitHub with a reproduction.", .{
-                if (T == u8) path else std.unicode.fmtUtf16le(path),
+                if (T == u8) path else bun.fmt.utf16(path),
             });
         }
         if (hasPrefixComptimeType(T, path, ":/") and Environment.isDebug) {
             std.debug.panic("Path passed to windows API '{s}' is almost certainly invalid. Where did the drive letter go?", .{
-                if (T == u8) path else std.unicode.fmtUtf16le(path),
+                if (T == u8) path else bun.fmt.utf16(path),
             });
         }
     }
@@ -2468,8 +2493,8 @@ pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
 
 pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8) !Escaped(u8) {
     const Scalar = struct {
-        pub const lengths: [std.math.maxInt(u8)]u4 = brk: {
-            var values: [std.math.maxInt(u8)]u4 = undefined;
+        pub const lengths: [std.math.maxInt(u8) + 1]u4 = brk: {
+            var values: [std.math.maxInt(u8) + 1]u4 = undefined;
             for (values, 0..) |_, i| {
                 switch (i) {
                     '"' => {
@@ -2808,8 +2833,8 @@ fn Escaped(comptime T: type) type {
 
 pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16) !Escaped(u16) {
     const Scalar = struct {
-        pub const lengths: [std.math.maxInt(u8)]u4 = brk: {
-            var values: [std.math.maxInt(u8)]u4 = undefined;
+        pub const lengths: [std.math.maxInt(u8) + 1]u4 = brk: {
+            var values: [std.math.maxInt(u8) + 1]u4 = undefined;
             for (values, 0..) |_, i| {
                 values[i] = switch (i) {
                     '"' => "&quot;".len,
@@ -3037,7 +3062,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                             break :scan_and_allocate_lazily;
                         },
                         128...std.math.maxInt(u16) => {
-                            const cp = utf16Codepoint([]const u16, ptr[0..2]);
+                            const cp = utf16Codepoint([]const u16, ptr[0..if (ptr + 1 == end) 1 else 2]);
 
                             ptr += @as(u16, cp.len);
                         },
@@ -3071,7 +3096,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                         ptr += 1;
                     },
                     128...std.math.maxInt(u16) => {
-                        const cp = utf16Codepoint([]const u16, ptr[0..2]);
+                        const cp = utf16Codepoint([]const u16, ptr[0..if (ptr + 1 == end) 1 else 2]);
 
                         buf.appendSlice(ptr[0..@as(usize, cp.len)]) catch unreachable;
                         ptr += @as(u16, cp.len);
@@ -4352,7 +4377,7 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
 
     if (Environment.enableSIMD and Environment.isNative) {
         const end_ptr = remaining.ptr + remaining.len - (remaining.len % ascii_u16_vector_size);
-        if (remaining.len > ascii_u16_vector_size) {
+        if (remaining.len >= ascii_u16_vector_size) {
             while (remaining.ptr != end_ptr) {
                 const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
                 const max_value = @reduce(.Max, vec);
@@ -4508,13 +4533,6 @@ test "firstNonASCII16" {
         const no = std.mem.bytesAsSlice(u16, toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
         try std.testing.expectEqual(@as(u32, 366), firstNonASCII16(@TypeOf(no), no).?);
     }
-}
-
-test "print UTF16" {
-    var err = std.io.getStdErr();
-    const utf16 = comptime toUTF16Literal("❌ ✅ opkay ");
-    try bun.fmt.str.formatUTF16(utf16, err.writer());
-    // std.unicode.fmtUtf16le(utf16le: []const u16)
 }
 
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
@@ -5370,7 +5388,7 @@ pub fn convertUTF8toUTF16InBuffer(
     //
     // the reason i didn't implement the fallback is purely because our
     // code in this file is too chaotic. it is left as a TODO
-    if (input.len == 0) return &[_]u16{};
+    if (input.len == 0) return buf[0..0];
     const result = bun.simdutf.convert.utf8.to.utf16.le(input, buf);
     return buf[0..result];
 }

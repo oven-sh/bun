@@ -40,6 +40,9 @@ const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
 });
 
 pub var active_test_expectation_counter: Counter = .{};
+pub var is_expecting_assertions: bool = false;
+pub var is_expecting_assertions_count: bool = false;
+pub var expected_assertions_number: u32 = 0;
 
 const log = bun.Output.scoped(.expect, false);
 
@@ -184,11 +187,13 @@ pub const Expect = struct {
                     promise.setHandled(vm);
 
                     const now = std.time.Instant.now() catch unreachable;
-                    const elapsed = if (Jest.runner.?.pending_test) |pending_test| @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms) else 0;
-                    const remaining = @as(u32, @truncate(Jest.runner.?.last_test_timeout_timer_duration -| elapsed));
+                    const remaining = if (Jest.runner) |runner| remaining: {
+                        const elapsed = if (runner.pending_test) |pending_test| @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms) else 0;
+                        break :remaining @as(u32, @truncate(runner.last_test_timeout_timer_duration -| elapsed));
+                    } else std.math.maxInt(u32);
 
                     if (!globalThis.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
-                        if (Jest.runner.?.pending_test) |pending_test|
+                        if (Jest.runner) |runner| if (runner.pending_test) |pending_test|
                             pending_test.timeout();
                         return null;
                     }
@@ -853,20 +858,25 @@ pub const Expect = struct {
         }
 
         const not = this.flags.not;
-        var pass = true;
+        var pass = brk: {
+            const count = expected.getLength(globalObject);
 
-        const count = expected.getLength(globalObject);
+            // jest-extended checks for truthiness before calling hasOwnProperty
+            // https://github.com/jest-community/jest-extended/blob/711fdcc54d68c2b2c1992c7cfbdf0d0bd6be0f4d/src/matchers/toContainKeys.js#L1-L6
+            if (!value.coerce(bool, globalObject)) break :brk count == 0;
 
-        var i: u32 = 0;
+            var i: u32 = 0;
 
-        while (i < count) : (i += 1) {
-            const key = expected.getIndex(globalObject, i);
+            while (i < count) : (i += 1) {
+                const key = expected.getIndex(globalObject, i);
 
-            if (!value.hasOwnPropertyValue(globalObject, key)) {
-                pass = false;
-                break;
+                if (!value.hasOwnPropertyValue(globalObject, key)) {
+                    break :brk false;
+                }
             }
-        }
+
+            break :brk true;
+        };
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -4314,9 +4324,50 @@ pub const Expect = struct {
         return thisValue;
     }
 
-    pub const assertions = notImplementedStaticFn;
-    pub const hasAssertions = notImplementedStaticFn;
     pub const addSnapshotSerializer = notImplementedStaticFn;
+
+    pub fn hasAssertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        _ = callFrame;
+        defer globalObject.bunVM().autoGarbageCollect();
+
+        is_expecting_assertions = true;
+
+        return .undefined;
+    }
+
+    pub fn assertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer globalObject.bunVM().autoGarbageCollect();
+
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("expect.assertions() takes 1 argument", .{});
+            return .zero;
+        }
+
+        const expected: JSValue = arguments[0];
+
+        if (!expected.isNumber()) {
+            var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+
+        const expected_assertions: f64 = expected.asNumber();
+        if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0) {
+            var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+
+        const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
+
+        is_expecting_assertions_count = true;
+        expected_assertions_number = unsigned_expected_assertions;
+
+        return .undefined;
+    }
 
     pub fn notImplementedJSCFn(_: *Expect, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         globalObject.throw("Not implemented", .{});

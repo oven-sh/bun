@@ -34,37 +34,36 @@
 //! Prior Art:
 //! - https://github.com/ScoopInstaller/Shim/blob/master/src/shim.cs
 //!
-//! The compiled binary is 10752 bytes and is `@embedFile`d into Bun itself.
+//! The compiled binary is 13312 bytes and is `@embedFile`d into Bun itself.
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
-const std = @import("std");
+//!
+//! Questions about this file should be directed at @paperdave.
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+const dbg = builtin.mode == .Debug;
+
+const std = @import("std");
+const w = std.os.windows;
+const assert = std.debug.assert;
+const fmt16 = std.unicode.fmtUtf16le;
+
+const is_standalone = !@hasDecl(@import("root"), "JavaScriptCore");
+const bun = if (!is_standalone) @import("root").bun else @compileError("cannot use 'bun' in standalone build of bun_shim_impl");
+const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
+const callmod_inline = if (is_standalone) std.builtin.CallModifier.always_inline else bun.callmod_inline;
+
+const Flags = @import("./BinLinkingShim.zig").Flags;
 
 pub inline fn wliteral(comptime str: []const u8) []const u16 {
     if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
     comptime var output: [str.len]u16 = undefined;
-
     for (str, 0..) |c, i| {
         output[i] = c;
     }
-
     const Static = struct {
         pub const literal: []const u16 = output[0..output.len];
     };
     return Static.literal;
 }
-
-const is_standalone = !@hasDecl(@import("root"), "bun");
-const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
-
-const dbg = builtin.mode == .Debug;
-
-const Flags = @import("./BinLinkingShim.zig").Flags;
-
-const assert = std.debug.assert;
-const fmt16 = std.unicode.fmtUtf16le;
-
-const w = std.os.windows;
 
 /// A copy of all ntdll declarations this program uses
 const nt = struct {
@@ -117,6 +116,8 @@ const k32 = struct {
     const GetExitCodeProcess = w.kernel32.GetExitCodeProcess;
     /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
     const GetConsoleMode = w.kernel32.GetConsoleMode;
+    /// https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-sethandleinformation
+    const SetHandleInformation = w.kernel32.SetHandleInformation;
     /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
     extern "kernel32" fn SetConsoleMode(
         hConsoleHandle: w.HANDLE, // [in]
@@ -129,7 +130,7 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
     if (!is_standalone) {
         bunDebugMessage(fmt, args);
     } else {
-        printError(fmt, args);
+        std.log.debug(fmt, args);
     }
 }
 
@@ -146,14 +147,17 @@ const FailReason = enum {
     InvalidShimDataSize,
     ShimNotFound,
     CreateProcessFailed,
+    /// When encountering this outside of standalone mode, you should fallback
+    /// to running the '.exe' file, not printing this error.
     InvalidShimValidation,
     InvalidShimBounds,
     CouldNotDirectLaunch,
     BinNotFound,
     InterpreterNotFound,
+    InterpreterNotFoundBun,
     ElevationRequired,
 
-    pub fn render(reason: FailReason) []const u8 {
+    pub fn getFormatTemplate(reason: FailReason) []const u8 {
         return switch (reason) {
             .NoDirname => "could not find node_modules path",
 
@@ -166,7 +170,8 @@ const FailReason = enum {
             // The difference between these two is that one is with a shebang (#!/usr/bin/env node) and
             // the other is without. This is a helpful distinction because it can detect if something
             // like node or bun is not in %path%, vs the actual executable was not installed in node_modules.
-            .InterpreterNotFound => "interpreter executable could not be found",
+            .InterpreterNotFound => "interpreter executable \"{s}\" not found in %PATH%",
+            .InterpreterNotFoundBun => "bun is not installed in %PATH%",
             .BinNotFound => "bin executable does not exist on disk",
             .ElevationRequired => "process requires elevation",
             .CreateProcessFailed => "could not create process",
@@ -174,9 +179,61 @@ const FailReason = enum {
             .CouldNotDirectLaunch => if (!is_standalone)
                 "bin metadata is corrupt (invalid utf16)"
             else
-                // Unreachable is ok because Direct Launch is not supported in standalone mode
+                // unreachable is ok because Direct Launch is not supported in standalone mode
                 unreachable,
         };
+    }
+
+    pub fn format(reason: FailReason, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (fmt.len != 0) @compileError("FailReason.format() only takes empty format string");
+
+        if (!is_standalone and bun.Environment.allow_assert and reason == .InvalidShimValidation) {
+            @panic("Internal Assertion: When encountering FailReason.InvalidShimValidation, you must not print the error, but rather fallback to running the .exe file");
+        }
+
+        try writer.writeAll("error: ");
+        switch (reason) {
+            inline else => |r| {
+                if (is_standalone and r == .CouldNotDirectLaunch)
+                    // unreachable is ok because Direct Launch is not supported in standalone mode
+                    unreachable;
+
+                const template = comptime getFormatTemplate(r) ++ "\n\n";
+
+                if (comptime std.mem.indexOf(u8, template, "{s}") != null) {
+                    try writer.print(template, .{failure_reason_argument.?});
+                    if (dbg) {
+                        failure_reason_argument = null;
+                    }
+                } else {
+                    try writer.writeAll(template);
+                }
+
+                const rest = switch (r) {
+                    .InterpreterNotFoundBun =>
+                    \\Please run the following command, or double check %PATH% is right.
+                    \\
+                    \\    powershell -c "irm bun.sh/install.ps1|iex"
+                    \\
+                    \\
+                    ,
+                    else =>
+                    \\Bun failed to remap this bin to its proper location within node_modules.
+                    \\This is an indication of a corrupted node_modules directory.
+                    \\
+                    \\Please run 'bun install --force' in the project root and try
+                    \\it again. If this message persists, please open an issue:
+                    \\https://github.com/oven-sh/bun/issues
+                    \\
+                    \\
+                };
+                try writer.writeAll(rest);
+            },
+        }
+    }
+
+    pub inline fn write(reason: FailReason, writer: anytype) !void {
+        return reason.format("", undefined, writer);
     }
 };
 
@@ -209,25 +266,10 @@ pub fn writeToHandle(handle: w.HANDLE, data: []const u8) error{}!usize {
 
 const NtWriter = std.io.Writer(w.HANDLE, error{}, writeToHandle);
 
-inline fn printError(comptime fmt: []const u8, args: anytype) void {
-    std.fmt.format(
-        NtWriter{
-            .context = @call(bun.callmod_inline, w.teb, .{})
-                .ProcessEnvironmentBlock
-                .ProcessParameters
-                .hStdError,
-        },
-        fmt,
-        args,
-    ) catch {};
-}
+var failure_reason_data: [512]u8 = undefined;
+var failure_reason_argument: ?[]const u8 = null;
 
-noinline fn fail(comptime reason: FailReason) noreturn {
-    @setCold(true);
-    failWithReason(reason);
-}
-
-noinline fn failWithReason(reason: FailReason) noreturn {
+noinline fn failAndExitWithReason(reason: FailReason) noreturn {
     @setCold(true);
 
     const console_handle = w.teb().ProcessEnvironmentBlock.ProcessParameters.hStdError;
@@ -237,26 +279,58 @@ noinline fn failWithReason(reason: FailReason) noreturn {
         _ = k32.SetConsoleMode(console_handle, mode);
     }
 
-    printError(
-        \\error: {s}
-        \\
-        \\Bun failed to remap this bin to it's proper location within node_modules.
-        \\This is an indication of a corrupted node_modules directory.
-        \\
-        \\Please run 'bun install --force' in the project root and try
-        \\it again. If this message persists, please open an issue:
-        \\https://github.com/oven-sh/bun/issues
-        \\
-        \\
-    , .{reason.render()});
+    reason.write(NtWriter{
+        .context = @call(callmod_inline, w.teb, .{})
+            .ProcessEnvironmentBlock
+            .ProcessParameters
+            .hStdError,
+    }) catch |e| {
+        if (builtin.mode == .Debug) {
+            std.debug.panic("Failed to write to stderr: {s}", .{@errorName(e)});
+        }
+    };
+
     nt.RtlExitUserProcess(255);
 }
 
 const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
 
-fn launcher(bun_ctx: anytype) noreturn {
+// This is used for CreateProcessW's lpCommandLine
+// "The maximum length of this string is 32,767 characters, including the Unicode terminating null character."
+const buf2_u16_len = 32767 + 1;
+
+pub const LauncherMode = enum {
+    launch,
+    read_without_launch,
+
+    /// Return type of `launcher`
+    fn RetType(comptime mode: LauncherMode) type {
+        return switch (mode) {
+            // See `tryStartupFromBunJS` for why this is `void` outside of standalone.
+            .launch => if (is_standalone) noreturn else void,
+            .read_without_launch => ReadWithoutLaunchResult,
+        };
+    }
+
+    fn FailRetType(comptime mode: LauncherMode) type {
+        return switch (mode) {
+            .launch => noreturn,
+            .read_without_launch => ReadWithoutLaunchResult,
+        };
+    }
+
+    noinline fn fail(comptime mode: LauncherMode, comptime reason: FailReason) mode.FailRetType() {
+        @setCold(true);
+        return switch (mode) {
+            .launch => failAndExitWithReason(reason),
+            .read_without_launch => ReadWithoutLaunchResult{ .err = reason },
+        };
+    }
+};
+
+fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     // peb! w.teb is a couple instructions of inline asm
-    const teb: *w.TEB = @call(bun.callmod_inline, w.teb, .{});
+    const teb: *w.TEB = @call(callmod_inline, w.teb, .{});
     const peb = teb.ProcessEnvironmentBlock;
     const ProcessParameters = peb.ProcessParameters;
     const CommandLine = ProcessParameters.CommandLine;
@@ -274,17 +348,12 @@ fn launcher(bun_ctx: anytype) noreturn {
     assert(@intFromPtr(cmd_line_u16.ptr) % 2 == 0); // alignment assumption
 
     if (dbg) {
-        debug("CommandLine: {}\n", .{fmt16(cmd_line_u16[0 .. cmd_line_b_len / 2])});
-        debug("ImagePathName: {}\n", .{fmt16(image_path_u16[0 .. image_path_b_len / 2])});
+        debug("CommandLine: {}", .{fmt16(cmd_line_u16[0 .. cmd_line_b_len / 2])});
+        debug("ImagePathName: {}", .{fmt16(image_path_u16[0 .. image_path_b_len / 2])});
     }
 
-    var buf1: [
-        w.PATH_MAX_WIDE + "\"\" ".len
-    ]u16 = undefined;
-
-    // This is used for CreateProcessW's lpCommandLine
-    // "The maximum length of this string is 32,767 characters, including the Unicode terminating null character."
-    var buf2: [32767 + 1]u16 = undefined;
+    var buf1: [w.PATH_MAX_WIDE + "\"\" ".len]u16 = undefined;
+    var buf2: [buf2_u16_len]u16 = undefined;
 
     const buf1_u8 = @as([*]u8, @ptrCast(&buf1[0]))[comptime buf1.len..];
     const buf1_u16 = @as([*]u16, @ptrCast(&buf1[0]))[comptime buf1.len / 2..];
@@ -302,7 +371,12 @@ fn launcher(bun_ctx: anytype) noreturn {
 
     // BUF1: '\??\C:\Users\dave\project\node_modules\.bin\hello.!!!!!!!!!!!!!!!!!!!!!!!!!!'
     const suffix = comptime (if (is_standalone) wliteral("exe") else wliteral("bunx"));
-    std.debug.assert(std.mem.endsWith(u16, image_path_u16, suffix));
+    if (dbg) if (!std.mem.endsWith(u16, image_path_u16, suffix)) {
+        std.debug.panic("assert failed: image path expected to end with {}, got {}", .{
+            std.unicode.fmtUtf16le(suffix),
+            std.unicode.fmtUtf16le(image_path_u16),
+        });
+    };
     const image_path_to_copy_b_len = image_path_b_len - 2 * suffix.len;
     @memcpy(
         buf1_u8[2 * nt_object_prefix.len ..][0..image_path_to_copy_b_len],
@@ -322,8 +396,8 @@ fn launcher(bun_ctx: anytype) noreturn {
             .MaximumLength = path_len_bytes,
             .Buffer = buf1_u16,
         };
-        if (dbg) debug("NtCreateFile({s})\n", .{fmt16(unicodeStringToU16(nt_name))});
-        if (dbg) debug("NtCreateFile({any})\n", .{(unicodeStringToU16(nt_name))});
+        if (dbg) debug("NtCreateFile({s})", .{fmt16(unicodeStringToU16(nt_name))});
+        if (dbg) debug("NtCreateFile({any})", .{(unicodeStringToU16(nt_name))});
         var attr = w.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
             .RootDirectory = null,
@@ -335,8 +409,8 @@ fn launcher(bun_ctx: anytype) noreturn {
         // NtCreateFile will fail for absolute paths if we do not pass an OBJECT name
         // so we need the prefix here. This is an extra sanity check.
         if (dbg) {
-            std.debug.assert(std.mem.startsWith(u16, unicodeStringToU16(nt_name), &nt_object_prefix));
-            std.debug.assert(std.mem.endsWith(u16, unicodeStringToU16(nt_name), comptime wliteral(".bunx")));
+            assert(std.mem.startsWith(u16, unicodeStringToU16(nt_name), &nt_object_prefix));
+            assert(std.mem.endsWith(u16, unicodeStringToU16(nt_name), comptime wliteral(".bunx")));
         }
         const rc = nt.NtCreateFile(
             &metadata_handle,
@@ -352,10 +426,10 @@ fn launcher(bun_ctx: anytype) noreturn {
             0,
         );
         if (rc != .SUCCESS) {
-            if (dbg) debug("error opening: {s}\n", .{@tagName(rc)});
+            if (dbg) debug("error opening: {s}", .{@tagName(rc)});
             if (rc == .OBJECT_NAME_NOT_FOUND)
-                fail(.ShimNotFound);
-            fail(.CouldNotOpenShim);
+                mode.fail(.ShimNotFound);
+            mode.fail(.CouldNotOpenShim);
         }
     } else {
         metadata_handle = bun_ctx.handle;
@@ -392,11 +466,11 @@ fn launcher(bun_ctx: anytype) noreturn {
         break :find_args cmd_line_u8[0..0];
     };
 
-    if (dbg) debug("UserArgs: '{s}' ({d} bytes)\n", .{ user_arguments_u8, user_arguments_u8.len });
+    if (dbg) debug("UserArgs: '{s}' ({d} bytes)", .{ user_arguments_u8, user_arguments_u8.len });
 
-    std.debug.assert(user_arguments_u8.len % 2 == 0);
-    std.debug.assert(user_arguments_u8.len != 2);
-    std.debug.assert(user_arguments_u8.len == 0 or user_arguments_u8[0] == ' ');
+    assert(user_arguments_u8.len % 2 == 0);
+    assert(user_arguments_u8.len != 2);
+    assert(user_arguments_u8.len == 0 or user_arguments_u8[0] == ' ');
 
     // Read the metadata file into the memory right after the image path.
     //
@@ -412,15 +486,18 @@ fn launcher(bun_ctx: anytype) noreturn {
     var read_ptr: [*]u16 = brk: {
         var left = image_path_b_len / 2 - (if (is_standalone) ".exe".len else ".bunx".len) - 1;
         var ptr: [*]u16 = buf1_u16[nt_object_prefix.len + left ..];
-        if (dbg) debug("left = {d}, at {}, after {}\n", .{ left, ptr[0], ptr[1] });
+        if (dbg) debug("left = {d}, at {}, after {}", .{ left, ptr[0], ptr[1] });
 
         // if this is false, potential out of bounds memory access
-        std.debug.assert(@intFromPtr(ptr) - left * @sizeOf(std.meta.Child(@TypeOf(ptr))) >= @intFromPtr(buf1_u16));
+        if (dbg)
+            assert(
+                @intFromPtr(ptr) - left * @sizeOf(std.meta.Child(@TypeOf(ptr))) >= @intFromPtr(buf1_u16),
+            );
         // we start our search right before the . as we know the extension is '.bunx'
-        std.debug.assert(ptr[1] == '.');
+        assert(ptr[1] == '.');
 
         while (true) {
-            if (dbg) debug("1 - {}\n", .{std.unicode.fmtUtf16le(ptr[0..1])});
+            if (dbg) debug("1 - {}", .{std.unicode.fmtUtf16le(ptr[0..1])});
             if (ptr[0] == '\\') {
                 left -= 1;
                 // ptr is of type [*]u16, which means -= operates on number of ITEMS, not BYTES
@@ -429,35 +506,37 @@ fn launcher(bun_ctx: anytype) noreturn {
             }
             left -= 1;
             if (left == 0) {
-                fail(.NoDirname);
+                return mode.fail(.NoDirname);
             }
             ptr -= 1;
-            std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
+            if (dbg)
+                assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
         }
         // inlined loop to do this again, because the completion case is different
         // using `inline for` caused comptime issues that made the code much harder to read
         while (true) {
-            if (dbg) debug("2 - {}\n", .{std.unicode.fmtUtf16le(ptr[0..1])});
+            if (dbg) debug("2 - {}", .{std.unicode.fmtUtf16le(ptr[0..1])});
             if (ptr[0] == '\\') {
-                // ptr is at the position marked s, so move forward one *character*
+                // ptr is at the position marked S, so move forward one *character*
                 break :brk ptr + 1;
             }
             left -= 1;
             if (left == 0) {
-                fail(.NoDirname);
+                return mode.fail(.NoDirname);
             }
             ptr -= 1;
-            std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
+            if (dbg)
+                assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
         }
-        comptime unreachable;
+        @compileError("unreachable - the loop breaks this entire block");
     };
-    std.debug.assert(read_ptr[0] != '\\');
-    std.debug.assert((read_ptr - 1)[0] == '\\');
+    assert(read_ptr[0] != '\\');
+    assert((read_ptr - 1)[0] == '\\');
 
     const read_max_len = buf1.len * 2 - (@intFromPtr(read_ptr) - @intFromPtr(buf1_u16));
 
-    if (dbg) debug("read_ptr = buf1 + {d}\n", .{(@intFromPtr(read_ptr) - @intFromPtr(buf1_u16))});
-    if (dbg) debug("max_read_len = {d}\n", .{read_max_len});
+    if (dbg) debug("read_ptr = buf1 + {d}", .{(@intFromPtr(read_ptr) - @intFromPtr(buf1_u16))});
+    if (dbg) debug("max_read_len = {d}", .{read_max_len});
 
     // Do the read!
     //
@@ -479,32 +558,38 @@ fn launcher(bun_ctx: anytype) noreturn {
         // In the context of this program, I don't think that is possible, but I will handle it
         read_max_len,
         else => |rc| {
-            if (dbg) debug("error reading: {s}\n", .{@tagName(rc)});
-            fail(.CouldNotReadShim);
+            if (dbg) debug("error reading: {s}", .{@tagName(rc)});
+            return mode.fail(.CouldNotReadShim);
         },
     };
 
     _ = nt.NtClose(metadata_handle);
 
-    if (dbg) debug("BufferAfterRead: '{}'\n", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
+    if (dbg) debug("BufferAfterRead: '{}'", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
 
     read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + read_len - @sizeOf(Flags));
     const flags: Flags = @as(*align(1) Flags, @ptrCast(read_ptr)).*;
 
     if (dbg) {
         const flags_u16: u16 = @as(*align(1) u16, @ptrCast(read_ptr)).*;
-        debug("FlagsInt: {d}\n", .{flags_u16});
+        debug("FlagsInt: {d}", .{flags_u16});
 
-        debug("Flags:\n", .{});
+        debug("Flags:", .{});
         inline for (comptime std.meta.fieldNames(Flags)) |name| {
-            debug("    {s}: {}\n", .{ name, @field(flags, name) });
+            debug("    {s}: {}", .{ name, @field(flags, name) });
         }
     }
 
-    if (!flags.isValid())
-        fail(.InvalidShimValidation);
+    if (!flags.isValid()) {
+        // We want to return control flow back into bun.exe's main code, so that it can fall
+        // back to the slow path. For more explanation, see the comment on top of `tryStartupFromBunJS`.
+        if (!is_standalone and mode == .launch)
+            return;
 
-    const spawn_command_line: [*:0]u16 = switch (flags.has_shebang) {
+        return mode.fail(.InvalidShimValidation);
+    }
+
+    var spawn_command_line: [*:0]u16 = switch (flags.has_shebang) {
         false => spawn_command_line: {
             // no shebang, which means the command line is simply going to be the joined file exe
             // followed by the existing command line.
@@ -559,8 +644,8 @@ fn launcher(bun_ctx: anytype) noreturn {
             const shebang_bin_path_len_bytes = shebang_metadata.bin_path_len_bytes;
 
             if (dbg) {
-                debug("bin_path_len_bytes: {}\n", .{shebang_metadata.bin_path_len_bytes});
-                debug("args_len_bytes: {}\n", .{shebang_metadata.args_len_bytes});
+                debug("bin_path_len_bytes: {}", .{shebang_metadata.bin_path_len_bytes});
+                debug("args_len_bytes: {}", .{shebang_metadata.args_len_bytes});
             }
 
             // magic number related to how BinLinkingShim.zig writes the metadata
@@ -572,9 +657,9 @@ fn launcher(bun_ctx: anytype) noreturn {
                 (@as(u64, shebang_arg_len_u8) +| @as(u64, shebang_bin_path_len_bytes)) + validation_length_offset != read_len)
             {
                 if (dbg)
-                    debug("read_len: {}\n", .{read_len});
+                    debug("read_len: {}", .{read_len});
 
-                fail(.InvalidShimBounds);
+                return mode.fail(.InvalidShimBounds);
             }
 
             if (!is_standalone and flags.is_node_or_bun and bun_ctx.force_use_bun) {
@@ -587,20 +672,22 @@ fn launcher(bun_ctx: anytype) noreturn {
                 //
                 // This optimization can save an additional ~10-20ms depending on the machine
                 // as we do not have to launch a second process.
-                if (dbg) debug("direct_launch_with_bun_js\n", .{});
+                if (dbg) debug("direct_launch_with_bun_js", .{});
                 // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-                //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^       ^ read_ptr
-                const launch_slice = buf1_u16[nt_object_prefix.len..][0 .. (@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) / 2 - shebang_arg_len_u8 - "\"".len];
+                //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^  ^ read_ptr
+                const len = (@intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - shebang_arg_len_u8) / 2 - nt_object_prefix.len - "\"\x00".len;
+                const launch_slice = buf1_u16[nt_object_prefix.len..][0..len :'"']; // assert we slice at the "
                 bun_ctx.direct_launch_with_bun_js(
                     launch_slice,
                     bun_ctx.cli_context,
                 );
-                fail(.CouldNotDirectLaunch);
+                return mode.fail(.CouldNotDirectLaunch);
             }
 
             // Copy the shebang bin path
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //                                                                  ^~~~^
+            //                                                                  ^ read_ptr
             // BUF2: 'node !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
             read_ptr = @ptrFromInt(@intFromPtr(read_ptr) - shebang_arg_len_u8);
             @memcpy(buf2_u8, @as([*]u8, @ptrCast(read_ptr))[0..shebang_arg_len_u8]);
@@ -610,36 +697,58 @@ fn launcher(bun_ctx: anytype) noreturn {
 
             // Copy the filename in. There is no leading " but there is a trailing "
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^   ^ read_ptr
+            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
-            const length_of_filename_u8 = @intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - nt_object_prefix.len - 6;
+            const length_of_filename_u8 = @intFromPtr(read_ptr) -
+                @intFromPtr(buf1_u8) - 2 * (nt_object_prefix.len + "\x00".len);
+            const filename = buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8];
+            if (dbg) {
+                const sliced = std.mem.bytesAsSlice(u16, filename);
+                debug("filename and quote: '{}'", .{fmt16(@alignCast(sliced))});
+                debug("last char of above is '{}'", .{sliced[sliced.len - 1]});
+                assert(sliced[sliced.len - 1] == '\"');
+            }
+
             @memcpy(
                 buf2_u8[shebang_arg_len_u8 + 2 * "\"".len ..][0..length_of_filename_u8],
-                buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8],
+                filename,
             );
+            // the pointer is now going to act as a write pointer for remaining data.
+            // note that it points into buf2 now, not buf1. this will write arguments and the null terminator
+            // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
+            //                                                                   ^ write_ptr
+            if (dbg) {
+                debug("advance = {} + {} + {}\n", .{ shebang_arg_len_u8, "\"".len, length_of_filename_u8 });
+            }
+            const advance = shebang_arg_len_u8 + 2 * "\"".len + length_of_filename_u8;
+            var write_ptr: [*]u16 = @ptrFromInt(@intFromPtr(buf2_u8) + advance);
+            assert((write_ptr - 1)[0] == '"');
 
-            // Copy the user arguments in:
-            // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags!!!!!!!!!!!'
-            //        ^~~~~X^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
-            //        |    |filename_len                                         where the user args go
-            //        |    the quote
-            //        shebang_arg_len
-            read_ptr = @ptrFromInt(@intFromPtr(buf2_u8) + length_of_filename_u8 + 2 * "\"\"".len + 2 * nt_object_prefix.len);
             if (user_arguments_u8.len > 0) {
-                @memcpy(@as([*]u8, @ptrCast(read_ptr)), user_arguments_u8);
-                read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + user_arguments_u8.len);
+                // Copy the user arguments in:
+                // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags!!!!!!!!!!!'
+                //        ^~~~~X^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+                //        |    |filename_len                                         write_ptr
+                //        |    the quote
+                //        shebang_arg_len
+                @memcpy(@as([*]u8, @ptrCast(write_ptr)), user_arguments_u8);
+                write_ptr = @ptrFromInt(@intFromPtr(write_ptr) + user_arguments_u8.len);
             }
 
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
             //                                                                           ^ null terminator
-            @as(*align(1) u16, @ptrCast(read_ptr)).* = 0;
+            write_ptr[0] = 0;
 
             break :spawn_command_line @ptrCast(buf2_u16);
         },
     };
 
-    if (dbg)
-        debug("lpCommandLine: {}\n", .{fmt16(std.mem.span(spawn_command_line))});
+    if (!is_standalone) {
+        // Prepare stdio for the child process, as after this we are going to *immediatly* exit
+        // it is likely that the c-runtime's atexit will not be called as we end the process ourselves.
+        bun.Output.Source.Stdio.restore();
+        bun.C.windows_enable_stdio_inheritance();
+    }
 
     // I attempted to use lower level methods for this, but it really seems
     // too difficult and not worth the stability risks.
@@ -671,55 +780,120 @@ fn launcher(bun_ctx: anytype) noreturn {
         .wShowWindow = 0,
         .cbReserved2 = 0,
         .lpReserved2 = null,
-        .hStdInput = ProcessParameters.hStdInput,
-        .hStdOutput = ProcessParameters.hStdOutput,
-        .hStdError = ProcessParameters.hStdError,
+        // The standard handles outside of standalone may be tampered with.
+        .hStdInput = if (is_standalone) ProcessParameters.hStdInput else bun.win32.STDIN_FD.cast(),
+        .hStdOutput = if (is_standalone) ProcessParameters.hStdOutput else bun.win32.STDOUT_FD.cast(),
+        .hStdError = if (is_standalone) ProcessParameters.hStdError else bun.win32.STDERR_FD.cast(),
     };
-    const did_process_spawn = k32.CreateProcessW(
-        null,
-        spawn_command_line,
-        null,
-        null,
-        1, // true
-        0,
-        null,
-        null,
-        &startup_info,
-        &process,
-    );
-    if (did_process_spawn == 0) {
-        const spawn_err = k32.GetLastError();
-        if (dbg) {
-            printError("CreateProcessW failed: {s}\n", .{@tagName(spawn_err)});
-        }
-        switch (spawn_err) {
-            .FILE_NOT_FOUND => if (flags.has_shebang)
-                fail(.InterpreterNotFound)
-            else
-                fail(.BinNotFound),
 
-            // TODO: ERROR_ELEVATION_REQUIRED must take a fallback path, this path is potentially slower:
-            // This likely will not be an issue anyone runs into for a while, because it implies
-            // the shebang depends on something that requires UAC, which .... why?
-            //
-            // https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/how-it-works#user
-            // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
-            .ELEVATION_REQUIRED => fail(.ElevationRequired),
+    inline for (.{ 0, 1 }) |attempt_number| iteration: {
+        if (dbg)
+            debug("lpCommandLine: {}\n", .{fmt16(std.mem.span(spawn_command_line))});
+        const did_process_spawn = k32.CreateProcessW(
+            null,
+            spawn_command_line,
+            null,
+            null,
+            1, // true
+            0,
+            null,
+            null,
+            &startup_info,
+            &process,
+        );
+        if (did_process_spawn == 0) {
+            const spawn_err = k32.GetLastError();
+            if (dbg) {
+                debug("CreateProcessW failed: {s}", .{@tagName(spawn_err)});
+                debug("attempt number: {d}", .{attempt_number});
+            }
+            return switch (spawn_err) {
+                .FILE_NOT_FOUND => if (flags.has_shebang) {
+                    if (attempt_number == 0) {
+                        if (flags.is_node) {
+                            if (dbg)
+                                debug("node is not found, changing to bun", .{});
 
-            else => fail(.CreateProcessFailed),
+                            if (!is_standalone) {
+                                // TODO: this is another place that direct_launch_with_bun_js should be used
+                            }
+
+                            // There are many packages that specifically call for node.exe, and Bun will respect that
+                            // but if node installed, this means the binary is unlaunchable. So before we fail,
+                            // we will try to launch it with bun.exe
+                            //
+                            // This is not an issue when using 'bunx' or 'bun run', because node.exe is already
+                            // added to the path synthetically through 'createFakeTemporaryNodeExecutable'. The path
+                            // here applies for when the binary is launched directly (user shell, double click, etc...)
+                            assert(flags.has_shebang);
+                            if (dbg)
+                                assert(std.mem.startsWith(u16, std.mem.span(spawn_command_line), comptime wliteral("node ")));
+
+                            // To go from node -> bun, it is a matter of writing three chars, and incrementing a pointer.
+                            //
+                            // lpCommandLine: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
+                            //                  ^~~ replace these three bytes with 'bun'
+                            @memcpy(spawn_command_line[1..][0..3], comptime wliteral("bun"));
+
+                            // lpCommandLine: 'nbun "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
+                            //                  ^ increment pointer by one char
+                            spawn_command_line += 1;
+
+                            break :iteration; // loop back
+                        }
+
+                        if (flags.is_node_or_bun) {
+                            // This script calls for 'bun', but it was not found.
+                            if (dbg)
+                                assert(std.mem.startsWith(u16, std.mem.span(spawn_command_line), comptime wliteral("bun ")));
+                            return mode.fail(.InterpreterNotFoundBun);
+                        }
+                    }
+
+                    // if attempt_number == 1, we already tried rewriting this to bun, and will now fail for real
+                    if (attempt_number == 1) {
+                        if (dbg)
+                            assert(std.mem.startsWith(u16, std.mem.span(spawn_command_line), comptime wliteral("bun ")));
+                        return mode.fail(.InterpreterNotFoundBun);
+                    }
+
+                    // This UTF16 -> UTF-8 conversion is intentionally very lossy, and assuming that ascii text is provided.
+                    // This trade off is made to reduce the binary size of the shim.
+                    failure_reason_argument = brk: {
+                        var i: u32 = 0;
+                        while (spawn_command_line[i] != ' ' and i < 512) : (i += 1) {
+                            failure_reason_data[i] = @as(u7, @truncate(spawn_command_line[i]));
+                        }
+                        break :brk failure_reason_data[0..i];
+                    };
+                    return mode.fail(.InterpreterNotFound);
+                } else return mode.fail(.BinNotFound),
+
+                // TODO: ERROR_ELEVATION_REQUIRED must take a fallback path, this path is potentially slower:
+                // This likely will not be an issue anyone runs into for a while, because it implies
+                // the shebang depends on something that requires UAC, which .... why?
+                //
+                // https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/how-it-works#user
+                // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
+                .ELEVATION_REQUIRED => return mode.fail(.ElevationRequired),
+
+                else => return mode.fail(.CreateProcessFailed),
+            };
         }
-        comptime unreachable;
+
+        _ = k32.WaitForSingleObject(process.hProcess, w.INFINITE);
+
+        var exit_code: w.DWORD = 255;
+        _ = k32.GetExitCodeProcess(process.hProcess, &exit_code);
+        if (dbg) debug("exit_code: {d}", .{exit_code});
+
+        _ = nt.NtClose(process.hProcess);
+        _ = nt.NtClose(process.hThread);
+
+        nt.RtlExitUserProcess(exit_code);
+        @compileError("unreachable - RtlExitUserProcess does not return");
     }
-
-    _ = k32.WaitForSingleObject(process.hProcess, w.INFINITE);
-
-    var exit_code: w.DWORD = 255;
-    _ = k32.GetExitCodeProcess(process.hProcess, &exit_code);
-
-    _ = nt.NtClose(process.hProcess);
-    _ = nt.NtClose(process.hThread);
-
-    nt.RtlExitUserProcess(exit_code);
+    @compileError("unreachable - above loop should not exit");
 }
 
 pub const FromBunRunContext = struct {
@@ -735,28 +909,68 @@ pub const FromBunRunContext = struct {
     /// Was --bun passed?
     force_use_bun: bool,
     /// A pointer to a function that can launch `Run.boot`
-    direct_launch_with_bun_js: *const fn (wpath: []u16, args: *CommandContext) void,
+    direct_launch_with_bun_js: *const fn (wpath: []u16, args: *const CommandContext) void,
     /// Command.Context
-    cli_context: *CommandContext,
+    cli_context: *const CommandContext,
+    /// Passed directly to CreateProcessW's lpEnvironment with CREATE_UNICODE_ENVIRONMENT
+    environment: ?[*]const u16,
 };
 
 /// This is called from run_command.zig in bun.exe which allows us to skip the CreateProcessW
 /// call to create bun_shim_impl.exe. Instead we invoke the logic it has from an open file handle.
 ///
-/// We pass in the context struct from above.
-///
 /// This saves ~5-12ms depending on the machine.
-pub fn startupFromBunJS(context: FromBunRunContext) noreturn {
-    std.debug.assert(!std.mem.startsWith(u16, context.base_path, &nt_object_prefix));
-    comptime std.debug.assert(!is_standalone);
-    launcher(context);
+///
+/// If the launch is successful, this function does not return. If a validation error occurs,
+/// this returns void, to which the caller should still try invoking the exe directly. This
+/// is to handle version mismatches where bun.exe's decoder is too new than the .bunx file.
+pub fn tryStartupFromBunJS(context: FromBunRunContext) void {
+    assert(!std.mem.startsWith(u16, context.base_path, &nt_object_prefix));
+    comptime assert(!is_standalone);
+    comptime assert(bun.FeatureFlags.windows_bunx_fast_path);
+    launcher(.launch, context);
+}
+
+pub const FromBunShellContext = struct {
+    /// Path like 'C:\Users\dave\project\node_modules\.bin\foo.bunx'
+    base_path: []u16,
+    /// Command line arguments which does NOT include the bin name:
+    /// like '--port 3000 --config ./config.json'
+    arguments: []u16,
+    /// Handle to the successfully opened metadata file
+    handle: w.HANDLE,
+    /// Was --bun passed?
+    force_use_bun: bool,
+    /// A pointer to memory needed to store the command line
+    buf: *Buf,
+
+    pub const Buf = [buf2_u16_len]u16;
+};
+
+pub const ReadWithoutLaunchResult = union {
+    err: FailReason, // enum which has a predefined custom formatter
+    command_line: []const u16,
+};
+
+/// Given the path and handle to a .bunx file, do everything needed to execute it,
+/// *except* for spawning it. This is used by the Bun shell to skip spawning the
+/// bun_shim_impl.exe executable. The returned command line is fed into the shell's
+/// method for launching a process.
+///
+/// The cost of spawning is about 5-12ms, and the unicode conversions are way
+/// faster than that, so this is a huge win.
+pub fn readWithoutLaunch(context: FromBunShellContext) ReadWithoutLaunchResult {
+    assert(!std.mem.startsWith(u16, context.base_path, &nt_object_prefix));
+    comptime assert(!is_standalone);
+    comptime assert(bun.FeatureFlags.windows_bunx_fast_path);
+    return launcher(.read_without_launch, context);
 }
 
 /// Main function for `bun_shim_impl.exe`
 pub inline fn main() noreturn {
-    comptime std.debug.assert(is_standalone);
-    comptime std.debug.assert(builtin.single_threaded);
-    comptime std.debug.assert(!builtin.link_libc);
-    comptime std.debug.assert(!builtin.link_libcpp);
-    launcher({});
+    comptime assert(is_standalone);
+    comptime assert(builtin.single_threaded);
+    comptime assert(!builtin.link_libc);
+    comptime assert(!builtin.link_libcpp);
+    launcher(.launch, {});
 }

@@ -122,7 +122,10 @@ pub const Sendfile = struct {
     content_size: usize = 0,
 
     pub fn isEligible(url: bun.URL) bool {
-        return url.isHTTP() and url.href.len > 0 and FeatureFlags.streaming_file_uploads_for_http_client;
+        if (comptime Environment.isWindows or !FeatureFlags.streaming_file_uploads_for_http_client) {
+            return false;
+        }
+        return url.isHTTP() and url.href.len > 0;
     }
 
     pub fn write(
@@ -632,6 +635,17 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return null;
         }
 
+        pub fn connectSocket(this: *@This(), client: *HTTPClient, socket_path: []const u8) !HTTPSocket {
+            client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
+            const socket = try HTTPSocket.connectUnixAnon(
+                socket_path,
+                this.us_socket_context,
+                ActiveSocket.init(client).ptr(),
+            );
+            client.allow_retry = false;
+            return socket;
+        }
+
         pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
             const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
                 "127.0.0.1"
@@ -653,18 +667,14 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
-            if (HTTPSocket.connectAnon(
+            const socket = try HTTPSocket.connectAnon(
                 hostname,
                 port,
                 this.us_socket_context,
-                undefined,
-            )) |socket| {
-                client.allow_retry = false;
-                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
-                return socket;
-            }
-
-            return error.FailedToOpenSocket;
+                ActiveSocket.init(client).ptr(),
+            );
+            client.allow_retry = false;
+            return socket;
         }
     };
 }
@@ -695,10 +705,6 @@ pub const HTTPThread = struct {
 
     const threadlog = Output.scoped(.HTTPThread, true);
 
-    const FakeStruct = struct {
-        trash: i64 = 0,
-    };
-
     pub fn init() !void {
         if (http_thread_loaded.swap(true, .SeqCst)) {
             return;
@@ -719,18 +725,17 @@ pub const HTTPThread = struct {
             .{
                 .stack_size = bun.default_thread_stack_size,
             },
-            comptime onStart,
-            .{
-                FakeStruct{},
-            },
+            onStart,
+            .{},
         );
         thread.detach();
     }
 
-    pub fn onStart(_: FakeStruct) void {
+    pub fn onStart() void {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
+
         const loop = bun.uws.Loop.create(struct {
             pub fn wakeup(_: *uws.Loop) callconv(.C) void {
                 http_thread.drainEvents();
@@ -738,6 +743,12 @@ pub const HTTPThread = struct {
             pub fn pre(_: *uws.Loop) callconv(.C) void {}
             pub fn post(_: *uws.Loop) callconv(.C) void {}
         });
+
+        if (Environment.isWindows) {
+            _ = std.os.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
+                std.debug.panic("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+            };
+        }
 
         http_thread.loop = loop;
         http_thread.http_context.init() catch @panic("Failed to init http context");
@@ -747,6 +758,10 @@ pub const HTTPThread = struct {
     }
 
     pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewHTTPContext(is_ssl).HTTPSocket {
+        if (client.unix_socket_path.length() > 0) {
+            return try this.context(is_ssl).connectSocket(client, client.unix_socket_path.slice());
+        }
+
         if (client.http_proxy) |url| {
             return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
         }
@@ -1314,6 +1329,8 @@ const Decompressor = union(enum) {
     }
 };
 
+// TODO: reduce the size of this struct
+// Many of these fields can be moved to a packed struct and use less space
 pub const InternalState = struct {
     response_message_buffer: MutableString = undefined,
     /// pending response is the temporary storage for the response headers, url and status code
@@ -1345,7 +1362,7 @@ pub const InternalState = struct {
     request_body: []const u8 = "",
     original_request_body: HTTPRequestBody = .{ .bytes = "" },
     request_sent_len: usize = 0,
-    fail: anyerror = error.NoError,
+    fail: ?anyerror = null,
     request_stage: HTTPStage = .pending,
     response_stage: HTTPStage = .pending,
     certificate_info: ?CertificateInfo = null,
@@ -1470,6 +1487,8 @@ pub const InternalState = struct {
 
 const default_redirect_count = 127;
 
+// TODO: reduce the size of this struct
+// Many of these fields can be moved to a packed struct and use less space
 method: Method,
 header_entries: Headers.Entries,
 header_buf: string,
@@ -1505,25 +1524,7 @@ async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
 reject_unauthorized: bool = true,
 
-pub fn init(
-    allocator: std.mem.Allocator,
-    method: Method,
-    url: URL,
-    header_entries: Headers.Entries,
-    header_buf: string,
-    hostname: ?[]u8,
-    signals: Signals,
-) HTTPClient {
-    return HTTPClient{
-        .allocator = allocator,
-        .method = method,
-        .url = url,
-        .header_entries = header_entries,
-        .header_buf = header_buf,
-        .hostname = hostname,
-        .signals = signals,
-    };
-}
+unix_socket_path: JSC.ZigString.Slice = JSC.ZigString.Slice.empty,
 
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
@@ -1538,10 +1539,14 @@ pub fn deinit(this: *HTTPClient) void {
         tunnel.deinit();
         this.proxy_tunnel = null;
     }
+    this.unix_socket_path.deinit();
+    this.unix_socket_path = JSC.ZigString.Slice.empty;
 }
 
 pub fn isKeepAlivePossible(this: *HTTPClient) bool {
     if (comptime FeatureFlags.enable_keepalive) {
+        // TODO keepalive for unix sockets
+        if (this.unix_socket_path.length() > 0) return false;
         // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
         if (this.http_proxy != null and this.url.isHTTPS()) {
             return false;
@@ -1740,6 +1745,8 @@ pub const AsyncHTTP = struct {
         this.response_headers = .{};
         this.request = null;
         this.response = null;
+        this.client.unix_socket_path.deinit();
+        this.client.unix_socket_path = JSC.ZigString.Slice.empty;
     }
 
     pub const State = enum(u32) {
@@ -1751,6 +1758,18 @@ pub const AsyncHTTP = struct {
     };
     const AtomicState = std.atomic.Value(State);
 
+    pub const Options = struct {
+        http_proxy: ?URL = null,
+        hostname: ?[]u8 = null,
+        signals: ?Signals = null,
+        unix_socket_path: ?JSC.ZigString.Slice = null,
+        disable_timeout: ?bool = null,
+        verbose: ?bool = null,
+        disable_keepalive: ?bool = null,
+        disable_decompression: ?bool = null,
+        reject_unauthorized: ?bool = null,
+    };
+
     pub fn init(
         allocator: std.mem.Allocator,
         method: Method,
@@ -1761,10 +1780,8 @@ pub const AsyncHTTP = struct {
         request_body: []const u8,
         timeout: usize,
         callback: HTTPClientResult.Callback,
-        http_proxy: ?URL,
-        hostname: ?[]u8,
         redirect_type: FetchRedirect,
-        signals: ?Signals,
+        options: Options,
     ) AsyncHTTP {
         var this = AsyncHTTP{
             .allocator = allocator,
@@ -1775,19 +1792,46 @@ pub const AsyncHTTP = struct {
             .request_body = .{ .bytes = request_body },
             .response_buffer = response_buffer,
             .result_callback = callback,
-            .http_proxy = http_proxy,
-            .signals = signals orelse .{},
-            .async_http_id = if (signals != null and signals.?.aborted != null) async_http_id.fetchAdd(1, .Monotonic) else 0,
+            .http_proxy = options.http_proxy,
+            .signals = options.signals orelse .{},
+            .async_http_id = if (options.signals != null and options.signals.?.aborted != null) async_http_id.fetchAdd(1, .Monotonic) else 0,
+            .timeout = timeout,
         };
 
-        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, hostname, signals orelse this.signals);
-        this.client.async_http_id = this.async_http_id;
-        this.client.timeout = timeout;
-        this.client.http_proxy = this.http_proxy;
-        this.client.redirect_type = redirect_type;
-        this.timeout = timeout;
+        this.client = .{
+            .allocator = allocator,
+            .method = method,
+            .url = url,
+            .header_entries = headers,
+            .header_buf = headers_buf,
+            .hostname = options.hostname,
+            .signals = options.signals orelse this.signals,
+            .async_http_id = this.async_http_id,
+            .timeout = timeout,
+            .http_proxy = this.http_proxy,
+            .redirect_type = redirect_type,
+        };
+        if (options.unix_socket_path) |val| {
+            std.debug.assert(this.client.unix_socket_path.length() == 0);
+            this.client.unix_socket_path = val;
+        }
+        if (options.disable_timeout) |val| {
+            this.client.disable_timeout = val;
+        }
+        if (options.verbose) |val| {
+            this.client.verbose = val;
+        }
+        if (options.disable_decompression) |val| {
+            this.client.disable_decompression = val;
+        }
+        if (options.disable_keepalive) |val| {
+            this.client.disable_keepalive = val;
+        }
+        if (options.reject_unauthorized) |val| {
+            this.client.reject_unauthorized = val;
+        }
 
-        if (http_proxy) |proxy| {
+        if (options.http_proxy) |proxy| {
             // Username between 0 and 4096 chars
             if (proxy.username.len > 0 and proxy.username.len < 4096) {
                 // Password between 0 and 4096 chars
@@ -1847,21 +1891,10 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
-        return @This().init(
-            allocator,
-            method,
-            url,
-            headers,
-            headers_buf,
-            response_buffer,
-            request_body,
-            timeout,
-            undefined,
-            http_proxy,
-            hostname,
-            redirect_type,
-            null,
-        );
+        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, redirect_type, .{
+            .http_proxy = http_proxy,
+            .hostname = hostname,
+        });
     }
 
     fn reset(this: *AsyncHTTP) !void {
@@ -1957,13 +1990,9 @@ pub const AsyncHTTP = struct {
         http_thread.schedule(batch);
         while (true) {
             const result: HTTPClientResult = ctx.channel.readItem() catch unreachable;
-            if (!result.isSuccess()) {
-                return result.fail;
-            }
+            if (result.fail) |e| return e;
             std.debug.assert(result.metadata != null);
-            if (result.metadata) |metadata| {
-                return metadata.response;
-            }
+            return result.metadata.?.response;
         }
 
         unreachable;
@@ -1974,6 +2003,8 @@ pub const AsyncHTTP = struct {
 
         var callback = this.result_callback;
         this.elapsed = http_thread.timer.read() -| this.elapsed;
+        // TODO: this condition seems wrong: if we started with a non-default value, we might
+        // report a redirect even if none happened
         this.redirected = this.client.remaining_redirect_count != default_redirect_count;
         if (result.isSuccess()) {
             this.err = null;
@@ -2140,6 +2171,9 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 }
 
 pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    this.unix_socket_path.deinit();
+    this.unix_socket_path = JSC.ZigString.Slice.empty;
+
     this.state.response_message_buffer.deinit();
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
     socket.ext(**anyopaque).?.* = bun.cast(
@@ -2162,6 +2196,8 @@ pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext
     this.remaining_redirect_count -|= 1;
     std.debug.assert(this.redirect_type == FetchRedirect.follow);
 
+    // TODO: should this check be before decrementing the redirect count?
+    // the current logic will allow one less redirect than requested
     if (this.remaining_redirect_count == 0) {
         this.fail(error.TooManyRedirects);
         return;
@@ -2218,13 +2254,18 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     }
 
     var socket = http_thread.connect(this, is_ssl) catch |err| {
+        if (Environment.isDebug) {
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
+        }
         this.fail(err);
         return;
     };
 
     if (socket.isClosed() and (this.state.response_stage != .done and this.state.response_stage != .fail)) {
         this.fail(error.ConnectionClosed);
-        std.debug.assert(this.state.fail != error.NoError);
+        std.debug.assert(this.state.fail != null);
         return;
     }
 }
@@ -2944,7 +2985,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const body = out_str.*;
         const result = this.toResult();
         const is_done = !result.has_more;
-        if (this.state.is_redirect_pending and this.state.fail == error.NoError) {
+        if (this.state.is_redirect_pending and this.state.fail == null) {
             if (this.state.isDone()) {
                 this.doRedirect(is_ssl, ctx, socket);
             }
@@ -2996,7 +3037,8 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
 pub const HTTPClientResult = struct {
     body: ?*MutableString = null,
     has_more: bool = false,
-    fail: anyerror = error.NoError,
+    fail: ?anyerror = null,
+
     /// Owns the response metadata aka headers, url and status code
     metadata: ?HTTPResponseMetadata = null,
 
@@ -3015,15 +3057,15 @@ pub const HTTPClientResult = struct {
     };
 
     pub fn isSuccess(this: *const HTTPClientResult) bool {
-        return this.fail == error.NoError;
+        return this.fail == null;
     }
 
     pub fn isTimeout(this: *const HTTPClientResult) bool {
-        return this.fail == error.Timeout;
+        return if (this.fail) |e| e == error.Timeout else false;
     }
 
     pub fn isAbort(this: *const HTTPClientResult) bool {
-        return this.fail == error.Aborted;
+        return if (this.fail) |e| e == error.Aborted else false;
     }
 
     pub const Callback = struct {
@@ -3076,7 +3118,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .redirected = this.remaining_redirect_count != default_redirect_count,
             .fail = this.state.fail,
             // check if we are reporting cert errors, do not have a fail state and we are not done
-            .has_more = this.state.fail == error.NoError and !this.state.isDone(),
+            .has_more = this.state.fail == null and !this.state.isDone(),
             .body_size = body_size,
             .certificate_info = null,
         };
@@ -3086,7 +3128,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .metadata = null,
         .fail = this.state.fail,
         // check if we are reporting cert errors, do not have a fail state and we are not done
-        .has_more = certificate_info != null or (this.state.fail == error.NoError and !this.state.isDone()),
+        .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
         .body_size = body_size,
         .certificate_info = certificate_info,
     };
@@ -3529,6 +3571,10 @@ pub fn handleResponseMetadata(
 
                             const normalized_url = JSC.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
                             defer normalized_url.deref();
+                            if (normalized_url.tag == .Dead) {
+                                // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
+                                return error.RedirectURLInvalid;
+                            }
                             const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);

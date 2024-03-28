@@ -5,8 +5,7 @@ const constants = $processBindingConstants.fs;
 const EventEmitter = require("node:events");
 
 var PromisePrototypeThen = Promise.prototype.then;
-var PromiseResolve = Promise.resolve;
-var SafePromisePrototypeFinally = Promise.prototype.finally; //TODO
+var PromisePrototypeFinally = Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
 var ObjectFreeze = Object.freeze;
 
@@ -23,11 +22,6 @@ const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 
 var fs = Bun.fs();
-
-// note: this is not quite the same as how node does it
-// in some cases, node swaps around arguments or makes small tweaks to the return type
-// this is just better than nothing.
-const notrace = "::bunternal::";
 
 function watch(
   filename: string | Buffer | URL,
@@ -102,7 +96,6 @@ function watch(
   };
 }
 
-let lazy_cp: any = null;
 // attempt to use the native code version if possible
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
@@ -112,8 +105,7 @@ function cp(src, dest, options) {
     throw new TypeError("options must be an object");
   }
   if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    if (!lazy_cp) lazy_cp = require("../internal/fs/cp-sync");
-    return lazy_cp!(src, dest, options);
+    return require("../internal/fs/cp")(src, dest, options);
   }
   return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
@@ -149,12 +141,20 @@ class Dir {
     }
   }
 }
+
 async function opendir(dir: string) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   return new Dir(entries, dir);
 }
 
-const real_export = {
+const private_symbols = {
+  kRef,
+  kUnref,
+  kFd,
+  FileHandle: null,
+};
+
+const exports = {
   access: fs.access.bind(fs),
   appendFile: fs.appendFile.bind(fs),
   close: fs.close.bind(fs),
@@ -177,8 +177,7 @@ const real_export = {
   mkdir: fs.mkdir.bind(fs),
   mkdtemp: fs.mkdtemp.bind(fs),
   open: async (path, flags, mode) => {
-    const fd = await fs.open(path, flags, mode);
-    return new FileHandle(fd);
+    return new FileHandle(await fs.open(path, flags, mode));
   },
   read: fs.read.bind(fs),
   write: fs.write.bind(fs),
@@ -213,276 +212,315 @@ const real_export = {
   },
   constants,
   watch,
-
   opendir,
+
+  // "$data" is reuse of private symbol
+  // this is used to export the private symbols to 'fs.js' without making it public.
+  $data: private_symbols,
 };
-export default real_export;
+export default exports;
 
-// Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
-class FileHandle extends EventEmitter {
-  constructor(fd) {
-    super();
-    this[kFd] = fd ? fd : -1;
-    this[kRefs] = 1;
-    this[kClosePromise] = null;
-  }
+{
+  const {
+    writeFile,
+    readFile,
+    fchmod,
+    fchown,
+    fdatasync,
+    fsync,
+    read,
+    readv,
+    fstat,
+    ftruncate,
+    futimes,
+    write,
+    writev,
+    close,
+  } = exports;
 
-  getAsyncId() {
-    throw new Error("BUN TODO FileHandle.getAsyncId");
-  }
-
-  get fd() {
-    return this[kFd];
-  }
-
-  appendFile(data, options) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.writeFile, fd);
-
-    try {
-      this[kRef]();
-      return real_export.writeFile(fd, data, options);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  chmod(mode) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.fchmod, fd);
-
-    try {
-      this[kRef]();
-      return real_export.fchmod(fd, mode);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  chown(uid, gid) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.fchown, fd);
-
-    try {
-      this[kRef]();
-      return real_export.fchown(fd, uid, gid);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  datasync() {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.fdatasync, fd);
-
-    try {
-      this[kRef]();
-      return real_export.fdatasync(fd);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  sync() {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.fsync, fd);
-
-    try {
-      this[kRef]();
-      return real_export.fsync(fd);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  read(buffer, offset, length, position) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.read, fd);
-
-    try {
-      this[kRef]();
-      return real_export.read(fd, buffer, offset, length, position);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  readv(buffers, position) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.readv, fd);
-
-    try {
-      this[kRef]();
-      return real_export.readv(fd, buffers, position);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  readFile(options) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.readFile, fd);
-
-    try {
-      this[kRef]();
-      return real_export.readFile(fd, options);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  readLines(options = undefined) {
-    throw new Error("BUN TODO FileHandle.readLines");
-  }
-
-  stat(options) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.fstat, fd);
-
-    try {
-      this[kRef]();
-      return real_export.fstat(fd, options);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  truncate(len = 0) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.ftruncate, fd);
-
-    try {
-      this[kRef]();
-      return real_export.ftruncate(fd, len);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  utimes(atime, mtime) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.futimes, fd);
-
-    try {
-      this[kRef]();
-      return real_export.futimes(fd, atime, mtime);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  write(buffer, offset, length, position) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.write, fd);
-
-    try {
-      this[kRef]();
-      return real_export.write(fd, buffer, offset, length, position);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  writev(buffers, position) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.writev, fd);
-
-    try {
-      this[kRef]();
-      return real_export.writev(fd, buffers, position);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  writeFile(data, options) {
-    const fd = this[kFd];
-    throwEBADFIfNecessary(real_export.writeFile, fd);
-
-    try {
-      this[kRef]();
-      return real_export.writeFile(fd, data, options);
-    } finally {
-      this[kUnref]();
-    }
-  }
-
-  close() {
-    if (this[kFd] === -1) {
-      return PromiseResolve();
+  // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
+  // These functions await the result so that errors propagate correctly with
+  // async stack traces and so that the ref counting is correct.
+  var FileHandle = (private_symbols.FileHandle = class FileHandle extends EventEmitter {
+    constructor(fd) {
+      super();
+      this[kFd] = fd ? fd : -1;
+      this[kRefs] = 1;
+      this[kClosePromise] = null;
     }
 
-    if (this[kClosePromise]) {
-      return this[kClosePromise];
+    getAsyncId() {
+      throw new Error("BUN TODO FileHandle.getAsyncId");
     }
 
-    this[kRefs]--;
-    if (this[kRefs] === 0) {
-      this[kClosePromise] = SafePromisePrototypeFinally.$call(real_export.close(this[kFd]), () => {
-        this[kClosePromise] = undefined;
-      });
-    } else {
-      this[kClosePromise] = SafePromisePrototypeFinally.$call(
-        new Promise((resolve, reject) => {
-          this[kCloseResolve] = resolve;
-          this[kCloseReject] = reject;
-        }),
-        () => {
+    get fd() {
+      return this[kFd];
+    }
+
+    async appendFile(data, options) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(writeFile, fd);
+
+      try {
+        this[kRef]();
+        return await writeFile(fd, data, options);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async chmod(mode) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fchmod, fd);
+
+      try {
+        this[kRef]();
+        return await fchmod(fd, mode);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async chown(uid, gid) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fchown, fd);
+
+      try {
+        this[kRef]();
+        return await fchown(fd, uid, gid);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async datasync() {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fdatasync, fd);
+
+      try {
+        this[kRef]();
+        return await fdatasync(fd);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async sync() {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fsync, fd);
+
+      try {
+        this[kRef]();
+        return await fsync(fd);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async read(buffer, offset, length, position) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(read, fd);
+
+      try {
+        this[kRef]();
+        return { buffer, bytesRead: await read(fd, buffer, offset, length, position) };
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async readv(buffers, position) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(readv, fd);
+
+      try {
+        this[kRef]();
+        return await readv(fd, buffers, position);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async readFile(options) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(readFile, fd);
+
+      try {
+        this[kRef]();
+        return await readFile(fd, options);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    readLines(options = undefined) {
+      throw new Error("BUN TODO FileHandle.readLines");
+    }
+
+    async stat(options) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fstat, fd);
+
+      try {
+        this[kRef]();
+        return await fstat(fd, options);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async truncate(len = 0) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(ftruncate, fd);
+
+      try {
+        this[kRef]();
+        return await ftruncate(fd, len);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async utimes(atime, mtime) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(futimes, fd);
+
+      try {
+        this[kRef]();
+        return await futimes(fd, atime, mtime);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async write(buffer, offset, length, position) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(write, fd);
+
+      try {
+        this[kRef]();
+        return { buffer, bytesWritten: await write(fd, buffer, offset, length, position) };
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async writev(buffers, position) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(writev, fd);
+
+      try {
+        this[kRef]();
+        return await writev(fd, buffers, position);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    async writeFile(data, options) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(writeFile, fd);
+
+      try {
+        this[kRef]();
+        return await writeFile(fd, data, options);
+      } finally {
+        this[kUnref]();
+      }
+    }
+
+    close = () => {
+      const fd = this[kFd];
+      if (fd === -1) {
+        return Promise.resolve();
+      }
+
+      if (this[kClosePromise]) {
+        return this[kClosePromise];
+      }
+
+      if (--this[kRefs] === 0) {
+        this[kFd] = -1;
+        this[kClosePromise] = PromisePrototypeFinally.$call(close(fd), () => {
           this[kClosePromise] = undefined;
-          this[kCloseReject] = undefined;
-          this[kCloseResolve] = undefined;
-        },
-      );
+        });
+      } else {
+        this[kClosePromise] = PromisePrototypeFinally.$call(
+          new Promise((resolve, reject) => {
+            this[kCloseResolve] = resolve;
+            this[kCloseReject] = reject;
+          }),
+          () => {
+            this[kClosePromise] = undefined;
+            this[kCloseReject] = undefined;
+            this[kCloseResolve] = undefined;
+          },
+        );
+      }
+
+      this.emit("close");
+      return this[kClosePromise];
+    };
+
+    async [SymbolAsyncDispose]() {
+      return this.close();
     }
 
-    this.emit("close");
-    return this[kClosePromise];
-  }
+    readableWebStream(options = kEmptyObject) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fs.createReadStream, fd);
 
-  async [SymbolAsyncDispose]() {
-    return this.close();
-  }
-
-  readableWebStream(options = kEmptyObject) {
-    throw new Error("BUN TODO FileHandle.readableWebStream");
-  }
-
-  createReadStream(options = undefined) {
-    throw new Error("BUN TODO FileHandle.createReadStream");
-  }
-
-  createWriteStream(options = undefined) {
-    throw new Error("BUN TODO FileHandle.createWriteStream");
-  }
-
-  [kTransfer]() {
-    throw new Error("BUN TODO FileHandle.kTransfer");
-  }
-
-  [kTransferList]() {
-    throw new Error("BUN TODO FileHandle.kTransferList");
-  }
-
-  [kDeserialize]({ handle }) {
-    throw new Error("BUN TODO FileHandle.kDeserialize");
-  }
-
-  [kRef]() {
-    this[kRefs]++;
-  }
-
-  [kUnref]() {
-    this[kRefs]--;
-    if (this[kRefs] === 0) {
-      PromisePrototypeThen(this.close(), this[kCloseResolve], this[kCloseReject]);
+      return Bun.file(fd).stream();
     }
-  }
+
+    createReadStream(options = kEmptyObject) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fs.createReadStream, fd);
+      return require("node:fs").createReadStream("", {
+        fd: this,
+        highWaterMark: 64 * 1024,
+        ...options,
+      });
+    }
+
+    createWriteStream(options = kEmptyObject) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fs.createWriteStream, fd);
+      return require("node:fs").createWriteStream("", {
+        fd: this,
+        ...options,
+      });
+    }
+
+    [kTransfer]() {
+      throw new Error("BUN TODO FileHandle.kTransfer");
+    }
+
+    [kTransferList]() {
+      throw new Error("BUN TODO FileHandle.kTransferList");
+    }
+
+    [kDeserialize]({ handle }) {
+      throw new Error("BUN TODO FileHandle.kDeserialize");
+    }
+
+    [kRef]() {
+      this[kRefs]++;
+    }
+
+    [kUnref]() {
+      if (--this[kRefs] === 0) {
+        this[kFd] = -1;
+        this.close().$then(this[kCloseResolve], this[kCloseReject]);
+      }
+    }
+  });
 }
 
 function throwEBADFIfNecessary(fn, fd) {
   if (fd === -1) {
     // eslint-disable-next-line no-restricted-syntax
-    const err = new Error("file closed");
+    const err = new Error("Bad file descriptor");
     err.code = "EBADF";
     err.name = "SystemError";
     err.syscall = fn.name;

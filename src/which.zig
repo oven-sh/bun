@@ -58,7 +58,11 @@ const win_extensionsW = .{
     bun.strings.w("cmd"),
     bun.strings.w("bat"),
 };
-const win_extensions = .{ "exe", "cmd", "bat" };
+const win_extensions = .{
+    "exe",
+    "cmd",
+    "bat",
+};
 
 pub fn endsWithExtension(str: []const u8) bool {
     if (str.len < 4) return false;
@@ -73,8 +77,11 @@ pub fn endsWithExtension(str: []const u8) bool {
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by whichWin)
 fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: bool) ?[:0]const u16 {
-    if (bun.sys.existsOSPath(buf[0..path_size :0], true))
-        return buf[0..path_size :0];
+    if (!check_windows_extensions)
+        // On Windows, files without extensions are not executable
+        // Therefore, we should only care about this check when the file already has an extension.
+        if (bun.sys.existsOSPath(buf[0..path_size :0], true))
+            return buf[0..path_size :0];
 
     if (check_windows_extensions) {
         buf[path_size] = '.';
@@ -132,14 +139,10 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
     }
 
     // iterate over system path delimiter
-    var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
-    while (path_iter.next()) |_segment| {
-        // we also iterate over ':' to match linux behavior
-        var segment_iter = std.mem.tokenizeScalar(u8, _segment, ':');
-        while (segment_iter.next()) |segment_part| {
-            if (searchBinInPath(buf, &path_buf, segment_part, bin, check_windows_extensions)) |bin_path| {
-                return bin_path;
-            }
+    var path_iter = std.mem.tokenizeScalar(u8, path, ';');
+    while (path_iter.next()) |segment_part| {
+        if (searchBinInPath(buf, &path_buf, segment_part, bin, check_windows_extensions)) |bin_path| {
+            return bin_path;
         }
     }
 

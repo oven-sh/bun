@@ -29,8 +29,7 @@ export function initializeReadableStream(
   underlyingSource: UnderlyingSource,
   strategy: QueuingStrategy,
 ) {
-  if (underlyingSource === undefined)
-    underlyingSource = { $bunNativeType: 0, $bunNativePtr: 0, $lazy: false } as UnderlyingSource;
+  if (underlyingSource === undefined) underlyingSource = { $bunNativePtr: undefined, $lazy: false } as UnderlyingSource;
   if (strategy === undefined) strategy = {};
 
   if (!$isObject(underlyingSource)) throw new TypeError("ReadableStream constructor takes an object as first argument");
@@ -44,12 +43,11 @@ export function initializeReadableStream(
 
   $putByIdDirectPrivate(this, "storedError", undefined);
 
-  $putByIdDirectPrivate(this, "disturbed", false);
+  this.$disturbed = false;
 
   // Initialized with null value to enable distinction with undefined case.
   $putByIdDirectPrivate(this, "readableStreamController", null);
-  $putByIdDirectPrivate(this, "bunNativeType", $getByIdDirectPrivate(underlyingSource, "bunNativeType") ?? 0);
-  $putByIdDirectPrivate(this, "bunNativePtr", $getByIdDirectPrivate(underlyingSource, "bunNativePtr") ?? 0);
+  this.$bunNativePtr = $getByIdDirectPrivate(underlyingSource, "bunNativePtr") ?? undefined;
 
   $putByIdDirectPrivate(this, "asyncContext", $getInternalField($asyncContext, 0));
 
@@ -300,10 +298,10 @@ export function createUsedReadableStream() {
 }
 
 $linkTimeConstant;
-export function createNativeReadableStream(nativePtr, nativeType, autoAllocateChunkSize) {
+export function createNativeReadableStream(nativePtr, autoAllocateChunkSize) {
+  $assert(nativePtr, "nativePtr must be a valid pointer");
   return new ReadableStream({
     $lazy: true,
-    $bunNativeType: nativeType,
     $bunNativePtr: nativePtr,
     autoAllocateChunkSize: autoAllocateChunkSize,
   });

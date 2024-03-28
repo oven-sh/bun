@@ -147,6 +147,10 @@ export interface BundlerTestInput {
   assetNaming?: string;
   banner?: string;
   define?: Record<string, string | number>;
+
+  /** Use for resolve custom conditions */
+  conditions?: string[];
+
   /** Default is "[name].[ext]" */
   entryNaming?: string;
   /** Default is "[name]-[hash].[ext]" */
@@ -397,6 +401,7 @@ function expectBundled(
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
     useDefineForClassFields,
+    conditions,
     // @ts-expect-error
     _referenceFn,
     ...unknownProps
@@ -580,6 +585,7 @@ function expectBundled(
               `--target=${target}`,
               // `--format=${format}`,
               external && external.map(x => ["--external", x]),
+              conditions && conditions.map(x => ["--conditions", x]),
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
@@ -616,6 +622,7 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
               external && external.map(x => `--external:${x}`),
+              conditions && `--conditions=${conditions.join(",")}`,
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
               `--jsx=${jsx.runtime === "classic" ? "transform" : "automatic"}`,
@@ -899,6 +906,10 @@ function expectBundled(
           target,
           publicPath,
         } as BuildConfig;
+
+        if (conditions?.length) {
+          buildConfig.conditions = conditions;
+        }
 
         if (DEBUG) {
           if (_referenceFn) {

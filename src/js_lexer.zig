@@ -73,6 +73,8 @@ pub const JSONOptions = struct {
 
     /// mark as originally for a macro to enable inlining
     was_originally_macro: bool = false,
+
+    always_decode_escape_sequences: bool = false,
 };
 
 pub fn decodeUTF8(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
@@ -99,6 +101,7 @@ pub fn NewLexer(
         json_options.ignore_trailing_escape_sequences,
         json_options.json_warn_duplicate_keys,
         json_options.was_originally_macro,
+        json_options.always_decode_escape_sequences,
     );
 }
 
@@ -110,6 +113,7 @@ fn NewLexer_(
     comptime json_options_ignore_trailing_escape_sequences: bool,
     comptime json_options_json_warn_duplicate_keys: bool,
     comptime json_options_was_originally_macro: bool,
+    comptime json_options_always_decode_escape_sequences: bool,
 ) type {
     const json_options = JSONOptions{
         .is_json = json_options_is_json,
@@ -119,6 +123,7 @@ fn NewLexer_(
         .ignore_trailing_escape_sequences = json_options_ignore_trailing_escape_sequences,
         .json_warn_duplicate_keys = json_options_json_warn_duplicate_keys,
         .was_originally_macro = json_options_was_originally_macro,
+        .always_decode_escape_sequences = json_options_always_decode_escape_sequences,
     };
     return struct {
         const LexerType = @This();
@@ -666,11 +671,17 @@ fn NewLexer_(
         pub const InnerStringLiteral = packed struct { suffix_len: u3, needs_slow_path: bool };
 
         fn parseStringLiteralInnter(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
+            const check_for_backslash = comptime is_json and json_options.always_decode_escape_sequences;
             var needs_slow_path = false;
             var suffix_len: u3 = if (comptime quote == 0) 0 else 1;
+            var has_backslash: if (check_for_backslash) bool else void = if (check_for_backslash) false else {};
             stringLiteral: while (true) {
                 switch (lexer.code_point) {
                     '\\' => {
+                        if (comptime check_for_backslash) {
+                            has_backslash = true;
+                        }
+
                         lexer.step();
 
                         // Handle Windows CRLF
@@ -783,6 +794,8 @@ fn NewLexer_(
 
                 lexer.step();
             }
+
+            if (comptime check_for_backslash) needs_slow_path = needs_slow_path or has_backslash;
 
             return InnerStringLiteral{ .needs_slow_path = needs_slow_path, .suffix_len = suffix_len };
         }
@@ -2001,7 +2014,7 @@ fn NewLexer_(
             }
 
             if (comptime Environment.allow_assert)
-                std.debug.assert(rest.len == 0 or bun.isSliceInBuffer(u8, rest, text));
+                std.debug.assert(rest.len == 0 or bun.isSliceInBuffer(rest, text));
 
             while (rest.len > 0) {
                 const c = rest[0];

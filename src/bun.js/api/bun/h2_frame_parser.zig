@@ -68,6 +68,8 @@ const SettingsType = enum(u16) {
     SETTINGS_INITIAL_WINDOW_SIZE = 0x4,
     SETTINGS_MAX_FRAME_SIZE = 0x5,
     SETTINGS_MAX_HEADER_LIST_SIZE = 0x6,
+    SETTINGS_ENABLE_CONNECT_PROTOCOL = 0x8,
+    SETTINGS_NO_RFC7540_PRIORITIES = 0x9,
 };
 
 const UInt31WithReserved = packed struct(u32) {
@@ -149,7 +151,7 @@ const SettingsPayloadUnit = packed struct(u48) {
     }
 };
 
-const FullSettingsPayload = packed struct(u288) {
+const FullSettingsPayload = packed struct(u384) {
     _headerTableSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_HEADER_TABLE_SIZE),
     headerTableSize: u32 = 4096,
     _enablePushType: u16 = @intFromEnum(SettingsType.SETTINGS_ENABLE_PUSH),
@@ -162,17 +164,24 @@ const FullSettingsPayload = packed struct(u288) {
     maxFrameSize: u32 = 16384,
     _maxHeaderListSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_MAX_HEADER_LIST_SIZE),
     maxHeaderListSize: u32 = 65535,
+    _enableConnectProtocol: u16 = @intFromEnum(SettingsType.SETTINGS_ENABLE_CONNECT_PROTOCOL),
+    enableConnectProtocol: u32 = 1,
 
-    pub const byteSize: usize = 36;
+    // not added to the settings js object
+    _noRFC7540Priorities: u16 = @intFromEnum(SettingsType.SETTINGS_NO_RFC7540_PRIORITIES),
+    noRFC7540Priorities: u32 = 1,
+
+    pub const byteSize: usize = 48;
     pub fn toJS(this: *FullSettingsPayload, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        var result = JSValue.createEmptyObject(globalObject, 6);
+        var result = JSValue.createEmptyObject(globalObject, 8);
         result.put(globalObject, JSC.ZigString.static("headerTableSize"), JSC.JSValue.jsNumber(this.headerTableSize));
-        result.put(globalObject, JSC.ZigString.static("enablePush"), JSC.JSValue.jsBoolean(this.enablePush == 1));
+        result.put(globalObject, JSC.ZigString.static("enablePush"), JSC.JSValue.jsBoolean(this.enablePush > 0));
         result.put(globalObject, JSC.ZigString.static("maxConcurrentStreams"), JSC.JSValue.jsNumber(this.maxConcurrentStreams));
         result.put(globalObject, JSC.ZigString.static("initialWindowSize"), JSC.JSValue.jsNumber(this.initialWindowSize));
         result.put(globalObject, JSC.ZigString.static("maxFrameSize"), JSC.JSValue.jsNumber(this.maxFrameSize));
         result.put(globalObject, JSC.ZigString.static("maxHeaderListSize"), JSC.JSValue.jsNumber(this.maxHeaderListSize));
         result.put(globalObject, JSC.ZigString.static("maxHeaderSize"), JSC.JSValue.jsNumber(this.maxHeaderListSize));
+        result.put(globalObject, JSC.ZigString.static("enableConnectProtocol"), JSC.JSValue.jsBoolean(this.enableConnectProtocol > 0));
 
         return result;
     }
@@ -185,6 +194,8 @@ const FullSettingsPayload = packed struct(u288) {
             .SETTINGS_INITIAL_WINDOW_SIZE => this.initialWindowSize = option.value,
             .SETTINGS_MAX_FRAME_SIZE => this.maxFrameSize = option.value,
             .SETTINGS_MAX_HEADER_LIST_SIZE => this.maxHeaderListSize = option.value,
+            .SETTINGS_ENABLE_CONNECT_PROTOCOL => this.enableConnectProtocol = option.value,
+            .SETTINGS_NO_RFC7540_PRIORITIES => this.noRFC7540Priorities = option.value,
         }
     }
     pub fn write(this: *FullSettingsPayload, comptime Writer: type, writer: Writer) void {

@@ -3,6 +3,7 @@ import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { $ } from "bun";
 import { cp, rm } from "fs/promises";
+
 test("09041", async () => {
   const out = tempDirWithFiles("09041", {
     "09041-fixture.mjs": await Bun.file(join(import.meta.dir, "09041", "09041-fixture.mjs")).text(),
@@ -22,6 +23,6 @@ test("09041", async () => {
   expect(err).toContain("1 pass");
   expect(err).toContain("0 fail");
   const std = await new Response(stdout).text();
-  await rm(out, { force: true, recursive: true });
-  expect(std.length).toBeGreaterThan(65 * 1024);
+
+  expect(std.length).toBeGreaterThan(1024 * 1024);
 }, 10000);

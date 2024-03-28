@@ -96,6 +96,9 @@ FROM alpine:3.18
 ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
 
+ARG BUN_INSTALL_BIN=/usr/local/bin
+ENV BUN_INSTALL_BIN=${BUN_INSTALL_BIN}
+
 COPY --from=build /usr/local/bin/bun /usr/local/bin/
 COPY docker-entrypoint.sh /usr/local/bin/
 

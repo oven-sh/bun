@@ -1,4 +1,4 @@
-import { gc as bunGC, unsafe, which } from "bun";
+import { gc as bunGC, spawnSync, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { readlink, readFile } from "fs/promises";
 import { isAbsolute } from "path";
@@ -343,6 +343,24 @@ Buffer.prototype.toUnixString = function () {
 
 export function dockerExe(): string | null {
   return which("docker") || which("podman") || null;
+}
+
+export function isDocker() {
+  const docker = dockerExe();
+  if (!docker) {
+    return false;
+  }
+
+  const { exitCode, stderr } = spawnSync({
+    cmd: [docker, "info"],
+    stderr: "pipe",
+  });
+
+  if (exitCode !== 0 || /cannot connect/i.test(stderr.toString())) {
+    return false;
+  }
+
+  return true;
 }
 
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {

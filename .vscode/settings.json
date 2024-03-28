@@ -40,7 +40,7 @@
   // C++
   "lldb.verboseLogging": false,
   "cmake.configureOnOpen": false,
-  "C_Cpp.errorSquiggles": "enabled",  
+  "C_Cpp.errorSquiggles": "enabled",
   "[cpp]": {
     "editor.defaultFormatter": "xaver.clang-format"
   },
@@ -55,7 +55,7 @@
   "prettier.enable": true,
   "eslint.workingDirectories": ["${workspaceFolder}/packages/bun-types"],
   "[javascript]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[javascriptreact]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
@@ -72,12 +72,12 @@
 
   // JSON
   "[json]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[jsonc]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
-  
+
   // Markdown
   "[markdown]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
@@ -94,12 +94,17 @@
 
   // TOML
   "[toml]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
 
   // YAML
   "[yaml]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+
+  // Dockerfile
+  "[dockerfile]": {
+    "editor.formatOnSave": false
   },
 
   // Files
@@ -148,5 +153,5 @@
     "WebKit/WebDriver": true,
     "WebKit/WebKitBuild": true,
     "WebKit/WebInspectorUI": true
-  },
+  }
 }

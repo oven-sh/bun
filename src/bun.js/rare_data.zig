@@ -269,6 +269,7 @@ pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
 }
 
 pub fn stderr(rare: *RareData) *Blob.Store {
+    bun.Analytics.Features.@"Bun.stderr" += 1;
     return rare.stderr_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
@@ -301,6 +302,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdout(rare: *RareData) *Blob.Store {
+    bun.Analytics.Features.@"Bun.stdout" += 1;
     return rare.stdout_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
@@ -331,6 +333,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdin(rare: *RareData) *Blob.Store {
+    bun.Analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;

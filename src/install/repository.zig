@@ -177,6 +177,7 @@ pub const Repository = extern struct {
         name: string,
         url: string,
     ) !std.fs.Dir {
+        bun.Analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),
         });
@@ -278,6 +279,7 @@ pub const Repository = extern struct {
         url: string,
         resolved: string,
     ) !ExtractData {
+        bun.Analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved);
 
         var package_dir = cache_dir.openDirZ(folder_name, .{}) catch |not_found| brk: {

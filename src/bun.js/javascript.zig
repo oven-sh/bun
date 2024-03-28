@@ -1151,7 +1151,7 @@ pub const VirtualMachine = struct {
         this.bundler.resolver.caches.fs.use_alternate_source_cache = true;
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
-        Analytics.Features.macros = true;
+        Analytics.Features.macros += 1;
         this.transpiler_store.enabled = false;
     }
 

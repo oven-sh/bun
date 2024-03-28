@@ -130,7 +130,6 @@ pub fn printMetadata() void {
         \\<r>----- bun meta -----
     ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ maybe_baseline ++ " {s}\n" ++
         \\{s}: {}
-        \\
     , .{
         analytics_platform.version,
         cmd_label,

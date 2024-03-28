@@ -117,6 +117,8 @@ pub const TSConfigJSON = struct {
         // behavior may also be different).
         const json: js_ast.Expr = (json_cache.parseTSConfig(log, source, allocator) catch null) orelse return null;
 
+        bun.Analytics.Features.tsconfig += 1;
+
         var result: TSConfigJSON = TSConfigJSON{ .abs_path = source.key_path.text, .paths = PathsMap.init(allocator) };
         errdefer allocator.free(result.paths);
         if (json.asProperty("extends")) |extends_value| {
@@ -226,6 +228,9 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("paths")) |paths_prop| {
                 switch (paths_prop.expr.data) {
                     .e_object => {
+                        defer {
+                            bun.Analytics.Features.tsconfig_paths += 1;
+                        }
                         var paths = paths_prop.expr.data.e_object;
                         result.base_url_for_paths = if (result.base_url.len > 0) result.base_url else ".";
                         result.paths = PathsMap.init(allocator);

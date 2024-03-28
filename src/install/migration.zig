@@ -140,6 +140,8 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         return error.InvalidNPMLockfile;
     }
 
+    bun.Analytics.Features.lockfile_migration_from_package_lock += 1;
+
     // Count pass
     var builder_ = this.stringBuilder();
     var builder = &builder_;

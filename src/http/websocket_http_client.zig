@@ -311,6 +311,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 client,
                 "tcp",
             )) |out| {
+                bun.Analytics.Features.WebSocket += 1;
+
                 if (comptime ssl) {
                     if (!strings.isIPAddress(host_.slice())) {
                         out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";

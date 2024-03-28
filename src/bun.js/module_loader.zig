@@ -2321,6 +2321,8 @@ pub const ModuleLoader = struct {
                 .hash = Runtime.Runtime.versionHash(),
             };
         } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
+            Analytics.Features.builtin_modules.insert(hardcoded);
+
             switch (hardcoded) {
                 .@"bun:main" => {
                     return ResolvedSource{
@@ -2514,6 +2516,7 @@ pub const ModuleLoader = struct {
                 return true;
             },
         );
+        Analytics.Features.virtual_modules += 1;
         return true;
     }
 

@@ -143,7 +143,7 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
         .allocator = null,
         .source_code = bun.String.empty,
         .specifier = specifier,
-        .source_url = bun.String.init(@tagName(name)),
+        .source_url = bun.String.static(@tagName(name)),
         .hash = 0,
         .tag = name,
         .source_code_needs_deref = false,
@@ -706,6 +706,8 @@ pub const RuntimeTranspilerStore = struct {
 pub const ModuleLoader = struct {
     transpile_source_code_arena: ?*bun.ArenaAllocator = null,
     eval_source: ?*logger.Source = null,
+
+    pub var is_allowed_to_use_internal_testing_apis = false;
 
     /// This must be called after calling transpileSourceCode
     pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
@@ -2346,6 +2348,24 @@ pub const ModuleLoader = struct {
                 .@"bun:jsc" => return jsSyntheticModule(.@"bun:jsc", specifier),
                 .@"bun:test" => return jsSyntheticModule(.@"bun:test", specifier),
 
+                .@"bun:internal-for-testing" => {
+                    if (!Environment.isDebug) {
+                        if (!is_allowed_to_use_internal_testing_apis)
+                            return null;
+
+                        const is_outside_our_ci = brk: {
+                            const repo = jsc_vm.bundler.env.get("GITHUB_REPOSITORY") orelse break :brk true;
+                            break :brk !strings.endsWithComptime(repo, "/bun");
+                        };
+                        if (is_outside_our_ci) {
+                            // i have no sympathy for anyone who tries this.
+                            @panic("Do not use bun:intenral-for-testing outside of the development cycle of Bun");
+                        }
+                    }
+
+                    return jsSyntheticModule(.InternalForTesting, specifier);
+                },
+
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
                 .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
@@ -2546,6 +2566,7 @@ pub const HardcodedModule = enum {
     @"bun:main",
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
     @"bun:sqlite",
+    @"bun:internal-for-testing",
     @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
@@ -2620,6 +2641,7 @@ pub const HardcodedModule = enum {
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:test", HardcodedModule.@"bun:test" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
+            .{ "bun:internal-for-testing", HardcodedModule.@"bun:internal-for-testing" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
             .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
@@ -2833,6 +2855,7 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
+            .{ "bun:internal-for-testing", .{ .path = "bun:internal-for-testing" } },
             .{ "ffi", .{ .path = "bun:ffi" } },
 
             // Thirdparty packages we override

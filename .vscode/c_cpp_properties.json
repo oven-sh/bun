@@ -55,6 +55,7 @@
       "name": "BunWithJSCDebug",
       "forcedInclude": ["${workspaceFolder}/src/bun.js/bindings/root.h"],
       "includePath": [
+        "${workspaceFolder}/build/codegen",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Debug/",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Debug/ICU/Headers/",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Debug/JavaScriptCore/PrivateHeaders/",

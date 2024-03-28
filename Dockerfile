@@ -116,7 +116,7 @@ RUN apt-get update -y \
   && case "${arch##*-}" in \
   amd64) variant="x64";; \
   arm64) variant="aarch64";; \
-  *) echo "error: unsupported architecture: $arch"; exit 1 ;; \
+  *) echo "unsupported architecture: $arch"; exit 1 ;; \
   esac \
   && wget "${BUN_DOWNLOAD_URL_BASE}/bun-linux-${variant}.zip" \
   && unzip bun-linux-${variant}.zip \
@@ -414,7 +414,7 @@ COPY --from=bun-codegen-for-zig ${BUN_DIR}/packages/bun-error/dist ${BUN_DIR}/pa
 WORKDIR $BUN_DIR
 
 RUN mkdir -p build \
-  && bun run $BUN_DIR/src/codegen/bundle-modules-fast.ts $BUN_DIR/build \
+  && bun run $BUN_DIR/src/codegen/bundle-modules.ts --debug=OFF $BUN_DIR/build \
   && cd build \
   && cmake .. \
   -G Ninja \

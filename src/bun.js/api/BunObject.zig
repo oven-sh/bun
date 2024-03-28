@@ -8,19 +8,13 @@
 /// - Run "make dev"
 pub const BunObject = struct {
     // --- Callbacks ---
-    pub const DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = dump_mimalloc;
-    pub const _Os = Bun._Os;
-    pub const _Path = Bun._Path;
     pub const allocUnsafe = Bun.allocUnsafe;
     pub const build = Bun.JSBundler.buildFn;
     pub const connect = JSC.wrapStaticMethod(JSC.API.Listener, "connect", false);
     pub const deflateSync = JSC.wrapStaticMethod(JSZlib, "deflateSync", true);
     pub const file = WebCore.Blob.constructBunFile;
-    pub const fs = Bun.fs;
     pub const gc = Bun.runGC;
     pub const generateHeapSnapshot = Bun.generateHeapSnapshot;
-    pub const getImportedStyles = Bun.getImportedStyles;
-    pub const getPublicPath = Bun.getPublicPathJS;
     pub const gunzipSync = JSC.wrapStaticMethod(JSZlib, "gunzipSync", true);
     pub const gzipSync = JSC.wrapStaticMethod(JSZlib, "gzipSync", true);
     pub const indexOfLine = Bun.indexOfLine;
@@ -128,19 +122,14 @@ pub const BunObject = struct {
         // --- Getters --
 
         // -- Callbacks --
-        @export(BunObject.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump, .{ .name = callbackName("DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump") });
-        @export(BunObject._Os, .{ .name = callbackName("_Os") });
-        @export(BunObject._Path, .{ .name = callbackName("_Path") });
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
         @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
         @export(BunObject.connect, .{ .name = callbackName("connect") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
         @export(BunObject.file, .{ .name = callbackName("file") });
-        @export(BunObject.fs, .{ .name = callbackName("fs") });
         @export(BunObject.gc, .{ .name = callbackName("gc") });
         @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
-        @export(BunObject.getImportedStyles, .{ .name = callbackName("getImportedStyles") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
@@ -1423,41 +1412,9 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(globalObject);
 }
 
-fn fs(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    var module = JSC.Node.NodeJSFS.new(.{
-        .node_fs = .{
-            .vm = globalObject.bunVM(),
-        },
-    });
-
-    return module.toJS(globalObject);
-}
-
-fn _Os(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    return Node.Os.create(globalObject);
-}
-
-fn _Path(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    const arguments = callframe.arguments(1);
-    const args = arguments.slice();
-    const is_windows = args.len == 1 and args[0].toBoolean();
-    return Node.Path.create(globalObject, is_windows);
-}
-
-/// @deprecated
-fn getImportedStyles(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    defer flushCSSImports();
-    const styles = getCSSImports();
-    if (styles.len == 0) {
-        return JSC.JSValue.createEmptyArray(globalObject, 0);
-    }
-
-    return JSValue.createStringArray(globalObject, styles.ptr, styles.len, true);
-}
-
 extern fn dump_zone_malloc_stats() void;
 
-pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+export fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     globalObject.bunVM().arena.dumpStats();
     if (comptime bun.is_heap_breakdown_enabled) {
         dump_zone_malloc_stats();
@@ -3526,6 +3483,7 @@ const UnsafeObject = struct {
             .gcAggressionLevel = &gcAggressionLevel,
             .segfault = &__debug__doSegfault,
             .arrayBufferToString = &arrayBufferToString,
+            .mimallocDump = &dump_mimalloc,
         };
         inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |name| {
             object.put(
@@ -5476,9 +5434,6 @@ const InternalTestingAPIs = struct {
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
-        _ = Crypto.JSPasswordObject.JSPasswordObject__create;
-        BunObject.exportAll();
-        @export(InternalTestingAPIs.BunInternalFunction__syntaxHighlighter, .{ .name = "BunInternalFunction__syntaxHighlighter" });
-    }
+    _ = Crypto.JSPasswordObject.JSPasswordObject__create;
+    BunObject.exportAll();
 }

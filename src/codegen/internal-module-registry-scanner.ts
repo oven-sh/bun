@@ -26,6 +26,9 @@ export function createInternalModuleRegistry(basedir: string) {
     }
   }
 
+  moduleList.push("internal-for-testing.ts");
+  internalRegistry.set("bun:internal-for-testing", moduleList.length - 1);
+
   // Native Module registry
   const nativeModuleH = fs.readFileSync(path.join(basedir, "../bun.js/modules/_NativeModule.h"), "utf8");
   const nativeModuleDefine = nativeModuleH.match(/BUN_FOREACH_NATIVE_MODULE\(macro\)\s*\\\n((.*\\\n)*\n)/);

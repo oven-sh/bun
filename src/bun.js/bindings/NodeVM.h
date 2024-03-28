@@ -80,4 +80,11 @@ JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);
 JSC_DECLARE_HOST_FUNCTION(vmModule_isContext);
 JSC_DECLARE_HOST_FUNCTION(vmModuleRunInNewContext);
 JSC_DECLARE_HOST_FUNCTION(vmModuleRunInThisContext);
+
+} // namespace WebCore
+
+namespace Bun {
+
+JSC::JSValue createNodeVMBinding(Zig::GlobalObject*);
+
 }

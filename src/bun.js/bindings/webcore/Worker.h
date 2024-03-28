@@ -140,4 +140,6 @@ private:
     void* impl_ { nullptr };
 };
 
+JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
+
 } // namespace WebCore

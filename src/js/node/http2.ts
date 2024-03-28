@@ -14,7 +14,7 @@ const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
 const primordials = require("internal/primordials");
 
-const { H2FrameParser, getPackedSettings, getUnpackedSettings } = $lazy("internal/http2");
+const [H2FrameParser, getPackedSettings, getUnpackedSettings] = $zig("h2_frame_parser.zig", "createNodeHttp2Binding");
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");

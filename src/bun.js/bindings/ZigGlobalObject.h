@@ -322,6 +322,8 @@ public:
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Bun::GlobalScope& globalEventScope;
 
+    void resetOnEachMicrotaskTick();
+
     enum class PromiseFunctions : uint8_t {
         Bun__HTTPRequestContext__onReject,
         Bun__HTTPRequestContext__onRejectStream,

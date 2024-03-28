@@ -2570,7 +2570,7 @@ function formatWithOptionsInternal(inspectOptions, args) {
   return str;
 }
 
-var internalGetStringWidth = $lazy("getStringWidth");
+const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
  */

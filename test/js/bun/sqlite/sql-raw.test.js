@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
+import { SQL } from "bun:internal-for-testing";
 
-var SQL = globalThis[Symbol.for("Bun.lazy")]("sqlite");
 const dbPath = import.meta.dir + "/northwind.testdb";
 
 it("works", () => {

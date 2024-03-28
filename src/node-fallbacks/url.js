@@ -20,7 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const { URL, URLSearchParams, [Symbol.for("Bun.lazy")]: lazy } = globalThis;
+const { URL, URLSearchParams } = globalThis;
 
 function util_isString(arg) {
   return typeof arg === "string";
@@ -739,28 +739,16 @@ export { urlResolveObject as resolveObject };
 export { urlFormat as format };
 export { Url as Url };
 
-export var pathToFileURL;
-export var fileURLToPath;
-export var domainToASCII;
-export var domainToUnicode;
-
-if (lazy) {
-  pathToFileURL = lazy("pathToFileURL");
-  fileURLToPath = lazy("fileURLToPath");
-  domainToASCII = lazy("domainToASCII");
-  domainToUnicode = lazy("domainToUnicode");
-}
-
 export default {
   parse: urlParse,
   resolve: urlResolve,
   resolveObject: urlResolveObject,
   format: urlFormat,
   Url: Url,
-  pathToFileURL: pathToFileURL,
-  fileURLToPath: fileURLToPath,
-  domainToASCII,
-  domainToUnicode,
+  // pathToFileURL: pathToFileURL,
+  // fileURLToPath: fileURLToPath,
+  // domainToASCII,
+  // domainToUnicode,
   URL,
   URLSearchParams,
 };

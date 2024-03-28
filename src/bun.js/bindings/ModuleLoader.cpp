@@ -35,6 +35,7 @@
 #include "NativeModuleImpl.h"
 
 #include "../modules/ObjectModule.h"
+#include "wtf/Assertions.h"
 
 namespace Bun {
 using namespace JSC;
@@ -75,7 +76,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         JSValue requireResult = globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId);
         RETURN_IF_EXCEPTION(throwScope, void());
         auto* object = requireResult.getObject();
-        ASSERT(object);
+        ASSERT_WITH_MESSAGE(object, "Expected object from requireId %s", moduleKey.string().string().utf8().data());
 
         JSC::EnsureStillAliveScope stillAlive(object);
 

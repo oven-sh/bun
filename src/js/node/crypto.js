@@ -5,6 +5,21 @@ const StreamModule = require("node:stream");
 const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
+const {
+  symmetricKeySize,
+  asymmetricKeyDetails,
+  asymmetricKeyType,
+  equals,
+  exports,
+  createSecretKey,
+  createPublicKey,
+  createPrivateKey,
+  generateKeySync,
+  generateKeyPairSync,
+  sign: nativeSign,
+  verify: nativeVerify,
+} = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
+
 const MAX_STRING_LENGTH = 536870888;
 var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
@@ -12024,20 +12039,6 @@ const harcoded_curves = [
 function getCurves() {
   return harcoded_curves;
 }
-const {
-  symmetricKeySize,
-  asymmetricKeyDetails,
-  asymmetricKeyType,
-  equals,
-  exports,
-  createSecretKey,
-  createPublicKey,
-  createPrivateKey,
-  generateKeySync,
-  generateKeyPairSync,
-  sign: nativeSign,
-  verify: nativeVerify,
-} = $lazy("internal/crypto");
 
 class KeyObject {
   // we use $bunNativePtr so that util.types.isKeyObject can detect it

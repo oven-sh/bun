@@ -1,6 +1,6 @@
 #include "root.h"
 
-#include "NodeVMScript.h"
+#include "NodeVM.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/ExternalStringImpl.h"
 
@@ -594,4 +594,31 @@ void NodeVMScript::destroy(JSCell* cell)
 {
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
+
+} // namespace WebCore
+
+namespace Bun {
+
+JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto* obj = constructEmptyObject(globalObject);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Script"_s)),
+        reinterpret_cast<Zig::GlobalObject*>(globalObject)->NodeVMScript(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createContext"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "createContext"_s, vmModule_createContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isContext"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "isContext"_s, vmModule_isContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInNewContext"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "runInNewContext"_s, vmModuleRunInNewContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInThisContext"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "runInThisContext"_s, vmModuleRunInThisContext, ImplementationVisibility::Public), 0);
+    return obj;
 }
+
+} // namespace Bun

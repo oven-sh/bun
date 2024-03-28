@@ -1002,6 +1002,18 @@ pub const Parser = struct {
 
                 _ = self.match_any_comptime(&.{ .Semicolon, .Newline });
 
+                // Scripts like: `echo foo & && echo hi` aren't allowed because
+                // `&&` and `||` require the left-hand side's exit code to be
+                // immediately observable, but the `&` makes it run in the
+                // background.
+                //
+                // So we do a quick check for this kind of syntax here, and
+                // provide a helpful error message to the user.
+                if (self.peek() == .DoubleAmpersand) {
+                    try self.add_error("\"&\" is not allowed on the left-hand side of \"&&\"", .{});
+                    return ParseError.Unsupported;
+                }
+
                 break;
             }
             try exprs.append(expr);

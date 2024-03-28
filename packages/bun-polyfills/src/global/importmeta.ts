@@ -19,9 +19,7 @@ export default function polyfillImportMeta(metaIn: ImportMeta) {
         dir: path.dirname(metapath),
         file: path.basename(metapath),
         require: require2,
-        async resolve(id: string, parent?: string) {
-            return this.resolveSync(id, parent);
-        },
+        resolve: metaIn.resolve,
         resolveSync(id: string, parent?: string) {
             return require2.resolve(id, {
                 paths: typeof parent === 'string' ? [

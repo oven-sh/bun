@@ -979,6 +979,7 @@ pub const Interpreter = struct {
             },
         };
 
+        bun.Analytics.Features.shell += 1;
         return interpreter;
     }
 
@@ -1209,6 +1210,7 @@ pub const Interpreter = struct {
     }
 
     pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
+        bun.Analytics.Features.standalone_shell += 1;
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 

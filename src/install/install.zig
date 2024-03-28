@@ -5127,7 +5127,7 @@ pub const PackageManager = struct {
                         continue;
                     }
                     manager.extracted_count += 1;
-                    bun.Analytics.Features.extracted_packages = true;
+                    bun.Analytics.Features.extracted_packages += 1;
 
                     // GitHub and tarball URL dependencies are not fully resolved until after the tarball is downloaded & extracted.
                     if (manager.processExtractedTarballPackage(&package_id, resolution, task.data.extract, comptime log_level)) |pkg| brk: {

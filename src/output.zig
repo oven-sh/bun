@@ -568,17 +568,21 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
-const _log_fn = fn (comptime fmt: string, args: anytype) void;
-pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
+const LogFunction = fn (comptime fmt: string, args: anytype) void;
+
+pub fn createScope(comptime tag: anytype, comptime disabled: bool) type {
     const tagname = switch (@TypeOf(tag)) {
         @Type(.EnumLiteral) => @tagName(tag),
         []const u8 => tag,
-        else => @compileError("Output.scoped expected @Type(.EnumLiteral) or []const u8, you gave: " ++ @typeName(@Type(tag))),
+        else => @compileError("Output.scoped expected @Type(.EnumLiteral) or []const u8, you gave: " ++ @typeName(@TypeOf(tag))),
     };
     if (comptime !Environment.isDebug or !Environment.isNative) {
         return struct {
+            pub fn isVisible() bool {
+                return false;
+            }
             pub fn log(comptime _: string, _: anytype) void {}
-        }.log;
+        };
     }
 
     return struct {
@@ -589,6 +593,21 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
         var really_disable = disabled;
         var evaluated_disable = false;
         var lock = std.Thread.Mutex{};
+
+        pub fn isVisible() bool {
+            if (!evaluated_disable) {
+                evaluated_disable = true;
+                if (bun.getenvZ("BUN_DEBUG_ALL") != null or
+                    bun.getenvZ("BUN_DEBUG_" ++ tagname) != null)
+                {
+                    really_disable = false;
+                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
+                    really_disable = really_disable or !strings.eqlComptime(val, "0");
+                }
+            }
+
+            return !really_disable;
+        }
 
         /// Debug-only logs which should not appear in release mode
         /// To enable a specific log at runtime, set the environment variable
@@ -606,18 +625,7 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
                 return;
             }
 
-            if (!evaluated_disable) {
-                evaluated_disable = true;
-                if (bun.getenvZ("BUN_DEBUG_ALL") != null or
-                    bun.getenvZ("BUN_DEBUG_" ++ tagname) != null)
-                {
-                    really_disable = false;
-                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
-                    really_disable = really_disable or !strings.eqlComptime(val, "0");
-                }
-            }
-
-            if (really_disable)
+            if (!isVisible())
                 return;
 
             if (!out_set) {
@@ -650,7 +658,11 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
                 };
             }
         }
-    }.log;
+    };
+}
+
+pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
+    return createScope(tag, disabled).log;
 }
 
 // Valid "colors":
@@ -868,9 +880,11 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
+const debug_scope = Output.createScope(.debug_warn, false);
+
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
-    if (Environment.isDebug) {
+    if (Environment.isDebug and debug_scope.isVisible()) {
         prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
         flush();
     }

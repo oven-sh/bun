@@ -183,7 +183,7 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
             },
         };
         const dir = std.fs.cwd().makeOpenPath(base_name, .{}) catch |e| {
-            Output.debug("Failed to dump source string: {}", .{e});
+            Output.debugWarn("Failed to dump source string: {}", .{e});
             return;
         };
         BunDebugHolder.dir = dir;
@@ -196,12 +196,12 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
             .windows => bun.path.windowsFilesystemRoot(dir_path).len,
         };
         var parent = dir.makeOpenPath(dir_path[root_len..], .{}) catch |e| {
-            Output.debug("Failed to dump source string: makeOpenPath({s}[{d}..]) {}", .{ dir_path, root_len, e });
+            Output.debugWarn("Failed to dump source string: makeOpenPath({s}[{d}..]) {}", .{ dir_path, root_len, e });
             return;
         };
         defer parent.close();
         parent.writeFile(std.fs.path.basename(specifier), written) catch |e| {
-            Output.debug("Failed to dump source string: writeFile {}", .{e});
+            Output.debugWarn("Failed to dump source string: writeFile {}", .{e});
             return;
         };
     } else {

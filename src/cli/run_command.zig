@@ -347,13 +347,14 @@ pub const RunCommand = struct {
             Output.flush();
         }
 
+        const envp = try env.map.createNullDelimitedEnvMap(bun.default_allocator);
+        defer envp.deinit(bun.default_allocator);
+
         const spawn_result = switch ((bun.spawnSync(&.{
             .argv = &argv,
             .argv0 = shell_bin.ptr,
 
-            // TODO: remember to free this when we add --filter or --concurrent
-            // in the meantime we don't need to free it.
-            .envp = try env.map.createNullDelimitedEnvMap(bun.default_allocator),
+            .envp = envp.envp,
 
             .cwd = cwd,
             .stderr = .inherit,
@@ -513,14 +514,15 @@ pub const RunCommand = struct {
             argv = try array_list.toOwnedSlice();
         }
 
+        const envp = try env.map.createNullDelimitedEnvMap(bun.default_allocator);
+        defer envp.deinit(bun.default_allocator);
+
         const silent = ctx.debug.silent;
         const spawn_result = bun.spawnSync(&.{
             .argv = argv,
             .argv0 = executableZ,
 
-            // TODO: remember to free this when we add --filter or --concurrent
-            // in the meantime we don't need to free it.
-            .envp = try env.map.createNullDelimitedEnvMap(bun.default_allocator),
+            .envp = envp.envp,
 
             .cwd = cwd,
             .stderr = .inherit,
@@ -850,7 +852,7 @@ pub const RunCommand = struct {
 
         this_bundler.configureLinker();
 
-        var root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
+        const root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
             if (!log_errors) return error.CouldntReadCurrentDirectory;
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
@@ -876,26 +878,10 @@ pub const RunCommand = struct {
         if (env == null) {
             this_bundler.env.loadProcess();
 
-            if (this_bundler.env.get("NODE_ENV")) |node_env| {
-                if (strings.eqlComptime(node_env, "production")) {
-                    this_bundler.options.production = true;
-                }
-            }
+            if (this_bundler.env.isProduction())
+                this_bundler.options.production = true;
 
-            // TODO: evaluate if we can skip running this in nested calls to bun run
-            // The reason why it's unclear:
-            // - Some scripts may do NODE_ENV=production bun run foo
-            //   This would cause potentially a different .env file to be loaded
-            this_bundler.runEnvLoader() catch {};
-
-            if (root_dir_info.getEntries(0)) |dir| {
-                // Run .env again if it exists in a parent dir
-                if (this_bundler.options.production) {
-                    this_bundler.env.load(dir, this_bundler.options.env.files, .production) catch {};
-                } else {
-                    this_bundler.env.load(dir, this_bundler.options.env.files, .development) catch {};
-                }
-            }
+            this_bundler.runEnvLoader(true) catch {};
         }
 
         this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
@@ -1055,11 +1041,8 @@ pub const RunCommand = struct {
         {
             this_bundler.env.loadProcess();
 
-            if (this_bundler.env.get("NODE_ENV")) |node_env| {
-                if (strings.eqlComptime(node_env, "production")) {
-                    this_bundler.options.production = true;
-                }
-            }
+            if (this_bundler.env.isProduction())
+                this_bundler.options.production = true;
         }
 
         const ResultList = bun.StringArrayHashMap(void);

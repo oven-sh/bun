@@ -1688,7 +1688,6 @@ pub const Subprocess = struct {
             }
 
             if (args != .zero and args.isObject()) {
-
                 // This must run before the stdio parsing happens
                 if (args.getTruthy(globalThis, "ipc")) |val| {
                     if (val.isCell() and val.isCallable(globalThis.vm())) {
@@ -1848,9 +1847,8 @@ pub const Subprocess = struct {
         }
 
         if (!override_env and env_array.items.len == 0) {
-            env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err|
+            env_array = jsc_vm.bundler.env.map.createEnvArrayList(allocator) catch |err|
                 return globalThis.handleError(err, "in Bun.spawn");
-            env_array.capacity = env_array.items.len;
         }
 
         inline for (0..stdio.len) |fd_index| {
@@ -1949,8 +1947,8 @@ pub const Subprocess = struct {
 
         var spawned = switch (bun.spawn.spawnProcess(
             &spawn_options,
-            @ptrCast(argv.items.ptr),
-            @ptrCast(env_array.items.ptr),
+            @ptrCast(argv.items[0 .. argv.items.len - 1 :null].ptr),
+            @ptrCast(env_array.items[0 .. env_array.items.len - 1 :null].ptr),
         ) catch |err| {
             process_allocator.destroy(subprocess);
             spawn_options.deinit();

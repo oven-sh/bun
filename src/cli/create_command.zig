@@ -1400,7 +1400,7 @@ pub const CreateCommand = struct {
         if (!create_options.skip_install) {
             npm_client_ = NPMClient{
                 .tag = .bun,
-                .bin = try std.fs.selfExePathAlloc(ctx.allocator),
+                .bin = try bun.selfExePath(),
             };
         }
 

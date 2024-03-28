@@ -459,10 +459,7 @@ pub const RunCommand = struct {
         if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path and bun.strings.hasSuffixComptime(executable, ".exe")) {
             std.debug.assert(std.fs.path.isAbsolute(executable));
 
-            // Using @constCast is safe because we know that
-            // `direct_launch_buffer` is the data destination that assumption is
-            // backed by the immediate assertion.
-            var wpath = @constCast(bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable));
+            var wpath = bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable);
             std.debug.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
 
             std.debug.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
@@ -678,7 +675,7 @@ pub const RunCommand = struct {
     } ++ if (!Environment.isDebug)
         "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
-        "/bun-debug-node";
+        "/bun-node-debug";
 
     pub fn bunNodeFileUtf8(allocator: std.mem.Allocator) ![:0]const u8 {
         if (!Environment.isWindows) return bun_node_dir;
@@ -706,8 +703,6 @@ pub const RunCommand = struct {
         return try allocator.dupeZ(u8, target_path_buffer[0 .. converted.len + file_name.len :0]);
     }
 
-    var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-
     pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
@@ -722,7 +717,7 @@ pub const RunCommand = struct {
                 argv0 = bun.argv()[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
-                var self = try std.fs.selfExePath(&self_exe_bin_path_buf);
+                var self = try bun.selfExePath();
                 if (self.len > 0) {
                     self.ptr[self.len] = 0;
                     argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
@@ -790,7 +785,15 @@ pub const RunCommand = struct {
                 "-" ++ Environment.git_sha_short
             else
                 "";
+            @memcpy(target_path_buffer[prefix.len..][len..].ptr, comptime bun.strings.w(dir_name));
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
+
+            if (Environment.isDebug) {
+                const dir_slice_u8 = std.unicode.utf16leToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
+                defer bun.default_allocator.free(dir_slice_u8);
+                std.fs.deleteTreeAbsolute(dir_slice_u8) catch {};
+                std.fs.makeDirAbsolute(dir_slice_u8) catch @panic("huh?");
+            }
 
             const image_path = bun.windows.exePathW();
             inline for (.{ "node.exe", "bun.exe" }) |name| {
@@ -816,6 +819,9 @@ pub const RunCommand = struct {
                         },
                     }
                 }
+            }
+            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+                try PATH.append(std.fs.path.delimiter);
             }
 
             // The reason for the extra delim is because we are going to append the system PATH
@@ -913,7 +919,7 @@ pub const RunCommand = struct {
 
         if (this_bundler.env.get("npm_execpath") == null) {
             // we don't care if this fails
-            if (std.fs.selfExePathAlloc(ctx.allocator)) |self_exe_path| {
+            if (bun.selfExePath()) |self_exe_path| {
                 this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
             } else |_| {}
         }

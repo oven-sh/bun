@@ -377,6 +377,7 @@ jobs:
             Build failed on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
 
             **[Build Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})** | [Commit](https://github.com/oven-sh/bun/commits/${{github.sha}})
+
   windows-test:
     name: Test
     runs-on: windows-small
@@ -422,13 +423,9 @@ jobs:
           packages: bash
       - name: Install dependencies
         run: |
-          # bun install --verbose
-          # bun install --cwd=test --verbose
-          # bun install --cwd=packages/bun-internal-test --verbose
-
-          npm install
-          cd test && npm install
-          cd ../packages/bun-internal-test && npm install
+          bun install --verbose
+          bun install --cwd=test --verbose
+          bun install --cwd=packages/bun-internal-test --verbose
           cd ../..
       - id: test
         name: Run tests
@@ -441,6 +438,7 @@ jobs:
           BUN_PATH_BASE: ${{runner.temp}}
           BUN_PATH: release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe
         run: |
+          cd test && node ./node_modules/verdaccio/bin/verdaccio -c cli/install/registry/verdaccio.yaml &
           node packages/bun-internal-test/src/runner.node.mjs  || true
         shell: bash
       - uses: sarisia/actions-status-discord@v1

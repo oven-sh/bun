@@ -7,8 +7,9 @@ import { gzipSync } from "zlib";
 import { join } from "path";
 import { gc, withoutAggressiveGC, gcTick, isWindows } from "harness";
 import net from "net";
+import { tmpdirSync } from "cli/install/dummy.registry";
 
-const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
+const tmp_dir = tmpdirSync("fetch-test-");
 
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 

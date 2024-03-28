@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, describe } from "bun:test";
 import { bunEnv, bunExe, bunEnv as env, isWindows } from "harness";
 import { mkdtemp, realpath, rm, writeFile, exists } from "fs/promises";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, sep } from "path";
 import { readdirSorted } from "./dummy.registry";
 
 let run_dir: string;
@@ -324,7 +324,7 @@ it("should download dependencies to run local file", async () => {
 import { file } from "bun";
 import decompress from "decompress@4.2.1";
 
-const buffer = await file("${filePath}").arrayBuffer();
+const buffer = await file("${filePath.replaceAll(sep, "/")}").arrayBuffer();
 for (const entry of await decompress(Buffer.from(buffer))) {
   console.log(\`\${entry.type}: \${entry.path}\`);
 }

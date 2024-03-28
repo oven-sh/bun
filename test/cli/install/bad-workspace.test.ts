@@ -4,11 +4,12 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunExe, bunEnv } from "harness";
 import { join } from "path";
 import { tmpdir } from "os";
+import { tmpdirSync } from "./dummy.registry";
 
 let cwd: string;
 
 beforeEach(() => {
-  cwd = mkdtempSync(join(realpathSync(tmpdir()), "bad-workspace.test"));
+  cwd = tmpdirSync("bad-workspace-test-");
 });
 
 afterEach(() => {

@@ -15,6 +15,7 @@ import {
   requested,
   root_url,
   setHandler,
+  tmpdirSync,
 } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
@@ -33,7 +34,7 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
-  add_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
+  add_dir = tmpdirSync("bun-add.test-");
   await dummyBeforeEach();
 });
 afterEach(async () => {

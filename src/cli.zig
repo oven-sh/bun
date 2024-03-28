@@ -1218,11 +1218,11 @@ pub const Command = struct {
     };
 
     pub fn isBunX(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "bunx") or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug"));
+        return strings.endsWithComptime(argv0, "bunx" ++ bun.exe_suffix);
     }
 
     pub fn isNode(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "node");
+        return strings.endsWithComptime(argv0, "node" ++ bun.exe_suffix);
     }
 
     pub fn which() Tag {
@@ -1251,7 +1251,7 @@ pub const Command = struct {
             return .BunxCommand;
         }
 
-        if (isNode(without_exe)) {
+        if (isNode(argv0)) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;

@@ -1562,7 +1562,7 @@ pub fn reloadProcess(
     }
 
     // we must clone selfExePath incase the argv[0] was not an absolute path (what appears in the terminal)
-    const exec_path = (allocator.dupeZ(u8, std.fs.selfExePathAlloc(allocator) catch unreachable) catch unreachable).ptr;
+    const exec_path = (bun.selfExePath() catch unreachable).ptr;
 
     // we clone argv so that the memory address isn't the same as the libc one
     const newargv = @as([*:null]?[*:0]const u8, @ptrCast(dupe_argv.ptr));
@@ -2033,9 +2033,9 @@ pub const posix = struct {
 
 pub const win32 = struct {
     const w = std.os.windows;
-    pub var STDOUT_FD: FileDescriptor = undefined;
-    pub var STDERR_FD: FileDescriptor = undefined;
-    pub var STDIN_FD: FileDescriptor = undefined;
+    pub var STDOUT_FD = invalid_fd;
+    pub var STDERR_FD = invalid_fd;
+    pub var STDIN_FD = invalid_fd;
 
     const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
     // magic exit code to indicate to the watcher manager that the child process should be re-spawned
@@ -2814,6 +2814,21 @@ pub inline fn markPosixOnly() if (Environment.isPosix) void else noreturn {
 pub fn linuxKernelVersion() Semver.Version {
     if (comptime !Environment.isLinux) @compileError("linuxKernelVersion() is only available on Linux");
     return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+}
+
+pub fn selfExePath() ![:0]u8 {
+    const memo = struct {
+        var set = false;
+        // this is lame; open issues to fix std soon
+        var value: [4096]u8 = undefined;
+        var len: usize = 0;
+    };
+    if (memo.set) return memo.value[0..memo.len :0];
+    const init = try std.fs.selfExePath(&memo.value);
+    memo.len = init.len;
+    memo.value[memo.len] = 0;
+    memo.set = true;
+    return memo.value[0..memo.len :0];
 }
 
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";

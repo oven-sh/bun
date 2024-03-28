@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows } from "harness";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";

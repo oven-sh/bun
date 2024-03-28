@@ -1,7 +1,7 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile } from "fs/promises";
-import { isAbsolute } from "path";
+import { readlink, readFile, writeFile } from "fs/promises";
+import { isAbsolute, sep } from "path";
 import { openSync, closeSync } from "node:fs";
 
 export const isMacOS = process.platform === "darwin";
@@ -112,9 +112,8 @@ export function hideFromStackTrace(block: CallableFunction) {
 export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>): string {
   var fs = require("fs");
   var path = require("path");
-  var { tmpdir } = require("os");
 
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
+  const dir = tmpdirSync(basename + "_");
   for (const [name, contents] of Object.entries(files)) {
     if (typeof contents === "object") {
       const entries = Object.entries(contents);
@@ -231,9 +230,8 @@ export async function runWithErrorPromise(cb: () => unknown): Promise<Error | un
 }
 
 export function fakeNodeRun(dir: string, file: string | string[], env?: Record<string, string>) {
-  var path = require("path");
   const result = Bun.spawnSync([bunExe(), "--bun", "node", ...(Array.isArray(file) ? file : [file])], {
-    cwd: dir ?? path.dirname(file),
+    cwd: dir,
     env: {
       ...bunEnv,
       NODE_ENV: undefined,
@@ -499,6 +497,7 @@ function failTestsOnBlockingWriteCall() {
 failTestsOnBlockingWriteCall();
 
 import { heapStats } from "bun:jsc";
+import { tmpdirSync } from "cli/install/dummy.registry";
 export function dumpStats() {
   const stats = heapStats();
   const { objectTypeCounts, protectedObjectTypeCounts } = stats;
@@ -549,10 +548,28 @@ export function toTOMLString(opts: object) {
   const props = makeFlatPropertyMap(opts);
   let ret = "";
   for (const [key, value] of Object.entries(props)) {
-    if (value === undefined) continue;
-    ret += `${key} = ${JSON.stringify(value)}` + "\n";
+    if (!value) continue;
+    ret += `${key} = ${JSON.stringify(value)}\n`;
   }
   return ret;
+}
+
+const shebang_posix = (program: string) => `#!/usr/bin/env ${program}
+`;
+
+const shebang_windows = (program: string) => `0</* :{
+  @echo off
+  ${program} %~f0 %*
+  exit /b %errorlevel%
+:} */0;
+`;
+
+export function writeShebangScript(path: string, program: string, data: string) {
+  if (!isWindows) {
+    return writeFile(path, shebang_posix(program) + "\n" + data, { mode: 0o777 });
+  } else {
+    return writeFile(path + ".cmd", shebang_windows(program) + "\n" + data);
+  }
 }
 
 export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {

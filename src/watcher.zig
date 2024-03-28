@@ -277,7 +277,7 @@ const WindowsWatcher = struct {
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,
             .MaximumLength = path_len_bytes,
-            .Buffer = @constCast(wpath.ptr),
+            .Buffer = wpath.ptr,
         };
         var attr = w.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),

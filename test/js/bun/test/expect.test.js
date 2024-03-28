@@ -2409,6 +2409,14 @@ describe("expect()", () => {
     }).toThrow("undefined is not an object");
   });
 
+  test("toContainAllKeys", () => {
+    expect({ a: "hello", b: "world" }).toContainAllKeys(["a", "b"]);
+    expect({ a: "hello", b: "world" }).toContainAllKeys(["b", "a"]);
+    expect({ 1: "hello", b: "world" }).toContainAllKeys([1, "b"]);
+    expect({ a: "hello", b: "world" }).not.toContainAllKeys(["c"]);
+    expect({ a: "hello", b: "world" }).not.toContainAllKeys(["a"]);
+  });
+
   test("toContainAnyKeys", () => {
     expect({ a: "hello", b: "world" }).toContainAnyKeys(["a"]);
     expect({ a: "hello", b: "world" }).toContainAnyKeys(["a", "c"]);
@@ -2437,6 +2445,26 @@ describe("expect()", () => {
     expect(() => {
       expect(null).toContainKeys(["id"]);
     }).toThrow(/(Received:)(.*null)/);
+  });
+
+  test("toContainValue", () => {
+    const shallow = { hello: "world" };
+    const deep = { message: shallow };
+    const deepArray = { message: [shallow] };
+    const o = { a: "foo", b: [1, "hello", true], c: "baz" };
+
+    expect(shallow).toContainValue("world");
+    expect({ foo: false }).toContainValue(false);
+    expect(deep).toContainValue({ hello: "world" });
+    expect(deepArray).toContainValue([{ hello: "world" }]);
+
+    expect(o).toContainValue("foo");
+    expect(o).toContainValue([1, "hello", true]);
+    expect(o).not.toContainValue("qux");
+
+    expect(shallow).not.toContainValue("foo");
+    expect(deep).not.toContainValue({ foo: "bar" });
+    expect(deepArray).not.toContainValue([{ foo: "bar" }]);
   });
 
   test("toBeTruthy()", () => {

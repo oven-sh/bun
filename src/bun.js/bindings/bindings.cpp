@@ -2497,6 +2497,104 @@ JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue 
     RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
 }
 
+JSC__JSValue JSC__JSValue__values(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue targetValue = JSC::JSValue::decode(objectValue);
+    if (targetValue.isUndefinedOrNull())
+        return throwVMTypeError(globalObject, scope, "Object.values requires that input parameter not be null or undefined"_s);
+    JSC::JSObject* target = targetValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    if (!target->staticPropertiesReified()) {
+        target->reifyAllStaticProperties(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+
+    {
+        JSC::MarkedArgumentBuffer namedPropertyValues;
+        bool canUseFastPath = false;
+        if (!target->canHaveExistingOwnIndexedGetterSetterProperties() && !target->hasNonReifiedStaticProperties()) {
+            JSC::Structure* targetStructure = target->structure();
+            if (targetStructure->canPerformFastPropertyEnumerationCommon()) {
+                canUseFastPath = true;
+                targetStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                    if (entry.attributes() & PropertyAttribute::DontEnum)
+                        return true;
+
+                    if (entry.key()->isSymbol())
+                        return true;
+
+                    namedPropertyValues.appendWithCrashOnOverflow(target->getDirect(entry.offset()));
+                    return true;
+                });
+            }
+        }
+
+        if (canUseFastPath) {
+            JSC::Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+            JSC::MarkedArgumentBuffer indexedPropertyValues;
+            if (target->canHaveExistingOwnIndexedProperties()) {
+                target->forEachOwnIndexedProperty<JSC::JSObject::SortMode::Ascending>(globalObject, [&](unsigned, JSC::JSValue value) {
+                    indexedPropertyValues.appendWithCrashOnOverflow(value);
+                    return IterationStatus::Continue;
+                });
+            }
+            RETURN_IF_EXCEPTION(scope, { });
+
+            {
+                JSC::ObjectInitializationScope initializationScope(vm);
+                JSC::JSArray* result = nullptr;
+                if (LIKELY(result = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, arrayStructure, indexedPropertyValues.size() + namedPropertyValues.size()))) {
+                    for (unsigned i = 0; i < indexedPropertyValues.size(); ++i)
+                        result->initializeIndex(initializationScope, i, indexedPropertyValues.at(i));
+                    for (unsigned i = 0; i < namedPropertyValues.size(); ++i)
+                        result->initializeIndex(initializationScope, indexedPropertyValues.size() + i, namedPropertyValues.at(i));
+                    return JSC::JSValue::encode(result);
+                }
+            }
+            throwOutOfMemoryError(globalObject, scope);
+            return { };
+        }
+    }
+
+    JSC::JSArray* values = JSC::constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    JSC::PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    target->methodTable()->getOwnPropertyNames(target, globalObject, properties, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    unsigned index = 0;
+    auto append = [&] (JSGlobalObject* globalObject, PropertyName propertyName) {
+        PropertySlot slot(target, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool hasProperty = target->methodTable()->getOwnPropertySlot(target, globalObject, propertyName, slot);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!hasProperty)
+            return;
+        if (slot.attributes() & PropertyAttribute::DontEnum)
+            return;
+
+        JSC::JSValue value;
+        if (LIKELY(!slot.isTaintedByOpaqueObject()))
+            value = slot.getValue(globalObject, propertyName);
+        else
+            value = target->get(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, void());
+
+        values->putDirectIndex(globalObject, index++, value);
+    };
+
+    for (const auto& propertyName : properties) {
+        append(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+
+    return JSC::JSValue::encode(values);
+}
+
 bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key)
 {
     JSC::VM& vm = globalObject->vm();

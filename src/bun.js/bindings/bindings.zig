@@ -3730,8 +3730,8 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("createEmptyArray", .{ global, len });
     }
 
-    pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, values_len: usize) void {
-        return cppFn("putRecord", .{ value, global, key, values, values_len });
+    pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values_array: [*]ZigString, values_len: usize) void {
+        return cppFn("putRecord", .{ value, global, key, values_array, values_len });
     }
 
     /// Note: key can't be numeric (if so, use putMayBeIndex instead)
@@ -4117,11 +4117,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return String.init(buf.toOwnedSliceLeaky()).toJS(globalThis);
     }
 
-    pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
+    pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values_array: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
         return cppFn("fromEntries", .{
             globalThis,
             keys_array,
-            values,
+            values_array,
             strings_count,
             clone,
         });
@@ -4129,6 +4129,13 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn keys(globalThis: *JSGlobalObject, value: JSValue) JSValue {
         return cppFn("keys", .{
+            globalThis,
+            value,
+        });
+    }
+
+    pub fn values(_: JSValue, globalThis: *JSGlobalObject, value: JSValue) JSValue {
+        return cppFn("values", .{
             globalThis,
             value,
         });
@@ -5328,6 +5335,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "jsUndefined",
         "jsonStringify",
         "keys",
+        "values",
         "kind_",
         "makeWithNameAndPrototype",
         "parseJSON",

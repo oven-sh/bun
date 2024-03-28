@@ -287,6 +287,7 @@ pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;
 pub extern fn JSC__JSValue__keys(arg0: *bindings.JSGlobalObject, arg1: JSC__JSValue) JSC__JSValue;
+pub extern fn JSC__JSValue__values(arg0: *bindings.JSGlobalObject, arg1: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSValue__makeWithNameAndPrototype(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, arg2: ?*anyopaque, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSValue__parseJSON(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__push(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;

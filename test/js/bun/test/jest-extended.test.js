@@ -525,15 +525,7 @@ describe("jest-extended", () => {
   // test("toBeEmptyObject()")
   // test("toContainKey()")
   // test("toContainKeys()")
-
-  test("toContainAllKeys", () => {
-    expect({ a: "hello", b: "world" }).toContainAllKeys(["a", "b"]);
-    expect({ a: "hello", b: "world" }).toContainAllKeys(["b", "a"]);
-    expect({ 1: "hello", b: "world" }).toContainAllKeys([1, "b"]);
-    expect({ a: "hello", b: "world" }).not.toContainAllKeys(["c"]);
-    expect({ a: "hello", b: "world" }).not.toContainAllKeys(["a"]);
-  });
-
+  // test("toContainAllKeys()")
   // test("toContainAnyKeys()")
   // test("toContainValue()")
   // test("toContainValues()")

@@ -957,6 +957,35 @@ declare module "bun:test" {
     toContainAnyKeys(expected: unknown): void;
 
     /**
+     * Asserts that an `object` contain the provided value.
+     *
+     * The value must be an object
+     *
+     * @example
+     * const shallow = { hello: "world" };
+     * const deep = { message: shallow };
+     * const deepArray = { message: [shallow] };
+     * const o = { a: "foo", b: [1, "hello", true], c: "baz" };
+
+     * expect(shallow).toContainValue("world");
+     * expect({ foo: false }).toContainValue(false);
+     * expect(deep).toContainValue({ hello: "world" });
+     * expect(deepArray).toContainValue([{ hello: "world" }]);
+
+     * expect(o).toContainValue("foo", "barr");
+     * expect(o).toContainValue([1, "hello", true]);
+     * expect(o).not.toContainValue("qux");
+
+     // NOT
+     * expect(shallow).not.toContainValue("foo");
+     * expect(deep).not.toContainValue({ foo: "bar" });
+     * expect(deepArray).not.toContainValue([{ foo: "bar" }]);
+     *
+     * @param expected the expected value
+     */
+    toContainValue(expected: unknown): void;
+
+    /**
      * Asserts that an `object` contains all the provided keys.
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);

@@ -580,13 +580,11 @@ pub const Target = enum {
         });
         array.set(Target.bun, &[_]string{
             "bun",
-            "worker",
             "node",
         });
         array.set(Target.bun_macro, &[_]string{
             "macro",
             "bun",
-            "worker",
             "node",
         });
 

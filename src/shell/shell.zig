@@ -985,6 +985,25 @@ pub const Parser = struct {
             !self.match_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
         {
             const expr = try self.parse_expr();
+            if (self.match(.Ampersand)) {
+                switch (expr) {
+                    .binary => {
+                        var newexpr = expr;
+                        const right_alloc = try self.allocate(AST.Expr, newexpr.binary.right);
+                        const right: AST.Expr = .{ .@"async" = right_alloc };
+                        newexpr.binary.right = right;
+                        try exprs.append(newexpr);
+                    },
+                    else => {
+                        const @"async" = .{ .@"async" = try self.allocate(AST.Expr, expr) };
+                        try exprs.append(@"async");
+                    },
+                }
+
+                _ = self.match_any_comptime(&.{ .Semicolon, .Newline });
+
+                break;
+            }
             try exprs.append(expr);
         }
 
@@ -994,12 +1013,7 @@ pub const Parser = struct {
     }
 
     fn parse_expr(self: *Parser) !AST.Expr {
-        const left = try self.parse_binary();
-        if (switch (left) {
-            .pipeline, .cmd, .condexpr, .@"if" => true,
-            else => false,
-        } and self.match(.Ampersand)) return .{ .@"async" = try self.allocate(AST.Expr, left) };
-        return left;
+        return try self.parse_binary();
     }
 
     fn parse_binary(self: *Parser) !AST.Expr {
@@ -1018,25 +1032,6 @@ pub const Parser = struct {
 
             const binary = try self.allocate(AST.Binary, .{ .op = op, .left = left, .right = right });
             left = .{ .binary = binary };
-        }
-
-        // Parse async (`&`)
-        // Note that it is not allowed on the left hand side of a binary
-        if (self.match(.Ampersand)) {
-            if (self.peek() == .DoubleAmpersand) {
-                try self.add_error("\"&\" is not allowed on the left-hand side of \"&&\"", .{});
-                return ParseError.Expected;
-            }
-            switch (left) {
-                .binary => {
-                    const right_alloc = try self.allocate(AST.Expr, left.binary.right);
-                    const right: AST.Expr = .{ .@"async" = right_alloc };
-                    left.binary.right = right;
-                },
-                else => {
-                    left = .{ .@"async" = try self.allocate(AST.Expr, left) };
-                },
-            }
         }
 
         return left;

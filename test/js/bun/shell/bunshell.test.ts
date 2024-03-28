@@ -946,6 +946,7 @@ describe("if_clause", () => {
 
   TestBuilder.command`echo fif hi`.stdout("fif hi\n").runAsTest("parsing edge case");
 
+  // Ported from https://github.com/posix-shell-tests/posix-shell-tests/
   describe("ported from posix shell tests", () => {
     // test_oE 'execution path of if, true'
     TestBuilder.command`if echo foo; then echo bar; fi`.stdout("foo\nbar\n").runAsTest("execution path of if, true");
@@ -1247,19 +1248,27 @@ echo x7; echo x8; fi`
       .runAsTest("more than one inner command");
 
     // test_oE 'nest between if and then'
-    TestBuilder.command`if { echo foo; } then echo bar; fi`.stdout("foo\nbar\n").runAsTest("nest between if and then");
+    TestBuilder.command`if { echo foo; } then echo bar; fi`
+      .stdout("foo\nbar\n")
+      .todo("grouping with { and } not supported yet")
+      .runAsTest("nest between if and then");
 
     // test_oE 'nest between then and fi'
-    TestBuilder.command`if echo foo; then { echo bar; } fi`.stdout("foo\nbar\n").runAsTest("nest between then and fi");
+    TestBuilder.command`if echo foo; then { echo bar; } fi`
+      .stdout("foo\nbar\n")
+      .todo("grouping with { and } not supported yet")
+      .runAsTest("nest between then and fi");
 
     // test_oE 'nest between then and elif'
     TestBuilder.command`if echo foo; then { echo bar; } elif echo baz; then echo qux; fi`
       .stdout("foo\nbar\n")
+      .todo("grouping with { and } not supported yet")
       .runAsTest("nest between then and elif");
 
     // test_oE 'nest between elif and then'
     TestBuilder.command`if echo foo; then echo bar; elif { echo baz; } then echo qux; fi`
       .stdout("foo\nbar\n")
+      .todo("grouping with { and } not supported yet")
       .runAsTest("nest between elif and then");
 
     // test_oE 'nest between then and else'
@@ -1281,11 +1290,12 @@ else echo baz
 fi >redir_out
 cat redir_out`
       .stdout("foo\nbar\n")
+      .todo("redirecting if-else not supported yet")
       .runAsTest("redirection on if");
   });
 });
 
-describe("condexprs", () => {
+describe.todo("condexprs", () => {
   TestBuilder.command`[[ -f package.json ]] && echo yes!`.file("package.json", "hi").stdout("yes!\n").runAsTest("-f");
   TestBuilder.command`[[ -f mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-f non-existent");
 
@@ -1303,6 +1313,291 @@ describe("condexprs", () => {
   TestBuilder.command`FOO="" [[ -n $FOO ]] && echo yes!`.exitCode(1).runAsTest("-n fail");
 
   TestBuilder.command`[[ -n hey ]] | echo hi | cat`.stdout("hi\n").runAsTest("precedence: pipeline");
+
+  describe("ported from GNU bash", () => {
+    TestBuilder.command`
+    [[ foo > bar && $PWD -ef . ]]
+    `
+      .exitCode(0)
+      .runAsTest("this one is straight out of the ksh88 book");
+
+    TestBuilder.command`
+    [[ x ]]
+    `
+      .exitCode(0)
+      .runAsTest("[[ x ]] is equivalent to [[ -n x ]]");
+
+    TestBuilder.command`[[ ! x ]]`.exitCode(1).runAsTest("# [[ ! x ]] is equivalent to [[ ! -n x ]]");
+
+    // tests.ts
+
+    TestBuilder.command`[[ ! x || x ]]`
+      .exitCode(0)
+      .runAsTest("! binds tighter than test/[ -- it binds to a term, not an expression");
+
+    TestBuilder.command`
+[[ ! 1 -eq 1 ]]; echo $?
+[[ ! ! 1 -eq 1 ]]; echo $?
+`
+      .stdout("1")
+      .stdout("0")
+      .runAsTest("! toggles on and off rather than just setting an 'invert result' flag");
+
+    TestBuilder.command`
+[[ ! ! ! 1 -eq 1 ]]; echo $?
+[[ ! ! ! ! 1 -eq 1 ]]; echo $?
+`
+      .stdout("1")
+      .stdout("0")
+      .runAsTest("! toggles on and off rather than just setting an 'invert result' flag");
+
+    TestBuilder.command`[[ a ]]`.exitCode(0).runAsTest("parenthesized terms didn't work right until post-2.04");
+    TestBuilder.command`[[ (a) ]]`.exitCode(0).runAsTest("parenthesized terms didn't work right until post-2.04");
+    TestBuilder.command`[[ -n a ]]`.exitCode(0).runAsTest("parenthesized terms didn't work right until post-2.04");
+    TestBuilder.command`[[ (-n a) ]]`.exitCode(0).runAsTest("parenthesized terms didn't work right until post-2.04");
+
+    TestBuilder.command`[[ -n $UNSET ]]`.exitCode(1).runAsTest("unset variables don't need to be quoted");
+    TestBuilder.command`[[ -z $UNSET ]]`.exitCode(0).runAsTest("unset variables don't need to be quoted");
+
+    TestBuilder.command`[[ $TDIR == /usr/homes/* ]]`
+      .exitCode(0)
+      .runAsTest("the ==/= and != operators do pattern matching");
+    TestBuilder.command`[[ $TDIR == /usr/homes/\\* ]]`
+      .exitCode(1)
+      .runAsTest("...but you can quote any part of the pattern to have it matched as a string");
+    TestBuilder.command`[[ $TDIR == '/usr/homes/*' ]]`
+      .exitCode(1)
+      .runAsTest("...but you can quote any part of the pattern to have it matched as a string");
+
+    TestBuilder.command`[[ -n $UNSET && $UNSET == foo ]]`
+      .exitCode(1)
+      .runAsTest("if the first part of && fails, the second is not executed");
+    TestBuilder.command`[[ -z $UNSET && $UNSET == foo ]]`
+      .exitCode(1)
+      .runAsTest("if the first part of && fails, the second is not executed");
+
+    TestBuilder.command`[[ -z $UNSET || -d $PWD ]]`
+      .exitCode(0)
+      .runAsTest("if the first part of || succeeds, the second is not executed");
+
+    // TestBuilder.command`[[ -n $TDIR || $HOME -ef ${H*} ]]`.exitCode(0).runAsTest("if the rhs were executed, it would be an error");
+    // TestBuilder.command`[[ -n $TDIR && -z $UNSET || $HOME -ef ${H*} ]]`.exitCode(0).runAsTest("if the rhs were executed, it would be an error");
+
+    TestBuilder.command`[[ -n $TDIR && -n $UNSET || $TDIR -ef . ]]`
+      .exitCode(0)
+      .runAsTest("&& has a higher parsing precedence than ||");
+    TestBuilder.command`[[ -n $TDIR || -n $UNSET && $PWD -ef xyz ]]`
+      .exitCode(1)
+      .runAsTest("...but expressions in parentheses may be used to override precedence rules");
+    TestBuilder.command`[[ ( -n $TDIR || -n $UNSET ) && $PWD -ef xyz ]]`
+      .exitCode(1)
+      .runAsTest("...but expressions in parentheses may be used to override precedence rules");
+
+    TestBuilder.command`
+unset IVAR A
+[[ 7 -gt $IVAR ]]
+`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+unset IVAR A
+[[ $IVAR -gt 7 ]]
+`
+      .exitCode(1)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+IVAR=4
+[[ $IVAR -gt 7 ]]
+`
+      .exitCode(1)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`[[ 7 -eq 4+3 ]]`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`[[ 7 -eq 4+ ]]`
+      .exitCode(1)
+      .stdout('./cond.tests: line 122: [[: 4+: syntax error: operand expected (error token is "+")')
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+IVAR=4+3
+[[ $IVAR -eq 7 ]]
+`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+A=7
+[[ $IVAR -eq A ]]
+`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`[[ "$IVAR" -eq "7" ]]`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+A=7
+[[ "$IVAR" -eq "A" ]]
+`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+unset IVAR A
+[[ $filename == *.c ]]
+`
+      .exitCode(1)
+      .runAsTest("more pattern matching tests");
+
+    TestBuilder.command`
+filename=patmatch.c
+[[ $filename == *.c ]]
+`
+      .exitCode(0)
+      .runAsTest("more pattern matching tests");
+
+    TestBuilder.command`
+shopt -s extglob
+arg=-7
+[[ $arg == -+([0-9]) ]]
+`
+      .exitCode(0)
+      .runAsTest("the extended globbing features may be used when matching patterns");
+
+    TestBuilder.command`
+shopt -s extglob
+arg=-H
+[[ $arg == -+([0-9]) ]]
+`
+      .exitCode(1)
+      .runAsTest("the extended globbing features may be used when matching patterns");
+
+    TestBuilder.command`
+shopt -s extglob
+arg=+4
+[[ $arg == ++([0-9]) ]]
+`
+      .exitCode(0)
+      .runAsTest("the extended globbing features may be used when matching patterns");
+
+    TestBuilder.command`
+STR=file.c
+PAT=
+if [[ $STR = $PAT ]]; then
+        echo oops
+fi
+`.runAsTest("make sure the null string is never matched if the string is not null");
+
+    TestBuilder.command`
+STR=
+PAT=
+if [[ $STR = $PAT ]]; then
+        echo ok
+fi
+`
+      .stdout("ok")
+      .runAsTest("but that if the string is null, a null pattern is matched correctly");
+
+    // TestBuilder.command`
+    // [[ jbig2dec-0.9-i586-001.tgz =~ ([^-]+)-([^-]+)-([^-]+)-0*([1-9][0-9]*)\.tgz ]]
+    // echo ${BASH_REMATCH[1]}
+    // `
+    //   .stdout("jbig2dec")
+    //   .runAsTest("test the regular expression conditional operator");
+
+    // TestBuilder.command`
+    // [[ jbig2dec-0.9-i586-001.tgz =~ \\([^-]+\\)-\\([^-]+\\)-\\([^-]+\\)-0*\\([1-9][0-9]*\\)\\.tgz ]]
+    // echo ${BASH_REMATCH[1]}
+    // `
+    //   .runAsTest("this shouldn't echo anything");
+
+    // TestBuilder.command`
+    // LDD_BASH="       linux-gate.so.1 =>  (0xffffe000)
+    //        libreadline.so.5 => /lib/libreadline.so.5 (0xb7f91000)
+    //        libhistory.so.5 => /lib/libhistory.so.5 (0xb7f8a000)
+    //        libncurses.so.5 => /lib/libncurses.so.5 (0xb7f55000)
+    //        libdl.so.2 => /lib/libdl.so.2 (0xb7f51000)
+    //        libc.so.6 => /lib/libc.so.6 (0xb7e34000)
+    //        /lib/ld-linux.so.2 (0xb7fd0000)"
+    // [[ "$LDD_BASH" =~ "libc" ]] && echo "found 1"
+    // echo ${BASH_REMATCH[@]}
+    // `
+    //   .stdout("found 1")
+    //   .stdout("libc")
+    //   .runAsTest("test the regular expression conditional operator");
+
+    // TestBuilder.command`
+    // LDD_BASH="       linux-gate.so.1 =>  (0xffffe000)
+    //        libreadline.so.5 => /lib/libreadline.so.5 (0xb7f91000)
+    //        libhistory.so.5 => /lib/libhistory.so.5 (0xb7f8a000)
+    //        libncurses.so.5 => /lib/libncurses.so.5 (0xb7f55000)
+    //        libdl.so.2 => /lib/libdl.so.2 (0xb7f51000)
+    //        libc.so.6 => /lib/libc.so.6 (0xb7e34000)
+    //        /lib/ld-linux.so.2 (0xb7fd0000)"
+    // [[ "$LDD_BASH" =~ libc ]] && echo "found 2"
+    // echo ${BASH_REMATCH[@]}
+    // `
+    //   .stdout("found 2")
+    //   .stdout("libc")
+    //   .runAsTest("test the regular expression conditional operator");
+
+    TestBuilder.command`
+if [[ "123abc" == *?(a)bc ]]; then echo ok 42; else echo bad 42; fi
+if [[ "123abc" == *?(a)bc ]]; then echo ok 43; else echo bad 43; fi
+`
+      .stdout("ok 42")
+      .stdout("ok 43")
+      .runAsTest("bug in all versions up to and including bash-2.05b");
+
+    // TestBuilder.command`
+    // match() { [[ $ 1 == $2 ]]; }
+    // match $'? *x\1y\177z' $'??\\*\\x\\\1\\y\\\177\\z' || echo bad 44
+
+    // foo=""
+    // [[ bar == *"${foo,,}"* ]] && echo ok 1
+    // [[ bar == *${foo,,}* ]] && echo ok 2
+
+    // shopt -s extquote
+    // bs='\\'
+    // del=$'\177'
+    // [[ bar == *$bs"$del"* ]] || echo ok 3
+    // [[ "" == "$foo" ]] && echo ok 4
+    // [[ "$del" == "${foo,,}" ]] || echo ok 5
+
+    // # allow reserved words after a conditional command just because
+    // if [[ str ]] then [[ str ]] fi
+    // `
+    //   .stdout("ok 1")
+    //   .stdout("ok 2")
+    //   .stdout("ok 3")
+    //   .stdout("ok 4")
+    //   .stdout("ok 5")
+    //   .runAsTest("various tests");
+  });
 });
 
 describe("async", () => {

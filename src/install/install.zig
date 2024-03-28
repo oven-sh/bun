@@ -7042,7 +7042,7 @@ pub const PackageManager = struct {
                     switch (bun.sys.sys_uv.symlinkUV(
                         link_path,
                         dest_path,
-                        bun.windows.libuv.UV_FS_SYMLINK_DIR,
+                        bun.windows.libuv.UV_FS_SYMLINK_JUNCTION,
                     )) {
                         .err => |err| {
                             Output.prettyErrorln("<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}", .{err});

@@ -1,6 +1,7 @@
 import { build, buildSync, transform, transformSync } from "esbuild";
 
 {
+  console.log(1);
   const result = await transform("console.log('hello world')", {
     loader: "js",
     target: "node12",
@@ -11,7 +12,8 @@ import { build, buildSync, transform, transformSync } from "esbuild";
 }
 
 {
-  const hugeString = `console.log(${JSON.stringify("a".repeat(1000000))});`;
+  console.log(2);
+  const hugeString = `console.log("${"a".repeat(1000000)}");`;
 
   for (let i = 0; i < 2; i++) {
     const result = await transform(hugeString, {
@@ -25,6 +27,7 @@ import { build, buildSync, transform, transformSync } from "esbuild";
 }
 
 {
+  console.log(3);
   const result = transformSync("console.log('hello world')", {
     loader: "js",
     target: "node12",
@@ -35,6 +38,7 @@ import { build, buildSync, transform, transformSync } from "esbuild";
 }
 
 {
+  console.log(4);
   const result = await build({
     stdin: {
       "contents": "console.log('hello world')",
@@ -50,9 +54,10 @@ import { build, buildSync, transform, transformSync } from "esbuild";
 }
 
 {
-  const contents = `console.log(${JSON.stringify("a".repeat(1000000))});`;
+  const contents = `console.log("${"a".repeat(1000000)}");`;
 
   for (let i = 0; i < 2; i++) {
+    console.log(5);
     const result = await build({
       target: "node12",
       write: false,
@@ -69,7 +74,8 @@ import { build, buildSync, transform, transformSync } from "esbuild";
 }
 
 {
-  const result = buildSync({
+  console.log(6);
+  const result = await build({
     stdin: {
       "contents": "console.log('hello world')",
       "loader": "js",

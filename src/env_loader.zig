@@ -502,7 +502,7 @@ pub const Loader = struct {
                 while (iter.next()) |file_path| {
                     if (file_path.len > 0) {
                         try this.loadEnvFileDynamic(file_path, false);
-                        Analytics.Features.dotenv = true;
+                        Analytics.Features.dotenv += 1;
                     }
                 }
             }
@@ -524,19 +524,19 @@ pub const Loader = struct {
             .development => {
                 if (dir.hasComptimeQuery(".env.development.local")) {
                     try this.loadEnvFile(dir_handle, ".env.development.local", false);
-                    Analytics.Features.dotenv = true;
+                    Analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production.local")) {
                     try this.loadEnvFile(dir_handle, ".env.production.local", false);
-                    Analytics.Features.dotenv = true;
+                    Analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test.local")) {
                     try this.loadEnvFile(dir_handle, ".env.test.local", false);
-                    Analytics.Features.dotenv = true;
+                    Analytics.Features.dotenv += 1;
                 }
             },
         }
@@ -544,7 +544,7 @@ pub const Loader = struct {
         if (comptime suffix != .@"test") {
             if (dir.hasComptimeQuery(".env.local")) {
                 try this.loadEnvFile(dir_handle, ".env.local", false);
-                Analytics.Features.dotenv = true;
+                Analytics.Features.dotenv += 1;
             }
         }
 
@@ -552,26 +552,26 @@ pub const Loader = struct {
             .development => {
                 if (dir.hasComptimeQuery(".env.development")) {
                     try this.loadEnvFile(dir_handle, ".env.development", false);
-                    Analytics.Features.dotenv = true;
+                    Analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production")) {
                     try this.loadEnvFile(dir_handle, ".env.production", false);
-                    Analytics.Features.dotenv = true;
+                    Analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test")) {
                     try this.loadEnvFile(dir_handle, ".env.test", false);
-                    Analytics.Features.dotenv = true;
+                    Analytics.Features.dotenv += 1;
                 }
             },
         }
 
         if (dir.hasComptimeQuery(".env")) {
             try this.loadEnvFile(dir_handle, ".env", false);
-            Analytics.Features.dotenv = true;
+            Analytics.Features.dotenv += 1;
         }
     }
 

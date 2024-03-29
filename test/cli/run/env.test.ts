@@ -710,6 +710,89 @@ test("NODE_ENV default is not propogated in bun run", () => {
   expect(bunRunAsScript(tmp, "show-env", {}).stdout).toBe("");
 });
 
+for (const shell of ["system", "bun"]) {
+  const isWindowsCMD = isWindows && shell === "system";
+
+  const env = {
+    ENV_FILE_NAME: "N/A",
+  };
+
+  const show_env_script = isWindowsCMD //
+    ? "echo ENV_FILE_NAME=%ENV_FILE_NAME%, NODE_ENV=%NODE_ENV%"
+    : "echo ENV_FILE_NAME=$ENV_FILE_NAME, NODE_ENV=$NODE_ENV";
+
+  describe(`script runner with ${shell} shell`, () => {
+    test("does not pass variables from .env files into scripts", () => {
+      const tmp = tempDirWithFiles("script-runner-env", {
+        "package.json": '{"scripts":{"show-env":"' + show_env_script + '"}}',
+
+        ".env.development": "ENV_FILE_NAME=.env.development",
+        ".env.production": "ENV_FILE_NAME=.env.production",
+        ".env.test": "ENV_FILE_NAME=.env.test",
+        ".env": "ENV_FILE_NAME=.env",
+      });
+
+      expect(bunRunAsScript(tmp, "show-env", { ...env }, ["--shell=" + shell]).stdout).toBe(
+        "ENV_FILE_NAME=N/A, NODE_ENV=" + (isWindowsCMD ? "%NODE_ENV%" : ""),
+      );
+    });
+
+    for (const { NODE_ENV, expected, env_file } of [
+      {
+        NODE_ENV: "production",
+        expected: "production",
+        env_file: ".env.production",
+      },
+      {
+        NODE_ENV: "development",
+        expected: "development",
+        env_file: ".env.development",
+      },
+      {
+        NODE_ENV: undefined,
+        expected: isWindowsCMD ? "%NODE_ENV%" : "",
+        env_file: ".env.development",
+      },
+    ]) {
+      test("explicit NODE_ENV=" + NODE_ENV, () => {
+        const tmp = tempDirWithFiles("script-runner-env", {
+          "package.json": '{"scripts":{"show-env":"' + show_env_script + '"}}',
+
+          ".env.development": "ENV_FILE_NAME=.env.development",
+          ".env.production": "ENV_FILE_NAME=.env.production",
+          ".env.test": "ENV_FILE_NAME=.env.test",
+          ".env": "ENV_FILE_NAME=.env",
+        });
+
+        expect(bunRunAsScript(tmp, "show-env", { ...env, NODE_ENV }, ["--shell=" + shell]).stdout).toBe(
+          "ENV_FILE_NAME=N/A, NODE_ENV=" + expected,
+        );
+      });
+
+      // This is already covered in isolation by the '.env file is loaded' describe
+      // but it is nice to have just a couple e2e tests combining script runner AND the runtime.
+      test.skipIf(isWindowsCMD)("e2e NODE_ENV=" + NODE_ENV, () => {
+        // TODO: couldnt get a working thing for this on windows
+        const run_index_script = `NODE_ENV=${NODE_ENV} bun run index.ts`;
+
+        const tmp = tempDirWithFiles("script-runner-env", {
+          "package.json": '{"scripts":{"start":"' + run_index_script + '"}}',
+          "index.ts": "console.log(`ENV_FILE_NAME=${process.env.ENV_FILE_NAME}, NODE_ENV=${process.env.NODE_ENV}`);",
+
+          ".env.development": "ENV_FILE_NAME=.env.development",
+          ".env.production": "ENV_FILE_NAME=.env.production",
+          ".env.test": "ENV_FILE_NAME=.env.test",
+          ".env": "ENV_FILE_NAME=.env",
+        });
+
+        expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe(
+          "ENV_FILE_NAME=" + env_file + ", NODE_ENV=" + NODE_ENV,
+        );
+      });
+    }
+  });
+}
+
 const todoOnPosix = process.platform !== "win32" ? test.todo : test;
 todoOnPosix("setting process.env coerces the value to a string", () => {
   // @ts-expect-error

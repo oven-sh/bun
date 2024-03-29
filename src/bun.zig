@@ -1562,7 +1562,7 @@ pub fn reloadProcess(
     }
 
     // we must clone selfExePath incase the argv[0] was not an absolute path (what appears in the terminal)
-    const exec_path = (allocator.dupeZ(u8, std.fs.selfExePathAlloc(allocator) catch unreachable) catch unreachable).ptr;
+    const exec_path = (bun.selfExePath() catch unreachable).ptr;
 
     // we clone argv so that the memory address isn't the same as the libc one
     const newargv = @as([*:null]?[*:0]const u8, @ptrCast(dupe_argv.ptr));
@@ -2816,6 +2816,22 @@ pub fn linuxKernelVersion() Semver.Version {
     return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
 }
 
+pub fn selfExePath() ![:0]u8 {
+    const memo = struct {
+        var set = false;
+        // TODO open zig issue to make 'std.fs.selfExePath' return [:0]u8 directly
+        // note: this doesn't use MAX_PATH_BYTES because on windows that's 32767*3+1 yet normal paths are 255.
+        // should this fail it will still do so gracefully. 4096 is MAX_PATH_BYTES on posix.
+        var value: [4096]u8 = undefined;
+        var len: usize = 0;
+    };
+    if (memo.set) return memo.value[0..memo.len :0];
+    const init = try std.fs.selfExePath(&memo.value);
+    memo.len = init.len;
+    memo.value[memo.len] = 0;
+    memo.set = true;
+    return memo.value[0..memo.len :0];
+}
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
 
 pub const spawnSync = @This().spawn.sync.spawn;

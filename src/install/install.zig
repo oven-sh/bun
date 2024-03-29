@@ -8271,7 +8271,8 @@ pub const PackageManager = struct {
                 const tree_id = entry.tree_id;
                 if (this.canRunScripts(tree_id)) {
                     _ = this.pending_lifecycle_scripts.swapRemove(i);
-                    this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, false) catch |err| {
+                    const output_in_foreground = false;
+                    this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, output_in_foreground) catch |err| {
                         if (comptime log_level != .silent) {
                             const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                             const args = .{ name, @errorName(err) };
@@ -8309,7 +8310,8 @@ pub const PackageManager = struct {
                     PackageManager.instance.sleep();
                 }
 
-                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, false) catch |err| {
+                const output_in_foreground = false;
+                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, output_in_foreground) catch |err| {
                     if (comptime log_level != .silent) {
                         const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                         const args = .{ package_name, @errorName(err) };
@@ -9500,12 +9502,13 @@ pub const PackageManager = struct {
 
             installer.completeRemainingScripts(log_level);
 
-            if (!FeatureFlags.breaking_changes_1_1_0) {
+            if (comptime !FeatureFlags.breaking_changes_1_1_0) {
                 if (this.root_lifecycle_scripts) |scripts| {
                     if (comptime log_level.showProgress()) {
                         scripts_node.setEstimatedTotalItems(scripts_node.unprotected_completed_items + scripts.total);
                     }
-                    try this.spawnPackageLifecycleScripts(ctx, scripts, log_level, false);
+                    const output_in_foreground = false;
+                    try this.spawnPackageLifecycleScripts(ctx, scripts, log_level, output_in_foreground);
                 }
             }
 
@@ -10154,7 +10157,7 @@ pub const PackageManager = struct {
             }
         }
 
-        if (FeatureFlags.breaking_changes_1_1_0) {
+        if (comptime FeatureFlags.breaking_changes_1_1_0) {
             if (manager.options.do.run_scripts) {
                 if (manager.root_lifecycle_scripts) |scripts| {
                     if (comptime Environment.allow_assert) {
@@ -10167,7 +10170,8 @@ pub const PackageManager = struct {
                     }
                     // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
                     // have finished, and lockfiles have been saved
-                    try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, true);
+                    const output_in_foreground = true;
+                    try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, output_in_foreground);
 
                     while (manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
                         if (PackageManager.verbose_install) {

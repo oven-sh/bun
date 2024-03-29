@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins, breakingChanges_1_0_0 } from "harness";
+import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins, breakingChanges_1_1_0 } from "harness";
 import { join } from "path";
 import { mkdtempSync, realpathSync, copyFileSync, mkdirSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -3735,7 +3735,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test.if(breakingChanges_1_0_0)(
+    test.if(breakingChanges_1_1_0)(
       "default trusted dependencies should not be used of trustedDependencies is populated",
       async () => {
         await writeFile(
@@ -3831,7 +3831,7 @@ for (const forceWaiterThread of [false, true]) {
       },
     );
 
-    test.if(breakingChanges_1_0_0)("does not run any scripts if trustedDependencies is an empty list", async () => {
+    test.if(breakingChanges_1_1_0)("does not run any scripts if trustedDependencies is an empty list", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3875,7 +3875,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
     });
 
-    test.if(breakingChanges_1_0_0)(
+    test.if(breakingChanges_1_1_0)(
       "will run default trustedDependencies after install that didn't include them",
       async () => {
         await writeFile(
@@ -4785,7 +4785,7 @@ for (const forceWaiterThread of [false, true]) {
       });
     });
   });
-  describe.if(breakingChanges_1_0_0)("stdout/stderr is inherited from root scripts during install", async () => {
+  describe.if(breakingChanges_1_1_0)("stdout/stderr is inherited from root scripts during install", async () => {
     test("without packages", async () => {
       const exe = bunExe().replace(/\\/g, "\\\\");
       await writeFile(

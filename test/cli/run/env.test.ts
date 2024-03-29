@@ -41,10 +41,10 @@ describe(".env file is loaded", () => {
       ".env": "FOO=fail\nBAR=baz\n",
       ".env.development": "FOO=bar\n",
       ".env.local": "LOCAL=true\n",
-      "index.ts": "console.log(process.env.FOO, process.env.BAR, process.env.LOCAL);",
+      "index.ts": "console.log(process.env.NODE_ENV, process.env.FOO, process.env.BAR, process.env.LOCAL);",
     });
     const { stdout } = bunRun(`${dir}/index.ts`);
-    expect(stdout).toBe("bar baz true");
+    expect(stdout).toBe("undefined bar baz true");
   });
   test(".env.development (NODE_ENV=development)", () => {
     const dir = tempDirWithFiles("dotenv", {
@@ -696,7 +696,7 @@ process.env.NODE_ENV = "production";
 console.log(dynamic().NODE_ENV);
 `,
   });
-  expect(bunRun(path.join(tmp, "index.ts"), {}).stdout).toBe("development\ndevelopment\nproduction");
+  expect(bunRun(path.join(tmp, "index.ts"), {}).stdout).toBe("undefined\nundefined\nproduction");
 });
 
 test("NODE_ENV default is not propogated in bun run", () => {

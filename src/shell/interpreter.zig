@@ -510,7 +510,7 @@ pub const EnvMap = struct {
         pub fn hash(self: @This(), s: EnvStr) u32 {
             _ = self;
             if (bun.Environment.isWindows) {
-                 return bun.CaseInsensitiveASCIIStringContext.hash(undefined, s.slice());
+                return bun.CaseInsensitiveASCIIStringContext.hash(undefined, s.slice());
             }
             return std.array_hash_map.hashString(s.slice());
         }
@@ -518,7 +518,7 @@ pub const EnvMap = struct {
             _ = self;
             _ = b_index;
             if (bun.Environment.isWindows) {
-                 return bun.CaseInsensitiveASCIIStringContext.eql(undefined, a.slice(), b.slice(), undefined);
+                return bun.CaseInsensitiveASCIIStringContext.eql(undefined, a.slice(), b.slice(), undefined);
             }
             return std.array_hash_map.eqlString(a.slice(), b.slice());
         }

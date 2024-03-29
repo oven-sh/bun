@@ -983,6 +983,7 @@ pub const Interpreter = struct {
             },
         };
 
+        bun.Analytics.Features.shell += 1;
         return interpreter;
     }
 
@@ -1191,6 +1192,7 @@ pub const Interpreter = struct {
     }
 
     pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
+        bun.Analytics.Features.standalone_shell += 1;
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
@@ -9015,6 +9017,20 @@ pub const Interpreter = struct {
                             this.writer.handle = .{ .closed = {} };
                             return __start(this);
                         }
+                    }
+                }
+
+                if (bun.Environment.isWindows) {
+                    // This might happen if the file descriptor points to NUL.
+                    // On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so
+                    // `this.writer.start()` will try to open it as a tty with
+                    // uv_tty_init, but this returns EBADF. As a workaround,
+                    // we'll try opening the file descriptor as a file.
+                    if (e.getErrno() == .BADF) {
+                        this.flags.pollable = false;
+                        this.flags.nonblocking = false;
+                        this.flags.is_socket = false;
+                        return this.writer.startWithFile(this.fd);
                     }
                 }
                 return .{ .err = e };

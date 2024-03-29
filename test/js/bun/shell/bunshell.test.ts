@@ -1604,7 +1604,7 @@ if [[ "123abc" == *?(a)bc ]]; then echo ok 43; else echo bad 43; fi
   });
 });
 
-describe("async", () => {
+describe.todo("async", () => {
   TestBuilder.command`echo hi && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${/* ts */ `await Bun.sleep(500); console.log('noice')`} &; echo hello`
     .stdout("hi\nhello\nnoice\n")
     .runAsTest("basic");

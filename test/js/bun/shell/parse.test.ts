@@ -801,7 +801,7 @@ describe("parse shell", () => {
     });
   });
 
-  describe("async", () => {
+  describe.todo("async", () => {
     TestBuilder.command`echo foo & && echo hi`
       .error('"&" is not allowed on the left-hand side of "&&"')
       .runAsTest("left side of binary not allowed");

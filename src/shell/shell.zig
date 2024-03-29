@@ -986,35 +986,38 @@ pub const Parser = struct {
         {
             const expr = try self.parse_expr();
             if (self.match(.Ampersand)) {
-                switch (expr) {
-                    .binary => {
-                        var newexpr = expr;
-                        const right_alloc = try self.allocate(AST.Expr, newexpr.binary.right);
-                        const right: AST.Expr = .{ .@"async" = right_alloc };
-                        newexpr.binary.right = right;
-                        try exprs.append(newexpr);
-                    },
-                    else => {
-                        const @"async" = .{ .@"async" = try self.allocate(AST.Expr, expr) };
-                        try exprs.append(@"async");
-                    },
-                }
+                try self.add_error("Background commands \"&\" are not supported yet.", .{});
+                return ParseError.Unsupported;
+                // Uncomment when we enable ampersand
+                // switch (expr) {
+                //     .binary => {
+                //         var newexpr = expr;
+                //         const right_alloc = try self.allocate(AST.Expr, newexpr.binary.right);
+                //         const right: AST.Expr = .{ .@"async" = right_alloc };
+                //         newexpr.binary.right = right;
+                //         try exprs.append(newexpr);
+                //     },
+                //     else => {
+                //         const @"async" = .{ .@"async" = try self.allocate(AST.Expr, expr) };
+                //         try exprs.append(@"async");
+                //     },
+                // }
 
-                _ = self.match_any_comptime(&.{ .Semicolon, .Newline });
+                // _ = self.match_any_comptime(&.{ .Semicolon, .Newline });
 
-                // Scripts like: `echo foo & && echo hi` aren't allowed because
-                // `&&` and `||` require the left-hand side's exit code to be
-                // immediately observable, but the `&` makes it run in the
-                // background.
-                //
-                // So we do a quick check for this kind of syntax here, and
-                // provide a helpful error message to the user.
-                if (self.peek() == .DoubleAmpersand) {
-                    try self.add_error("\"&\" is not allowed on the left-hand side of \"&&\"", .{});
-                    return ParseError.Unsupported;
-                }
+                // // Scripts like: `echo foo & && echo hi` aren't allowed because
+                // // `&&` and `||` require the left-hand side's exit code to be
+                // // immediately observable, but the `&` makes it run in the
+                // // background.
+                // //
+                // // So we do a quick check for this kind of syntax here, and
+                // // provide a helpful error message to the user.
+                // if (self.peek() == .DoubleAmpersand) {
+                //     try self.add_error("\"&\" is not allowed on the left-hand side of \"&&\"", .{});
+                //     return ParseError.Unsupported;
+                // }
 
-                break;
+                // break;
             }
             try exprs.append(expr);
         }

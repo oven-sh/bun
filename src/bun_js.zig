@@ -147,7 +147,7 @@ pub const Run = struct {
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
         }
 
-        if (strings.endsWithComptime(entry_path, comptime if (Environment.isWindows) ".sh" else ".bun.sh")) {
+        if (strings.endsWithComptime(entry_path, ".sh")) {
             const exit_code = try bootBunShell(&ctx, entry_path);
             Global.exitWide(exit_code);
             return;

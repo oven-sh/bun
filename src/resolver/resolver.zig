@@ -944,9 +944,9 @@ pub const Resolver = struct {
                 return .{ .failure = error.MissingResolveDir };
             }
 
-            // This can also be hit if you use plugins with odd specifiers, or call
-            // the module resolver from javascript (import.meta.resolveSync, or
-            // import.meta.resolve) with a faulty parent specifier.
+            // This can also be hit if you use plugins with odd specifiers, or
+            // call the module resolver from javascript (Bun.resolveSync) with a
+            // faulty parent specifier.
             if (!std.fs.path.isAbsolute(source_dir)) {
                 if (r.debug_logs) |*debug| {
                     debug.addNote("Cannot resolve this path without an absolute directory");

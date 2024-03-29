@@ -6,6 +6,7 @@ Bun implements the following properties.
 import.meta.dir;   // => "/path/to/project"
 import.meta.file;  // => "file.ts"
 import.meta.path;  // => "/path/to/project/file.ts"
+import.meta.url;   // => "file:///path/to/project/file.ts"
 
 import.meta.main;  // `true` if this file is directly executed by `bun run`
                    // `false` otherwise
@@ -58,15 +59,11 @@ import.meta.resolve("zod"); // => "file:///path/to/project/node_modules/zod/inde
   ```ts
   import.meta.resolve("zod");
   // => "file:///path/to/project/node_modules/zod/index.ts"
-
-  import.meta.resolveSync("./file.tsx");
-  // => "/path/to/project/file.tsx"
   ```
 
 ---
 
 - `import.meta.url`
 - A `string` url to the current file, e.g. `file:///path/to/project/index.ts`. Equivalent to [`import.meta.url` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#url)
-
 
 {% /table %}

@@ -1769,17 +1769,12 @@ declare global {
     resolveSync(moduleId: string, parent?: string): string;
 
     /**
-     * Load a CommonJS module
-     *
-     * Internally, this is a synchronous version of ESModule's `import()`, with extra code for handling:
-     * - CommonJS modules
-     * - *.node files
-     * - *.json files
-     *
-     * Warning: **This API is not stable** and may change in the future. Use at your
-     * own risk. Usually, you should use `require` instead and Bun's transpiler
-     * will automatically rewrite your code to use `import.meta.require` if
-     * relevant.
+     * Load a CommonJS module within an ES Module. Bun's transpiler rewrites all
+     * calls to `require` with `import.meta.require` when transpiling ES Modules
+     * for the runtime.
+     * 
+     * Warning: **This API is not stable** and may change or be removed in the
+     * future. Use at your own risk.
      */
     require: NodeJS.Require;
 
@@ -1803,16 +1798,14 @@ declare global {
     readonly main: boolean;
 
     /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
-    dirname: string;
+    readonly dirname: string;
 
     /** Alias of `import.meta.path`. Exists for Node.js compatibility */
-    filename: string;
+    readonly filename: string;
   }
 
   /**
    * NodeJS-style `require` function
-   *
-   * Internally, uses `import.meta.require`
    *
    * @param moduleId - The module ID to resolve
    */

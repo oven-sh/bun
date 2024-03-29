@@ -247,6 +247,52 @@ describe.each(["--production", "without --production"])("%s", flag => {
   });
 });
 
+test("hardlinks on windows dont fail with long paths", async () => {
+  await mkdir(join(packageDir, "a-package"));
+  await writeFile(
+    join(packageDir, "a-package", "package.json"),
+    JSON.stringify({
+      name: "a-package",
+      version: "1.0.0",
+    }),
+  );
+
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      dependencies: {
+        // 255 characters
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":
+          "file:./a-package",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@a-package",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+});
+
 test("basic 1", async () => {
   await writeFile(
     join(packageDir, "package.json"),

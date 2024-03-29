@@ -8670,19 +8670,19 @@ pub const Interpreter = struct {
             }
 
             pub fn next(this: *Exit) void {
-                while (!(this.state == .err or this.state == .done)) {
-                    switch (this.state) {
-                        .waiting_io => return,
-                        .idle, .done, .err => unreachable,
-                    }
-                }
-                if (this.state == .done) {
-                    this.bltn.done(1);
-                    return;
-                }
-                if (this.state == .err) {
-                    this.bltn.done(1);
-                    return;
+                switch (this.state) {
+                    .idle => unreachable,
+                    .waiting_io => {
+                        return;
+                    },
+                    .err => {
+                        this.bltn.done(1);
+                        return;
+                    },
+                    .done => {
+                        this.bltn.done(1);
+                        return;
+                    },
                 }
             }
 

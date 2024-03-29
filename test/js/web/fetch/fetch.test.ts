@@ -1282,8 +1282,8 @@ describe("Response", () => {
         expect(response.status).toBe(200);
         expect(response.headers.get("content-length")).toBe("14");
         let input = await response.arrayBuffer();
-        let output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
-        expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
+        let output = await Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer();
+        expect(input).toEqual(output);
       }
     });
   });

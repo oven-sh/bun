@@ -472,9 +472,7 @@ pub fn WindowsPipeReader(
             if (this.source) |source| {
                 switch (source) {
                     .sync_file, .file => |file| {
-                        // we need a new fs_t to close the file
-                        // the current one is used for reading/canceling
-                        // we dont wanna to free any data that is being used in uv loop
+                        // always use close_fs here because we can have a operation in progress
                         file.close_fs.data = file;
                         _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, @ptrCast(&onFileClose));
                     },

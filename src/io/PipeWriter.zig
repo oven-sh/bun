@@ -767,7 +767,7 @@ fn BaseWindowsPipeWriter(
 
         fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
             const file = bun.cast(*Source.File, handle.data);
-            file.fs.deinit();
+            handle.deinit();
             bun.default_allocator.destroy(file);
         }
 
@@ -786,9 +786,9 @@ fn BaseWindowsPipeWriter(
             if (this.source) |source| {
                 switch (source) {
                     .file => |file| {
-                        file.fs.deinit();
-                        file.fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &file.fs, file.file, @ptrCast(&onFileClose));
+                        // always use close_fs here because we can have a operation in progress
+                        file.close_fs.data = file;
+                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, @ptrCast(&onFileClose));
                     },
                     .sync_file => {
                         // no-op
@@ -1202,6 +1202,7 @@ pub fn WindowsStreamingWriter(
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            if (fs.result.int() == uv.UV_ECANCELED) return;
             const this = bun.cast(*WindowsWriter, fs.data);
             if (fs.result.toError(.write)) |err| {
                 this.close();

@@ -15,6 +15,9 @@ pub const Source = union(enum) {
 
     pub const File = struct {
         fs: uv.fs_t,
+        // we need a new fs_t to close the file
+        // the current one is used for write/reading/canceling
+        // we dont wanna to free any data that is being used in uv loop
         close_fs: uv.fs_t,
         iov: uv.uv_buf_t,
         file: uv.uv_file,

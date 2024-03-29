@@ -1,11 +1,18 @@
 import { $ } from "bun";
 import { beforeAll, describe, test, expect } from "bun:test";
 
-beforeAll(() => {
-  $.nothrow();
-});
-
 describe("throw", () => {
+  test("throws by default", async () => {
+    let e;
+    try {
+      await $`ls ksjflkjfksjdflksdjflksdf`;
+      expect("Woops").toBe("Should have thrown");
+    } catch (err) {
+      e = err;
+    }
+    expect(e).toBeDefined();
+  });
+
   test("enabled globally", async () => {
     $.throws(true);
     let e;

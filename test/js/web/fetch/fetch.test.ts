@@ -1259,6 +1259,33 @@ describe("Response", () => {
       var output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
       expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
     });
+    it("with Bun.file() sendfile with request/response", async () => {
+      startServer({
+        async fetch(request: Request) {
+          return new Response(Bun.file(import.meta.dir + "/fixtures/file.txt"));
+        },
+      });
+
+      let promises = [];
+
+      // Issue a sufficiently large volume of requests to make sure they all succeed.
+      // This is a repro strategy for #7954. Essentially there was an issue where we
+      // were writing an additional /r/n at the end of responses, which interfered
+      // with adjacent requests on the same connection.
+      for (let i = 0; i < 2000; i++) {
+        promises.push(fetch(server.url));
+      }
+
+      const responses = await Promise.all(promises);
+
+      for (const response of responses) {
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-length")).toBe("14");
+        let input = await response.arrayBuffer();
+        let output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
+        expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
+      }
+    });
   });
 
   it("should work with bigint", () => {

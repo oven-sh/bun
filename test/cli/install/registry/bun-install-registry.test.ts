@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins } from "harness";
+import { bunEnv, bunExe, bunEnv as env, isWindows, mergeWindowEnvs, toBeValidBin, toHaveBins } from "harness";
 import { join } from "path";
 import { mkdtempSync, realpathSync, copyFileSync, mkdirSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -6694,10 +6694,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();

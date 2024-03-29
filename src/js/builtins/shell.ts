@@ -250,7 +250,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
   class ShellPrototype {
     [cwdSymbol]: string | undefined;
     [envSymbol]: Record<string, string | undefined> | undefined;
-    [throwsSymbol]: boolean = false;
+    [throwsSymbol]: boolean = true;
 
     env(newEnv: Record<string, string | undefined>) {
       if (typeof newEnv === "undefined" || newEnv === originalDefaultEnv) {
@@ -263,6 +263,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
       return this;
     }
+
     cwd(newCwd: string | undefined) {
       if (typeof newCwd === "undefined" || typeof newCwd === "string") {
         if (newCwd === "." || newCwd === "" || newCwd === "./") {
@@ -276,10 +277,12 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
       return this;
     }
+
     nothrow() {
       this[throwsSymbol] = false;
       return this;
     }
+
     throws(doThrow: boolean | undefined) {
       this[throwsSymbol] = !!doThrow;
       return this;
@@ -333,7 +336,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
   BunShell[cwdSymbol] = defaultCwd;
   BunShell[envSymbol] = defaultEnv;
-  BunShell[throwsSymbol] = false;
+  BunShell[throwsSymbol] = true;
 
   Object.defineProperties(BunShell, {
     Shell: {

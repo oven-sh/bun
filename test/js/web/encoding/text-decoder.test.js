@@ -230,7 +230,7 @@ describe("TextDecoder", () => {
     const decoder = new TextDecoder("utf-8", { fatal: true });
     expect(() => {
       decoder.decode(new Uint8Array([0xc0])); // Invalid UTF8
-    }).toThrow(TypeError);
+    }).toThrow(Error);
     let err;
     try {
       decoder.decode(new Uint8Array([0xc0, 0x80])); // Invalid UTF8

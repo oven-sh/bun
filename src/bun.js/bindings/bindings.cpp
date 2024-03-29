@@ -3640,7 +3640,9 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JS
                 jc = pathString.characterAt(j);
             }
 
-            PropertyName propName = PropertyName(Identifier::fromString(vm, pathString.substring(i, j - i)));
+            String propNameStr = pathString.substring(i, j - i);
+            PropertyName propName = PropertyName(Identifier::fromString(vm, propNameStr));
+
             currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {

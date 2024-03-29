@@ -311,6 +311,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 client,
                 "tcp",
             )) |out| {
+                bun.Analytics.Features.WebSocket += 1;
+
                 if (comptime ssl) {
                     if (!strings.isIPAddress(host_.slice())) {
                         out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
@@ -454,9 +456,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
 
             const is_first = this.body.items.len == 0;
-            if (is_first) {
+            const http_101 = "HTTP/1.1 101 ";
+            if (is_first and body.len > http_101.len) {
                 // fail early if we receive a non-101 status code
-                if (!strings.hasPrefixComptime(body, "HTTP/1.1 101 ")) {
+                if (!strings.hasPrefixComptime(body, http_101)) {
                     this.terminate(ErrorCode.expected_101_status_code);
                     return;
                 }
@@ -492,7 +495,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var websocket_accept_header = PicoHTTP.Header{ .name = "", .value = "" };
             var visited_protocol = this.websocket_protocol == 0;
             // var visited_version = false;
-            std.debug.assert(response.status_code == 101);
+
+            if (response.status_code != 101) {
+                this.terminate(ErrorCode.expected_101_status_code);
+                return;
+            }
 
             for (response.headers) |header| {
                 switch (header.name.len) {

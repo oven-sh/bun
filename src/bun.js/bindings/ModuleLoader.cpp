@@ -41,8 +41,6 @@ using namespace JSC;
 using namespace Zig;
 using namespace WebCore;
 
-static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, bool wasModuleMock = false);
-
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
 static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
@@ -660,16 +658,6 @@ static JSValue fetchESMSourceCode(
         } else {
             throwException(globalObject, scope, exception);
             return {};
-        }
-    };
-
-    const auto resolve = [&](JSValue code) -> JSValue {
-        if constexpr (allowPromise) {
-            auto* ret = resolvedInternalPromise(globalObject, code);
-            scope.release();
-            return ret;
-        } else {
-            return code;
         }
     };
 

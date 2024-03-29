@@ -170,8 +170,13 @@ export function bunTest(file: string, env?: Record<string, string>) {
   };
 }
 
-export function bunRunAsScript(dir: string, script: string, env?: Record<string, string>) {
-  const result = Bun.spawnSync([bunExe(), `run`, `${script}`], {
+export function bunRunAsScript(
+  dir: string,
+  script: string,
+  env?: Record<string, string | undefined>,
+  execArgv?: string[],
+) {
+  const result = Bun.spawnSync([bunExe(), ...(execArgv ?? []), `run`, `${script}`], {
     cwd: dir,
     env: {
       ...bunEnv,
@@ -555,4 +560,32 @@ export function toTOMLString(opts: object) {
     ret += `${key} = ${JSON.stringify(value)}` + "\n";
   }
   return ret;
+}
+
+export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
+  var decoder = new (require("string_decoder").StringDecoder)("utf8");
+  var str = "";
+  for await (const chunk of iter) {
+    str += decoder.write(chunk);
+    let i = str.indexOf("\n");
+    while (i >= 0) {
+      yield str.slice(0, i);
+      str = str.slice(i + 1);
+      i = str.indexOf("\n");
+    }
+  }
+
+  str += decoder.end();
+  {
+    let i = str.indexOf("\n");
+    while (i >= 0) {
+      yield str.slice(0, i);
+      str = str.slice(i + 1);
+      i = str.indexOf("\n");
+    }
+  }
+
+  if (str.length > 0) {
+    yield str;
+  }
 }

@@ -90,6 +90,8 @@ pub const LifecycleScriptSubprocess = struct {
     var cwd_z_buf: bun.PathBuffer = undefined;
 
     pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
+        bun.Analytics.Features.lifecycle_scripts += 1;
+
         if (!this.has_incremented_alive_count) {
             this.has_incremented_alive_count = true;
             _ = alive_count.fetchAdd(1, .Monotonic);

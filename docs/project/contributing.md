@@ -30,36 +30,23 @@ $ sudo zypper install go cmake ninja automake git rustup && rustup toolchain ins
 
 {% /codetabs %}
 
-{% callout }
-
-**Note**: The Zig compiler is automatically installed and updated by the build scripts. Manual installation is not required.
-
-{% /callout }
+> **Note**: The Zig compiler is automatically installed and updated by the build scripts. Manual installation is not required.
 
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
 {% codetabs %}
 
 ```bash#Native
-$ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+$ curl -fsSL https://bun.sh/install | bash
 ```
 
 ```bash#npm
-$ npm install -g bun # the last `npm` command you'll ever need
+$ npm install -g bun
 ```
 
 ```bash#Homebrew
-$ brew tap oven-sh/bun # for macOS and Linux
+$ brew tap oven-sh/bun
 $ brew install bun
-```
-
-```bash#Docker
-$ docker pull oven/bun
-$ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
-```
-
-```bash#proto
-$ proto install bun
 ```
 
 {% /codetabs %}
@@ -150,7 +137,7 @@ $ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 $ ninja -C build # 'bun run build' runs just this
 ```
 
-Advanced uses can pass CMake flags to customize the build.
+Advanced users can pass CMake flags to customize the build.
 
 ## VSCode
 
@@ -320,8 +307,7 @@ $ xcode-select --install
 Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
 ```bash
-$ cmake -Bbuild -GNinja -DUSE_STATIC_LIBATOMIC=ON
-$ ninja -Cbuild
+$ bun setup -DUSE_STATIC_LIBATOMIC=OFF
 ```
 
 The built version of Bun may not work on other systems if compiled this way.

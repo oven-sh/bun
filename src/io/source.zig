@@ -15,6 +15,7 @@ pub const Source = union(enum) {
 
     pub const File = struct {
         fs: uv.fs_t,
+        close_fs: uv.fs_t,
         iov: uv.uv_buf_t,
         file: uv.uv_file,
     };

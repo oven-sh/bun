@@ -276,6 +276,25 @@ describe("WebSocketServer", () => {
     new WebSocket("ws://localhost:" + wss.address().port);
     await promise;
   });
+
+  it("sockets can be terminated", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers();
+
+    wss.on("connection", ws => {
+      ws.on("close", () => {
+        resolve();
+      });
+      try {
+        ws.terminate();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    new WebSocket("ws://localhost:" + wss.address().port);
+    await promise;
+  });
 });
 
 describe("Server", () => {

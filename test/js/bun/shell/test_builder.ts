@@ -16,6 +16,7 @@ export class TestBuilder {
   private expected_error: ShellError | string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
   private _doesNotExist: string[] = [];
+  private _timeout: number | undefined = undefined;
 
   private tempdir: string | undefined = undefined;
   private _env: { [key: string]: string } | undefined = undefined;
@@ -174,6 +175,11 @@ export class TestBuilder {
     return this.tempdir;
   }
 
+  timeout(ms: number): this {
+    this._timeout = ms;
+    return this;
+  }
+
   async run(): Promise<undefined> {
     if (this.promise.type === "err") {
       const err = this.promise.val;
@@ -237,9 +243,13 @@ export class TestBuilder {
         await tb.run();
       });
     } else {
-      test(name, async () => {
-        await tb.run();
-      });
+      test(
+        name,
+        async () => {
+          await tb.run();
+        },
+        this._timeout,
+      );
     }
   }
 

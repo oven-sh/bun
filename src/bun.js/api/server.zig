@@ -5671,6 +5671,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             server.request_pool_allocator = RequestContext.pool.?;
 
+            if (comptime ssl_enabled_) {
+                Analytics.Features.https_server += 1;
+            } else {
+                Analytics.Features.http_server += 1;
+            }
+
             return server;
         }
 

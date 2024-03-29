@@ -365,6 +365,7 @@ const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
+const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -436,6 +437,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellTouchTask,
     ShellCondExprStatTask,
     ShellAsync,
+    ShellAsyncSubprocessDone,
     TimerReference,
 
     ProcessWaiterThreadTask,
@@ -889,6 +891,10 @@ pub const EventLoop = struct {
             switch (task.tag()) {
                 @field(Task.Tag, typeBaseName(@typeName(ShellAsync))) => {
                     var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
+                    shell_ls_task.runFromMainThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellAsyncSubprocessDone))) => {
+                    var shell_ls_task: *ShellAsyncSubprocessDone = task.get(ShellAsyncSubprocessDone).?;
                     shell_ls_task.runFromMainThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellIOWriterAsyncDeinit))) => {

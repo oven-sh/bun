@@ -371,6 +371,10 @@ pub const EnvStr = packed struct {
     };
 
     inline fn initSlice(str: []const u8) EnvStr {
+        if (str.len == 0)
+            // Zero length strings may have invalid pointers, leading to a bad integer cast.
+            return .{ .tag = .slice, .ptr = @intCast(@intFromPtr(&"")), .len = 0 };
+
         return .{
             .ptr = @intCast(@intFromPtr(str.ptr)),
             .tag = .slice,
@@ -379,6 +383,11 @@ pub const EnvStr = packed struct {
     }
 
     fn initRefCounted(str: []const u8) EnvStr {
+        if (str.len == 0)
+            // Zero length strings may have invalid pointers, leading to a bad integer cast.
+            // Instead of ref-counting zero lens, just be the same as the above initSlice
+            return .{ .tag = .slice, .ptr = @intCast(@intFromPtr(&"")), .len = 0 };
+
         return .{
             .ptr = @intCast(@intFromPtr(RefCountedStr.init(str))),
             .tag = .refcounted,

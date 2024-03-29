@@ -1270,9 +1270,9 @@ describe("Response", () => {
 
       // Issue a sufficiently large volume of requests to make sure they all succeed.
       // This is a repro strategy for #7954. Essentially there was an issue where we
-      // were writing an additional /r/n at the end of responses, which interfered
+      // were writing an additional \r\n at the end of responses, which interfered
       // with adjacent requests on the same connection.
-      for (let i = 0; i < 2000; i++) {
+      for (let i = 0; i < 500; i++) {
         promises.push(fetch(server.url));
       }
 

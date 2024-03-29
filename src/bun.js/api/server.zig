@@ -1561,7 +1561,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         /// Complete the response without writing a body payload.
-        /// `sendCrlf` if true will send an /r/n at the end of the HTTP response.
+        /// `sendCrlf` if true will send an \r\n at the end of the HTTP response.
         /// If we already wrote a body and are using this function to complete the response, then
         /// `sendCrlf` should be false.
         pub fn endWithoutBody(this: *RequestContext, closeConnection: bool, sendCrlf: bool) void {

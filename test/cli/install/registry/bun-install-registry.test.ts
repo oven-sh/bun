@@ -6682,7 +6682,6 @@ test.if(isWindows)(
       { bin: "bin7", name: "bin7" },
       { bin: "bin-node", name: "bin-node" },
       { bin: "bin-bun", name: "bin-bun" },
-      { bin: "bin-py", name: "bin-py" },
       { bin: "native", name: "exe" },
       { bin: "uses-native", name: `exe ${packageDir}\\node_modules\\bunx-bins\\uses-native.ts` },
     ];

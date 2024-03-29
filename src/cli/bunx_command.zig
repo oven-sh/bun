@@ -574,7 +574,7 @@ pub const BunxCommand = struct {
         }
 
         var args = std.BoundedArray([]const u8, 7).fromSlice(&.{
-            try std.fs.selfExePathAlloc(ctx.allocator),
+            try bun.selfExePath(),
             "add",
             install_param,
             "--no-summary",

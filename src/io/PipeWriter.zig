@@ -848,6 +848,15 @@ fn BaseWindowsPipeWriter(
             return this.startWithCurrentPipe();
         }
 
+        pub fn startWithFile(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.JSC.Maybe(void) {
+            std.debug.assert(this.source == null);
+            const source: bun.io.Source = .{ .file = Source.openFile(fd) };
+            source.setData(this);
+            this.source = source;
+            this.setParent(this.parent);
+            return this.startWithCurrentPipe();
+        }
+
         pub fn start(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
             std.debug.assert(this.source == null);
             const source = switch (Source.open(uv.Loop.get(), fd)) {
@@ -1052,17 +1061,20 @@ pub const StreamBuffer = struct {
                 return buffer;
             }
 
-            var byte_list = bun.ByteList.fromList(this.list);
-            defer this.list = byte_list.listManaged(this.list.allocator);
-
-            _ = try byte_list.writeLatin1(this.list.allocator, buffer);
+            {
+                var byte_list = bun.ByteList.fromList(this.list);
+                defer this.list = byte_list.listManaged(this.list.allocator);
+                _ = try byte_list.writeLatin1(this.list.allocator, buffer);
+            }
 
             return this.list.items[this.cursor..];
         } else if (comptime @TypeOf(writeFn) == @TypeOf(&writeUTF16) and writeFn == &writeUTF16) {
-            var byte_list = bun.ByteList.fromList(this.list);
-            defer this.list = byte_list.listManaged(this.list.allocator);
+            {
+                var byte_list = bun.ByteList.fromList(this.list);
+                defer this.list = byte_list.listManaged(this.list.allocator);
 
-            _ = try byte_list.writeUTF16(this.list.allocator, buffer);
+                _ = try byte_list.writeUTF16(this.list.allocator, buffer);
+            }
 
             return this.list.items[this.cursor..];
         } else if (comptime @TypeOf(writeFn) == @TypeOf(&write) and writeFn == &write) {

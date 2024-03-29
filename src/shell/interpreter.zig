@@ -358,38 +358,55 @@ pub const IO = struct {
 /// So environment strings can be ref counted or borrowed slices
 pub const EnvStr = packed struct {
     ptr: u48,
-    tag: Tag,
+    tag: Tag = .empty,
     len: usize = 0,
 
     const print = bun.Output.scoped(.EnvStr, true);
 
     const Tag = enum(u16) {
+        /// no value
+        empty,
+
         /// Dealloced by reference counting
         refcounted,
+
         /// Memory is managed elsewhere so don't dealloc it
         slice,
     };
 
     inline fn initSlice(str: []const u8) EnvStr {
+        if (str.len == 0)
+            // Zero length strings may have invalid pointers, leading to a bad integer cast.
+            return .{ .tag = .empty, .ptr = 0, .len = 0 };
+
         return .{
-            .ptr = @intCast(@intFromPtr(str.ptr)),
+            .ptr = toPtr(str.ptr),
             .tag = .slice,
             .len = str.len,
         };
     }
 
+    fn toPtr(ptr_val: *const anyopaque) u48 {
+        const num: [8]u8 = @bitCast(@intFromPtr(ptr_val));
+        return @bitCast(num[0..6].*);
+    }
+
     fn initRefCounted(str: []const u8) EnvStr {
+        if (str.len == 0)
+            return .{ .tag = .empty, .ptr = 0, .len = 0 };
+
         return .{
-            .ptr = @intCast(@intFromPtr(RefCountedStr.init(str))),
+            .ptr = toPtr(RefCountedStr.init(str)),
             .tag = .refcounted,
         };
     }
 
     pub fn slice(this: EnvStr) []const u8 {
-        if (this.asRefCounted()) |refc| {
-            return refc.byteSlice();
-        }
-        return this.castSlice();
+        return switch (this.tag) {
+            .empty => "",
+            .slice => this.castSlice(),
+            .refcounted => this.castRefCounted().byteSlice(),
+        };
     }
 
     fn ref(this: EnvStr) void {
@@ -492,11 +509,17 @@ pub const EnvMap = struct {
     const MapType = std.ArrayHashMap(EnvStr, EnvStr, struct {
         pub fn hash(self: @This(), s: EnvStr) u32 {
             _ = self;
+            if (bun.Environment.isWindows) {
+                return bun.CaseInsensitiveASCIIStringContext.hash(undefined, s.slice());
+            }
             return std.array_hash_map.hashString(s.slice());
         }
         pub fn eql(self: @This(), a: EnvStr, b: EnvStr, b_index: usize) bool {
             _ = self;
             _ = b_index;
+            if (bun.Environment.isWindows) {
+                return bun.CaseInsensitiveASCIIStringContext.eql(undefined, a.slice(), b.slice(), undefined);
+            }
             return std.array_hash_map.eqlString(a.slice(), b.slice());
         }
     }, true);
@@ -983,6 +1006,7 @@ pub const Interpreter = struct {
             },
         };
 
+        bun.Analytics.Features.shell += 1;
         return interpreter;
     }
 
@@ -1191,6 +1215,7 @@ pub const Interpreter = struct {
     }
 
     pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
+        bun.Analytics.Features.standalone_shell += 1;
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
@@ -3572,7 +3597,7 @@ pub const Interpreter = struct {
                 }
 
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
+                const resolved = which(&path_buf, spawn_args.PATH, first_arg[0..first_arg_len]) orelse {
                     this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
                     return;
                 };
@@ -5870,7 +5895,7 @@ pub const Interpreter = struct {
                     var had_not_found = false;
                     for (args) |arg_raw| {
                         const arg = arg_raw[0..std.mem.len(arg_raw)];
-                        const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                        const resolved = which(&path_buf, PATH.slice(), arg) orelse {
                             had_not_found = true;
                             const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
                             _ = this.bltn.writeNoIO(.stdout, buf);
@@ -5908,7 +5933,7 @@ pub const Interpreter = struct {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
-                const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                const resolved = which(&path_buf, PATH.slice(), arg) orelse {
                     multiargs.had_not_found = true;
                     if (!this.bltn.stdout.needsIO()) {
                         const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
@@ -9015,6 +9040,20 @@ pub const Interpreter = struct {
                             this.writer.handle = .{ .closed = {} };
                             return __start(this);
                         }
+                    }
+                }
+
+                if (bun.Environment.isWindows) {
+                    // This might happen if the file descriptor points to NUL.
+                    // On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so
+                    // `this.writer.start()` will try to open it as a tty with
+                    // uv_tty_init, but this returns EBADF. As a workaround,
+                    // we'll try opening the file descriptor as a file.
+                    if (e.getErrno() == .BADF) {
+                        this.flags.pollable = false;
+                        this.flags.nonblocking = false;
+                        this.flags.is_socket = false;
+                        return this.writer.startWithFile(this.fd);
                     }
                 }
                 return .{ .err = e };

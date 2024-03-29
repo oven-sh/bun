@@ -1400,7 +1400,7 @@ pub const CreateCommand = struct {
         if (!create_options.skip_install) {
             npm_client_ = NPMClient{
                 .tag = .bun,
-                .bin = try std.fs.selfExePathAlloc(ctx.allocator),
+                .bin = try bun.selfExePath(),
             };
         }
 
@@ -1564,7 +1564,7 @@ pub const CreateCommand = struct {
         Output.flush();
 
         if (create_options.open) {
-            if (which(&bun_path_buf, PATH, destination, "bun")) |bin| {
+            if (which(&bun_path_buf, PATH, "bun")) |bin| {
                 var argv = [_]string{bun.asByteSlice(bin)};
                 var child = std.ChildProcess.init(&argv, ctx.allocator);
                 child.cwd = destination;
@@ -2289,7 +2289,7 @@ const GitHandler = struct {
         //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
         //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
 
-        if (which(&bun_path_buf, PATH, destination, "git")) |git| {
+        if (which(&bun_path_buf, PATH, "git")) |git| {
             const git_commands = .{
                 &[_]string{ git, "init", "--quiet" },
                 &[_]string{ git, "add", destination, "--ignore-errors" },

@@ -1151,7 +1151,7 @@ pub const VirtualMachine = struct {
         this.bundler.resolver.caches.fs.use_alternate_source_cache = true;
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
-        Analytics.Features.macros = true;
+        Analytics.Features.macros += 1;
         this.transpiler_store.enabled = false;
     }
 
@@ -1925,7 +1925,8 @@ pub const VirtualMachine = struct {
         }
 
         const old_log = jsc_vm.log;
-        var log = logger.Log.init(jsc_vm.allocator);
+        // the logger can end up being called on another thread, it must not use threadlocal Heap Allocator
+        var log = logger.Log.init(bun.default_allocator);
         defer log.deinit();
         jsc_vm.log = &log;
         jsc_vm.bundler.resolver.log = &log;

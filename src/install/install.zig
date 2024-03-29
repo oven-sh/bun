@@ -2121,11 +2121,11 @@ pub const PackageManager = struct {
             };
         }
 
-        this.env.loadCCachePath(this_bundler.fs);
+        this.env.loadCCachePath();
 
         {
             var node_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-            if (this.env.getNodePath(this_bundler.fs, &node_path)) |node_pathZ| {
+            if (this.env.getNodePath(&node_path)) |node_pathZ| {
                 _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
             } else brk: {
                 const current_path = this.env.get("PATH") orelse "";
@@ -5130,7 +5130,7 @@ pub const PackageManager = struct {
                         continue;
                     }
                     manager.extracted_count += 1;
-                    bun.Analytics.Features.extracted_packages = true;
+                    bun.Analytics.Features.extracted_packages += 1;
 
                     // GitHub and tarball URL dependencies are not fully resolved until after the tarball is downloaded & extracted.
                     if (manager.processExtractedTarballPackage(&package_id, resolution, task.data.extract, comptime log_level)) |pkg| brk: {
@@ -6675,7 +6675,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(entries_option.entries, &[_][]u8{}, .production);
+        try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 

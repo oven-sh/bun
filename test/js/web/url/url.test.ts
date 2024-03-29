@@ -226,5 +226,9 @@ describe("url", () => {
         expect(URL.canParse(url, base)).toBe(expected);
       });
     });
+
+    it("URL.canParse.length should be 1", () => {
+      expect(URL.canParse.length).toBe(1);
+    });
   });
 });

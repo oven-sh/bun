@@ -706,8 +706,6 @@ pub const RunCommand = struct {
         return try allocator.dupeZ(u8, target_path_buffer[0 .. converted.len + file_name.len :0]);
     }
 
-    var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-
     pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
@@ -722,10 +720,9 @@ pub const RunCommand = struct {
                 argv0 = bun.argv()[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
-                var self = try std.fs.selfExePath(&self_exe_bin_path_buf);
+                const self = try bun.selfExePath();
                 if (self.len > 0) {
-                    self.ptr[self.len] = 0;
-                    argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
+                    argv0 = self.ptr;
                     optional_bun_path.* = self;
                 }
             }
@@ -900,7 +897,7 @@ pub const RunCommand = struct {
 
         if (this_bundler.env.get("npm_execpath") == null) {
             // we don't care if this fails
-            if (std.fs.selfExePathAlloc(ctx.allocator)) |self_exe_path| {
+            if (bun.selfExePath()) |self_exe_path| {
                 this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
             } else |_| {}
         }

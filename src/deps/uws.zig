@@ -1964,8 +1964,8 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn writeHeaderInt(res: *Response, key: []const u8, value: u64) void {
                 uws_res_write_header_int(ssl_flag, res.downcast(), key.ptr, key.len, value);
             }
-            pub fn endWithoutBody(res: *Response, close_connection: bool) void {
-                uws_res_end_without_body(ssl_flag, res.downcast(), close_connection);
+            pub fn endWithoutBody(res: *Response, close_connection: bool, sendCrlf: bool) void {
+                uws_res_end_without_body(ssl_flag, res.downcast(), close_connection, sendCrlf);
             }
             pub fn write(res: *Response, data: []const u8) bool {
                 return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
@@ -2372,7 +2372,7 @@ extern fn uws_res_write_continue(ssl: i32, res: *uws_res) void;
 extern fn uws_res_write_status(ssl: i32, res: *uws_res, status: [*c]const u8, length: usize) void;
 extern fn uws_res_write_header(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: [*c]const u8, value_length: usize) void;
 extern fn uws_res_write_header_int(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: u64) void;
-extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bool) void;
+extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bool, send_crlf: bool) void;
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) uintmax_t;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, uintmax_t) void;

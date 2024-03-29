@@ -1560,13 +1560,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn endWithoutBody(this: *RequestContext, closeConnection: bool) void {
+        /// Complete the response without writing a body payload.
+        /// `sendCrlf` if true will send an /r/n at the end of the HTTP response.
+        /// If we already wrote a body and are using this function to complete the response, then
+        /// `sendCrlf` should be false.
+        pub fn endWithoutBody(this: *RequestContext, closeConnection: bool, sendCrlf: bool) void {
             if (this.resp) |resp| {
                 if (this.flags.is_waiting_for_request_body) {
                     this.flags.is_waiting_for_request_body = false;
                     resp.clearOnData();
                 }
-                resp.endWithoutBody(closeConnection);
+                resp.endWithoutBody(closeConnection, sendCrlf);
                 this.resp = null;
             }
         }
@@ -1866,7 +1870,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
             if (this.resp) |resp| {
                 resp.overrideWriteOffset(this.sendfile.offset);
-                this.endWithoutBody(this.shouldCloseConnection());
+                this.endWithoutBody(this.shouldCloseConnection(), false);
             }
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
@@ -2879,7 +2883,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             resp.writeStatus("404 Not Found");
                             this.flags.has_written_status = true;
                         }
-                        this.endWithoutBody(this.shouldCloseConnection());
+                        this.endWithoutBody(this.shouldCloseConnection(), true);
                     },
                     else => {
                         if (!this.flags.has_written_status) {
@@ -5949,7 +5953,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                 if (req_len > this.config.max_request_body_size) {
                     resp.writeStatus("413 Request Entity Too Large");
-                    resp.endWithoutBody(true);
+                    resp.endWithoutBody(true, true);
                     this.finalize();
                     return;
                 }

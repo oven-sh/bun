@@ -218,7 +218,7 @@ extern "C"
     DLL_EXPORT void uws_res_write_header(int ssl, uws_res_t *res, const char *key, size_t key_length, const char *value, size_t value_length);
 
     DLL_EXPORT void uws_res_write_header_int(int ssl, uws_res_t *res, const char *key, size_t key_length, uint64_t value);
-    DLL_EXPORT void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection);
+    DLL_EXPORT void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection, bool send_crlf);
     DLL_EXPORT bool uws_res_write(int ssl, uws_res_t *res, const char *data, size_t length);
     DLL_EXPORT uintmax_t uws_res_get_write_offset(int ssl, uws_res_t *res);
     DLL_EXPORT void uws_res_override_write_offset(int ssl, uws_res_t *res, uintmax_t offset);

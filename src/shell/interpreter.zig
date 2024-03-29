@@ -628,8 +628,12 @@ pub const Interpreter = struct {
 
     async_commands_executing: u32 = 0,
 
-    done: ?*bool = null,
-    exit_code: ?*ExitCode = null,
+    flags: packed struct(u8) {
+        done: bool = false,
+        quiet: bool = false,
+        __unused: u6 = 0,
+    } = .{},
+    exit_code: ?ExitCode = null,
 
     const InterpreterChildPtr = StatePtrUnion(.{
         Script,
@@ -1198,10 +1202,19 @@ pub const Interpreter = struct {
                 return asdlfk.interp.flags.done;
             }
         };
-        var is_done: IsDone = .{};
-        interp.done = &is_done.done;
-        interp.exit_code = &exit_code;
-        try interp.run();
+        var is_done: IsDone = .{
+            .interp = interp,
+        };
+        interp.exit_code = exit_code;
+        switch (try interp.run()) {
+            .err => |e| {
+                interp.deinitEverything();
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ std.fs.path.basename(path), e.toSystemError() });
+                bun.Global.exit(1);
+                return 1;
+            },
+            else => {},
+        }
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         return exit_code;
     }
@@ -1247,11 +1260,20 @@ pub const Interpreter = struct {
                 return asdlfk.interp.flags.done;
             }
         };
-        var is_done: IsDone = .{};
-        var exit_code: ExitCode = 1;
-        interp.done = &is_done.done;
-        interp.exit_code = &exit_code;
-        try interp.run();
+        var is_done: IsDone = .{
+            .interp = interp,
+        };
+        const exit_code: ExitCode = 1;
+        interp.exit_code = exit_code;
+        switch (try interp.run()) {
+            .err => |e| {
+                interp.deinitEverything();
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ path_for_errors, e.toSystemError() });
+                bun.Global.exit(1);
+                return 1;
+            },
+            else => {},
+        }
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         interp.deinitEverything();
         return exit_code;
@@ -1376,8 +1398,8 @@ pub const Interpreter = struct {
             defer this.deinitAfterJSRun();
             _ = this.resolve.call(&.{JSValue.jsNumberFromU16(exit_code)});
         } else {
-            this.done.?.* = true;
-            this.exit_code.?.* = exit_code;
+            this.flags.done = true;
+            this.exit_code = exit_code;
         }
     }
 
@@ -10722,160 +10744,6 @@ pub fn FlagParser(comptime Opts: type) type {
             }
 
             return .continue_parsing;
-        }
-    };
-}
-
-/// A list that can store its items inlined, and promote itself to a heap allocated bun.ByteList
-pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
-    return union(enum) {
-        inlined: Inlined,
-        heap: ByteList,
-
-        const ByteList = bun.BabyList(T);
-
-        pub const Inlined = struct {
-            items: [INLINED_MAX]T = undefined,
-            len: u32 = 0,
-
-            pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
-                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
-                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
-                list.push(bun.default_allocator, new) catch bun.outOfMemory();
-                return list;
-            }
-
-            pub fn orderedRemove(this: *Inlined, idx: usize) T {
-                if (this.len - 1 == idx) return this.pop();
-                const slice_to_shift = this.items[idx + 1 .. this.len];
-                std.mem.copyForwards(T, this.items[idx .. this.len - 1], slice_to_shift);
-                this.len -= 1;
-            }
-
-            pub fn swapRemove(this: *Inlined, idx: usize) T {
-                if (this.len - 1 == idx) return this.pop();
-
-                const old_item = this.items[idx];
-                this.items[idx] = this.pop();
-                return old_item;
-            }
-
-            pub fn pop(this: *Inlined) T {
-                const ret = this.items[this.items.len - 1];
-                this.len -= 1;
-                return ret;
-            }
-        };
-
-        pub inline fn len(this: *@This()) usize {
-            return switch (this.*) {
-                .inlined => this.inlined.len,
-                .heap => this.heap.len,
-            };
-        }
-
-        pub fn orderedRemove(this: *@This(), idx: usize) void {
-            switch (this.*) {
-                .heap => {
-                    var list = this.heap.listManaged(bun.default_allocator);
-                    _ = list.orderedRemove(idx);
-                },
-                .inlined => {
-                    _ = this.inlined.orderedRemove(idx);
-                },
-            }
-        }
-
-        pub fn swapRemove(this: *@This(), idx: usize) void {
-            switch (this.*) {
-                .heap => {
-                    var list = this.heap.listManaged(bun.default_allocator);
-                    _ = list.swapRemove(idx);
-                },
-                .inlined => {
-                    _ = this.inlined.swapRemove(idx);
-                },
-            }
-        }
-
-        pub fn truncate(this: *@This(), starting_idx: usize) void {
-            switch (this.*) {
-                .inlined => {
-                    if (starting_idx >= this.inlined.len) return;
-                    const slice_to_move = this.inlined.items[starting_idx..this.inlined.len];
-                    std.mem.copyForwards(T, this.inlined.items[0..starting_idx], slice_to_move);
-                },
-                .heap => {
-                    const new_len = this.heap.len - starting_idx;
-                    this.heap.replaceRange(0, starting_idx, this.heap.ptr[starting_idx..this.heap.len]) catch bun.outOfMemory();
-                    this.heap.len = @intCast(new_len);
-                },
-            }
-        }
-
-        pub inline fn sliceMutable(this: *@This()) []T {
-            return switch (this.*) {
-                .inlined => {
-                    if (this.inlined.len == 0) return &[_]T{};
-                    return this.inlined.items[0..this.inlined.len];
-                },
-                .heap => {
-                    if (this.heap.len == 0) return &[_]T{};
-                    return this.heap.slice();
-                },
-            };
-        }
-
-        pub inline fn slice(this: *@This()) []const T {
-            return switch (this.*) {
-                .inlined => {
-                    if (this.inlined.len == 0) return &[_]T{};
-                    return this.inlined.items[0..this.inlined.len];
-                },
-                .heap => {
-                    if (this.heap.len == 0) return &[_]T{};
-                    return this.heap.slice();
-                },
-            };
-        }
-
-        pub inline fn get(this: *@This(), idx: usize) *T {
-            return switch (this.*) {
-                .inlined => {
-                    if (bun.Environment.allow_assert) {
-                        if (idx >= this.inlined.len) @panic("Index out of bounds");
-                    }
-                    return &this.inlined.items[idx];
-                },
-                .heap => &this.heap.ptr[idx],
-            };
-        }
-
-        pub fn append(this: *@This(), new: T) void {
-            switch (this.*) {
-                .inlined => {
-                    if (this.inlined.len == INLINED_MAX) {
-                        this.* = .{ .heap = this.inlined.promote(INLINED_MAX, new) };
-                        return;
-                    }
-                    this.inlined.items[this.inlined.len] = new;
-                    this.inlined.len += 1;
-                },
-                .heap => {
-                    this.heap.push(bun.default_allocator, new) catch bun.outOfMemory();
-                },
-            }
-        }
-
-        pub fn clearRetainingCapacity(this: *@This()) void {
-            switch (this.*) {
-                .inlined => {
-                    this.inlined.len = 0;
-                },
-                .heap => {
-                    this.heap.clearRetainingCapacity();
-                },
-            }
         }
     };
 }

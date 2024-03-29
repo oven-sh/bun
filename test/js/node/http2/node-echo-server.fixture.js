@@ -16,6 +16,7 @@ server.on("stream", (stream, headers, flags) => {
     ":status": 200,
     "set-cookie": setCookie,
   });
+  stream.on("error", () => {});
 
   if (headers["x-wait-trailer"]) {
     const response = { headers, flags };

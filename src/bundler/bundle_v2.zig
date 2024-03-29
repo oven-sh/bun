@@ -804,7 +804,7 @@ pub const BundleV2 = struct {
 
         if (this.bundler.router) |router| {
             defer this.bundler.resetStore();
-            Analytics.Features.filesystem_router = true;
+            Analytics.Features.filesystem_router += 1;
 
             const entry_points = try router.getEntryPoints();
             try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, entry_points.len);

@@ -371,7 +371,7 @@ it("close event", async () => {
   const via = [
     function once(ws) {
       const { promise, resolve, reject } = Promise.withResolvers();
-      ws.on("close", () => resolve());
+      ws.once("close", () => resolve());
       return promise;
     },
     function on(ws) {
@@ -404,9 +404,7 @@ it("close event", async () => {
       ws.onopen = () => {
         ws.send("hello");
       };
-      const { promise, resolve, reject } = Promise.withResolvers();
-      version(ws).then(resolve, reject);
-      await promise;
+      return version(ws);
     }),
   );
 

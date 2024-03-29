@@ -48,8 +48,6 @@ describe("esbuild integration test", () => {
     expect(err).toBe("");
     expect(out).toContain("0.19.8");
     expect(await exited).toBe(0);
-
-    await rm(packageDir, { recursive: true, force: true });
   });
 
   test("install and use estrella", async () => {
@@ -200,7 +198,5 @@ describe("esbuild integration test", () => {
     expect(err).toBe("");
     expect(out).toBe('console.log("hello"),console.log("estrella");\n');
     expect(await exited).toBe(0);
-
-    await rm(packageDir, { recursive: true, force: true });
   });
 });

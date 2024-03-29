@@ -19,9 +19,6 @@ beforeEach(async () => {
     }
   });
 });
-afterEach(async () => {
-  await rm(x_dir, { force: true, recursive: true });
-});
 
 it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
   const processes = Array.from({ length: 3 }, (_, i) => {

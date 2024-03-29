@@ -121,7 +121,6 @@ registry = "http://localhost:${server.port}/"
 
 export async function dummyAfterEach() {
   resetHandler();
-  await rm(package_dir, { force: true, recursive: true });
 }
 
 if (Bun.main === import.meta.path) {

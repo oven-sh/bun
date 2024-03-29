@@ -11,10 +11,6 @@ beforeEach(() => {
   cwd = mkdtempSync(join(realpathSync(tmpdir()), "bad-workspace.test"));
 });
 
-afterEach(() => {
-  rmSync(cwd, { recursive: true, force: true });
-});
-
 test("bad workspace path", () => {
   writeFileSync(
     `${cwd}/package.json`,

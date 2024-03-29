@@ -11,10 +11,6 @@ beforeEach(() => {
   package_dir = tmpdirSync("bun-install-path");
 });
 
-afterEach(() => {
-  rmSync(package_dir, { recursive: true, force: true });
-});
-
 // https://github.com/oven-sh/bun/issues/2462
 test("custom registry doesn't have multiple trailing slashes in pathname", async () => {
   const urls: string[] = [];

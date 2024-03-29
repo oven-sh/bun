@@ -59,6 +59,7 @@ const ErrorCode = enum(u32) {
     ENHANCE_YOUR_CALM = 0xb,
     INADEQUATE_SECURITY = 0xc,
     HTTP_1_1_REQUIRED = 0xd,
+    _, // we can have unsupported extension/custom error codes types
 };
 
 const SettingsType = enum(u16) {
@@ -68,8 +69,11 @@ const SettingsType = enum(u16) {
     SETTINGS_INITIAL_WINDOW_SIZE = 0x4,
     SETTINGS_MAX_FRAME_SIZE = 0x5,
     SETTINGS_MAX_HEADER_LIST_SIZE = 0x6,
+
+    // non standard extension settings here (we still dont support this ones)
     SETTINGS_ENABLE_CONNECT_PROTOCOL = 0x8,
     SETTINGS_NO_RFC7540_PRIORITIES = 0x9,
+    _, // we can have more unsupported extension settings types
 };
 
 const UInt31WithReserved = packed struct(u32) {
@@ -151,7 +155,7 @@ const SettingsPayloadUnit = packed struct(u48) {
     }
 };
 
-const FullSettingsPayload = packed struct(u384) {
+const FullSettingsPayload = packed struct(u288) {
     _headerTableSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_HEADER_TABLE_SIZE),
     headerTableSize: u32 = 4096,
     _enablePushType: u16 = @intFromEnum(SettingsType.SETTINGS_ENABLE_PUSH),
@@ -164,14 +168,7 @@ const FullSettingsPayload = packed struct(u384) {
     maxFrameSize: u32 = 16384,
     _maxHeaderListSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_MAX_HEADER_LIST_SIZE),
     maxHeaderListSize: u32 = 65535,
-    _enableConnectProtocol: u16 = @intFromEnum(SettingsType.SETTINGS_ENABLE_CONNECT_PROTOCOL),
-    enableConnectProtocol: u32 = 1,
-
-    // not added to the settings js object
-    _noRFC7540Priorities: u16 = @intFromEnum(SettingsType.SETTINGS_NO_RFC7540_PRIORITIES),
-    noRFC7540Priorities: u32 = 1,
-
-    pub const byteSize: usize = 48;
+    pub const byteSize: usize = 36;
     pub fn toJS(this: *FullSettingsPayload, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         var result = JSValue.createEmptyObject(globalObject, 8);
         result.put(globalObject, JSC.ZigString.static("headerTableSize"), JSC.JSValue.jsNumber(this.headerTableSize));
@@ -181,8 +178,9 @@ const FullSettingsPayload = packed struct(u384) {
         result.put(globalObject, JSC.ZigString.static("maxFrameSize"), JSC.JSValue.jsNumber(this.maxFrameSize));
         result.put(globalObject, JSC.ZigString.static("maxHeaderListSize"), JSC.JSValue.jsNumber(this.maxHeaderListSize));
         result.put(globalObject, JSC.ZigString.static("maxHeaderSize"), JSC.JSValue.jsNumber(this.maxHeaderListSize));
-        result.put(globalObject, JSC.ZigString.static("enableConnectProtocol"), JSC.JSValue.jsBoolean(this.enableConnectProtocol > 0));
-
+        // TODO: we dont support this setting yet see https://nodejs.org/api/http2.html#settings-object
+        // we should also support customSettings
+        result.put(globalObject, JSC.ZigString.static("enableConnectProtocol"), JSC.JSValue.jsBoolean(false));
         return result;
     }
 
@@ -194,8 +192,7 @@ const FullSettingsPayload = packed struct(u384) {
             .SETTINGS_INITIAL_WINDOW_SIZE => this.initialWindowSize = option.value,
             .SETTINGS_MAX_FRAME_SIZE => this.maxFrameSize = option.value,
             .SETTINGS_MAX_HEADER_LIST_SIZE => this.maxHeaderListSize = option.value,
-            .SETTINGS_ENABLE_CONNECT_PROTOCOL => this.enableConnectProtocol = option.value,
-            .SETTINGS_NO_RFC7540_PRIORITIES => this.noRFC7540Priorities = option.value,
+            else => {}, // we ignore unknown/unsupportd settings its not relevant if we dont apply them
         }
     }
     pub fn write(this: *FullSettingsPayload, comptime Writer: type, writer: Writer) void {

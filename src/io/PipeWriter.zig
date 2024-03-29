@@ -1202,9 +1202,15 @@ pub fn WindowsStreamingWriter(
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
-            if (fs.result.int() == uv.UV_ECANCELED) return;
+            const result = fs.result;
+            if (result.int() == uv.UV_ECANCELED) {
+                fs.deinit();
+                return;
+            }
             const this = bun.cast(*WindowsWriter, fs.data);
-            if (fs.result.toError(.write)) |err| {
+
+            fs.deinit();
+            if (result.toError(.write)) |err| {
                 this.close();
                 onError(this.parent, err);
                 return;

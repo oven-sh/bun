@@ -368,14 +368,15 @@ pub fn WindowsPipeReader(
         }
 
         fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
-            const nread_int = fs.result.int();
+            const result = fs.result;
+            const nread_int = result.int();
+            bun.sys.syslog("onFileRead({}) = {d}", .{ bun.toFD(fs.file.fd), nread_int });
             if (nread_int == uv.UV_ECANCELED) {
-                // we can be deinit at this point (when closing the reader and calling stopReading)
+                fs.deinit();
                 return;
             }
             var this: *This = bun.cast(*This, fs.data);
-
-            bun.sys.syslog("onFileRead({}) = {d}", .{ bun.toFD(fs.file.fd), nread_int });
+            fs.deinit();
 
             switch (nread_int) {
                 // 0 actually means EOF too
@@ -386,7 +387,7 @@ pub fn WindowsPipeReader(
                 // UV_ECANCELED needs to be on the top so we avoid UAF
                 uv.UV_ECANCELED => unreachable,
                 else => {
-                    if (fs.result.toError(.read)) |err| {
+                    if (result.toError(.read)) |err| {
                         this.flags.is_paused = true;
                         this.onRead(.{ .err = err }, "", .progress);
                         return;
@@ -397,7 +398,6 @@ pub fn WindowsPipeReader(
                             if (this.source) |source| {
                                 if (source == .file) {
                                     const file = source.file;
-                                    file.fs.deinit();
                                     source.setData(this);
                                     const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                                     file.iov = uv.uv_buf_t.init(buf);

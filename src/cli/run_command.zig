@@ -856,7 +856,7 @@ pub const RunCommand = struct {
 
         this_bundler.configureLinker();
 
-        var root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
+        const root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
             if (!log_errors) return error.CouldntReadCurrentDirectory;
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
@@ -888,20 +888,7 @@ pub const RunCommand = struct {
                 }
             }
 
-            // TODO: evaluate if we can skip running this in nested calls to bun run
-            // The reason why it's unclear:
-            // - Some scripts may do NODE_ENV=production bun run foo
-            //   This would cause potentially a different .env file to be loaded
-            this_bundler.runEnvLoader() catch {};
-
-            if (root_dir_info.getEntries(0)) |dir| {
-                // Run .env again if it exists in a parent dir
-                if (this_bundler.options.production) {
-                    this_bundler.env.load(dir, this_bundler.options.env.files, .production) catch {};
-                } else {
-                    this_bundler.env.load(dir, this_bundler.options.env.files, .development) catch {};
-                }
-            }
+            this_bundler.runEnvLoader(true) catch {};
         }
 
         this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;

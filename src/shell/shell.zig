@@ -150,6 +150,11 @@ pub fn Result(comptime T: anytype) type {
         pub const success: @This() = @This(){
             .result = std.mem.zeroes(T),
         };
+
+        pub fn asErr(this: @This()) ?ShellErr {
+            if (this == .err) return this.err;
+            return null;
+        }
     };
 }
 

@@ -409,9 +409,10 @@ pub const Stdio = union(enum) {
                 }
             }
         } else if (value.asArrayBuffer(globalThis)) |array_buffer| {
-            if (array_buffer.slice().len == 0) {
-                globalThis.throwInvalidArguments("ArrayBuffer cannot be empty", .{});
-                return false;
+            // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
+            if (array_buffer.byteSlice().len == 0) {
+                out_stdio.* = .{ .ignore = {} };
+                return true;
             }
 
             out_stdio.* = .{
@@ -473,6 +474,12 @@ pub const Stdio = union(enum) {
         if (i == 1 or i == 2) {
             globalThis.throwInvalidArguments("Blobs are immutable, and cannot be used for stdout/stderr", .{});
             return false;
+        }
+
+        // Instead of writing an empty blob, lets just make it /dev/null
+        if (blob.fastSize() == 0) {
+            stdio.* = .{ .ignore = {} };
+            return true;
         }
 
         stdio.* = .{ .blob = blob };

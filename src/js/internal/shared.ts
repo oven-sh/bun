@@ -29,8 +29,25 @@ function hideFromStack(...fns) {
   }
 }
 
+let warned;
+function warnNotImplementedOnce(feature: string, issue?: number) {
+  if (!warned) {
+    warned = new Set();
+  }
+
+  if (warned.has(feature)) {
+    return;
+  }
+  warned.add(feature);
+  console.warn(new NotImplementedError(feature, issue));
+}
+
+const fileSinkSymbol = Symbol("fileSink");
+
 export default {
   NotImplementedError,
   throwNotImplemented,
   hideFromStack,
+  warnNotImplementedOnce,
+  fileSinkSymbol,
 };

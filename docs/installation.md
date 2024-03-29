@@ -22,8 +22,7 @@ $ npm install -g bun # the last `npm` command you'll ever need
 ```
 
 ```bash#Homebrew
-$ brew tap oven-sh/bun # for macOS and Linux
-$ brew install bun
+$ brew install oven-sh/bun/bun # for macOS and Linux
 ```
 
 ```bash#Docker
@@ -231,6 +230,10 @@ If you need to remove Bun from your system, use the following commands.
 
 ```bash#macOS/Linux_(curl)
 $ rm -rf ~/.bun # for macOS, Linux, and WSL
+```
+
+```powershell#Windows
+powershell -c ~\.bun\uninstall.ps1
 ```
 
 ```bash#NPM

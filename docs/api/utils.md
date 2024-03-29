@@ -261,13 +261,12 @@ This function is optimized for large input. On an M1X, it processes 480 MB/s -
 20 GB/s, depending on how much data is being escaped and whether there is non-ascii
 text. Non-string types will be converted to a string before escaping.
 
-## `Bun.stringWidth()`
+## `Bun.stringWidth()` ~6,756x faster `string-width` alternative
 
-```ts
-Bun.stringWidth(input: string, options?: { countAnsiEscapeCodes?: boolean = false }): number
-```
+Get the column count of a string as it would be displayed in a terminal.
+Supports ANSI escape codes, emoji, and wide characters.
 
-Returns the number of columns required to display a string. This is useful for aligning text in a terminal. By default, ANSI escape codes are removed before measuring the string. To include them, pass `{ countAnsiEscapeCodes: true }` as the second argument.
+Example usage:
 
 ```ts
 Bun.stringWidth("hello"); // => 5
@@ -275,8 +274,131 @@ Bun.stringWidth("\u001b[31mhello\u001b[0m"); // => 5
 Bun.stringWidth("\u001b[31mhello\u001b[0m", { countAnsiEscapeCodes: true }); // => 12
 ```
 
-Compared with the popular `string-width` npm package, `bun`'s implementation is > [100x faster](https://github.com/oven-sh/bun/blob/8abd1fb088bcf2e78bd5d0d65ba4526872d2ab61/bench/snippets/string-width.mjs#L22)
+This is useful for:
+- Aligning text in a terminal
+- Quickly checking if a string contains ANSI escape codes
+- Measuring the width of a string in a terminal
 
+This API is designed to match the popular "string-width" package, so that
+existing code can be easily ported to Bun and vice versa.
+
+[In this benchmark](https://github.com/oven-sh/bun/blob/5147c0ba7379d85d4d1ed0714b84d6544af917eb/bench/snippets/string-width.mjs#L13), `Bun.stringWidth` is a ~6,756x faster than the `string-width` npm package for input larger than about 500 characters. Big thanks to [sindresorhus](https://github.com/sindresorhus) for their work on `string-width`!
+
+```ts
+❯ bun string-width.mjs
+cpu: 13th Gen Intel(R) Core(TM) i9-13900
+runtime: bun 1.0.29 (x64-linux)
+
+benchmark                                          time (avg)             (min … max)       p75       p99      p995
+------------------------------------------------------------------------------------- -----------------------------
+Bun.stringWidth     500 chars ascii              37.09 ns/iter   (36.77 ns … 41.11 ns)  37.07 ns  38.84 ns  38.99 ns
+
+❯ node string-width.mjs
+
+benchmark                                          time (avg)             (min … max)       p75       p99      p995
+------------------------------------------------------------------------------------- -----------------------------
+npm/string-width    500 chars ascii             249,710 ns/iter (239,970 ns … 293,180 ns) 250,930 ns  276,700 ns 281,450 ns
+```
+
+To make `Bun.stringWidth` fast, we've implemented it in Zig using optimized SIMD instructions, accounting for Latin1, UTF-16, and UTF-8 encodings. It passes `string-width`'s tests.
+
+{% details summary="View full benchmark" %}
+
+As a reminder, 1 nanosecond (ns) is 1 billionth of a second. Here's a quick reference for converting between units:
+
+| Unit | 1 Millisecond |
+| ---- | ------------- |
+| ns   | 1,000,000     |
+| µs   | 1,000         |
+| ms   | 1             |
+
+```js
+❯ bun string-width.mjs
+cpu: 13th Gen Intel(R) Core(TM) i9-13900
+runtime: bun 1.0.29 (x64-linux)
+
+benchmark                                          time (avg)             (min … max)       p75       p99      p995
+------------------------------------------------------------------------------------- -----------------------------
+Bun.stringWidth      5 chars ascii              16.45 ns/iter   (16.27 ns … 19.71 ns)  16.48 ns  16.93 ns  17.21 ns
+Bun.stringWidth     50 chars ascii              19.42 ns/iter   (18.61 ns … 27.85 ns)  19.35 ns   21.7 ns  22.31 ns
+Bun.stringWidth    500 chars ascii              37.09 ns/iter   (36.77 ns … 41.11 ns)  37.07 ns  38.84 ns  38.99 ns
+Bun.stringWidth  5,000 chars ascii              216.9 ns/iter  (215.8 ns … 228.54 ns) 216.23 ns 228.52 ns 228.53 ns
+Bun.stringWidth 25,000 chars ascii               1.01 µs/iter     (1.01 µs … 1.01 µs)   1.01 µs   1.01 µs   1.01 µs
+Bun.stringWidth      7 chars ascii+emoji         54.2 ns/iter   (53.36 ns … 58.19 ns)  54.23 ns  57.55 ns  57.94 ns
+Bun.stringWidth     70 chars ascii+emoji       354.26 ns/iter (350.51 ns … 363.96 ns) 355.93 ns 363.11 ns 363.96 ns
+Bun.stringWidth    700 chars ascii+emoji          3.3 µs/iter      (3.27 µs … 3.4 µs)    3.3 µs    3.4 µs    3.4 µs
+Bun.stringWidth  7,000 chars ascii+emoji        32.69 µs/iter   (32.22 µs … 45.27 µs)   32.7 µs  34.57 µs  34.68 µs
+Bun.stringWidth 35,000 chars ascii+emoji       163.35 µs/iter (161.17 µs … 170.79 µs) 163.82 µs 169.66 µs 169.93 µs
+Bun.stringWidth      8 chars ansi+emoji         66.15 ns/iter   (65.17 ns … 69.97 ns)  66.12 ns   69.8 ns  69.87 ns
+Bun.stringWidth     80 chars ansi+emoji        492.95 ns/iter  (488.05 ns … 499.5 ns)  494.8 ns 498.58 ns  499.5 ns
+Bun.stringWidth    800 chars ansi+emoji          4.73 µs/iter     (4.71 µs … 4.88 µs)   4.72 µs   4.88 µs   4.88 µs
+Bun.stringWidth  8,000 chars ansi+emoji         47.02 µs/iter   (46.37 µs … 67.44 µs)  46.96 µs  49.57 µs  49.63 µs
+Bun.stringWidth 40,000 chars ansi+emoji        234.45 µs/iter (231.78 µs … 240.98 µs) 234.92 µs 236.34 µs 236.62 µs
+Bun.stringWidth     19 chars ansi+emoji+ascii  135.46 ns/iter (133.67 ns … 143.26 ns) 135.32 ns 142.55 ns 142.77 ns
+Bun.stringWidth    190 chars ansi+emoji+ascii    1.17 µs/iter     (1.16 µs … 1.17 µs)   1.17 µs   1.17 µs   1.17 µs
+Bun.stringWidth  1,900 chars ansi+emoji+ascii   11.45 µs/iter   (11.26 µs … 20.41 µs)  11.45 µs  12.08 µs  12.11 µs
+Bun.stringWidth 19,000 chars ansi+emoji+ascii  114.06 µs/iter (112.86 µs … 120.06 µs) 114.25 µs 115.86 µs 116.15 µs
+Bun.stringWidth 95,000 chars ansi+emoji+ascii  572.69 µs/iter (565.52 µs … 607.22 µs) 572.45 µs 604.86 µs 605.21 µs
+```
+
+```ts
+❯ node string-width.mjs
+cpu: 13th Gen Intel(R) Core(TM) i9-13900
+runtime: node v21.4.0 (x64-linux)
+
+benchmark                                           time (avg)             (min … max)       p75       p99      p995
+-------------------------------------------------------------------------------------- -----------------------------
+npm/string-width      5 chars ascii               3.19 µs/iter     (3.13 µs … 3.48 µs)   3.25 µs   3.48 µs   3.48 µs
+npm/string-width     50 chars ascii              20.09 µs/iter  (18.93 µs … 435.06 µs)  19.49 µs  21.89 µs  22.59 µs
+npm/string-width    500 chars ascii             249.71 µs/iter (239.97 µs … 293.18 µs) 250.93 µs  276.7 µs 281.45 µs
+npm/string-width  5,000 chars ascii               6.69 ms/iter     (6.58 ms … 6.76 ms)   6.72 ms   6.76 ms   6.76 ms
+npm/string-width 25,000 chars ascii             139.57 ms/iter (137.17 ms … 143.28 ms) 140.49 ms 143.28 ms 143.28 ms
+npm/string-width      7 chars ascii+emoji          3.7 µs/iter     (3.62 µs … 3.94 µs)   3.73 µs   3.94 µs   3.94 µs
+npm/string-width     70 chars ascii+emoji        23.93 µs/iter   (22.44 µs … 331.2 µs)  23.15 µs  25.98 µs   30.2 µs
+npm/string-width    700 chars ascii+emoji       251.65 µs/iter (237.78 µs … 444.69 µs) 252.92 µs 325.89 µs 354.08 µs
+npm/string-width  7,000 chars ascii+emoji         4.95 ms/iter     (4.82 ms … 5.19 ms)      5 ms   5.04 ms   5.19 ms
+npm/string-width 35,000 chars ascii+emoji        96.93 ms/iter  (94.39 ms … 102.58 ms)  97.68 ms 102.58 ms 102.58 ms
+npm/string-width      8 chars ansi+emoji          3.92 µs/iter     (3.45 µs … 4.57 µs)   4.09 µs   4.57 µs   4.57 µs
+npm/string-width     80 chars ansi+emoji         24.46 µs/iter     (22.87 µs … 4.2 ms)  23.54 µs  25.89 µs  27.41 µs
+npm/string-width    800 chars ansi+emoji        259.62 µs/iter (246.76 µs … 480.12 µs) 258.65 µs 349.84 µs 372.55 µs
+npm/string-width  8,000 chars ansi+emoji          5.46 ms/iter     (5.41 ms … 5.57 ms)   5.48 ms   5.55 ms   5.57 ms
+npm/string-width 40,000 chars ansi+emoji        108.91 ms/iter  (107.55 ms … 109.5 ms) 109.25 ms  109.5 ms  109.5 ms
+npm/string-width     19 chars ansi+emoji+ascii    6.53 µs/iter     (6.35 µs … 6.75 µs)   6.54 µs   6.75 µs   6.75 µs
+npm/string-width    190 chars ansi+emoji+ascii   55.52 µs/iter  (52.59 µs … 352.73 µs)  54.19 µs  80.77 µs 167.21 µs
+npm/string-width  1,900 chars ansi+emoji+ascii  701.71 µs/iter (653.94 µs … 893.78 µs)  715.3 µs 855.37 µs  872.9 µs
+npm/string-width 19,000 chars ansi+emoji+ascii   27.19 ms/iter   (26.89 ms … 27.41 ms)  27.28 ms  27.41 ms  27.41 ms
+npm/string-width 95,000 chars ansi+emoji+ascii     3.68 s/iter        (3.66 s … 3.7 s)    3.69 s     3.7 s     3.7 s
+```
+
+{% /details %}
+
+
+TypeScript definition:
+
+```ts
+namespace Bun {
+  export function stringWidth(
+    /**
+     * The string to measure
+     */
+    input: string,
+    options?: {
+      /**
+       * If `true`, count ANSI escape codes as part of the string width. If `false`, ANSI escape codes are ignored when calculating the string width.
+       *
+       * @default false
+       */
+      countAnsiEscapeCodes?: boolean;
+      /**
+       * When it's ambiugous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
+       *
+       * @default true
+       */
+      ambiguousIsNarrow?: boolean;
+    },
+  ): number;
+}
+```
 
 
 <!-- ## `Bun.enableANSIColors()` -->

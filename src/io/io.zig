@@ -13,6 +13,8 @@ const TimerHeap = heap.Intrusive(Timer, void, Timer.less);
 const os = std.os;
 const assert = std.debug.assert;
 
+pub const Source = @import("./source.zig").Source;
+
 pub const Loop = struct {
     pending: Request.Queue = .{},
     waker: bun.Async.Waker,
@@ -36,7 +38,7 @@ pub const Loop = struct {
 
         if (!@atomicRmw(bool, &has_loaded_loop, std.builtin.AtomicRmwOp.Xchg, true, .Monotonic)) {
             loop = Loop{
-                .waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("failed to initialize waker"),
+                .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
             };
             if (comptime Environment.isLinux) {
                 loop.epoll_fd = bun.toFD(std.os.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
@@ -192,7 +194,7 @@ pub const Loop = struct {
 
             const current_events: []std.os.linux.epoll_event = events[0..rc];
             if (rc != 0) {
-                log("epoll_wait({d}) = {d}", .{ this.pollfd(), rc });
+                log("epoll_wait({}) = {d}", .{ this.pollfd(), rc });
             }
 
             for (current_events) |event| {
@@ -743,7 +745,7 @@ pub const Poll = struct {
             fd: bun.FileDescriptor,
             kqueue_event: *std.os.system.kevent64_s,
         ) void {
-            log("register({s}, {d})", .{ @tagName(action), fd });
+            log("register({s}, {})", .{ @tagName(action), fd });
             defer {
                 switch (comptime action) {
                     .readable => poll.flags.insert(Flags.poll_readable),
@@ -873,7 +875,7 @@ pub const Poll = struct {
     pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) JSC.Maybe(void) {
         const watcher_fd = loop.pollfd();
 
-        log("register: {s} ({d})", .{ @tagName(flag), fd });
+        log("register: {s} ({})", .{ @tagName(flag), fd });
 
         std.debug.assert(fd != bun.invalid_fd);
 
@@ -926,4 +928,12 @@ pub const Poll = struct {
 
 pub const retry = bun.C.E.AGAIN;
 
+pub const ReadState = @import("./pipes.zig").ReadState;
 pub const PipeReader = @import("./PipeReader.zig").PipeReader;
+pub const BufferedReader = @import("./PipeReader.zig").BufferedReader;
+pub const BufferedWriter = @import("./PipeWriter.zig").BufferedWriter;
+pub const WriteResult = @import("./PipeWriter.zig").WriteResult;
+pub const WriteStatus = @import("./PipeWriter.zig").WriteStatus;
+pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;
+pub const StreamBuffer = @import("./PipeWriter.zig").StreamBuffer;
+pub const FileType = @import("./pipes.zig").FileType;

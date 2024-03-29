@@ -7,7 +7,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptor = bun.FileDescriptor;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
@@ -18,7 +18,7 @@ const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
-const allocators = @import("./allocators.zig");
+const allocators = bun.allocators;
 
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const PathBuffer = bun.PathBuffer;
@@ -66,7 +66,7 @@ pub const FileSystem = struct {
         return tmpdir_handle.?;
     }
 
-    pub fn getFdPath(this: *const FileSystem, fd: FileDescriptorType) ![]const u8 {
+    pub fn getFdPath(this: *const FileSystem, fd: FileDescriptor) ![]const u8 {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const dir = try bun.getFdPath(fd, &buf);
         return try this.dirname_store.append([]u8, dir);
@@ -83,18 +83,18 @@ pub const FileSystem = struct {
         });
     }
 
-    pub var max_fd: FileDescriptorType = .zero;
+    pub var max_fd: std.os.fd_t = 0;
 
-    pub inline fn setMaxFd(fd: anytype) void {
+    pub inline fn setMaxFd(fd: std.os.fd_t) void {
+        if (Environment.isWindows) {
+            return;
+        }
+
         if (!FeatureFlags.store_file_descriptors) {
             return;
         }
 
-        if (comptime @TypeOf(fd) == *anyopaque) {
-            max_fd = @enumFromInt(@max(@intFromPtr(fd), max_fd.int()));
-        } else {
-            max_fd = @enumFromInt(@max(fd, max_fd.int()));
-        }
+        max_fd = @max(fd, max_fd);
     }
     pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;
@@ -109,16 +109,11 @@ pub const FileSystem = struct {
         ENOTDIR,
     };
 
-    pub fn init(
-        top_level_dir: ?string,
-    ) !*FileSystem {
+    pub fn init(top_level_dir: ?string) !*FileSystem {
         return initWithForce(top_level_dir, false);
     }
 
-    pub fn initWithForce(
-        top_level_dir_: ?string,
-        comptime force: bool,
-    ) !*FileSystem {
+    pub fn initWithForce(top_level_dir_: ?string, comptime force: bool) !*FileSystem {
         const allocator = bun.fs_allocator;
         var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
 
@@ -134,9 +129,7 @@ pub const FileSystem = struct {
         if (!instance_loaded or force) {
             instance = FileSystem{
                 .top_level_dir = top_level_dir,
-                .fs = Implementation.init(
-                    top_level_dir,
-                ),
+                .fs = Implementation.init(top_level_dir),
                 // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
                 .dirname_store = DirnameStore.init(bun.default_allocator),
                 .filename_store = FilenameStore.init(bun.default_allocator),
@@ -427,15 +420,15 @@ pub const FileSystem = struct {
 
     // }
     pub fn normalize(_: *@This(), str: string) string {
-        return @call(.always_inline, path_handler.normalizeString, .{ str, true, .auto });
+        return @call(bun.callmod_inline, path_handler.normalizeString, .{ str, true, .auto });
     }
 
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
-        return @call(.always_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
+        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
     }
 
     pub fn join(_: *@This(), parts: anytype) string {
-        return @call(.always_inline, path_handler.joinStringBuf, .{
+        return @call(bun.callmod_inline, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
             .loose,
@@ -443,7 +436,7 @@ pub const FileSystem = struct {
     }
 
     pub fn joinBuf(_: *@This(), parts: anytype, buf: []u8) string {
-        return @call(.always_inline, path_handler.joinStringBuf, .{
+        return @call(bun.callmod_inline, path_handler.joinStringBuf, .{
             buf,
             parts,
             .loose,
@@ -451,21 +444,30 @@ pub const FileSystem = struct {
     }
 
     pub fn relative(_: *@This(), from: string, to: string) string {
-        return @call(.always_inline, path_handler.relative, .{
+        return @call(bun.callmod_inline, path_handler.relative, .{
             from,
             to,
         });
     }
 
+    pub fn relativePlatform(_: *@This(), from: string, to: string, comptime platform: path_handler.Platform) string {
+        return @call(bun.callmod_inline, path_handler.relativePlatform, .{
+            from,
+            to,
+            platform,
+            false,
+        });
+    }
+
     pub fn relativeTo(f: *@This(), to: string) string {
-        return @call(.always_inline, path_handler.relative, .{
+        return @call(bun.callmod_inline, path_handler.relative, .{
             f.top_level_dir,
             to,
         });
     }
 
     pub fn relativeFrom(f: *@This(), from: string) string {
-        return @call(.always_inline, path_handler.relative, .{
+        return @call(bun.callmod_inline, path_handler.relative, .{
             from,
             f.top_level_dir,
         });
@@ -542,15 +544,30 @@ pub const FileSystem = struct {
             return switch (Environment.os) {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
                 .windows => win_tempdir_cache orelse {
-                    const value = bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse brk: {
+                    const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
+                        if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
+                            break :brk bun.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}\\Temp",
+                                .{strings.withoutTrailingSlash(windir)},
+                            ) catch bun.outOfMemory();
+                        }
+
                         if (bun.getenvZ("USERPROFILE")) |profile| {
                             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
+                            break :brk bun.default_allocator.dupe(u8, out) catch bun.outOfMemory();
                         }
 
-                        break :brk "C:\\Windows\\Temp";
+                        var tmp_buf: bun.PathBuffer = undefined;
+                        const cwd = std.os.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
+                        const root = bun.path.windowsFilesystemRoot(cwd);
+                        break :brk bun.fmt.allocPrint(
+                            bun.default_allocator,
+                            "{s}\\Windows\\Temp",
+                            .{strings.withoutTrailingSlash(root)},
+                        ) catch bun.outOfMemory();
                     };
                     win_tempdir_cache = value;
                     return value;
@@ -693,8 +710,11 @@ pub const FileSystem = struct {
 
                 const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
 
-                const result = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
-                this.fd = bun.toLibUVOwnedFD(result);
+                this.fd = brk: {
+                    const fd = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
+                    errdefer _ = bun.sys.close(fd);
+                    break :brk try bun.toLibUVOwnedFD(fd);
+                };
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
                 this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
@@ -711,7 +731,7 @@ pub const FileSystem = struct {
                 else
                     bun.strings.toWPathNormalized(&existing_buf, name);
                 if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({s}, {s})", .{ bun.fmt.fmtUTF16(existing), bun.fmt.fmtUTF16(new) });
+                    debug("moveFileExW({s}, {s})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
@@ -726,18 +746,40 @@ pub const FileSystem = struct {
         };
 
         pub fn needToCloseFiles(rfs: *const RealFS) bool {
-            // On Windows, we must always close open file handles
-            // Windows locks files
-            if (comptime !FeatureFlags.store_file_descriptors) {
+            if (!FeatureFlags.store_file_descriptors) {
                 return true;
             }
 
+            if (Environment.isWindows) {
+                // 'false' is okay here because windows gives you a seemingly unlimited number of open
+                // file handles, while posix has a lower limit.
+                //
+                // This limit does not extend to the C-Runtime which is only 512 to 8196 or so,
+                // but we know that all resolver-related handles are not C-Runtime handles because
+                // `setMaxFd` on Windows (besides being a no-op) only takes in `HANDLE`.
+                //
+                // Handles are automatically closed when the process exits as stated here:
+                // https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process
+                // But in a crazy experiment to find the upper-bound of the number of open handles,
+                // I found that opening upwards of 500k to a million handles in a single process
+                // would cause the process to hang while closing. This might just be Windows slowly
+                // closing the handles, not sure. This is likely not something to worry about.
+                //
+                // If it is decided that not closing files ever is a bad idea. This should be
+                // replaced with some form of intelligent count of how many files we opened.
+                // On POSIX we can get away with measuring how high `fd` gets because it typically
+                // assigns these descriptors in ascending order (1 2 3 ...). Windows does not
+                // guarantee this.
+                return false;
+            }
+
             // If we're not near the max amount of open files, don't worry about it.
-            return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd.int() + 1) * 2);
+            return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd + 1) * 2);
         }
 
-        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) void {
-            rfs.entries.remove(file_path);
+        /// Returns `true` if an entry was removed
+        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) bool {
+            return rfs.entries.remove(file_path);
         }
 
         pub const Limit = struct {
@@ -978,8 +1020,18 @@ pub const FileSystem = struct {
         // https://twitter.com/jarredsumner/status/1655787337027309568
         // https://twitter.com/jarredsumner/status/1655714084569120770
         // https://twitter.com/jarredsumner/status/1655464485245845506
-        pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, generation: bun.Generation, store_fd: bool, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
-            var dir = _dir;
+        pub fn readDirectoryWithIterator(
+            fs: *RealFS,
+            dir_maybe_trail_slash: string,
+            maybe_handle: ?std.fs.Dir,
+            generation: bun.Generation,
+            store_fd: bool,
+            comptime Iterator: type,
+            iterator: Iterator,
+        ) !*EntriesOption {
+            var dir = bun.strings.pathWithoutTrailingSlashOne(dir_maybe_trail_slash);
+
+            bun.resolver.Resolver.assertValidCacheKey(dir);
             var cache_result: ?allocators.Result = null;
             if (comptime FeatureFlags.enable_entry_cache) {
                 fs.entries_mutex.lock();
@@ -1005,20 +1057,20 @@ pub const FileSystem = struct {
                 }
             }
 
-            var handle = _handle orelse try fs.openDir(dir);
+            var handle = maybe_handle orelse try fs.openDir(dir);
 
             defer {
-                if (_handle == null and (!store_fd or fs.needToCloseFiles())) {
+                if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) {
                     handle.close();
                 }
             }
 
             // if we get this far, it's a real directory, so we can just store the dir name.
-            if (_handle == null) {
+            if (maybe_handle == null) {
                 dir = try if (in_place) |existing|
                     existing.dir
                 else
-                    DirnameStore.instance.append(string, _dir);
+                    DirnameStore.instance.append(string, dir_maybe_trail_slash);
             }
 
             // Cache miss: read the directory entries
@@ -1133,10 +1185,12 @@ pub const FileSystem = struct {
                 while (true) {
 
                     // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+                    const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
                     const read_count = file.preadAll(shared_buffer.list.items[offset..], offset) catch |err| {
                         fs.readFileError(path, err);
                         return err;
                     };
+                    if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
                     shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + offset];
                     file_contents = shared_buffer.list.items;
                     debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
@@ -1179,10 +1233,12 @@ pub const FileSystem = struct {
                 // stick a zero at the end
                 buf[size] = 0;
 
+                const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
                 const read_count = file.preadAll(buf, 0) catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
+                if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
                 file_contents = buf[0..read_count];
                 debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
 
@@ -1636,10 +1692,20 @@ pub const Path = struct {
         return this.name.dirWithTrailingSlash();
     }
 
+    /// The bundler will hash path.pretty, so it needs to be consistent across platforms.
+    /// This assertion might be a bit too forceful though.
+    pub fn assertPrettyIsValid(path: *const Path) void {
+        if (Environment.isWindows and Environment.allow_assert) {
+            if (std.mem.indexOfScalar(u8, path.pretty, '\\') != null) {
+                std.debug.panic("Expected pretty file path to have only forward slashes, got '{s}'", .{path.pretty});
+            }
+        }
+    }
+
     // This duplicates but only when strictly necessary
     // This will skip allocating if it's already in FilenameStore or DirnameStore
     pub fn dupeAlloc(this: *const Path, allocator: std.mem.Allocator) !Fs.Path {
-        if (this.text.ptr == this.pretty.ptr and this.text.len == this.text.len) {
+        if (this.text.ptr == this.pretty.ptr and this.text.len == this.pretty.len) {
             if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
                 return this.*;
             }
@@ -1659,12 +1725,12 @@ pub const Path = struct {
             new_path.namespace = this.namespace;
             new_path.is_symlink = this.is_symlink;
             return new_path;
-        } else if (allocators.sliceRange(this.pretty, this.text)) |start_end| {
+        } else if (allocators.sliceRange(this.pretty, this.text)) |start_len| {
             if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
                 return this.*;
             }
             var new_path = Fs.Path.init(try FileSystem.FilenameStore.instance.append([]const u8, this.text));
-            new_path.pretty = this.text[start_end[0]..start_end[1]];
+            new_path.pretty = this.text[start_len[0]..][0..start_len[1]];
             new_path.namespace = this.namespace;
             new_path.is_symlink = this.is_symlink;
             return new_path;

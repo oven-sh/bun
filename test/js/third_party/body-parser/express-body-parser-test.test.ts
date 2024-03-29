@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 // @ts-nocheck
 // can't use @types/express or @types/body-parser because they
 // depend on @types/node which conflicts with bun-types

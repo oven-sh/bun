@@ -1179,9 +1179,9 @@ describe("bundler", () => {
                     p3: readonly ["hello", "world"],
                     p4: typeof c,
                     p5: readonly [number, string],
-                    // prettier-ignore
+                    // biome-ignore: format
                     p6: (string | string),
-                    // prettier-ignore
+                    // biome-ignore: format
                     p7: (string & string),
                     p8: boolean extends true ? "a" : "b",
                     // @ts-ignore

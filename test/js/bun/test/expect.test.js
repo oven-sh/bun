@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "switch on corrupt value"
 // @ts-check
 
 /** This file is meant to be runnable in Jest, Vitest, and Bun:
@@ -110,7 +109,9 @@ describe("expect()", () => {
     expect({}).toEqual({});
     expect({}).toStrictEqual({});
     expect({}).toEqual({ a: undefined });
+    expect({ a: undefined }).toEqual({});
     expect({}).not.toStrictEqual({ a: undefined });
+    expect({ a: undefined }).not.toStrictEqual({});
 
     class C {
       hi = 34;
@@ -257,6 +258,152 @@ describe("expect()", () => {
 
     expect(new RegExp("s", "g")).toEqual(new RegExp("s", "g"));
     expect(new RegExp("s", "g")).not.toEqual(new RegExp("s", "i"));
+  });
+
+  test("deepEquals and deleted properties", () => {
+    var obj1 = { a: 1 };
+    var obj2 = {};
+    expect(obj1).not.toStrictEqual(obj2);
+    expect(obj2).not.toStrictEqual(obj1);
+    expect(obj1).not.toEqual(obj2);
+    expect(obj2).not.toEqual(obj1);
+    delete obj1.a;
+    expect(obj1).toStrictEqual(obj2);
+    expect(obj2).toStrictEqual(obj1);
+    expect(obj1).toEqual(obj2);
+    expect(obj2).toEqual(obj1);
+
+    var obj3 = { a: 1, b: 3, c: 4 };
+    var obj4 = { a: 1, b: 3 };
+    expect(obj3).not.toStrictEqual(obj4);
+    expect(obj4).not.toStrictEqual(obj3);
+    expect(obj3).not.toEqual(obj4);
+    expect(obj4).not.toEqual(obj3);
+    delete obj3.c;
+    expect(obj3).toStrictEqual(obj4);
+    expect(obj4).toStrictEqual(obj3);
+    expect(obj3).toEqual(obj4);
+    expect(obj4).toEqual(obj3);
+    delete obj3.b;
+    expect(obj3).not.toStrictEqual(obj4);
+    expect(obj4).not.toStrictEqual(obj3);
+    expect(obj3).not.toEqual(obj4);
+    expect(obj4).not.toEqual(obj3);
+    delete obj3.a;
+    expect(obj3).not.toStrictEqual(obj4);
+    expect(obj4).not.toStrictEqual(obj3);
+    expect(obj3).not.toEqual(obj4);
+    expect(obj4).not.toEqual(obj3);
+    delete obj4.a;
+    expect(obj3).not.toStrictEqual(obj4);
+    expect(obj4).not.toStrictEqual(obj3);
+    expect(obj3).not.toEqual(obj4);
+    expect(obj4).not.toEqual(obj3);
+    delete obj4.b;
+    expect(obj3).toStrictEqual(obj4);
+    expect(obj4).toStrictEqual(obj3);
+    expect(obj3).toEqual(obj4);
+    expect(obj4).toEqual(obj3);
+
+    var obj5 = {};
+    var obj6 = {};
+    expect(obj5).toStrictEqual(obj6);
+    expect(obj6).toStrictEqual(obj5);
+    expect(obj5).toEqual(obj6);
+    expect(obj6).toEqual(obj5);
+    delete obj5.a;
+    expect(obj5).toStrictEqual(obj6);
+    expect(obj6).toStrictEqual(obj5);
+    expect(obj5).toEqual(obj6);
+    expect(obj6).toEqual(obj5);
+    obj5.a = 1;
+    expect(obj5).not.toStrictEqual(obj6);
+    expect(obj6).not.toStrictEqual(obj5);
+    expect(obj5).not.toEqual(obj6);
+    expect(obj6).not.toEqual(obj5);
+    obj6.a = 1;
+    expect(obj5).toStrictEqual(obj6);
+    expect(obj6).toStrictEqual(obj5);
+    expect(obj5).toEqual(obj6);
+    expect(obj6).toEqual(obj5);
+    delete obj6.a;
+    expect(obj5).not.toStrictEqual(obj6);
+    expect(obj6).not.toStrictEqual(obj5);
+    expect(obj5).not.toEqual(obj6);
+    expect(obj6).not.toEqual(obj5);
+    delete obj5.a;
+    expect(obj5).toStrictEqual(obj6);
+    expect(obj6).toStrictEqual(obj5);
+    expect(obj5).toEqual(obj6);
+    expect(obj6).toEqual(obj5);
+
+    var obj7 = { a: 1, b: 1 };
+    var obj8 = { b: 1 };
+    expect(obj7).not.toStrictEqual(obj8);
+    expect(obj8).not.toStrictEqual(obj7);
+    expect(obj7).not.toEqual(obj8);
+    expect(obj8).not.toEqual(obj7);
+    delete obj7.a;
+    expect(obj7).toStrictEqual(obj8);
+    expect(obj8).toStrictEqual(obj7);
+    expect(obj7).toEqual(obj8);
+    expect(obj8).toEqual(obj7);
+    delete obj7.b;
+    expect(obj7).not.toStrictEqual(obj8);
+    expect(obj8).not.toStrictEqual(obj7);
+    expect(obj7).not.toEqual(obj8);
+    expect(obj8).not.toEqual(obj7);
+    delete obj8.b;
+    expect(obj7).toStrictEqual(obj8);
+    expect(obj8).toStrictEqual(obj7);
+    expect(obj7).toEqual(obj8);
+    expect(obj8).toEqual(obj7);
+  });
+
+  test("deepEquals and deleted indexes", () => {
+    var a1 = [1];
+    var a2 = [];
+    expect(a1).not.toStrictEqual(a2);
+    expect(a2).not.toStrictEqual(a1);
+    expect(a1).not.toEqual(a2);
+    expect(a2).not.toEqual(a1);
+    delete a1[0];
+    expect(a1).not.toStrictEqual(a2);
+    expect(a2).not.toStrictEqual(a1);
+    expect(a1).toEqual(a2);
+    expect(a2).toEqual(a1);
+
+    var a3 = [];
+    var a4 = [];
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+    delete a3[0];
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+    a3[0] = 1;
+    expect(a3).not.toStrictEqual(a4);
+    expect(a4).not.toStrictEqual(a3);
+    expect(a3).not.toEqual(a4);
+    expect(a4).not.toEqual(a3);
+    a4[0] = 1;
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+    delete a4[0];
+    expect(a3).not.toStrictEqual(a4);
+    expect(a4).not.toStrictEqual(a3);
+    expect(a3).not.toEqual(a4);
+    expect(a4).not.toEqual(a3);
+    delete a3[0];
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
   });
 
   test("deepEquals works with accessors", () => {
@@ -2168,7 +2315,7 @@ describe("expect()", () => {
     [[1n, "abc", null, -1n, undefined], -1n],
     [[Symbol.for("a")], Symbol.for("a")],
     [new Set([1, 2, 3]), 1],
-    [new Set([[], { a: 1 }, new Headers()]), new Headers()],
+    ...[!isJest ? [new Set([[], { a: 1 }, new Headers()]), new Headers()] : []],
     [new Set(["a", "b", "c"]), "c"],
     [new Set([new Map([[1, 2]])]), new Map([[1, 2]])],
     [new Uint8Array([1, 2, 3]), 1],
@@ -2257,6 +2404,9 @@ describe("expect()", () => {
     expect(o).toContainKey("c");
     expect(o).not.toContainKey("z");
     expect(o).not.toContainKey({ a: "foo" });
+    expect(() => {
+      expect(undefined).not.toContainKey(["id"]);
+    }).toThrow("undefined is not an object");
   });
 
   test("toContainAnyKeys", () => {
@@ -2274,6 +2424,19 @@ describe("expect()", () => {
     expect({ a: "foo", 1: "test" }).toContainKeys(["a", 1]);
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["a", "b", "e"]);
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["z"]);
+
+    expect(undefined).not.toContainKeys(["id"]);
+    expect("").toContainKeys([]);
+    expect("").not.toContainKeys(["id"]);
+    expect(false).toContainKeys([]);
+    expect(false).not.toContainKeys(["id"]);
+
+    expect(() => {
+      expect(undefined).toContainKeys(["id"]);
+    }).toThrow(/(Received:)(.*undefined)/);
+    expect(() => {
+      expect(null).toContainKeys(["id"]);
+    }).toThrow(/(Received:)(.*null)/);
   });
 
   test("toBeTruthy()", () => {
@@ -3104,18 +3267,22 @@ describe("expect()", () => {
         label: `Buffer.from("")`,
         value: Buffer.from(""),
       },
-      {
-        label: `new Headers()`,
-        value: new Headers(),
-      },
-      {
-        label: `new URLSearchParams()`,
-        value: new URLSearchParams(),
-      },
-      {
-        label: `new FormData()`,
-        value: new FormData(),
-      },
+      ...(isBun
+        ? [
+            {
+              label: `new Headers()`,
+              value: new Headers(),
+            },
+            {
+              label: `new URLSearchParams()`,
+              value: new URLSearchParams(),
+            },
+            {
+              label: `new FormData()`,
+              value: new FormData(),
+            },
+          ]
+        : []),
       {
         label: `(function* () {})()`,
         value: (function* () {})(),
@@ -3180,26 +3347,30 @@ describe("expect()", () => {
         label: `Buffer.from(" ")`,
         value: Buffer.from(" "),
       },
-      {
-        label: `new Headers({...})`,
-        value: new Headers({
-          a: "b",
-          c: "d",
-        }),
-      },
-      {
-        label: `URL.searchParams`,
-        value: new URL("https://example.com?d=e&f=g").searchParams,
-      },
-      {
-        label: `FormData`,
-        value: (() => {
-          var a = new FormData();
-          a.append("a", "b");
-          a.append("c", "d");
-          return a;
-        })(),
-      },
+      ...(isBun
+        ? [
+            {
+              label: `new Headers({...})`,
+              value: new Headers({
+                a: "b",
+                c: "d",
+              }),
+            },
+            {
+              label: `URL.searchParams`,
+              value: new URL("https://example.com?d=e&f=g").searchParams,
+            },
+            {
+              label: `FormData`,
+              value: (() => {
+                var a = new FormData();
+                a.append("a", "b");
+                a.append("c", "d");
+                return a;
+              })(),
+            },
+          ]
+        : []),
       {
         label: `generator function`,
         value: (function* () {
@@ -4101,7 +4272,25 @@ describe("expect()", () => {
     });
   });
 
-  const mocked = mock(() => {});
+  test("expect.hasAssertions doesn't throw when valid", () => {
+    expect.hasAssertions();
+    expect("a").toEqual("a");
+  });
+
+  test("expect.assertions doesn't throw when valid", () => {
+    expect.assertions(1);
+    expect("a").toEqual("a");
+  });
+
+  test("expect.hasAssertions returns undefined", () => {
+    expect(expect.hasAssertions()).toBeUndefined();
+  });
+
+  test("expect.assertions returns undefined", () => {
+    expect(expect.assertions(1)).toBeUndefined();
+  });
+
+  const mocked = isBun ? mock(() => {}) : jest.fn(() => {});
   mocked();
 
   test("fail to return undefined", () => {

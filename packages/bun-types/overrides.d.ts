@@ -16,20 +16,13 @@ declare module "fs/promises" {
 }
 
 declare module "tls" {
-  interface BunConnectionOptions
-    extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
+  interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**
      * Optionally override the trusted CA certificates. Default is to trust
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    ca?:
-      | string
-      | Buffer
-      | NodeJS.TypedArray
-      | BunFile
-      | Array<string | Buffer | BunFile>
-      | undefined;
+    ca?: string | Buffer | NodeJS.TypedArray | BunFile | Array<string | Buffer | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -67,8 +60,5 @@ declare module "tls" {
       | undefined;
   }
 
-  function connect(
-    options: BunConnectionOptions,
-    secureConnectListener?: () => void,
-  ): TLSSocket;
+  function connect(options: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
 }

@@ -1,8 +1,8 @@
-// @known-failing-on-windows: 1 failing
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, nodeExe } from "harness";
+import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
 
 const strings = [
@@ -21,7 +21,7 @@ const strings = [
     message: "utf8-😶",
     bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x98, 0xb6],
   },
-];
+] as const;
 
 const buffers = [
   {
@@ -39,9 +39,9 @@ const buffers = [
     message: Buffer.from("utf8-🤩"),
     bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0xa4, 0xa9],
   },
-];
+] as const;
 
-const messages = [...strings, ...buffers];
+const messages = [...strings, ...buffers] as const;
 
 const binaryTypes = [
   {
@@ -254,8 +254,9 @@ describe("WebSocket", () => {
 });
 
 describe("WebSocketServer", () => {
-  it("sets websocket prototype properties correctly", done => {
+  it("sets websocket prototype properties correctly", async () => {
     const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers();
 
     wss.on("connection", ws => {
       try {
@@ -263,9 +264,9 @@ describe("WebSocketServer", () => {
         expect(ws.CLOSING).toBeDefined();
         expect(ws.CONNECTING).toBeDefined();
         expect(ws.OPEN).toBeDefined();
-        return done();
+        resolve();
       } catch (err) {
-        done(err);
+        reject(err);
       } finally {
         wss.close();
         ws.close();
@@ -273,12 +274,33 @@ describe("WebSocketServer", () => {
     });
 
     new WebSocket("ws://localhost:" + wss.address().port);
+    await promise;
+  });
+
+  it("sockets can be terminated", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers();
+
+    wss.on("connection", ws => {
+      ws.on("close", () => {
+        resolve();
+      });
+      try {
+        ws.terminate();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    new WebSocket("ws://localhost:" + wss.address().port);
+    await promise;
   });
 });
 
 describe("Server", () => {
-  it("sets websocket prototype properties correctly", done => {
+  it("sets websocket prototype properties correctly", async () => {
     const wss = new Server({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers();
 
     wss.on("connection", ws => {
       try {
@@ -286,9 +308,9 @@ describe("Server", () => {
         expect(ws.CLOSING).toBeDefined();
         expect(ws.CONNECTING).toBeDefined();
         expect(ws.OPEN).toBeDefined();
-        return done();
+        resolve();
       } catch (err) {
-        done(err);
+        reject(err);
       } finally {
         wss.close();
         ws.close();
@@ -296,24 +318,27 @@ describe("Server", () => {
     });
 
     new WebSocket("ws://localhost:" + wss.address().port);
+    await promise;
   });
 });
 
-it("isBinary", done => {
+it("isBinary", async () => {
   const wss = new WebSocketServer({ port: 0 });
   let isDone = false;
+  const { resolve, reject, promise } = Promise.withResolvers();
   wss.on("connection", ws => {
     ws.on("message", (data, isBinary) => {
       if (isDone) {
         expect(isBinary).toBeTrue();
         wss.close();
         ws.close();
-        done();
+        resolve();
         return;
       }
       expect(isBinary).toBeFalse();
       isDone = true;
     });
+    ws.on("error", reject);
   });
 
   const ws = new WebSocket("ws://localhost:" + wss.address().port);
@@ -321,6 +346,8 @@ it("isBinary", done => {
     ws.send("hello");
     ws.send(Buffer.from([1, 2, 3]));
   });
+
+  await promise;
 });
 
 it("onmessage", done => {
@@ -362,12 +389,12 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
 }
 
 async function listen(): Promise<URL> {
-  const { pathname } = new URL("../../web/websocket/websocket-server-echo.mjs", import.meta.url);
+  const pathname = path.resolve(import.meta.dir, "../../web/websocket/websocket-server-echo.mjs");
   const server = spawn({
-    cmd: [nodeExe() ?? bunExe(), pathname],
+    cmd: [bunExe(), pathname],
     cwd: import.meta.dir,
     env: bunEnv,
-    stderr: "ignore",
+    stderr: "inherit",
     stdout: "pipe",
   });
   servers.push(server);

@@ -6,6 +6,7 @@
 
 #include <JavaScriptCore/BytecodeCacheError.h>
 #include "ZigGlobalObject.h"
+#include "wtf/Assertions.h"
 
 #include <JavaScriptCore/Completion.h>
 #include <wtf/Scope.h>
@@ -27,23 +28,7 @@ using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
-static uintptr_t getSourceProviderMapKey(ResolvedSource& resolvedSource)
-{
-    switch (resolvedSource.source_code.tag) {
-    case BunStringTag::WTFStringImpl: {
-        return (uintptr_t)resolvedSource.source_code.impl.wtf->characters8();
-    }
-    case BunStringTag::StaticZigString:
-    case BunStringTag::ZigString: {
-        return (uintptr_t)Zig::untag(resolvedSource.source_code.impl.zig.ptr);
-    }
-    default: {
-        return 0;
-    }
-    }
-}
-
-static SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
+SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 {
     if (isBuiltin) {
         if (sourceURL.startsWith("node:"_s)) {
@@ -55,6 +40,7 @@ static SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
         }
     }
 
+    ASSERT_WITH_MESSAGE(!sourceURL.startsWith("file://"_s), "sourceURL should not already be a file URL");
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
@@ -92,7 +78,7 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 
-Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
+Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource& resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
 {
 
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
@@ -103,9 +89,12 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
     bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && BunTest__shouldGenerateCodeCoverage(resolvedSource.source_url);
 
     if (resolvedSource.needsDeref && !isBuiltin) {
+        resolvedSource.needsDeref = false;
         resolvedSource.source_code.deref();
-        resolvedSource.specifier.deref();
-        // source_url gets deref'd by the WTF::String above.
+        // Do not deref either source_url or specifier
+        // Specifier's lifetime is the JSValue, mostly
+        // source_url is owned by the string above
+        // https://github.com/oven-sh/bun/issues/9521
     }
 
     auto provider = adoptRef(*new SourceProvider(

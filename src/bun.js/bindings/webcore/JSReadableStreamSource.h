@@ -66,6 +66,7 @@ public:
     // Custom functions
     JSC::JSValue start(JSC::JSGlobalObject&, JSC::CallFrame&, Ref<DeferredPromise>&&);
     JSC::JSValue pull(JSC::JSGlobalObject&, JSC::CallFrame&, Ref<DeferredPromise>&&);
+
 protected:
     JSReadableStreamSource(JSC::Structure*, JSDOMGlobalObject&, Ref<ReadableStreamSource>&&);
 

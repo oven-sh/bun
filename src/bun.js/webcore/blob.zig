@@ -86,6 +86,8 @@ pub const Blob = struct {
         closing,
     };
 
+    reported_estimated_size: usize = 0,
+
     size: SizeType = 0,
     offset: SizeType = 0,
     /// When set, the blob will be freed on finalization callbacks
@@ -1424,32 +1426,29 @@ pub const Blob = struct {
         return blob_;
     }
 
-    fn estimatedByteSize(this: *Blob) usize {
+    fn calculateEstimatedByteSize(this: *Blob) void {
         // in-memory size. not the size on disk.
-        if (this.size != Blob.max_size) {
-            return this.size;
-        }
-
-        const store = this.store orelse return 0;
-        if (store.data == .bytes) {
-            return store.data.bytes.len;
-        }
-
-        return 0;
-    }
-
-    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
-        var size = this.estimatedByteSize() + @sizeOf(Blob);
+        var size: usize = @sizeOf(Blob);
 
         if (this.store) |store| {
             size += @sizeOf(Blob.Store);
-            size += switch (store.data) {
-                .bytes => store.data.bytes.stored_name.estimatedSize(),
-                .file => store.data.file.pathlike.estimatedSize(),
-            };
+            switch (store.data) {
+                .bytes => {
+                    size += store.data.bytes.stored_name.estimatedSize();
+                    size += if (this.size != Blob.max_size)
+                        this.size
+                    else
+                        store.data.bytes.len;
+                },
+                .file => size += store.data.file.pathlike.estimatedSize(),
+            }
         }
 
-        return size + (this.content_type.len * @as(usize, @intFromBool(this.content_type_allocated)));
+        this.reported_estimated_size = size + (this.content_type.len * @intFromBool(this.content_type_allocated));
+    }
+
+    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+        return this.reported_estimated_size;
     }
 
     comptime {
@@ -1519,21 +1518,32 @@ pub const Blob = struct {
         return ptr.toJS(globalObject);
     }
 
-    pub fn findOrCreateFileFromPath(path_: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
+    pub fn findOrCreateFileFromPath(path_or_fd: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
         var vm = globalThis.bunVM();
         const allocator = bun.default_allocator;
 
         const path: JSC.Node.PathOrFileDescriptor = brk: {
-            switch (path_.*) {
+            switch (path_or_fd.*) {
                 .path => {
-                    const slice = path_.path.slice();
+                    var slice = path_or_fd.path.slice();
+
+                    if (Environment.isWindows and bun.strings.eqlComptime(slice, "/dev/null")) {
+                        path_or_fd.deinit();
+                        path_or_fd.* = .{
+                            .path = .{
+                                // this memory is freed with this allocator in `Blob.Store.deinit`
+                                .string = bun.PathString.init(allocator.dupe(u8, "\\\\.\\NUL") catch bun.outOfMemory()),
+                            },
+                        };
+                        slice = path_or_fd.path.slice();
+                    }
 
                     if (vm.standalone_module_graph) |graph| {
                         if (graph.find(slice)) |file| {
                             defer {
-                                if (path_.path != .string) {
-                                    path_.deinit();
-                                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                                if (path_or_fd.path != .string) {
+                                    path_or_fd.deinit();
+                                    path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
                                 }
                             }
 
@@ -1541,28 +1551,27 @@ pub const Blob = struct {
                         }
                     }
 
-                    path_.toThreadSafe();
-                    const copy = path_.*;
-                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                    path_or_fd.toThreadSafe();
+                    const copy = path_or_fd.*;
+                    path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
                     break :brk copy;
                 },
                 .fd => {
-                    switch (bun.FDTag.get(path_.fd)) {
-                        .stdin => return Blob.initWithStore(
-                            vm.rareData().stdin(),
+                    const optional_store: ?*Store = switch (bun.FDTag.get(path_or_fd.fd)) {
+                        .stdin => vm.rareData().stdin(),
+                        .stderr => vm.rareData().stderr(),
+                        .stdout => vm.rareData().stdout(),
+                        else => null,
+                    };
+
+                    if (optional_store) |store| {
+                        store.ref();
+                        return Blob.initWithStore(
+                            store,
                             globalThis,
-                        ),
-                        .stderr => return Blob.initWithStore(
-                            vm.rareData().stderr(),
-                            globalThis,
-                        ),
-                        .stdout => return Blob.initWithStore(
-                            vm.rareData().stdout(),
-                            globalThis,
-                        ),
-                        else => {},
+                        );
                     }
-                    break :brk path_.*;
+                    break :brk path_or_fd.*;
                 },
             }
         };
@@ -1751,15 +1760,13 @@ pub const Blob = struct {
                                             .toSystemError();
                                         self.opened_fd = invalid_fd;
                                     } else {
-                                        self.opened_fd = bun.toFD(@as(i32, @intCast(req.result.value)));
-                                        std.debug.assert(bun.uvfdcast(self.opened_fd) == req.result.value);
+                                        self.opened_fd = req.result.toFD();
                                     }
                                 }
                                 Callback(self, self.opened_fd);
                             }
                         };
 
-                        // use real libuv async
                         const rc = libuv.uv_fs_open(
                             this.loop,
                             &this.req,
@@ -1881,7 +1888,10 @@ pub const Blob = struct {
                         }
                     }
 
-                    if (is_allowed_to_close_fd and this.opened_fd.int() > 2 and this.opened_fd != invalid_fd) {
+                    if (is_allowed_to_close_fd and
+                        this.opened_fd != invalid_fd and
+                        !this.opened_fd.isStdio())
+                    {
                         if (comptime Environment.isWindows) {
                             bun.Async.Closer.close(bun.uvfdcast(this.opened_fd), this.loop);
                         } else {
@@ -2018,7 +2028,8 @@ pub const Blob = struct {
                 const promise = this.promise.swap();
                 const err_instance = err.toSystemError().toErrorInstance(globalThis);
                 var event_loop = this.event_loop;
-                defer event_loop.drainMicrotasks();
+                event_loop.enter();
+                defer event_loop.exit();
                 this.deinit();
                 promise.reject(globalThis, err_instance);
             }
@@ -2287,7 +2298,13 @@ pub const Blob = struct {
                         open_source_flags,
                         0,
                     )) {
-                        .result => |result| bun.toLibUVOwnedFD(result),
+                        .result => |result| switch (bun.sys.toLibUVOwnedFD(result, .open, .close_on_fail)) {
+                            .result => |result_fd| result_fd,
+                            .err => |errno| {
+                                this.system_error = errno.toSystemError();
+                                return bun.errnoToZigErr(errno.errno);
+                            },
+                        },
                         .err => |errno| {
                             this.system_error = errno.toSystemError();
                             return bun.errnoToZigErr(errno.errno);
@@ -2303,7 +2320,13 @@ pub const Blob = struct {
                             open_destination_flags,
                             JSC.Node.default_permission,
                         )) {
-                            .result => |result| bun.toLibUVOwnedFD(result),
+                            .result => |result| switch (bun.sys.toLibUVOwnedFD(result, .open, .close_on_fail)) {
+                                .result => |result_fd| result_fd,
+                                .err => |errno| {
+                                    this.system_error = errno.toSystemError();
+                                    return bun.errnoToZigErr(errno.errno);
+                                },
+                            },
                             .err => |errno| {
                                 switch (mkdirIfNotExists(this, errno, dest, dest)) {
                                     .@"continue" => continue,
@@ -2696,7 +2719,6 @@ pub const Blob = struct {
         max_size: SizeType = Blob.max_size,
         // milliseconds since ECMAScript epoch
         last_modified: JSC.JSTimeType = JSC.init_timestamp,
-        pipe: if (Environment.isWindows) libuv.uv_pipe_t else u0 = if (Environment.isWindows) std.mem.zeroes(libuv.uv_pipe_t) else 0,
 
         pub fn isSeekable(this: *const FileStore) ?bool {
             if (this.seekable) |seekable| {
@@ -2894,14 +2916,9 @@ pub const Blob = struct {
             return JSValue.jsBoolean(true);
         }
 
-        if (comptime Environment.isWindows) {
-            this.globalThis.throwTODO("exists is not implemented on Windows");
-            return JSValue.jsUndefined();
-        }
-
         // We say regular files and pipes exist.
         // This is mostly meant for "Can we use this in new Response(file)?"
-        return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or std.os.S.ISFIFO(store.data.file.mode));
+        return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or bun.C.S.ISFIFO(store.data.file.mode));
     }
 
     // This mostly means 'can it be read?'
@@ -2936,9 +2953,9 @@ pub const Blob = struct {
             return JSValue.jsUndefined();
         }
 
-        if (Environment.isWindows and !(store.data.file.is_atty orelse false)) {
-            // on Windows we use uv_pipe_t when not using TTY
+        if (Environment.isWindows) {
             const pathlike = store.data.file.pathlike;
+            const vm = globalThis.bunVM();
             const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
                 switch (bun.sys.open(
@@ -2950,58 +2967,61 @@ pub const Blob = struct {
                         break :brk result;
                     },
                     .err => |err| {
-                        globalThis.throwInvalidArguments("Failed to create UVStreamSink: {}", .{err.getErrno()});
+                        globalThis.throwInvalidArguments("Failed to create FileSink: {}", .{err.getErrno()});
                         return JSValue.jsUndefined();
                     },
                 }
                 unreachable;
             };
 
-            var pipe_ptr = &(this.store.?.data.file.pipe);
-            if (store.data.file.pipe.loop == null) {
-                if (libuv.uv_pipe_init(libuv.Loop.get(), pipe_ptr, 0) != 0) {
-                    pipe_ptr.loop = null;
-                    globalThis.throwInvalidArguments("Failed to create UVStreamSink", .{});
-                    return JSValue.jsUndefined();
+            const is_stdout_or_stderr = brk: {
+                if (pathlike != .fd) {
+                    break :brk false;
                 }
-                const file_fd = bun.uvfdcast(fd);
-                if (libuv.uv_pipe_open(pipe_ptr, file_fd).errEnum()) |err| {
-                    pipe_ptr.loop = null;
-                    globalThis.throwInvalidArguments("Failed to create UVStreamSink: uv_pipe_open({d}) {}", .{ file_fd, err });
-                    return JSValue.jsUndefined();
+
+                if (vm.rare_data) |rare| {
+                    if (store == rare.stdout_store) {
+                        break :brk true;
+                    }
+
+                    if (store == rare.stderr_store) {
+                        break :brk true;
+                    }
                 }
-            }
 
-            var sink = JSC.WebCore.UVStreamSink.init(globalThis.allocator(), @ptrCast(pipe_ptr), null) catch |err| {
-                globalThis.throwInvalidArguments("Failed to create UVStreamSink: {s}", .{@errorName(err)});
-                return JSValue.jsUndefined();
+                break :brk switch (bun.FDTag.get(fd)) {
+                    .stdout, .stderr => true,
+                    else => false,
+                };
             };
+            var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
 
-            var stream_start: JSC.WebCore.StreamStart = .{
-                .UVStreamSink = {},
-            };
+            if (is_stdout_or_stderr) {
+                switch (sink.writer.startSync(fd, false)) {
+                    .err => |err| {
+                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        sink.deref();
 
-            if (arguments.len > 0 and arguments.ptr[0].isObject()) {
-                stream_start = JSC.WebCore.StreamStart.fromJSWithTag(globalThis, arguments[0], .UVStreamSink);
-            }
+                        return JSC.JSValue.zero;
+                    },
+                    else => {},
+                }
+            } else {
+                switch (sink.writer.start(fd, true)) {
+                    .err => |err| {
+                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        sink.deref();
 
-            switch (sink.start(stream_start)) {
-                .err => |err| {
-                    globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-                    sink.finalize();
-
-                    return JSC.JSValue.zero;
-                },
-                else => {},
+                        return JSC.JSValue.zero;
+                    },
+                    else => {},
+                }
             }
 
             return sink.toJS(globalThis);
         }
 
-        var sink = JSC.WebCore.FileSink.init(globalThis.allocator(), null) catch |err| {
-            globalThis.throwInvalidArguments("Failed to create FileSink: {s}", .{@errorName(err)});
-            return JSValue.jsUndefined();
-        };
+        var sink = JSC.WebCore.FileSink.init(bun.invalid_fd, this.globalThis.bunVM().eventLoop());
 
         const input_path: JSC.WebCore.PathOrFileDescriptor = brk: {
             if (store.data.file.pathlike == .fd) {
@@ -3032,7 +3052,7 @@ pub const Blob = struct {
         switch (sink.start(stream_start)) {
             .err => |err| {
                 globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-                sink.finalize();
+                sink.deref();
 
                 return JSC.JSValue.zero;
             },
@@ -3410,6 +3430,8 @@ pub const Blob = struct {
             },
         }
 
+        blob.calculateEstimatedByteSize();
+
         var blob_ = bun.new(Blob, blob);
         blob_.allocator = allocator;
         return blob_;
@@ -3580,6 +3602,15 @@ pub const Blob = struct {
         return duped;
     }
 
+    pub fn toJS(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        // if (comptime Environment.allow_assert) {
+        //     std.debug.assert(this.allocator != null);
+        // }
+
+        this.calculateEstimatedByteSize();
+        return Blob.toJSUnchecked(globalObject, this);
+    }
+
     pub fn deinit(this: *Blob) void {
         this.detach();
 
@@ -3635,7 +3666,10 @@ pub const Blob = struct {
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             // instead of erroring, invalid characters will become a U+FFFD replacement character
-            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch unreachable) |external| {
+            if (strings.toUTF16Alloc(bun.default_allocator, buf, false, false) catch {
+                global.throwOutOfMemory();
+                return .zero;
+            }) |external| {
                 if (lifetime != .temporary)
                     this.setIsASCIIFlag(false);
 
@@ -3735,7 +3769,7 @@ pub const Blob = struct {
             var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
             const allocator = stack_fallback.get();
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
-            if (strings.toUTF16Alloc(allocator, buf, false) catch null) |external| {
+            if (strings.toUTF16Alloc(allocator, buf, false, false) catch null) |external| {
                 if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
                 const result = ZigString.init16(external).toJSONObject(global);
                 allocator.free(external);
@@ -4393,7 +4427,7 @@ pub const InternalBlob = struct {
 
     pub fn toStringOwned(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
-        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false) catch &[_]u16{}) |out| {
+        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false, false) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
             return_value.ensureStillAlive();
             this.deinit();

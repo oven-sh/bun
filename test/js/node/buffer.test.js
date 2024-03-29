@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { Buffer, SlowBuffer, isAscii, isUtf8 } from "buffer";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { gc } from "harness";
@@ -6,6 +5,32 @@ import { gc } from "harness";
 const BufferModule = await import("buffer");
 beforeEach(() => gc());
 afterEach(() => gc());
+
+it("#9120 fill", () => {
+  let abBuf = Buffer.alloc(2, "ab");
+  let x = Buffer.alloc(1);
+  x.fill(abBuf);
+  expect(x.toString()).toBe("a");
+
+  for (let count = 2; count < 10; count += 2) {
+    const full = Buffer.from("a".repeat(count) + "b".repeat(count));
+    const x = Buffer.alloc(count);
+    x.fill(full);
+    expect(x.toString()).toBe("a".repeat(count));
+  }
+});
+
+it("#9120 alloc", () => {
+  let abBuf = Buffer.alloc(2, "ab");
+  let x = Buffer.alloc(1, abBuf);
+  expect(x.toString()).toBe("a");
+
+  for (let count = 2; count < 10; count += 2) {
+    const full = Buffer.from("a".repeat(count) + "b".repeat(count));
+    const x = Buffer.alloc(count, full);
+    expect(x.toString()).toBe("a".repeat(count));
+  }
+});
 
 it("isAscii", () => {
   expect(isAscii(new Buffer("abc"))).toBeTrue();

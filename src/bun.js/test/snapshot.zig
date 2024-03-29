@@ -17,6 +17,7 @@ const Expect = @import("./expect.zig").Expect;
 
 pub const Snapshots = struct {
     const file_header = "// Bun Snapshot v1, https://goo.gl/fbAQLP\n";
+    const snapshots_dir_name = "__snapshots__" ++ [_]u8{std.fs.path.sep};
     pub const ValuesHashMap = std.HashMap(usize, string, bun.IdentityContext(usize), std.hash_map.default_max_load_percentage);
 
     allocator: std.mem.Allocator,
@@ -111,8 +112,8 @@ pub const Snapshots = struct {
         var remain: []u8 = snapshot_file_path_buf[0..bun.MAX_PATH_BYTES];
         bun.copy(u8, remain, dir_path);
         remain = remain[dir_path.len..];
-        bun.copy(u8, remain, "__snapshots__/");
-        remain = remain["__snapshots__/".len..];
+        bun.copy(u8, remain, snapshots_dir_name);
+        remain = remain[snapshots_dir_name.len..];
         bun.copy(u8, remain, test_filename);
         remain = remain[test_filename.len..];
         bun.copy(u8, remain, ".snap");
@@ -221,8 +222,8 @@ pub const Snapshots = struct {
             var remain: []u8 = snapshot_file_path_buf[0..bun.MAX_PATH_BYTES];
             bun.copy(u8, remain, dir_path);
             remain = remain[dir_path.len..];
-            bun.copy(u8, remain, "__snapshots__/");
-            remain = remain["__snapshots__/".len..];
+            bun.copy(u8, remain, snapshots_dir_name);
+            remain = remain[snapshots_dir_name.len..];
 
             if (this.snapshot_dir_path == null or !strings.eqlLong(dir_path, this.snapshot_dir_path.?, true)) {
                 remain[0] = 0;
@@ -270,6 +271,9 @@ pub const Snapshots = struct {
                 } else {
                     const buf = try this.allocator.alloc(u8, length);
                     _ = try file.file.preadAll(buf, 0);
+                    if (comptime bun.Environment.isWindows) {
+                        try file.file.seekTo(0);
+                    }
                     try this.file_buf.appendSlice(buf);
                     this.allocator.free(buf);
                 }

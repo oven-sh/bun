@@ -5,14 +5,15 @@ export function main() {
 
 $visibility = "Private";
 export function require(this: CommonJSModuleRecord, id: string) {
-  return $tailCallForwardArguments($overridableRequire, this);
+  // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
+  return $overridableRequire.$apply(this, arguments);
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: CommonJSModuleRecord, id: string) {
-  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
+  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.id, false)));
   if (existing) {
     // Scenario where this is necessary:
     //
@@ -86,8 +87,8 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
 }
 
 $visibility = "Private";
-export function requireResolve(this: string | { path: string }, id: string) {
-  return $resolveSync(id, typeof this === "string" ? this : this?.path, false);
+export function requireResolve(this: string | { id: string }, id: string) {
+  return $resolveSync(id, typeof this === "string" ? this : this?.id, false);
 }
 
 $visibility = "Private";

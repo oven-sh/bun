@@ -83,6 +83,7 @@ const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
+pub const GenericWatcher = @import("../watcher.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -101,7 +102,7 @@ pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context)
     return struct {
         pub fn callback(ctx: ?*anyopaque) callconv(.C) void {
             const context: *Context = @as(*Context, @ptrCast(@alignCast(ctx.?)));
-            @call(.auto, Function, .{context});
+            Function(context);
         }
     }.callback;
 }
@@ -113,6 +114,8 @@ export var has_bun_garbage_collector_flag_enabled = false;
 const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
+
+const uv = bun.windows.libuv;
 
 pub const SavedSourceMap = struct {
     pub const vlq_offset = 24;
@@ -382,13 +385,17 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
-// pub fn getGlobalExitCodeForPipeFailure() u8 {
-//     if (VirtualMachine.is_main_thread_vm) {
-//         return VirtualMachine.get().exit_handler.exit_code;
-//     }
+const WindowsOnly = struct {
+    pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.C) *bun.windows.libuv.Loop {
+        return jsc_vm.uvLoop();
+    }
+};
 
-//     return 0;
-// }
+comptime {
+    if (Environment.isWindows) {
+        @export(WindowsOnly.Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
+    }
+}
 
 pub const ExitHandler = struct {
     exit_code: u8 = 0,
@@ -430,22 +437,22 @@ pub const ImportWatcher = union(enum) {
 
     pub fn start(this: ImportWatcher) !void {
         switch (this) {
-            inline .hot => |watcher| try watcher.start(),
-            inline .watch => |watcher| try watcher.start(),
+            inline .hot => |w| try w.start(),
+            inline .watch => |w| try w.start(),
             else => {},
         }
     }
 
-    pub inline fn watchlist(this: ImportWatcher) Watcher.WatchListArray {
+    pub inline fn watchlist(this: ImportWatcher) GenericWatcher.WatchList {
         return switch (this) {
-            inline .hot, .watch => |wacher| wacher.watchlist,
+            inline .hot, .watch => |w| w.watchlist,
             else => .{},
         };
     }
 
-    pub inline fn indexOf(this: ImportWatcher, hash: Watcher.HashType) ?u32 {
+    pub inline fn indexOf(this: ImportWatcher, hash: GenericWatcher.HashType) ?u32 {
         return switch (this) {
-            inline .hot, .watch => |wacher| wacher.indexOf(hash),
+            inline .hot, .watch => |w| w.indexOf(hash),
             else => null,
         };
     }
@@ -454,7 +461,7 @@ pub const ImportWatcher = union(enum) {
         this: ImportWatcher,
         fd: StoredFileDescriptorType,
         file_path: string,
-        hash: Watcher.HashType,
+        hash: GenericWatcher.HashType,
         loader: options.Loader,
         dir_fd: StoredFileDescriptorType,
         package_json: ?*PackageJSON,
@@ -482,6 +489,7 @@ pub const VirtualMachine = struct {
     console: *ConsoleObject,
     log: *logger.Log,
     main: string = "",
+    main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
     flush_list: std.ArrayList(string),
@@ -504,7 +512,7 @@ pub const VirtualMachine = struct {
     hide_bun_stackframes: bool = true,
 
     is_printing_plugin: bool = false,
-
+    is_shutting_down: bool = false,
     plugin_runner: ?PluginRunner = null,
     is_main_thread: bool = false,
     last_reported_error_for_dedupe: JSValue = .zero,
@@ -572,13 +580,16 @@ pub const VirtualMachine = struct {
     rare_data: ?*JSC.RareData = null,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
+    entry_point_result: struct {
+        value: JSC.Strong = .{},
+        cjs_set_value: bool = false,
+    } = .{},
+
     auto_install_dependencies: bool = false,
 
     onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
-
-    on_exception: ?*const OnException = null,
 
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
@@ -625,12 +636,8 @@ pub const VirtualMachine = struct {
         return this.debugger != null;
     }
 
-    pub fn setOnException(this: *VirtualMachine, callback: *const OnException) void {
-        this.on_exception = callback;
-    }
-
-    pub fn clearOnException(this: *VirtualMachine) void {
-        this.on_exception = null;
+    pub inline fn isShuttingDown(this: *const VirtualMachine) bool {
+        return this.is_shutting_down;
     }
 
     const VMHolder = struct {
@@ -761,7 +768,9 @@ pub const VirtualMachine = struct {
         }
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
-            if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
+            if (Environment.isWindows) {
+                this.initIPCInstance(kv.value.value);
+            } else if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
                 this.initIPCInstance(bun.toFD(fd));
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
@@ -773,7 +782,7 @@ pub const VirtualMachine = struct {
             // lookups on start for obscure flags which we do not want others to
             // depend on.
             if (map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-                JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
+                bun.spawn.WaiterThread.setShouldUseWaiterThread();
             }
 
             if (strings.eqlComptime(gc_level, "1")) {
@@ -819,10 +828,10 @@ pub const VirtualMachine = struct {
         Output.debug("Reloading...", .{});
         if (this.hot_reload == .watch) {
             Output.flush();
-            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
+            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
         }
 
-        if (!strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+        if (!strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
             Output.flush();
             Output.disableBuffering();
             Output.resetTerminalAll();
@@ -901,8 +910,35 @@ pub const VirtualMachine = struct {
         return .running;
     }
 
+    pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
+        if (this.module_loader.eval_source) |eval_source| {
+            var specifier_str = specifier.toBunString(this.global);
+            defer specifier_str.deref();
+            return specifier_str.eqlUTF8(eval_source.path.text);
+        }
+
+        return false;
+    }
+
+    pub fn setEntryPointEvalResultESM(this: *VirtualMachine, result: JSValue) callconv(.C) void {
+        // allow esm evaluate to set value multiple times
+        if (!this.entry_point_result.cjs_set_value) {
+            this.entry_point_result.value.set(this.global, result);
+        }
+    }
+
+    pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callconv(.C) void {
+        if (!this.entry_point_result.value.has()) {
+            this.entry_point_result.value.set(this.global, value);
+            this.entry_point_result.cjs_set_value = true;
+        }
+    }
+
     comptime {
         @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
+        @export(setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" });
+        @export(setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
+        @export(specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     }
 
     pub fn onExit(this: *VirtualMachine) void {
@@ -1115,7 +1151,7 @@ pub const VirtualMachine = struct {
         this.bundler.resolver.caches.fs.use_alternate_source_cache = true;
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
-        Analytics.Features.macros = true;
+        Analytics.Features.macros += 1;
         this.transpiler_store.enabled = false;
     }
 
@@ -1183,7 +1219,7 @@ pub const VirtualMachine = struct {
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
-            .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
+            .origin_timer = std.time.Timer.start() catch @panic("Timers are not supported on this system."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
@@ -1226,6 +1262,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             false,
+            false,
             null,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1251,6 +1288,10 @@ pub const VirtualMachine = struct {
         env_loader: ?*DotEnv.Loader = null,
         store_fd: bool = false,
         smol: bool = false,
+
+        // --print needs the result from evaluating the main module
+        eval: bool = false,
+
         graph: ?*bun.StandaloneModuleGraph = null,
         debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
     };
@@ -1336,6 +1377,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             opts.smol,
+            opts.eval,
             null,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1483,6 +1525,7 @@ pub const VirtualMachine = struct {
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
             worker.mini,
+            opts.eval,
             worker.cpp_worker,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1506,6 +1549,17 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
+        // refCountedString will panic if the code is empty
+        if (code.len == 0) {
+            return ResolvedSource{
+                .source_code = bun.String.init(""),
+                .specifier = specifier,
+                .source_url = bun.String.init(source_url),
+                .hash = 0,
+                .allocator = null,
+                .source_code_needs_deref = false,
+            };
+        }
         var source = this.refCountedString(code, hash_, !add_double_ref);
         if (add_double_ref) {
             source.ref();
@@ -1518,7 +1572,7 @@ pub const VirtualMachine = struct {
             .source_url = bun.String.init(source_url),
             .hash = source.hash,
             .allocator = source,
-            .needs_deref = false,
+            .source_code_needs_deref = false,
         };
     }
 
@@ -1572,33 +1626,41 @@ pub const VirtualMachine = struct {
             return builtin;
         }
 
-        var virtual_source: ?*logger.Source = null;
-
-        var display_specifier = _specifier.toUTF8(bun.default_allocator);
+        const display_specifier = _specifier.toUTF8(bun.default_allocator);
         defer display_specifier.deinit();
-        var specifier_clone = _specifier.toUTF8(bun.default_allocator);
+        const specifier_clone = _specifier.toUTF8(bun.default_allocator);
         defer specifier_clone.deinit();
         var display_slice = display_specifier.slice();
         const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
         const path = Fs.Path.init(specifier_clone.slice());
-        var loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
-            if (strings.eqlLong(specifier, jsc_vm.main, true)) {
-                break :brk options.Loader.js;
+        const loader, const virtual_source = brk: {
+            if (jsc_vm.module_loader.eval_source) |eval_source| {
+                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+                    break :brk .{ .tsx, eval_source };
+                }
+                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
+                    break :brk .{ .tsx, eval_source };
+                }
             }
 
-            break :brk options.Loader.file;
+            break :brk .{
+                jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk2: {
+                    if (strings.eqlLong(specifier, jsc_vm.main, true)) {
+                        break :brk2 options.Loader.js;
+                    }
+                    break :brk2 options.Loader.file;
+                },
+                null,
+            };
         };
 
-        if (jsc_vm.module_loader.eval_script) |eval_script| {
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_script;
-                loader = .tsx;
-            }
-        }
-
-        defer jsc_vm.module_loader.resetArena(jsc_vm);
+        // .print_source, which is used by exceptions avoids duplicating the entire source code
+        // but that means we have to be careful of the lifetime of the source code
+        // so we only want to reset the arena once its done freeing it.
+        defer if (flags != .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
+        errdefer if (flags == .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
@@ -1667,7 +1729,10 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = result.path;
             return;
-        } else if (jsc_vm.module_loader.eval_script != null and strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+        } else if (jsc_vm.module_loader.eval_source != null and
+            (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]")) or
+            strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
+        {
             ret.result = null;
             ret.path = specifier;
             return;
@@ -1706,17 +1771,18 @@ pub const VirtualMachine = struct {
                         const buster_name = name: {
                             if (std.fs.path.isAbsolute(normalized_specifier)) {
                                 if (std.fs.path.dirname(normalized_specifier)) |dir| {
-                                    break :name strings.withTrailingSlash(dir, normalized_specifier);
+                                    // Normalized with trailing slash
+                                    break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
                                 }
                             }
 
                             var parts = [_]string{
                                 source_to_use,
                                 normalized_specifier,
-                                "../",
+                                bun.pathLiteral(".."),
                             };
 
-                            break :name bun.path.joinAbsStringBuf(
+                            break :name bun.path.joinAbsStringBufZ(
                                 jsc_vm.bundler.fs.top_level_dir,
                                 &specifier_cache_resolver_buf,
                                 &parts,
@@ -1724,8 +1790,12 @@ pub const VirtualMachine = struct {
                             );
                         };
 
-                        jsc_vm.bundler.resolver.bustDirCache(buster_name);
-                        continue;
+                        // Only re-query if we previously had something cached.
+                        if (jsc_vm.bundler.resolver.bustDirCache(buster_name)) {
+                            continue;
+                        }
+
+                        return error.ModuleNotFound;
                     },
                 };
             }
@@ -2027,7 +2097,8 @@ pub const VirtualMachine = struct {
         this.runErrorHandler(result, exception_list);
     }
 
-    pub fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+    pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+        @setCold(true);
         if (!result.isEmptyOrUndefinedOrNull())
             this.last_reported_error_for_dedupe = result;
 
@@ -2035,20 +2106,28 @@ pub const VirtualMachine = struct {
         this.had_errors = false;
         defer this.had_errors = prev_had_errors;
 
+        const error_writer = Output.errorWriter();
+        var buffered_writer = std.io.bufferedWriter(error_writer);
+        defer {
+            buffered_writer.flush() catch {};
+        }
+
+        const writer = buffered_writer.writer();
+
         if (result.isException(this.global.vm())) {
             const exception = @as(*Exception, @ptrCast(result.asVoid()));
 
             this.printException(
                 exception,
                 exception_list,
-                @TypeOf(Output.errorWriter()),
-                Output.errorWriter(),
+                @TypeOf(writer),
+                writer,
                 true,
             );
         } else if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), true, true);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(writer), writer, true, true);
         } else {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), false, true);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(writer), writer, false, true);
         }
     }
 
@@ -2142,7 +2221,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
-        this.main_hash = bun.JSC.Watcher.getHash(entry_path);
+        this.main_hash = GenericWatcher.getHash(entry_path);
 
         try this.entry_point.generate(
             this.allocator,
@@ -2180,7 +2259,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
-        this.main_hash = bun.JSC.Watcher.getHash(entry_path);
+        this.main_hash = GenericWatcher.getHash(entry_path);
 
         this.eventLoop().ensureWaker();
 
@@ -2377,7 +2456,7 @@ pub const VirtualMachine = struct {
                 if (exception) |exception_| {
                     var holder = ZigException.Holder.init();
                     var zig_exception: *ZigException = holder.zigException();
-                    defer zig_exception.deinit();
+                    holder.deinit(this);
                     exception_.getStackTrace(&zig_exception.stack);
                     if (zig_exception.stack.frames_len > 0) {
                         if (allow_ansi_color) {
@@ -2585,12 +2664,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn remapZigException(
-        this: *VirtualMachine,
-        exception: *ZigException,
-        error_instance: JSValue,
-        exception_list: ?*ExceptionList,
-    ) void {
+    pub fn remapZigException(this: *VirtualMachine, exception: *ZigException, error_instance: JSValue, exception_list: ?*ExceptionList, must_reset_parser_arena_later: *bool) void {
         error_instance.toZigException(this.global, exception);
         // defer this so that it copies correctly
         defer {
@@ -2687,6 +2761,7 @@ pub const VirtualMachine = struct {
         if (mapping_) |mapping| {
             var log = logger.Log.init(default_allocator);
             var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+            must_reset_parser_arena_later.* = true;
             const code = original_source.source_code.toUTF8(bun.default_allocator);
             defer code.deinit();
 
@@ -2716,6 +2791,8 @@ pub const VirtualMachine = struct {
                 lines = lines[0..@min(@as(usize, lines.len), source_lines.len)];
                 var current_line_number: i32 = @intCast(last_line);
                 for (lines, source_lines[0..lines.len], source_line_numbers[0..lines.len]) |line, *line_dest, *line_number| {
+                    // To minimize duplicate allocations, we use the same slice as above
+                    // it should virtually always be UTF-8 and thus not cloned
                     line_dest.* = String.init(line);
                     line_number.* = current_line_number;
                     current_line_number -= 1;
@@ -2753,16 +2830,14 @@ pub const VirtualMachine = struct {
     pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) anyerror!void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
-        defer exception_holder.deinit();
-        this.remapZigException(exception, error_instance, exception_list);
+        defer exception_holder.deinit(this);
+        this.remapZigException(exception, error_instance, exception_list, &exception_holder.need_to_clear_parser_arena_on_deinit);
         const prev_had_errors = this.had_errors;
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
 
-        if (allow_side_effects) {
-            defer if (this.on_exception) |cb| {
-                cb(exception);
-            };
+        if (allow_side_effects and Output.is_github_action) {
+            defer printGithubAnnotation(exception);
         }
 
         const line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
@@ -2897,7 +2972,7 @@ pub const VirtualMachine = struct {
 
         if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
             inline for (extra_fields) |field| {
-                if (error_instance.getTruthy(this.global, field)) |value| {
+                if (error_instance.getTruthyComptime(this.global, field)) |value| {
                     const kind = value.jsType();
                     if (kind.isStringLike()) {
                         if (value.toStringOrNull(this.global)) |str| {
@@ -2995,13 +3070,143 @@ pub const VirtualMachine = struct {
         }
     }
 
+    // In Github Actions, emit an annotation that renders the error and location.
+    // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
+    pub noinline fn printGithubAnnotation(exception: *JSC.ZigException) void {
+        @setCold(true);
+        const name = exception.name;
+        const message = exception.message;
+        const frames = exception.stack.frames();
+        const top_frame = if (frames.len > 0) frames[0] else null;
+        const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
+        const allocator = bun.default_allocator;
+        Output.flush();
+
+        var buffered_writer = std.io.bufferedWriter(Output.errorWriter());
+        var writer = buffered_writer.writer();
+        defer {
+            buffered_writer.flush() catch {};
+        }
+
+        var has_location = false;
+
+        if (top_frame) |frame| {
+            if (!frame.position.isInvalid()) {
+                const source_url = frame.source_url.toUTF8(allocator);
+                defer source_url.deinit();
+                const file = bun.path.relative(dir, source_url.slice());
+                writer.print("\n::error file={s},line={d},col={d},title=", .{
+                    file,
+                    frame.position.line_start + 1,
+                    frame.position.column_start,
+                }) catch {};
+                has_location = true;
+            }
+        }
+
+        if (!has_location) {
+            writer.print("\n::error title=", .{}) catch {};
+        }
+
+        if (name.isEmpty() or name.eqlComptime("Error")) {
+            writer.print("error", .{}) catch {};
+        } else {
+            writer.print("{s}", .{name.githubAction()}) catch {};
+        }
+
+        if (!message.isEmpty()) {
+            const message_slice = message.toUTF8(allocator);
+            defer message_slice.deinit();
+            const msg = message_slice.slice();
+
+            var cursor: u32 = 0;
+            while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
+                cursor = i + 1;
+                if (msg[i] == '\n') {
+                    const first_line = bun.String.fromUTF8(msg[0..i]);
+                    writer.print(": {s}::", .{first_line.githubAction()}) catch {};
+                    break;
+                }
+            } else {
+                writer.print(": {s}::", .{message.githubAction()}) catch {};
+            }
+
+            while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
+                cursor = i + 1;
+                if (msg[i] == '\n') {
+                    break;
+                }
+            }
+
+            if (cursor > 0) {
+                const body = ZigString.initUTF8(msg[cursor..]);
+                writer.print("{s}", .{body.githubAction()}) catch {};
+            }
+        } else {
+            writer.print("::", .{}) catch {};
+        }
+
+        // TODO: cleanup and refactor to use printStackTrace()
+        if (top_frame) |_| {
+            const vm = VirtualMachine.get();
+            const origin = if (vm.is_from_devserver) &vm.origin else null;
+
+            var i: i16 = 0;
+            while (i < frames.len) : (i += 1) {
+                const frame = frames[@as(usize, @intCast(i))];
+                const source_url = frame.source_url.toUTF8(allocator);
+                defer source_url.deinit();
+                const file = bun.path.relative(dir, source_url.slice());
+                const func = frame.function_name.toUTF8(allocator);
+
+                if (file.len == 0 and func.len == 0) continue;
+
+                const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
+                    false,
+                )}) > 0;
+
+                // %0A = escaped newline
+                if (has_name) {
+                    writer.print(
+                        "%0A      at {any} ({any})",
+                        .{
+                            frame.nameFormatter(false),
+                            frame.sourceURLFormatter(
+                                file,
+                                origin,
+                                false,
+                                false,
+                            ),
+                        },
+                    ) catch {};
+                } else {
+                    writer.print(
+                        "%0A      at {any}",
+                        .{
+                            frame.sourceURLFormatter(
+                                file,
+                                origin,
+                                false,
+                                false,
+                            ),
+                        },
+                    ) catch {};
+                }
+            }
+        }
+
+        writer.print("\n", .{}) catch {};
+    }
+
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        uws_context: *uws.SocketContext,
+        context: if (Environment.isPosix) *uws.SocketContext else u0,
         ipc: IPC.IPCData,
+
+        pub usingnamespace bun.New(@This());
 
         pub fn handleIPCMessage(
             this: *IPCInstance,
@@ -3023,36 +3228,54 @@ pub const VirtualMachine = struct {
             }
         }
 
-        pub fn handleIPCClose(this: *IPCInstance, _: IPC.Socket) void {
+        pub fn handleIPCClose(this: *IPCInstance) void {
             JSC.markBinding(@src());
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;
                 Process__emitDisconnectEvent(global);
             }
-            uws.us_socket_context_free(0, this.uws_context);
-            bun.default_allocator.destroy(this);
+            if (Environment.isPosix) {
+                uws.us_socket_context_free(0, this.context);
+            }
+            this.destroy();
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    pub fn initIPCInstance(this: *VirtualMachine, fd: bun.FileDescriptor) void {
+    const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
+    pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType) void {
         if (Environment.isWindows) {
-            Output.warn("IPC is not supported on Windows", .{});
+            var instance = IPCInstance.new(.{
+                .globalThis = this.global,
+                .context = 0,
+                .ipc = .{},
+            });
+            instance.ipc.configureClient(IPCInstance, instance, info) catch {
+                instance.destroy();
+                Output.printErrorln("Unable to start IPC pipe", .{});
+                return;
+            };
+
+            this.ipc = instance;
+            instance.ipc.writeVersionPacket();
             return;
         }
         this.event_loop.ensureWaker();
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
 
-        var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
-        instance.* = .{
+        var instance = IPCInstance.new(.{
             .globalThis = this.global,
-            .uws_context = context,
+            .context = context,
             .ipc = undefined,
+        });
+        const socket = IPC.Socket.fromFd(context, info, IPCInstance, instance, null) orelse {
+            instance.destroy();
+            Output.printErrorln("Unable to start IPC socket", .{});
+            return;
         };
-        const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
         socket.setTimeout(0);
         instance.ipc = .{ .socket = socket };
 
@@ -3074,11 +3297,10 @@ extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
     return struct {
-        const watcher = @import("../watcher.zig");
-        pub const Watcher = watcher.NewWatcher(*@This());
+        pub const Watcher = GenericWatcher.NewWatcher(*@This());
         const Reloader = @This();
 
-        onAccept: std.ArrayHashMapUnmanaged(@This().Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
+        onAccept: std.ArrayHashMapUnmanaged(GenericWatcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
         ctx: *Ctx,
         verbose: bool = false,
 
@@ -3207,7 +3429,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
@@ -3217,7 +3439,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             // - Directories outside the root directory
             // - Directories inside node_modules
             if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
-                watch.addDirectory(dir_fd, file_path, @This().Watcher.getHash(file_path), false) catch {};
+                watch.addDirectory(dir_fd, file_path, GenericWatcher.getHash(file_path), false) catch {};
             }
         }
 
@@ -3250,9 +3472,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub fn onFileUpdate(
             this: *@This(),
-            events: []watcher.WatchEvent,
+            events: []GenericWatcher.WatchEvent,
             changed_files: []?[:0]u8,
-            watchlist: watcher.Watchlist,
+            watchlist: GenericWatcher.WatchList,
         ) void {
             var slice = watchlist.slice();
             const file_paths = slice.items(.file_path);
@@ -3314,6 +3536,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
                     },
                     .directory => {
+                        if (comptime Environment.isWindows) {
+                            // on windows we receive file events for all items affected by a directory change
+                            // so we only need to clear the directory cache. all other effects will be handled
+                            // by the file events
+                            _ = resolver.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                            continue;
+                        }
                         var affected_buf: [128][]const u8 = undefined;
                         var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
 
@@ -3361,10 +3590,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        resolver.bustDirCache(file_path);
+                        _ = resolver.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
 
                         if (entries_option) |dir_ent| {
-                            var last_file_hash: @This().Watcher.HashType = std.math.maxInt(@This().Watcher.HashType);
+                            var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);
 
                             for (affected) |changed_name_| {
                                 const changed_name: []const u8 = if (comptime Environment.isMac)
@@ -3377,14 +3606,14 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                 var prev_entry_id: usize = std.math.maxInt(usize);
                                 if (loader != .file) {
                                     var path_string: bun.PathString = undefined;
-                                    var file_hash: @This().Watcher.HashType = last_file_hash;
+                                    var file_hash: GenericWatcher.HashType = last_file_hash;
                                     const abs_path: string = brk: {
                                         if (dir_ent.entries.get(@as([]const u8, @ptrCast(changed_name)))) |file_ent| {
                                             // reset the file descriptor
                                             file_ent.entry.cache.fd = .zero;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
-                                            file_hash = @This().Watcher.getHash(path_string.slice());
+                                            file_hash = GenericWatcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
@@ -3412,7 +3641,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                                             @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len..][0..changed_name.len], changed_name);
                                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
-                                            file_hash = @This().Watcher.getHash(path_slice);
+                                            file_hash = GenericWatcher.getHash(path_slice);
                                             break :brk path_slice;
                                         }
                                     };

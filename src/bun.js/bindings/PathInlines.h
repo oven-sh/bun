@@ -4,9 +4,13 @@
 #if OS(WINDOWS)
 #define PLATFORM_SEP_s "\\"_s
 #define PLATFORM_SEP '\\'
+#define NOT_PLATFORM_SEP_s "/"_s
+#define NOT_PLATFORM_SEP '/'
 #else
 #define PLATFORM_SEP_s "/"_s
 #define PLATFORM_SEP '/'
+#define NOT_PLATFORM_SEP_s "\\"_s
+#define NOT_PLATFORM_SEP '\\'
 #endif
 
 ALWAYS_INLINE bool isAbsolutePath(WTF::String input)

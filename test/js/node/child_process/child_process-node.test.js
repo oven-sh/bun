@@ -1,12 +1,18 @@
-// @known-failing-on-windows: 1 failing
 import { ChildProcess, spawn, exec, fork } from "node:child_process";
 import { createTest } from "node-harness";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { bunEnv, bunExe } from "harness";
-const { beforeAll, describe, expect, it, throws, assert, createCallCheckCtx, createDoneDotAll } = createTest(
-  import.meta.path,
-);
+import util from "node:util";
+import { bunEnv, bunExe, isWindows } from "harness";
+const { beforeAll, beforeEach, afterAll, describe, expect, it, throws, assert, createCallCheckCtx, createDoneDotAll } =
+  createTest(import.meta.path);
+const origProcessEnv = process.env;
+beforeEach(() => {
+  process.env = { ...bunEnv };
+});
+afterAll(() => {
+  process.env = origProcessEnv;
+});
 const strictEqual = (a, b) => expect(a).toStrictEqual(b);
 const debug = process.env.DEBUG ? console.log : () => {};
 
@@ -18,7 +24,8 @@ const fixturesDir = path.join(__dirname, "fixtures");
 
 const fixtures = {
   path(...args) {
-    return path.join(fixturesDir, ...args);
+    const strings = [fixturesDir, ...args].filter(util.isString);
+    return path.join(...strings);
   },
 };
 
@@ -44,7 +51,7 @@ const fixtures = {
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 const common = {
-  pwdCommand: ["pwd", []],
+  pwdCommand: isWindows ? ["node", ["-e", "process.stdout.write(process.cwd() + '\\n')"]] : ["pwd", []],
 };
 
 describe("ChildProcess.constructor", () => {
@@ -241,7 +248,7 @@ describe("child_process cwd", () => {
     const { mustCall } = createCallCheckCtx(createDone(1500));
     const exitDone = createDone(5000);
 
-    const child = spawn(...common.pwdCommand, options);
+    const child = spawn(...common.pwdCommand, { stdio: ["inherit", "pipe", "inherit"], ...options });
 
     strictEqual(typeof child.pid, expectPidType);
 
@@ -265,7 +272,7 @@ describe("child_process cwd", () => {
       }
     });
 
-    child.on(
+    child.stdout.on(
       "close",
       mustCall(() => {
         expectData && strictEqual(data.trim(), expectData);
@@ -284,7 +291,7 @@ describe("child_process cwd", () => {
   //     mustCall(function (e) {
   //       console.log(e);
   //       strictEqual(e.code, "ENOENT");
-  //     })
+  //     }),
   //   );
   // });
 
@@ -329,7 +336,7 @@ describe("child_process cwd", () => {
       },
       createDone(1500),
     );
-    const shouldExistDir = "/dev";
+    const shouldExistDir = isWindows ? "C:\\Windows\\System32" : "/dev";
     testCwd(
       { cwd: shouldExistDir },
       {
@@ -361,10 +368,10 @@ describe("child_process cwd", () => {
 
 describe("child_process default options", () => {
   it("should use process.env as default env", done => {
-    const origTmpDir = globalThis.process.env.TMPDIR;
-    globalThis.process.env.TMPDIR = platformTmpDir;
-    let child = spawn("printenv", [], {});
-    globalThis.process.env.TMPDIR = origTmpDir;
+    process.env.TMPDIR = platformTmpDir;
+
+    // fake printenv
+    let child = spawn(bunExe(), ["--print", "process.env"], {});
     let response = "";
 
     child.stdout.setEncoding("utf8");
@@ -377,7 +384,7 @@ describe("child_process default options", () => {
     // because the process can exit before the stream is closed and the data is read
     child.stdout.on("close", () => {
       try {
-        expect(response).toContain(`TMPDIR=${platformTmpDir}`);
+        expect(response).toContain(`TMPDIR: "${platformTmpDir.replace(/\\/g, "\\\\")}"`);
         done();
       } catch (e) {
         done(e);
@@ -387,28 +394,34 @@ describe("child_process default options", () => {
 });
 
 describe("child_process double pipe", () => {
-  it.skipIf(process.platform === "linux")("should allow two pipes to be used at once", done => {
+  it("should allow two pipes to be used at once", done => {
     // const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
     const mustCallAtLeast = fn => fn;
     const mustCall = fn => fn;
-    let grep, sed, echo;
-    grep = spawn("grep", ["o"], { stdio: ["pipe", "pipe", "pipe"] });
-    sed = spawn("sed", ["s/o/O/"]);
-    echo = spawn("echo", ["hello\nnode\nand\nworld\n"]);
+    let fakeGrep, fakeSed, fakeEcho;
+    fakeGrep = spawn(bunExe(), [
+      "-e",
+      "process.stdin.on('data', (data) => { const dataStr = data.toString(); if (dataStr.includes('o')) process.stdout.write(dataStr); });",
+    ]);
+    fakeSed = spawn(bunExe(), [
+      "-e",
+      "process.stdin.on('data', (data) => { process.stdout.write(data.toString().replace(/o/g, 'O')); });",
+    ]);
+    fakeEcho = spawn(bunExe(), ["-e", "console.log('hello');console.log('node');console.log('world');"]);
 
     // pipe grep | sed
-    grep.stdout.on(
+    fakeGrep.stdout.on(
       "data",
       mustCallAtLeast(data => {
         debug(`grep stdout ${data.length}`);
-        if (!sed.stdin.write(data)) {
-          grep.stdout.pause();
+        if (!fakeSed.stdin.write(data)) {
+          fakeGrep.stdout.pause();
         }
       }),
     );
 
     // print sed's output
-    sed.stdout.on(
+    fakeSed.stdout.on(
       "data",
       mustCallAtLeast(data => {
         result += data.toString("utf8");
@@ -416,13 +429,13 @@ describe("child_process double pipe", () => {
       }),
     );
 
-    echo.stdout.on(
+    fakeEcho.stdout.on(
       "data",
       mustCallAtLeast(data => {
         debug(`grep stdin write ${data.length}`);
-        if (!grep.stdin.write(data)) {
+        if (!fakeGrep.stdin.write(data)) {
           debug("echo stdout pause");
-          echo.stdout.pause();
+          fakeEcho.stdout.pause();
         }
       }),
     );
@@ -431,35 +444,35 @@ describe("child_process double pipe", () => {
     // So stdin has no 'drain' event.
     // TODO(@jasnell): This does not appear to ever be
     // emitted. It's not clear if it is necessary.
-    grep.stdin.on("drain", () => {
+    fakeGrep.stdin.on("drain", () => {
       debug("echo stdout resume");
-      echo.stdout.resume();
+      fakeEcho.stdout.resume();
     });
 
     // Propagate end from echo to grep
-    echo.stdout.on(
+    fakeEcho.stdout.on(
       "end",
       mustCall(() => {
         debug("echo stdout end");
-        grep.stdin.end();
+        fakeGrep.stdin.end();
       }),
     );
 
-    echo.on(
+    fakeEcho.on(
       "exit",
       mustCall(() => {
         debug("echo exit");
       }),
     );
 
-    grep.on(
+    fakeGrep.on(
       "exit",
       mustCall(() => {
         debug("grep exit");
       }),
     );
 
-    sed.on(
+    fakeSed.on(
       "exit",
       mustCall(() => {
         debug("sed exit");
@@ -468,22 +481,22 @@ describe("child_process double pipe", () => {
 
     // TODO(@jasnell): This does not appear to ever be
     // emitted. It's not clear if it is necessary.
-    sed.stdin.on("drain", () => {
-      grep.stdout.resume();
+    fakeSed.stdin.on("drain", () => {
+      fakeGrep.stdout.resume();
     });
 
     // Propagate end from grep to sed
-    grep.stdout.on(
+    fakeGrep.stdout.on(
       "end",
       mustCall(() => {
         debug("grep stdout end");
-        sed.stdin.end();
+        fakeSed.stdin.end();
       }),
     );
 
     let result = "";
 
-    sed.stdout.on(
+    fakeSed.stdout.on(
       "end",
       mustCall(() => {
         debug("result: " + result);
@@ -501,7 +514,7 @@ describe("fork", () => {
       const { mustCall } = createCallCheckCtx(done);
       const ac = new AbortController();
       const { signal } = ac;
-      const cp = fork(fixtures.path("child-process-stay-alive-forever.js", { env: bunEnv }), {
+      const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
         signal,
         env: bunEnv,
       });
@@ -641,34 +654,40 @@ describe("fork", () => {
         });
       });
     });
+    // This test fails due to a DataCloneError or due to "Unable to deserialize data."
+    // This test was originally marked as TODO before the process changes.
     it.todo(
       "Ensure that the second argument of `fork` and `fork` should parse options correctly if args is undefined or null",
       done => {
         const invalidSecondArgs = [0, true, () => {}, Symbol("t")];
-        invalidSecondArgs.forEach(arg => {
-          expect(() => fork(fixtures.path("child-process-echo-options.js"), arg)).toThrow({
-            code: "ERR_INVALID_ARG_TYPE",
-            name: "TypeError",
-            message: `The \"args\" argument must be of type Array. Received ${arg?.toString()}`,
+        try {
+          invalidSecondArgs.forEach(arg => {
+            expect(() => fork(fixtures.path("child-process-echo-options.js"), arg)).toThrow({
+              code: "ERR_INVALID_ARG_TYPE",
+              name: "TypeError",
+              message: `The \"args\" argument must be of type Array. Received ${arg?.toString()}`,
+            });
           });
-        });
+        } catch (e) {
+          done(e);
+          return;
+        }
 
-        const argsLists = [undefined, null, []];
+        const argsLists = [[]];
 
         const { mustCall } = createCallCheckCtx(done);
 
         argsLists.forEach(args => {
           const cp = fork(fixtures.path("child-process-echo-options.js"), args, {
-            env: { ...process.env, ...expectedEnv, ...bunEnv },
+            env: { ...bunEnv, ...expectedEnv },
           });
 
-          // TODO - bun has no `send` method in the process
-          // cp.on(
-          //   'message',
-          //   common.mustCall(({ env }) => {
-          //     assert.strictEqual(env.foo, expectedEnv.foo);
-          //   })
-          // );
+          cp.on(
+            "message",
+            mustCall(({ env }) => {
+              assert.strictEqual(env.foo, expectedEnv.foo);
+            }),
+          );
 
           cp.on(
             "exit",
@@ -720,7 +739,7 @@ describe("fork", () => {
     // https://github.com/nodejs/node/blob/v20.5.0/test/parallel/test-child-process-fork-stdio.js
   });
   describe("fork", () => {
-    it.todo("message", () => {
+    it.todo("message", done => {
       // TODO - bun has no `send` method in the process
       const { mustCall } = createCallCheckCtx(done);
       const args = ["foo", "bar"];

@@ -45,9 +45,10 @@ pub const ZigGlobalObject = extern struct {
         console: *anyopaque,
         context_id: i32,
         mini_mode: bool,
+        eval_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
-        const global = shim.cppFn("create", .{ console, context_id, mini_mode, worker_ptr });
+        const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
         Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
@@ -63,26 +64,26 @@ pub const ZigGlobalObject = extern struct {
     pub fn import(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) ErrorableString {
         JSC.markBinding(@src());
 
-        return @call(.always_inline, Interface.import, .{ global, specifier, source });
+        return @call(bun.callmod_inline, Interface.import, .{ global, specifier, source });
     }
     pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
         JSC.markBinding(@src());
-        @call(.always_inline, Interface.resolve, .{ res, global, specifier, source, query });
+        @call(bun.callmod_inline, Interface.resolve, .{ res, global, specifier, source, query });
     }
 
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        return @call(.always_inline, Interface.promiseRejectionTracker, .{ global, promise, rejection });
+        return @call(bun.callmod_inline, Interface.promiseRejectionTracker, .{ global, promise, rejection });
     }
 
     pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        return @call(.always_inline, Interface.reportUncaughtException, .{ global, exception });
+        return @call(bun.callmod_inline, Interface.reportUncaughtException, .{ global, exception });
     }
 
     pub fn onCrash() callconv(.C) void {
         JSC.markBinding(@src());
-        return @call(.always_inline, Interface.onCrash, .{});
+        return @call(bun.callmod_inline, Interface.onCrash, .{});
     }
 
     pub const Export = shim.exportFunctions(
@@ -132,17 +133,11 @@ pub const ZigErrorType = extern struct {
 
 pub const NodePath = JSC.Node.Path;
 
-// Web Streams
-pub const JSReadableStreamBlob = JSC.WebCore.ByteBlobLoader.Source.JSReadableStreamSource;
-pub const JSReadableStreamFile = JSC.WebCore.FileReader.Source.JSReadableStreamSource;
-pub const JSReadableStreamBytes = JSC.WebCore.ByteStream.Source.JSReadableStreamSource;
-
 // Sinks
 pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 pub const JSHTTPSResponseSink = JSC.WebCore.HTTPSResponseSink.JSSink;
 pub const JSHTTPResponseSink = JSC.WebCore.HTTPResponseSink.JSSink;
 pub const JSFileSink = JSC.WebCore.FileSink.JSSink;
-pub const JSUVStreamSink = JSC.WebCore.UVStreamSink.JSSink;
 
 // WebSocket
 pub const WebSocketHTTPClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPClient;
@@ -189,10 +184,18 @@ pub const ResolvedSource = extern struct {
     pub const name = "ResolvedSource";
     pub const namespace = shim.namespace;
 
+    /// Specifier's lifetime is the caller from C++
+    /// https://github.com/oven-sh/bun/issues/9521
     specifier: bun.String = bun.String.empty,
     source_code: bun.String = bun.String.empty,
+
+    /// source_url is eventually deref'd on success
     source_url: bun.String = bun.String.empty,
+
+    // this pointer is unused and shouldn't exist
     commonjs_exports: ?[*]ZigString = null,
+
+    // This field is used to indicate whether it's a CommonJS module or ESM
     commonjs_exports_len: u32 = 0,
 
     hash: u32 = 0,
@@ -200,7 +203,9 @@ pub const ResolvedSource = extern struct {
     allocator: ?*anyopaque = null,
 
     tag: Tag = Tag.javascript,
-    needs_deref: bool = true,
+
+    /// This is for source_code
+    source_code_needs_deref: bool = true,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
@@ -753,6 +758,10 @@ pub const ZigException = extern struct {
         this.name.deref();
         this.message.deref();
 
+        for (this.stack.source_lines_ptr[0..this.stack.source_lines_len]) |*line| {
+            line.deref();
+        }
+
         for (this.stack.frames_ptr[0..this.stack.frames_len]) |*frame| {
             frame.deinit();
         }
@@ -770,6 +779,7 @@ pub const ZigException = extern struct {
         frames: [frame_count]ZigStackFrame,
         loaded: bool,
         zig_exception: ZigException,
+        need_to_clear_parser_arena_on_deinit: bool = false,
 
         pub const Zero: Holder = Holder{
             .frames = brk: {
@@ -796,8 +806,11 @@ pub const ZigException = extern struct {
             return Holder.Zero;
         }
 
-        pub fn deinit(this: *Holder) void {
+        pub fn deinit(this: *Holder, vm: *JSC.VirtualMachine) void {
             this.zigException().deinit();
+            if (this.need_to_clear_parser_arena_on_deinit) {
+                vm.module_loader.resetArena(vm);
+            }
         }
 
         pub fn zigException(this: *Holder) *ZigException {
@@ -911,18 +924,40 @@ comptime {
         _ = Process.setTitle;
         Bun.Timer.shim.ref();
         NodePath.shim.ref();
-        JSReadableStreamBlob.shim.ref();
         JSArrayBufferSink.shim.ref();
         JSHTTPResponseSink.shim.ref();
         JSHTTPSResponseSink.shim.ref();
         JSFileSink.shim.ref();
-        JSUVStreamSink.shim.ref();
-        JSReadableStreamBytes.shim.ref();
-        JSReadableStreamFile.shim.ref();
+        JSFileSink.shim.ref();
         _ = ZigString__free;
         _ = ZigString__free_global;
 
         TestScope.shim.ref();
         BodyValueBuffererContext.shim.ref();
+
+        _ = Bun__LoadLibraryBunString;
     }
+}
+
+/// Returns null on error. Use windows API to lookup the actual error.
+/// The reason this function is in zig is so that we can use our own utf16-conversion functions.
+///
+/// Using characters16() does not seem to always have the sentinel. or something else
+/// broke when I just used it. Not sure. ... but this works!
+pub export fn Bun__LoadLibraryBunString(str: *bun.String) ?*anyopaque {
+    var buf: bun.WPathBuffer = undefined;
+    const data = switch (str.encoding()) {
+        .utf8 => bun.strings.convertUTF8toUTF16InBuffer(&buf, str.utf8()),
+        .utf16 => brk: {
+            @memcpy(buf[0..str.length()], str.utf16());
+            break :brk buf[0..str.length()];
+        },
+        .latin1 => brk: {
+            bun.strings.copyU8IntoU16(&buf, str.latin1());
+            break :brk buf[0..str.length()];
+        },
+    };
+    buf[data.len] = 0;
+    const LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008;
+    return bun.windows.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
 }

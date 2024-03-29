@@ -1,6 +1,7 @@
 import { it, expect } from "bun:test";
 import * as os from "node:os";
 import { realpathSync } from "fs";
+import { isWindows } from "harness";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -26,7 +27,7 @@ it("getPriority", () => {
 });
 
 it("setPriority", () => {
-  if (process.platform === "win32") {
+  if (isWindows) {
     expect(os.setPriority(0, 10)).toBe(undefined);
     expect(os.getPriority()).toBe(10);
     expect(os.setPriority(0)).toBe(undefined);
@@ -48,7 +49,7 @@ it("homedir", () => {
 });
 
 it("tmpdir", () => {
-  if (process.platform === "win32") {
+  if (isWindows) {
     expect(
       [
         process.env.TEMP,
@@ -92,7 +93,7 @@ it("uptime", () => {
 
 it("version", () => {
   expect(typeof os.version() === "string").toBe(true);
-  if (process.platform === "win32") {
+  if (isWindows) {
     expect(os.version()).toInclude("Win");
     console.log(os.version());
   }
@@ -164,12 +165,12 @@ it("machine", () => {
 });
 
 it("EOL", () => {
-  if (process.platform === "win32") expect(os.EOL).toBe("\r\n");
+  if (isWindows) expect(os.EOL).toBe("\r\n");
   else expect(os.EOL).toBe("\n");
 });
 
 it("devNull", () => {
-  if (process.platform === "win32") expect(os.devNull).toBe("\\\\.\\nul");
+  if (isWindows) expect(os.devNull).toBe("\\\\.\\nul");
   else expect(os.devNull).toBe("/dev/null");
 });
 

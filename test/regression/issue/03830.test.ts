@@ -1,6 +1,3 @@
-// @known-failing-on-windows: 1 failing
-// test/regression/issue/03830.test.ts
-
 import { it, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, mkdtempSync, realpathSync } from "fs";

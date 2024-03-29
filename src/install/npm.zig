@@ -368,6 +368,41 @@ pub const OperatingSystem = enum(u16) {
     }
 };
 
+pub const Libc = enum(u8) {
+    none = 0,
+    _,
+
+    pub const glibc: u8 = 1 << 1;
+    pub const musl: u8 = 1 << 2;
+
+    pub const NameMap = ComptimeStringMap(u8, .{
+        .{ "glibc", glibc },
+        .{ "musl", musl },
+    });
+
+    pub inline fn has(this: Libc, other: u8) bool {
+        return (@intFromEnum(this) & other) != 0;
+    }
+
+    pub fn apply(this_: Libc, str: []const u8) Libc {
+        if (str.len == 0) {
+            return this_;
+        }
+        const this = @intFromEnum(this_);
+
+        const is_not = str[0] == '!';
+        const offset: usize = if (str[0] == '!') 1 else 0;
+
+        const field: u8 = NameMap.get(str[offset..]) orelse return this_;
+
+        if (is_not) {
+            return @as(Libc, @enumFromInt(this & ~field));
+        } else {
+            return @as(Libc, @enumFromInt(this | field));
+        }
+    }
+};
+
 /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
 /// https://nodejs.org/api/os.html#osarch
 pub const Architecture = enum(u16) {
@@ -482,7 +517,19 @@ pub const PackageVersion = extern struct {
     os: OperatingSystem = OperatingSystem.all,
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
+
+    /// `"libc"` field in package.json, not exposed in npm registry api yet.
+    libc: Libc = Libc.none,
+
+    /// `hasInstallScript` field in registry API.
+    has_install_script: bool = false,
 };
+
+comptime {
+    if (@sizeOf(Npm.PackageVersion) != 224) {
+        @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
+    }
+}
 
 pub const NpmPackage = extern struct {
     /// HTTP response headers
@@ -620,7 +667,7 @@ pub const PackageManifest = struct {
         }
 
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
-            const file_id = bun.Wyhash.hash(0, this.name());
+            const file_id = bun.Wyhash11.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
@@ -637,7 +684,7 @@ pub const PackageManifest = struct {
         }
 
         pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
-            const file_id = bun.Wyhash.hash(0, package_name);
+            const file_id = bun.Wyhash11.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
             const file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
@@ -1092,7 +1139,7 @@ pub const PackageManifest = struct {
                 // so names go last because we are better able to dedupe at the end
                 var dependency_values = version_extern_strings;
                 var dependency_names = all_dependency_names_and_values;
-                var prev_extern_bin_group = extern_strings_bin_entries;
+                var prev_extern_bin_group: ?[]ExternalString = null;
                 const empty_version = bun.serializable(PackageVersion{
                     .bin = Bin.init(),
                 });
@@ -1161,6 +1208,37 @@ pub const PackageManifest = struct {
                         }
                     }
 
+                    if (prop.value.?.asProperty("libc")) |libc| {
+                        package_version.libc = Libc.none;
+
+                        switch (libc.expr.data) {
+                            .e_array => |arr| {
+                                const items = arr.slice();
+                                if (items.len > 0) {
+                                    package_version.libc = Libc.none;
+                                    for (items) |item| {
+                                        if (item.asString(allocator)) |libc_str_| {
+                                            package_version.libc = package_version.libc.apply(libc_str_);
+                                        }
+                                    }
+                                }
+                            },
+                            .e_string => |stri| {
+                                package_version.libc = Libc.apply(.none, stri.data);
+                            },
+                            else => {},
+                        }
+                    }
+
+                    if (prop.value.?.asProperty("hasInstallScript")) |has_install_script| {
+                        switch (has_install_script.expr.data) {
+                            .e_boolean => |val| {
+                                package_version.has_install_script = val.value;
+                            },
+                            else => {},
+                        }
+                    }
+
                     bin: {
                         // bins are extremely repetitive
                         // We try to avoid storing copies the string
@@ -1186,17 +1264,17 @@ pub const PackageManifest = struct {
                                         else => {
                                             var group_slice = extern_strings_bin_entries[0 .. obj.properties.len * 2];
 
-                                            var is_identical = prev_extern_bin_group.len == group_slice.len;
+                                            var is_identical = if (prev_extern_bin_group) |bin_group| bin_group.len == group_slice.len else false;
                                             var group_i: u32 = 0;
 
                                             for (obj.properties.slice()) |bin_prop| {
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.key.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
-                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group.?[group_i].hash;
                                                     if (comptime Environment.allow_assert) {
                                                         if (is_identical) {
                                                             const first = group_slice[group_i].slice(string_builder.allocatedSlice());
-                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group.?[group_i].slice(string_builder.allocatedSlice());
                                                             if (!strings.eqlLong(first, second, true)) {
                                                                 Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
                                                             }
@@ -1207,11 +1285,11 @@ pub const PackageManifest = struct {
 
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.value.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
-                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group.?[group_i].hash;
                                                     if (comptime Environment.allow_assert) {
                                                         if (is_identical) {
                                                             const first = group_slice[group_i].slice(string_builder.allocatedSlice());
-                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group.?[group_i].slice(string_builder.allocatedSlice());
                                                             if (!strings.eqlLong(first, second, true)) {
                                                                 Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
                                                             }
@@ -1222,7 +1300,7 @@ pub const PackageManifest = struct {
                                             }
 
                                             if (is_identical) {
-                                                group_slice = prev_extern_bin_group;
+                                                group_slice = prev_extern_bin_group.?;
                                             } else {
                                                 prev_extern_bin_group = group_slice;
                                                 extern_strings_bin_entries = extern_strings_bin_entries[group_slice.len..];
@@ -1326,8 +1404,8 @@ pub const PackageManifest = struct {
                                 var this_names = dependency_names[0..count];
                                 var this_versions = dependency_values[0..count];
 
-                                var name_hasher = bun.Wyhash.init(0);
-                                var version_hasher = bun.Wyhash.init(0);
+                                var name_hasher = bun.Wyhash11.init(0);
+                                var version_hasher = bun.Wyhash11.init(0);
 
                                 const is_peer = comptime strings.eqlComptime(pair.prop, "peerDependencies");
 

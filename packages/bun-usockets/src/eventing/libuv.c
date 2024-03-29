@@ -91,6 +91,10 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
                  ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
   uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  // This unref is okay in the context of Bun's event loop, because sockets have
+  // a `Async.KeepAlive` associated with them, which is used instead of the
+  // usockets internals. usockets doesnt have a notion of ref-counted handles.
+  uv_unref((uv_handle_t *)p->uv_p);
   uv_poll_start(p->uv_p, events, poll_cb);
 }
 
@@ -197,8 +201,9 @@ void us_loop_free(struct us_loop_t *loop) {
 
 void us_loop_run(struct us_loop_t *loop) {
   us_loop_integrate(loop);
+  uv_update_time(loop->uv_loop);
 
-  uv_run(loop->uv_loop, UV_RUN_NOWAIT);
+  uv_run(loop->uv_loop, UV_RUN_ONCE);
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
@@ -210,7 +215,7 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
   return p;
 }
 
-/* If we update our block position we have to updarte the uv_poll data to point
+/* If we update our block position we have to update the uv_poll data to point
  * to us */
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
                                  unsigned int ext_size) {
@@ -224,8 +229,8 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
 // timer
 struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough,
                                    unsigned int ext_size) {
-  struct us_internal_callback_t *cb = malloc(
-      sizeof(struct us_internal_callback_t) + sizeof(uv_timer_t) + ext_size);
+  struct us_internal_callback_t *cb = us_calloc(
+      1, sizeof(struct us_internal_callback_t) + sizeof(uv_timer_t) + ext_size);
 
   cb->loop = loop;
   cb->cb_expects_the_loop = 0; // never read?
@@ -287,8 +292,8 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
                                                    int fallthrough,
                                                    unsigned int ext_size) {
-  struct us_internal_callback_t *cb = malloc(
-      sizeof(struct us_internal_callback_t) + sizeof(uv_async_t) + ext_size);
+  struct us_internal_callback_t *cb = us_calloc(
+      1, sizeof(struct us_internal_callback_t) + sizeof(uv_async_t) + ext_size);
 
   cb->loop = loop;
   return (struct us_internal_async *)cb;
@@ -327,11 +332,11 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
   uv_async_send(uv_async);
 }
 
-int us_socket_get_error(int ssl, struct us_socket_t* s)
-{
+int us_socket_get_error(int ssl, struct us_socket_t *s) {
   int error = 0;
   socklen_t len = sizeof(error);
-  if (getsockopt(us_poll_fd((struct us_poll_t*)s), SOL_SOCKET, SO_ERROR, (char*)&error, &len) == -1) {
+  if (getsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_ERROR,
+                 (char *)&error, &len) == -1) {
     return errno;
   }
   return error;

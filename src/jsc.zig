@@ -1,15 +1,15 @@
 // Top-level so it can access all files
+pub usingnamespace @import("./bun.js/base.zig");
+pub usingnamespace @import("./bun.js/bindings/bindings.zig");
+pub usingnamespace @import("./bun.js/bindings/exports.zig");
+pub usingnamespace @import("./bun.js/event_loop.zig");
+pub usingnamespace @import("./bun.js/javascript.zig");
+pub usingnamespace @import("./bun.js/module_loader.zig");
 pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
 pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");
-pub usingnamespace @import("./bun.js/bindings/exports.zig");
-pub usingnamespace @import("./bun.js/bindings/bindings.zig");
-pub usingnamespace @import("./bun.js/event_loop.zig");
-pub usingnamespace @import("./bun.js/base.zig");
 pub const RareData = @import("./bun.js/rare_data.zig");
 pub const Shimmer = @import("./bun.js/bindings/shimmer.zig").Shimmer;
-pub usingnamespace @import("./bun.js/javascript.zig");
-pub usingnamespace @import("./bun.js/module_loader.zig");
 pub const C = @import("./bun.js/javascript_core_c_api.zig");
 pub const WebCore = @import("./bun.js/webcore.zig");
 pub const BuildMessage = @import("./bun.js/BuildMessage.zig").BuildMessage;
@@ -70,12 +70,15 @@ comptime {
     }
 }
 
-pub const Maybe = Node.Maybe;
-pub const jsNumber = @This().JSValue.jsNumber;
-pub const jsBoolean = @This().JSValue.jsBoolean;
 const std = @import("std");
-
+const Syscall = @import("./sys.zig");
 const Output = @import("./output.zig");
+
+pub const Maybe = Syscall.Maybe;
+pub const jsBoolean = @This().JSValue.jsBoolean;
+pub const jsEmptyString = @This().JSValue.jsEmptyString;
+pub const jsNumber = @This().JSValue.jsNumber;
+
 const __jsc_log = Output.scoped(.JSC, true);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     if (comptime is_bindgen) unreachable;

@@ -669,3 +669,111 @@ it("empty blob", () => {
     },
   ]);
 });
+
+it("multiple statements with a schema change", () => {
+  const db = new Database(":memory:");
+  db.run(
+    `
+    CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT); 
+    CREATE TABLE bar (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+
+    INSERT INTO foo (name) VALUES ('foo');
+    INSERT INTO foo (name) VALUES ('bar');
+
+    INSERT INTO bar (name) VALUES ('foo');
+    INSERT INTO bar (name) VALUES ('bar');
+  `,
+  );
+
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      name: "foo",
+    },
+    {
+      id: 2,
+      name: "bar",
+    },
+  ]);
+
+  expect(db.query("SELECT * FROM bar").all()).toEqual([
+    {
+      id: 1,
+      name: "foo",
+    },
+    {
+      id: 2,
+      name: "bar",
+    },
+  ]);
+});
+
+it("multiple statements", () => {
+  const fixtures = [
+    "INSERT INTO foo (name) VALUES ('foo')",
+    "INSERT INTO foo (name) VALUES ('barabc')",
+    "INSERT INTO foo (name) VALUES ('!bazaspdok')",
+  ];
+  for (let separator of [";", ";\n", "\n;", "\r\n;", ";\r\n", ";\t", "\t;", "\r\n;"]) {
+    for (let spaceOffset of [1, 0, -1]) {
+      for (let spacesCount = 0; spacesCount < 8; spacesCount++) {
+        const db = new Database(":memory:");
+        db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+
+        const prefix = spaceOffset < 0 ? " ".repeat(spacesCount) : "";
+        const suffix = spaceOffset > 0 ? " ".repeat(spacesCount) : "";
+        const query = fixtures.join(prefix + separator + suffix);
+        db.run(query);
+
+        expect(db.query("SELECT * FROM foo").all()).toEqual([
+          {
+            id: 1,
+            name: "foo",
+          },
+          {
+            id: 2,
+            name: "barabc",
+          },
+          {
+            id: 3,
+            name: "!bazaspdok",
+          },
+        ]);
+      }
+    }
+  }
+});
+
+it.skipIf(
+  // We use the system version, which may or may not have math functions
+  process.platform === "darwin",
+)("math functions", () => {
+  const db = new Database(":memory:");
+
+  expect(db.prepare("SELECT ABS(-243.5)").all()).toEqual([{ "ABS(-243.5)": 243.5 }]);
+  expect(db.prepare("SELECT ACOS(0.25)").all()).toEqual([{ "ACOS(0.25)": 1.318116071652818 }]);
+  expect(db.prepare("SELECT ASIN(0.25)").all()).toEqual([{ "ASIN(0.25)": 0.25268025514207865 }]);
+  expect(db.prepare("SELECT ATAN(0.25)").all()).toEqual([{ "ATAN(0.25)": 0.24497866312686414 }]);
+  db.exec(
+    `
+    CREATE TABLE num_table (value TEXT NOT NULL);
+    INSERT INTO num_table values (1), (2), (6);
+    `,
+  );
+  expect(db.prepare(`SELECT AVG(value) as value FROM num_table`).all()).toEqual([{ value: 3 }]);
+  expect(db.prepare("SELECT CEILING(0.25)").all()).toEqual([{ "CEILING(0.25)": 1 }]);
+  expect(db.prepare("SELECT COUNT(*) FROM num_table").all()).toEqual([{ "COUNT(*)": 3 }]);
+  expect(db.prepare("SELECT COS(0.25)").all()).toEqual([{ "COS(0.25)": 0.9689124217106447 }]);
+  expect(db.prepare("SELECT DEGREES(0.25)").all()).toEqual([{ "DEGREES(0.25)": 14.32394487827058 }]);
+  expect(db.prepare("SELECT EXP(0.25)").all()).toEqual([{ "EXP(0.25)": 1.2840254166877414 }]);
+  expect(db.prepare("SELECT FLOOR(0.25)").all()).toEqual([{ "FLOOR(0.25)": 0 }]);
+  expect(db.prepare("SELECT LOG10(0.25)").all()).toEqual([{ "LOG10(0.25)": -0.6020599913279624 }]);
+  expect(db.prepare("SELECT PI()").all()).toEqual([{ "PI()": 3.141592653589793 }]);
+  expect(db.prepare("SELECT POWER(0.25, 3)").all()).toEqual([{ "POWER(0.25, 3)": 0.015625 }]);
+  expect(db.prepare("SELECT RADIANS(0.25)").all()).toEqual([{ "RADIANS(0.25)": 0.004363323129985824 }]);
+  expect(db.prepare("SELECT ROUND(0.25)").all()).toEqual([{ "ROUND(0.25)": 0 }]);
+  expect(db.prepare("SELECT SIGN(0.25)").all()).toEqual([{ "SIGN(0.25)": 1 }]);
+  expect(db.prepare("SELECT SIN(0.25)").all()).toEqual([{ "SIN(0.25)": 0.24740395925452294 }]);
+  expect(db.prepare("SELECT SQRT(0.25)").all()).toEqual([{ "SQRT(0.25)": 0.5 }]);
+  expect(db.prepare("SELECT TAN(0.25)").all()).toEqual([{ "TAN(0.25)": 0.25534192122103627 }]);
+});

@@ -2,6 +2,7 @@ const std = @import("std");
 const JSC = @import("root").bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
+const Allocator = std.mem.Allocator;
 const Lock = @import("../lock.zig").Lock;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
@@ -100,9 +101,11 @@ pub fn WorkTask(comptime Context: type) type {
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
+        pub usingnamespace bun.New(@This());
+
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var vm = globalThis.bunVM();
-            var this = bun.new(This, .{
+            var this = This.new(.{
                 .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
@@ -145,8 +148,7 @@ pub fn WorkTask(comptime Context: type) type {
 
         pub fn deinit(this: *This) void {
             this.ref.unref(this.event_loop.virtual_machine);
-
-            bun.destroyWithAlloc(this.allocator, this);
+            this.destroy();
         }
     };
 }
@@ -176,7 +178,7 @@ pub const AnyTask = struct {
             }
 
             pub fn wrap(this: ?*anyopaque) void {
-                @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+                @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
             }
         };
     }
@@ -210,7 +212,7 @@ pub const ManagedTask = struct {
             }
 
             pub fn wrap(this: ?*anyopaque) void {
-                @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+                @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
             }
         };
     }
@@ -347,16 +349,22 @@ const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
-const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
 const ShellRmDirTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask.DirTask;
-const ShellRmDirTaskMini = bun.shell.InterpreterMini.Builtin.Rm.ShellRmTask.DirTask;
 const ShellLsTask = bun.shell.Interpreter.Builtin.Ls.ShellLsTask;
 const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTask;
 const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
-const ShellSubprocessResultTask = JSC.Subprocess.WaiterThread.ShellSubprocessQueue.ResultTask;
+const ShellMkdirTask = bun.shell.Interpreter.Builtin.Mkdir.ShellMkdirTask;
+const ShellTouchTask = bun.shell.Interpreter.Builtin.Touch.ShellTouchTask;
+// const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
+const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinit;
+const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
+const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
+const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
+const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
+const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -367,6 +375,8 @@ pub const Task = TaggedPointerUnion(.{
     WriteFileTask,
     AnyTask,
     ManagedTask,
+    ShellIOReaderAsyncDeinit,
+    ShellIOWriterAsyncDeinit,
     napi_async_work,
     ThreadSafeFunction,
     CppTask,
@@ -415,18 +425,19 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
-    // WaitPidResultTask,
-    // These need to be referenced like this so they both don't become `WaitPidResultTask`
-    JSC.Subprocess.WaiterThread.WaitPidResultTask,
-    ShellSubprocessResultTask,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
-    ShellRmDirTaskMini,
     ShellMvCheckTargetTask,
     ShellMvBatchedTask,
     ShellLsTask,
+    ShellMkdirTask,
+    ShellTouchTask,
+    ShellAsyncSubprocessDone,
     TimerReference,
+
+    ProcessWaiterThreadTask,
+    RuntimeTranspilerStore,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -490,8 +501,14 @@ pub const GarbageCollectionController = struct {
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
 
+        if (comptime Environment.isDebug) {
+            if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
+                vm.eventLoop().debug.track_last_fn_name = true;
+            }
+        }
+
         var gc_timer_interval: i32 = 1000;
-        if (vm.bundler.env.map.get("BUN_GC_TIMER_INTERVAL")) |timer| {
+        if (vm.bundler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
             if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
                 if (parsed > 0) {
                     gc_timer_interval = parsed;
@@ -627,9 +644,72 @@ comptime {
     }
 }
 
-pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
+/// Sometimes, you have work that will be scheduled, cancelled, and rescheduled multiple times
+/// The order of that work may not particularly matter.
+///
+/// An example of this is when writing to a file or network socket.
+///
+/// You want to balance:
+///     1) Writing as much as possible to the file/socket in as few system calls as possible
+///     2) Writing to the file/socket as soon as possible
+///
+/// That is a scheduling problem. How do you decide when to write to the file/socket? Developers
+/// don't want to remember to call `flush` every time they write to a file/socket, but we don't
+/// want them to have to think about buffering or not buffering either.
+///
+/// Our answer to this is the DeferredTaskQueue.
+///
+/// When you call write() when sending a streaming HTTP response, we don't actually write it immediately
+/// by default. Instead, we wait until the end of the microtask queue to write it, unless either:
+///
+/// - The buffer is full
+/// - The developer calls `flush` manually
+///
+/// But that means every time you call .write(), we have to check not only if the buffer is full, but also if
+/// it previously had scheduled a write to the file/socket. So we use an ArrayHashMap to keep track of the
+/// list of pointers which have a deferred task scheduled.
+///
+/// The DeferredTaskQueue is drained after the microtask queue, but before other tasks are executed. This avoids re-entrancy
+/// issues with the event loop.
+pub const DeferredTaskQueue = struct {
+    pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
+
+    map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
+
+    pub fn postTask(this: *DeferredTaskQueue, ctx: ?*anyopaque, task: DeferredRepeatingTask) bool {
+        const existing = this.map.getOrPutValue(bun.default_allocator, ctx, task) catch bun.outOfMemory();
+        return existing.found_existing;
+    }
+
+    pub fn unregisterTask(this: *DeferredTaskQueue, ctx: ?*anyopaque) bool {
+        return this.map.swapRemove(ctx);
+    }
+
+    pub fn run(this: *DeferredTaskQueue) void {
+        var i: usize = 0;
+        var last = this.map.count();
+        while (i < last) {
+            const key = this.map.keys()[i] orelse {
+                this.map.swapRemoveAt(i);
+                last = this.map.count();
+                continue;
+            };
+
+            if (!this.map.values()[i](key)) {
+                this.map.swapRemoveAt(i);
+                last = this.map.count();
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    pub fn deinit(this: *DeferredTaskQueue) void {
+        this.map.deinit(bun.default_allocator);
+    }
+};
 pub const EventLoop = struct {
-    tasks: if (JSC.is_bindgen) void else Queue = undefined,
+    tasks: Queue = undefined,
 
     /// setImmediate() gets it's own two task queues
     /// When you call `setImmediate` in JS, it queues to the start of the next tick
@@ -647,13 +727,61 @@ pub const EventLoop = struct {
     global: *JSGlobalObject = undefined,
     virtual_machine: *JSC.VirtualMachine = undefined,
     waker: ?Waker = null,
-    start_server_on_next_tick: bool = false,
-    defer_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     forever_timer: ?*uws.Timer = null,
-    deferred_microtask_map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
+    deferred_tasks: DeferredTaskQueue = .{},
     uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
 
     timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
+
+    debug: Debug = .{},
+    entered_event_loop_count: isize = 0,
+
+    pub const Debug = if (Environment.isDebug) struct {
+        is_inside_tick_queue: bool = false,
+        js_call_count_outside_tick_queue: usize = 0,
+        drain_microtasks_count_outside_tick_queue: usize = 0,
+        _prev_is_inside_tick_queue: bool = false,
+        last_fn_name: bun.String = bun.String.empty,
+        track_last_fn_name: bool = false,
+
+        pub fn enter(this: *Debug) void {
+            this._prev_is_inside_tick_queue = this.is_inside_tick_queue;
+            this.is_inside_tick_queue = true;
+            this.js_call_count_outside_tick_queue = 0;
+            this.drain_microtasks_count_outside_tick_queue = 0;
+        }
+
+        pub fn exit(this: *Debug) void {
+            this.is_inside_tick_queue = this._prev_is_inside_tick_queue;
+            this._prev_is_inside_tick_queue = false;
+            this.js_call_count_outside_tick_queue = 0;
+            this.drain_microtasks_count_outside_tick_queue = 0;
+            this.last_fn_name.deref();
+            this.last_fn_name = bun.String.empty;
+        }
+    } else struct {
+        pub inline fn enter(_: Debug) void {}
+        pub inline fn exit(_: Debug) void {}
+    };
+
+    pub fn enter(this: *EventLoop) void {
+        log("enter() = {d}", .{this.entered_event_loop_count});
+        this.entered_event_loop_count += 1;
+        this.debug.enter();
+    }
+
+    pub fn exit(this: *EventLoop) void {
+        const count = this.entered_event_loop_count;
+        log("exit() = {d}", .{count - 1});
+
+        defer this.debug.exit();
+
+        if (count == 1) {
+            this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        }
+
+        this.entered_event_loop_count -= 1;
+    }
 
     pub inline fn getVmImpl(this: *EventLoop) *JSC.VirtualMachine {
         return this.virtual_machine;
@@ -668,6 +796,10 @@ pub const EventLoop = struct {
         };
     }
 
+    pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
+        return this.virtual_machine.rareData().pipeReadBuffer();
+    }
+
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
     const log = bun.Output.scoped(.EventLoop, false);
 
@@ -678,52 +810,105 @@ pub const EventLoop = struct {
     }
 
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
-    fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject) void {
+    pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) void {
         JSC.markBinding(@src());
 
+        jsc_vm.releaseWeakRefs();
         JSC__JSGlobalObject__drainMicrotasks(globalObject);
-        this.drainDeferredTasks();
+        this.deferred_tasks.run();
+
+        if (comptime bun.Environment.isDebug) {
+            this.debug.drain_microtasks_count_outside_tick_queue += @as(usize, @intFromBool(!this.debug.is_inside_tick_queue));
+        }
     }
 
     pub fn drainMicrotasks(this: *EventLoop) void {
-        this.drainMicrotasksWithGlobal(this.global);
+        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
     }
 
-    pub fn registerDeferredTask(this: *EventLoop, ctx: ?*anyopaque, task: DeferredRepeatingTask) bool {
-        const existing = this.deferred_microtask_map.getOrPutValue(this.virtual_machine.allocator, ctx, task) catch unreachable;
-        return existing.found_existing;
-    }
+    /// When you call a JavaScript function from outside the event loop task
+    /// queue
+    ///
+    /// It has to be wrapped in `runCallback` to ensure that microtasks are
+    /// drained and errors are handled.
+    ///
+    /// Otherwise, you will risk a large number of microtasks being queued and
+    /// not being drained, which can lead to catastrophic memory usage and
+    /// application slowdown.
+    pub fn runCallback(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) void {
+        this.enter();
+        defer this.exit();
 
-    pub fn unregisterDeferredTask(this: *EventLoop, ctx: ?*anyopaque) bool {
-        return this.deferred_microtask_map.swapRemove(ctx);
-    }
+        const result = callback.callWithThis(globalObject, thisValue, arguments);
 
-    fn drainDeferredTasks(this: *EventLoop) void {
-        var i: usize = 0;
-        var last = this.deferred_microtask_map.count();
-        while (i < last) {
-            const key = this.deferred_microtask_map.keys()[i] orelse {
-                this.deferred_microtask_map.swapRemoveAt(i);
-                last = this.deferred_microtask_map.count();
-                continue;
-            };
-
-            if (!this.deferred_microtask_map.values()[i](key)) {
-                this.deferred_microtask_map.swapRemoveAt(i);
-                last = this.deferred_microtask_map.count();
-            } else {
-                i += 1;
-            }
+        if (result.toError()) |err| {
+            this.virtual_machine.onUnhandledError(globalObject, err);
         }
     }
 
     pub fn tickQueueWithCount(this: *EventLoop, comptime queue_name: []const u8) u32 {
         var global = this.global;
-        var global_vm = global.vm();
+        const global_vm = global.vm();
         var counter: usize = 0;
+
+        if (comptime Environment.isDebug) {
+            if (this.debug.js_call_count_outside_tick_queue > this.debug.drain_microtasks_count_outside_tick_queue) {
+                if (this.debug.track_last_fn_name) {
+                    bun.Output.panic(
+                        \\<b>{d} JavaScript functions<r> were called outside of the microtask queue without draining microtasks.
+                        \\
+                        \\Last function name: {}
+                        \\
+                        \\Use EventLoop.runCallback() to run JavaScript functions outside of the microtask queue.
+                        \\
+                        \\Failing to do this can lead to a large number of microtasks being queued and not being drained, which can lead to a large amount of memory being used and application slowdown.
+                    ,
+                        .{
+                            this.debug.js_call_count_outside_tick_queue - this.debug.drain_microtasks_count_outside_tick_queue,
+                            this.debug.last_fn_name,
+                        },
+                    );
+                } else {
+                    bun.Output.panic(
+                        \\<b>{d} JavaScript functions<r> were called outside of the microtask queue without draining microtasks. To track the last function name, set the BUN_TRACK_LAST_FN_NAME environment variable.
+                        \\
+                        \\Use EventLoop.runCallback() to run JavaScript functions outside of the microtask queue.
+                        \\
+                        \\Failing to do this can lead to a large number of microtasks being queued and not being drained, which can lead to a large amount of memory being used and application slowdown.
+                    ,
+                        .{this.debug.js_call_count_outside_tick_queue - this.debug.drain_microtasks_count_outside_tick_queue},
+                    );
+                }
+            }
+        }
+
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
+                @field(Task.Tag, typeBaseName(@typeName(ShellAsyncSubprocessDone))) => {
+                    var shell_ls_task: *ShellAsyncSubprocessDone = task.get(ShellAsyncSubprocessDone).?;
+                    shell_ls_task.runFromMainThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellIOWriterAsyncDeinit))) => {
+                    var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
+                    shell_ls_task.runFromMainThread();
+                    // shell_ls_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellIOReaderAsyncDeinit))) => {
+                    var shell_ls_task: *ShellIOReaderAsyncDeinit = task.get(ShellIOReaderAsyncDeinit).?;
+                    shell_ls_task.runFromMainThread();
+                    // shell_ls_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellTouchTask))) => {
+                    var shell_ls_task: *ShellTouchTask = task.get(ShellTouchTask).?;
+                    shell_ls_task.runFromMainThread();
+                    // shell_ls_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellMkdirTask))) => {
+                    var shell_ls_task: *ShellMkdirTask = task.get(ShellMkdirTask).?;
+                    shell_ls_task.runFromMainThread();
+                    // shell_ls_task.deinit();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(ShellLsTask))) => {
                     var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
                     shell_ls_task.runFromMainThread();
@@ -744,11 +929,6 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTask))) => {
                     var shell_rm_task: *ShellRmDirTask = task.get(ShellRmDirTask).?;
-                    shell_rm_task.runFromMainThread();
-                    // shell_rm_task.deinit();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTaskMini))) => {
-                    var shell_rm_task: *ShellRmDirTaskMini = task.get(ShellRmDirTaskMini).?;
                     shell_rm_task.runFromMainThread();
                     // shell_rm_task.deinit();
                 },
@@ -993,18 +1173,17 @@ pub const EventLoop = struct {
                     var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(WaitPidResultTask))) => {
-                    var any: *WaitPidResultTask = task.get(WaitPidResultTask).?;
+                @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
+                    bun.markPosixOnly();
+                    var any: *ProcessWaiterThreadTask = task.get(ProcessWaiterThreadTask).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(ShellSubprocessResultTask))) => {
-                    var any: *ShellSubprocessResultTask = task.get(ShellSubprocessResultTask).?;
-                    any.runFromJSThread();
+                @field(Task.Tag, typeBaseName(@typeName(RuntimeTranspilerStore))) => {
+                    var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
+                    any.drain();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
-                    if (Environment.isWindows) {
-                        @panic("This should not be reachable on Windows");
-                    }
+                    bun.markPosixOnly();
                     var any: *TimerReference = task.get(TimerReference).?;
                     any.runFromJSThread();
                 },
@@ -1017,8 +1196,7 @@ pub const EventLoop = struct {
                 },
             }
 
-            global_vm.releaseWeakRefs();
-            this.drainMicrotasksWithGlobal(global);
+            this.drainMicrotasksWithGlobal(global, global_vm);
         }
 
         @field(this, queue_name).head = if (@field(this, queue_name).count == 0) 0 else @field(this, queue_name).head;
@@ -1110,9 +1288,17 @@ pub const EventLoop = struct {
 
         if (loop.isActive()) {
             this.processGCTimer();
+            var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
             loop.tick();
+
+            if (comptime Environment.isDebug) {
+                log("tick {}", .{bun.fmt.fmtDuration(event_loop_sleep_timer.read())});
+            }
         } else {
             loop.tickWithoutIdle();
+            if (comptime Environment.isDebug) {
+                log("tickWithoutIdle", .{});
+            }
         }
 
         this.flushImmediateQueue();
@@ -1178,14 +1364,10 @@ pub const EventLoop = struct {
         }
 
         if (!loop.isActive()) {
-            if (comptime Environment.isWindows) {
-                bun.todo(@src(), {});
-            } else {
-                if (this.forever_timer == null) {
-                    var t = uws.Timer.create(loop, this);
-                    t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
-                    this.forever_timer = t;
-                }
+            if (this.forever_timer == null) {
+                var t = uws.Timer.create(loop, this);
+                t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
+                this.forever_timer = t;
             }
         }
 
@@ -1233,31 +1415,38 @@ pub const EventLoop = struct {
 
     pub fn tick(this: *EventLoop) void {
         JSC.markBinding(@src());
-
-        const ctx = this.virtual_machine;
-        this.tickConcurrent();
-        this.processGCTimer();
-
-        const global = ctx.global;
-        const global_vm = ctx.jsc;
-
-        while (true) {
-            while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
-                this.tickConcurrent();
-            } else {
-                global_vm.releaseWeakRefs();
-                this.drainMicrotasksWithGlobal(global);
-                this.tickConcurrent();
-                if (this.tasks.count > 0) continue;
+        {
+            this.entered_event_loop_count += 1;
+            this.debug.enter();
+            defer {
+                this.entered_event_loop_count -= 1;
+                this.debug.exit();
             }
-            break;
-        }
 
-        while (this.tickWithCount() > 0) {
+            const ctx = this.virtual_machine;
             this.tickConcurrent();
-        }
+            this.processGCTimer();
 
-        this.global.handleRejectedPromises();
+            const global = ctx.global;
+            const global_vm = ctx.jsc;
+
+            while (true) {
+                while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
+                    this.tickConcurrent();
+                } else {
+                    this.drainMicrotasksWithGlobal(global, global_vm);
+                    this.tickConcurrent();
+                    if (this.tasks.count > 0) continue;
+                }
+                break;
+            }
+
+            while (this.tickWithCount() > 0) {
+                this.tickConcurrent();
+            }
+
+            this.global.handleRejectedPromises();
+        }
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
@@ -1346,15 +1535,8 @@ pub const EventLoop = struct {
         JSC.markBinding(@src());
         if (this.virtual_machine.event_loop_handle == null) {
             if (comptime Environment.isWindows) {
-                this.uws_loop = bun.uws.Loop.init();
+                this.uws_loop = bun.uws.Loop.get();
                 this.virtual_machine.event_loop_handle = Async.Loop.get();
-
-                _ = bun.windows.libuv.uv_replace_allocator(
-                    @ptrCast(&bun.Mimalloc.mi_malloc),
-                    @ptrCast(&bun.Mimalloc.mi_realloc),
-                    @ptrCast(&bun.Mimalloc.mi_calloc),
-                    @ptrCast(&bun.Mimalloc.mi_free),
-                );
             } else {
                 this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
             }
@@ -1474,6 +1656,13 @@ pub const EventLoopKind = enum {
     js,
     mini,
 
+    pub fn Type(comptime this: EventLoopKind) type {
+        return switch (this) {
+            .js => EventLoop,
+            .mini => MiniEventLoop,
+        };
+    }
+
     pub fn refType(comptime this: EventLoopKind) type {
         return switch (this) {
             .js => *JSC.VirtualMachine,
@@ -1489,13 +1678,10 @@ pub const EventLoopKind = enum {
     }
 };
 
-pub fn AbstractVM(inner: anytype) brk: {
-    if (@TypeOf(inner) == *JSC.VirtualMachine) {
-        break :brk JsVM;
-    } else if (@TypeOf(inner) == *JSC.MiniEventLoop) {
-        break :brk MiniVM;
-    }
-    @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
+pub fn AbstractVM(inner: anytype) switch (@TypeOf(inner)) {
+    *JSC.VirtualMachine => JsVM,
+    *JSC.MiniEventLoop => MiniVM,
+    else => @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner))),
 } {
     if (comptime @TypeOf(inner) == *JSC.VirtualMachine) return JsVM.init(inner);
     if (comptime @TypeOf(inner) == *JSC.MiniEventLoop) return MiniVM.init(inner);
@@ -1510,7 +1696,7 @@ pub fn AbstractVM(inner: anytype) brk: {
 
 pub const MiniEventLoop = struct {
     tasks: Queue,
-    concurrent_tasks: UnboundedQueue(AnyTaskWithExtraContext, .next) = .{},
+    concurrent_tasks: ConcurrentTaskQueue = .{},
     loop: *uws.Loop,
     allocator: std.mem.Allocator,
     file_polls_: ?*Async.FilePoll.Store = null,
@@ -1518,10 +1704,18 @@ pub const MiniEventLoop = struct {
     top_level_dir: []const u8 = "",
     after_event_loop_callback_ctx: ?*anyopaque = null,
     after_event_loop_callback: ?JSC.OpaqueCallback = null,
+    pipe_read_buffer: ?*PipeReadBuffer = null,
+    stdout_store: ?*JSC.WebCore.Blob.Store = null,
+    stderr_store: ?*JSC.WebCore.Blob.Store = null,
+    const PipeReadBuffer = [256 * 1024]u8;
 
+    pub threadlocal var globalInitialized: bool = false;
     pub threadlocal var global: *MiniEventLoop = undefined;
 
+    pub const ConcurrentTaskQueue = UnboundedQueue(AnyTaskWithExtraContext, .next);
+
     pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
+        if (globalInitialized) return global;
         const loop = MiniEventLoop.init(bun.default_allocator);
         global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
         global.* = loop;
@@ -1533,6 +1727,7 @@ pub const MiniEventLoop = struct {
             loader.* = bun.DotEnv.Loader.init(map, bun.default_allocator);
             break :env_loader loader;
         };
+        globalInitialized = true;
         return global;
     }
 
@@ -1547,6 +1742,13 @@ pub const MiniEventLoop = struct {
     pub fn throwError(_: *MiniEventLoop, err: bun.sys.Error) void {
         bun.Output.prettyErrorln("{}", .{err});
         bun.Output.flush();
+    }
+
+    pub fn pipeReadBuffer(this: *MiniEventLoop) []u8 {
+        return this.pipe_read_buffer orelse {
+            this.pipe_read_buffer = this.allocator.create(PipeReadBuffer) catch bun.outOfMemory();
+            return this.pipe_read_buffer.?;
+        };
     }
 
     pub fn onAfterEventLoop(this: *MiniEventLoop) void {
@@ -1605,10 +1807,44 @@ pub const MiniEventLoop = struct {
         return this.tasks.count - start_count;
     }
 
+    pub fn tickOnce(
+        this: *MiniEventLoop,
+        context: *anyopaque,
+    ) void {
+        if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
+            defer this.onAfterEventLoop();
+            this.loop.inc();
+            this.loop.tick();
+            this.loop.dec();
+        }
+
+        while (this.tasks.readItem()) |task| {
+            task.run(context);
+        }
+    }
+
+    pub fn tickWithoutIdle(
+        this: *MiniEventLoop,
+        context: *anyopaque,
+    ) void {
+        defer this.onAfterEventLoop();
+
+        while (true) {
+            _ = this.tickConcurrentWithCount();
+            while (this.tasks.readItem()) |task| {
+                task.run(context);
+            }
+
+            this.loop.tickWithoutIdle();
+
+            if (this.tasks.count == 0 and this.tickConcurrentWithCount() == 0) break;
+        }
+    }
+
     pub fn tick(
         this: *MiniEventLoop,
         context: *anyopaque,
-        comptime isDone: fn (*anyopaque) bool,
+        comptime isDone: *const fn (*anyopaque) bool,
     ) void {
         while (!isDone(context)) {
             if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
@@ -1657,10 +1893,74 @@ pub const MiniEventLoop = struct {
 
         this.loop.wakeup();
     }
+
+    pub fn stderr(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
+        return this.stderr_store orelse brk: {
+            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch bun.outOfMemory();
+            var mode: bun.Mode = 0;
+            const fd = if (comptime Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+
+            switch (bun.sys.fstat(fd)) {
+                .result => |stat| {
+                    mode = @intCast(stat.mode);
+                },
+                .err => {},
+            }
+
+            store.* = JSC.WebCore.Blob.Store{
+                .ref_count = 2,
+                .allocator = bun.default_allocator,
+                .data = .{
+                    .file = JSC.WebCore.Blob.FileStore{
+                        .pathlike = .{
+                            .fd = fd,
+                        },
+                        .is_atty = bun.Output.stderr_descriptor_type == .terminal,
+                        .mode = mode,
+                    },
+                },
+            };
+
+            this.stderr_store = store;
+            break :brk store;
+        };
+    }
+
+    pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
+        return this.stdout_store orelse brk: {
+            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch bun.outOfMemory();
+            var mode: bun.Mode = 0;
+            const fd = if (Environment.isWindows) bun.FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+
+            switch (bun.sys.fstat(fd)) {
+                .result => |stat| {
+                    mode = @intCast(stat.mode);
+                },
+                .err => {},
+            }
+
+            store.* = JSC.WebCore.Blob.Store{
+                .ref_count = 2,
+                .allocator = bun.default_allocator,
+                .data = .{
+                    .file = JSC.WebCore.Blob.FileStore{
+                        .pathlike = .{
+                            .fd = fd,
+                        },
+                        .is_atty = bun.Output.stdout_descriptor_type == .terminal,
+                        .mode = mode,
+                    },
+                },
+            };
+
+            this.stdout_store = store;
+            break :brk store;
+        };
+    }
 };
 
 pub const AnyEventLoop = union(enum) {
-    jsc: *EventLoop,
+    js: *EventLoop,
     mini: MiniEventLoop,
 
     pub const Task = AnyTaskWithExtraContext;
@@ -1669,7 +1969,39 @@ pub const AnyEventLoop = union(enum) {
         this: *AnyEventLoop,
         jsc: *EventLoop,
     ) void {
-        this.* = .{ .jsc = jsc };
+        this.* = .{ .js = jsc };
+    }
+
+    pub fn wakeup(this: *AnyEventLoop) void {
+        this.loop().wakeup();
+    }
+
+    pub fn filePolls(this: *AnyEventLoop) *bun.Async.FilePoll.Store {
+        return switch (this.*) {
+            .js => this.js.virtual_machine.rareData().filePolls(this.js.virtual_machine),
+            .mini => this.mini.filePolls(),
+        };
+    }
+
+    pub fn putFilePoll(this: *AnyEventLoop, poll: *Async.FilePoll) void {
+        switch (this.*) {
+            .js => this.js.virtual_machine.rareData().filePolls(this.js.virtual_machine).put(poll, this.js.virtual_machine, poll.flags.contains(.was_ever_registered)),
+            .mini => this.mini.filePolls().put(poll, &this.mini, poll.flags.contains(.was_ever_registered)),
+        }
+    }
+
+    pub fn loop(this: *AnyEventLoop) *uws.Loop {
+        return switch (this.*) {
+            .js => this.js.virtual_machine.uwsLoop(),
+            .mini => this.mini.loop,
+        };
+    }
+
+    pub fn pipeReadBuffer(this: *AnyEventLoop) []u8 {
+        return switch (this.*) {
+            .js => this.js.pipeReadBuffer(),
+            .mini => this.mini.pipeReadBuffer(),
+        };
     }
 
     pub fn init(
@@ -1680,16 +2012,33 @@ pub const AnyEventLoop = union(enum) {
 
     pub fn tick(
         this: *AnyEventLoop,
-        context: *anyopaque,
-        comptime isDone: fn (*anyopaque) bool,
+        context: anytype,
+        comptime isDone: *const fn (@TypeOf(context)) bool,
     ) void {
         switch (this.*) {
-            .jsc => {
-                this.jsc.tick();
-                this.jsc.autoTick();
+            .js => {
+                while (!isDone(context)) {
+                    this.js.tick();
+                    this.js.autoTick();
+                }
             },
             .mini => {
-                this.mini.tick(context, isDone);
+                this.mini.tick(context, @ptrCast(isDone));
+            },
+        }
+    }
+
+    pub fn tickOnce(
+        this: *AnyEventLoop,
+        context: anytype,
+    ) void {
+        switch (this.*) {
+            .js => {
+                this.js.tick();
+                this.js.autoTickActive();
+            },
+            .mini => {
+                this.mini.tickWithoutIdle(context);
             },
         }
     }
@@ -1703,7 +2052,7 @@ pub const AnyEventLoop = union(enum) {
         comptime field: std.meta.FieldEnum(Context),
     ) void {
         switch (this.*) {
-            .jsc => {
+            .js => {
                 unreachable; // TODO:
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);
@@ -1717,4 +2066,168 @@ pub const AnyEventLoop = union(enum) {
             },
         }
     }
+};
+
+pub const EventLoopHandle = union(enum) {
+    js: *JSC.EventLoop,
+    mini: *MiniEventLoop,
+
+    pub fn stdout(this: EventLoopHandle) *JSC.WebCore.Blob.Store {
+        return switch (this) {
+            .js => this.js.virtual_machine.rareData().stdout(),
+            .mini => this.mini.stdout(),
+        };
+    }
+
+    pub fn stderr(this: EventLoopHandle) *JSC.WebCore.Blob.Store {
+        return switch (this) {
+            .js => this.js.virtual_machine.rareData().stderr(),
+            .mini => this.mini.stderr(),
+        };
+    }
+
+    pub fn cast(this: EventLoopHandle, comptime as: @Type(.EnumLiteral)) if (as == .js) *JSC.EventLoop else *MiniEventLoop {
+        if (as == .js) {
+            if (this != .js) @panic("Expected *JSC.EventLoop but got *MiniEventLoop");
+            return this.js;
+        }
+
+        if (as == .mini) {
+            if (this != .mini) @panic("Expected *MiniEventLoop but got *JSC.EventLoop");
+            return this.js;
+        }
+
+        @compileError("Invalid event loop kind " ++ @typeName(as));
+    }
+
+    pub fn enter(this: EventLoopHandle) void {
+        switch (this) {
+            .js => this.js.enter(),
+            .mini => {},
+        }
+    }
+
+    pub fn exit(this: EventLoopHandle) void {
+        switch (this) {
+            .js => this.js.exit(),
+            .mini => {},
+        }
+    }
+
+    pub fn init(context: anytype) EventLoopHandle {
+        const Context = @TypeOf(context);
+        return switch (Context) {
+            *JSC.VirtualMachine => .{ .js = context.eventLoop() },
+            *JSC.EventLoop => .{ .js = context },
+            *JSC.MiniEventLoop => .{ .mini = context },
+            *AnyEventLoop => switch (context.*) {
+                .js => .{ .js = context.js },
+                .mini => .{ .mini = &context.mini },
+            },
+            EventLoopHandle => context,
+            else => @compileError("Invalid context type for EventLoopHandle.init " ++ @typeName(Context)),
+        };
+    }
+
+    pub fn filePolls(this: EventLoopHandle) *bun.Async.FilePoll.Store {
+        return switch (this) {
+            .js => this.js.virtual_machine.rareData().filePolls(this.js.virtual_machine),
+            .mini => this.mini.filePolls(),
+        };
+    }
+
+    pub fn putFilePoll(this: *EventLoopHandle, poll: *Async.FilePoll) void {
+        switch (this.*) {
+            .js => this.js.virtual_machine.rareData().filePolls(this.js.virtual_machine).put(poll, this.js.virtual_machine, poll.flags.contains(.was_ever_registered)),
+            .mini => this.mini.filePolls().put(poll, &this.mini, poll.flags.contains(.was_ever_registered)),
+        }
+    }
+
+    pub fn enqueueTaskConcurrent(this: EventLoopHandle, context: EventLoopTaskPtr) void {
+        switch (this) {
+            .js => {
+                this.js.enqueueTaskConcurrent(context.js);
+            },
+            .mini => {
+                this.mini.enqueueTaskConcurrent(context.mini);
+            },
+        }
+    }
+
+    pub fn loop(this: EventLoopHandle) *bun.uws.Loop {
+        return switch (this) {
+            .js => this.js.usocketsLoop(),
+            .mini => this.mini.loop,
+        };
+    }
+
+    pub fn pipeReadBuffer(this: EventLoopHandle) []u8 {
+        return switch (this) {
+            .js => this.js.pipeReadBuffer(),
+            .mini => this.mini.pipeReadBuffer(),
+        };
+    }
+
+    pub const platformEventLoop = loop;
+
+    pub fn ref(this: EventLoopHandle) void {
+        this.loop().ref();
+    }
+
+    pub fn unref(this: EventLoopHandle) void {
+        this.loop().unref();
+    }
+
+    pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
+        return switch (this) {
+            .js => this.js.virtual_machine.bundler.env.map.createNullDelimitedEnvMap(alloc),
+            .mini => this.mini.env.?.map.createNullDelimitedEnvMap(alloc),
+        };
+    }
+
+    pub inline fn allocator(this: EventLoopHandle) Allocator {
+        return switch (this) {
+            .js => this.js.virtual_machine.allocator,
+            .mini => this.mini.allocator,
+        };
+    }
+
+    pub inline fn topLevelDir(this: EventLoopHandle) []const u8 {
+        return switch (this) {
+            .js => this.js.virtual_machine.bundler.fs.top_level_dir,
+            .mini => this.mini.top_level_dir,
+        };
+    }
+
+    pub inline fn env(this: EventLoopHandle) *bun.DotEnv.Loader {
+        return switch (this) {
+            .js => this.js.virtual_machine.bundler.env,
+            .mini => this.mini.env.?,
+        };
+    }
+};
+
+pub const EventLoopTask = union {
+    js: ConcurrentTask,
+    mini: JSC.AnyTaskWithExtraContext,
+
+    pub fn init(comptime kind: @TypeOf(.EnumLiteral)) EventLoopTask {
+        switch (kind) {
+            .js => return .{ .js = ConcurrentTask{} },
+            .mini => return .{ .mini = JSC.AnyTaskWithExtraContext{} },
+            else => @compileError("Invalid kind: " ++ @typeName(kind)),
+        }
+    }
+
+    pub fn fromEventLoop(loop: JSC.EventLoopHandle) EventLoopTask {
+        switch (loop) {
+            .js => return .{ .js = ConcurrentTask{} },
+            .mini => return .{ .mini = JSC.AnyTaskWithExtraContext{} },
+        }
+    }
+};
+
+pub const EventLoopTaskPtr = union {
+    js: *ConcurrentTask,
+    mini: *JSC.AnyTaskWithExtraContext,
 };

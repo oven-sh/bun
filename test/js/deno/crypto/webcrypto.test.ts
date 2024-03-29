@@ -598,7 +598,7 @@ test(async function generateImportHmacJwk() {
 });
 const pkcs8TestVectors = [
     {
-        pem: "cli/tests/testdata/webcrypto/id_rsaEncryption.pem",
+        pem: "id_rsaEncryption.pem",
         hash: "SHA-256"
     }
 ];
@@ -642,15 +642,15 @@ test({
 });
 const nonInteroperableVectors = [
     {
-        pem: "cli/tests/testdata/webcrypto/id_rsassaPss.pem",
+        pem: "id_rsassaPss.pem",
         hash: "SHA-256"
     },
     {
-        pem: "cli/tests/testdata/webcrypto/id_rsassaPss_default.pem",
+        pem: "id_rsassaPss_default.pem",
         hash: "SHA-1"
     },
     {
-        pem: "cli/tests/testdata/webcrypto/id_rsassaPss_saltLen_30.pem",
+        pem: "id_rsassaPss_saltLen_30.pem",
         hash: "SHA-1"
     }
 ];

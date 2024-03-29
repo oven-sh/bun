@@ -62,7 +62,7 @@ public:
     }
 
     JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*);
-    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer);
+    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, bool wasModuleMock);
     static PendingVirtualModuleResult* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
@@ -88,6 +88,7 @@ public:
 
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
+    JSValue spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
@@ -95,6 +96,7 @@ JSValue fetchESMSourceCodeSync(
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
+    JSValue spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,

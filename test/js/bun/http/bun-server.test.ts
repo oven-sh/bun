@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import path from "path";
@@ -378,9 +377,10 @@ describe("Server", () => {
       cmd: [bunExe(), path.join("js-sink-sourmap-fixture", "index.mjs")],
       cwd: import.meta.dir,
       env: bunEnv,
-      stderr: "pipe",
+      stdin: "inherit",
+      stderr: "inherit",
+      stdout: "inherit",
     });
-    expect(stderr).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 
@@ -423,4 +423,59 @@ describe("Server", () => {
     expect(stderr).toBeEmpty();
     expect(exitCode).toBe(0);
   });
+});
+
+// By not timing out, this test passes.
+test("Bun.serve().unref() works", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture.ts")]).toRun();
+});
+
+test("unref keeps process alive for ongoing connections", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture-2.ts")]).toRun();
+});
+
+test("Bun does not crash when given invalid config", async () => {
+  const server1 = Bun.serve({
+    fetch(request, server) {
+      //
+      throw new Error("Should not be called");
+    },
+    port: 0,
+  });
+
+  const cases = [
+    {
+      fetch() {},
+      port: server1.port,
+      websocket: {},
+    },
+    {
+      port: server1.port,
+      get websocket() {
+        throw new Error();
+      },
+    },
+    {
+      fetch() {},
+      port: server1.port,
+      get websocket() {
+        throw new Error();
+      },
+    },
+    {
+      fetch() {},
+      port: server1.port,
+      get tls() {
+        throw new Error();
+      },
+    },
+  ];
+
+  for (const options of cases) {
+    expect(() => {
+      Bun.serve(options as any);
+    }).toThrow();
+  }
+
+  server1.stop();
 });

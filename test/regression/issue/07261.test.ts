@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { bunEnv, bunExe } from "harness";
 import { mkdirSync, rmSync, writeFileSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
@@ -15,7 +14,7 @@ it("imports tsconfig.json with abritary keys", async () => {
   writeFileSync(join(testDir, "tsconfig.json"), '{ "key-with-hyphen": true }');
 
   const { exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "-e", `require('${join(testDir, "tsconfig.json")}')`],
+    cmd: [bunExe(), "-e", `require('${join(testDir, "tsconfig.json").replace(/\\/g, "\\\\")}').compilerOptions`],
     env: bunEnv,
     stderr: "inherit",
   });

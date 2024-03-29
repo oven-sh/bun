@@ -232,7 +232,8 @@ for (const entrypoint of bundledEntryPoints) {
       .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
         throw new Error(`Builtin Bundler: do not use import.meta.require() (in ${file_path}))`);
       })
-      .replace(/__intrinsic__/g, "@") + "\n";
+      .replace(/__intrinsic__/g, "@")
+      .replace(/__no_intrinsic__/g, "") + "\n";
   captured = captured.replace(
     /function\s*\(.*?\)\s*{/,
     '$&"use strict";' +
@@ -335,7 +336,15 @@ if (!debug) {
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList.map((id, n) => declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.get(id.slice(0, -3)))).join("\n")}
+  ${moduleList
+    .map((id, n) => {
+      const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
+      if (!out) {
+        throw new Error(`Missing output for ${id}`);
+      }
+      return declareASCIILiteral(`${idToEnumName(id)}Code`, out);
+    })
+    .join("\n")}
 }
 }`,
   );

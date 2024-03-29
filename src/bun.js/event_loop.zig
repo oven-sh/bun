@@ -890,37 +890,30 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellAsync))) => {
                     var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellIOWriterAsyncDeinit))) => {
                     var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellIOReaderAsyncDeinit))) => {
                     var shell_ls_task: *ShellIOReaderAsyncDeinit = task.get(ShellIOReaderAsyncDeinit).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellCondExprStatTask))) => {
                     var shell_ls_task: *ShellCondExprStatTask = task.get(ShellCondExprStatTask).?;
                     shell_ls_task.task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellTouchTask))) => {
                     var shell_ls_task: *ShellTouchTask = task.get(ShellTouchTask).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellMkdirTask))) => {
                     var shell_ls_task: *ShellMkdirTask = task.get(ShellMkdirTask).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellLsTask))) => {
                     var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellMvBatchedTask))) => {
                     var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;
@@ -933,12 +926,10 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellRmTask))) => {
                     var shell_rm_task: *ShellRmTask = task.get(ShellRmTask).?;
                     shell_rm_task.runFromMainThread();
-                    // shell_rm_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTask))) => {
                     var shell_rm_task: *ShellRmDirTask = task.get(ShellRmDirTask).?;
                     shell_rm_task.runFromMainThread();
-                    // shell_rm_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellGlobTask))) => {
                     var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;

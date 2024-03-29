@@ -132,7 +132,7 @@ using JSDOMURLDOMConstructor = JSDOMConstructor<JSDOMURL>;
 static const HashTableValue JSDOMURLConstructorTableValues[] = {
     { "createObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_createObjectURL, 1 } },
     { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_revokeObjectURL, 1 } },
-    { "canParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_canParse, 2 } },
+    { "canParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_canParse, 1 } },
 };
 
 static inline JSC::EncodedJSValue constructJSDOMURL1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

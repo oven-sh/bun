@@ -54,6 +54,7 @@ pub const HTMLRewriter = struct {
             .builder = LOLHTML.HTMLRewriter.Builder.init(),
             .context = LOLHTMLContext.new(.{}),
         };
+        bun.Analytics.Features.html_rewriter += 1;
         return rewriter;
     }
 

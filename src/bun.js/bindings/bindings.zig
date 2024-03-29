@@ -2017,6 +2017,7 @@ pub const AbortSignal = extern opaque {
         this: *AbortSignal,
         reason: JSValue,
     ) *AbortSignal {
+        bun.Analytics.Features.abort_signal += 1;
         return cppFn("signal", .{ this, reason });
     }
 

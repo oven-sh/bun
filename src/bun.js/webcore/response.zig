@@ -1683,6 +1683,7 @@ pub const Fetch = struct {
         JSC.markBinding(@src());
         const globalThis = ctx.ptr();
         const arguments = callframe.arguments(2);
+        bun.Analytics.Features.fetch += 1;
 
         var exception_val = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_val;

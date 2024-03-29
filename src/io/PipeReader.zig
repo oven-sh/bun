@@ -1079,8 +1079,7 @@ pub const WindowsBufferedReader = struct {
         this.source.?.setData(this);
         this.buffer().clearRetainingCapacity();
         this.flags.is_done = false;
-        this.unpause();
-        return .{ .result = {} };
+        return this.startReading();
     }
 
     pub fn startWithPipe(this: *WindowsOutputReader, pipe: *uv.Pipe) bun.JSC.Maybe(void) {

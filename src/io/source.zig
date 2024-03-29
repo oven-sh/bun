@@ -149,8 +149,9 @@ pub const Source = union(enum) {
     }
 
     pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(Source) {
-        log("open (fd = {})", .{fd});
         const rc = bun.windows.GetFileType(fd.cast());
+        log("open(fd: {}, type: {d})", .{ fd, rc });
+
         switch (rc) {
             bun.windows.FILE_TYPE_PIPE => {
                 switch (openPipe(loop, fd)) {
@@ -163,6 +164,20 @@ pub const Source = union(enum) {
                     .result => |tty| return .{ .result = .{ .tty = tty } },
                     .err => |err| return .{ .err = err },
                 }
+            },
+            bun.windows.FILE_TYPE_UNKNOWN => {
+                const errno = bun.windows.getLastErrno();
+
+                if (errno == .SUCCESS) {
+                    // If it's nul, let's pretend its a pipe
+                    // that seems to be the mode that libuv is happiest with.
+                    return switch (openPipe(loop, fd)) {
+                        .result => |pipe| return .{ .result = .{ .pipe = pipe } },
+                        .err => |err| return .{ .err = err },
+                    };
+                }
+
+                return .{ .err = bun.sys.Error.fromCode(errno, .open) };
             },
             else => {
                 return .{

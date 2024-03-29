@@ -41,20 +41,6 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         //   /foo/bar/baz as a path and you're in /home/jarred?
     }
 
-    if (bun.Environment.os == .windows) {
-        var convert_buf: bun.WPathBuffer = undefined;
-
-        var convert_buf_bin: bun.WPathBuffer = undefined;
-        const bin_utf16 = bun.strings.convertUTF8toUTF16InBuffer(&convert_buf_bin, bin);
-
-        const result = whichWin(&convert_buf, path, cwd, bin_utf16) orelse return null;
-        const result_converted = bun.strings.convertUTF16toUTF8InBuffer(buf, result) catch unreachable;
-        buf[result_converted.len] = 0;
-        std.debug.assert(result_converted.ptr == buf.ptr);
-        return buf[0..result_converted.len :0];
-    }
-    if (bin.len == 0) return null;
-
     if (cwd.len > 0) {
         if (isValid(buf, std.mem.trimRight(u8, cwd, std.fs.path.sep_str), bin)) |len| {
             return buf[0..len :0];

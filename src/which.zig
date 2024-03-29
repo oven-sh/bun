@@ -71,23 +71,28 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
     return null;
 }
 
-const win_extensionsW = [_][:0]const u16{
+const win_extensions = [_][:0]const u16{
     bun.strings.w("exe"),
     bun.strings.w("cmd"),
     bun.strings.w("bat"),
 };
-const win_extensions = .{
-    "exe",
-    "cmd",
-    "bat",
-};
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by whichWin)
 fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: bool) ?[:0]const u16 {
+    if (!check_windows_extensions) {
+        const bin = buf[0..path_size :0];
+        inline for (win_extensions) |ext| {
+            if (bun.strings.endsWithGenericComptime(u16, bin, .{'.'} ++ ext)) {
+                if (bun.sys.existsOSPath(bin, true)) {
+                    return bin;
+                }
+            }
+        }
+    }
     if (check_windows_extensions) {
         buf[path_size] = '.';
         buf[path_size + 1 + 3] = 0;
-        inline for (win_extensionsW) |ext| {
+        inline for (win_extensions) |ext| {
             @memcpy(buf[path_size + 1 .. path_size + 1 + 3], ext);
             if (bun.sys.existsOSPath(buf[0 .. path_size + 1 + ext.len :0], true))
                 return buf[0 .. path_size + 1 + ext.len :0];
@@ -122,7 +127,7 @@ fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *[bun.MAX_PATH_BYTES]u8, pat
 /// It is similar to Get-Command in powershell.
 pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [:0]const u16) ?[:0]const u16 {
     var check_windows_extensions = true;
-    inline for (win_extensionsW) |ext| {
+    inline for (win_extensions) |ext| {
         if (bun.strings.endsWithGenericComptime(u16, bin, .{'.'} ++ ext)) {
             check_windows_extensions = false;
 

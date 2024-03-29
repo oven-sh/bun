@@ -3,8 +3,7 @@ import { describe, it, expect } from "bun:test";
 
 import { success, fail, createClient } from "./support/util.ts";
 
-// Hanging tests are disabled because they cause the test suite to hang
-describe.skip("timeout", () => {
+describe("timeout", () => {
   it("should timeout if the client does not acknowledge the event", done => {
     const io = new Server(0);
     const client = createClient(io, "/");

@@ -652,10 +652,9 @@ pub const TextDecoder = struct {
                     } else |err| {
                         switch (err) {
                             error.InvalidByteSequence => {
-                                globalThis.throwValue(
-                                    globalThis.createTypeErrorInstance("Invalid byte sequence", .{}),
-                                );
-                                return JSValue.zero;
+                                const type_error = globalThis.createErrorInstanceWithCode(.ERR_ENCODING_INVALID_ENCODED_DATA, "Invalid byte sequence", .{});
+                                globalThis.throwValue(type_error);
+                                return .zero;
                             },
                             error.OutOfMemory => {
                                 globalThis.throwOutOfMemory();

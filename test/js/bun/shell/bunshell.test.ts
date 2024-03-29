@@ -7,7 +7,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm } from "fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat } from "fs/promises";
 import { bunEnv, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
@@ -824,16 +824,20 @@ describe("deno_task", () => {
     const buf = new Uint8Array(128 * 1024).fill('a'.charCodeAt(0))
     for (let i = 0; i < 10; i++) {
       writer.write(buf);
+      await writer.flush();
     }
-    await writer.flush()
     `;
 
-    const runnerCode = /* ts */ `await Bun.$\`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${$.escape(writerCode)} | cat\``;
-    const { stdout, stderr, exitCode } = await $`${BUN} -e ${runnerCode}`.env(bunEnv);
+    const tmpdir = TestBuilder.tmpdir();
+    // I think writing 1mb of 'a's to the terminal breaks CI so redirect to a FD instead
+    const { stdout, stderr, exitCode } = await $`${BUN} -e ${writerCode} > ${tmpdir}/output.txt`.env(bunEnv);
 
     expect(stderr.length).toEqual(0);
+    expect(stdout.length).toEqual(0);
     expect(exitCode).toEqual(0);
-    expect(stdout.length).toEqual(128 * 1024 * 10);
+
+    const s = await stat(`${tmpdir}/output.txt`);
+    expect(s.size).toEqual(10 * 128 * 1024);
   });
 
   // https://github.com/oven-sh/bun/issues/9458
@@ -850,44 +854,27 @@ describe("deno_task", () => {
     `;
 
     const code = /* ts */ `
-    const { select } = require('@inquirer/prompts');
-
-    async function run() {
-      const foobar = await select({
-        message: 'Foo or Bar',
-        choices: [
-          { name: 'Foo', value: 'foo' },
-          { name: 'Bar', value: 'bar' },
-        ],
-      });
-      console.error('Choice:', foobar);
-    }
-
-    run();
+    import { expect } from 'bun:test'
+    const expected = [
+      '\\x1b[B',
+      '\\x0D'
+    ]
+    let i = 0
+    const writer = Bun.stdout.writer();
+    process.stdin.on("data", async chunk => {
+      const input = chunk.toString();
+      expect(input).toEqual(expected[i++])
+      writer.write(input)
+      await writer.flush()
+    });
     `;
 
-    const packagejson = `
-    {
-      "name": "stuff",
-      "module": "index.ts",
-      "type": "module",
-      "devDependencies": {
-        "@types/bun": "latest"
-      },
-      "peerDependencies": {
-        "typescript": "^5.0.0"
-      },
-      "dependencies": {
-        "@inquirer/prompts": "v4.3.0"
-      }
-    }
-    `;
+    const { stdout, stderr, exitCode } =
+      await Bun.$`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${inputCode} | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code}`;
 
-    await TestBuilder.command`echo ${packagejson} > package.json; BUN_DEBUG_QUIET_LOGS=1 ${BUN} i &> /dev/null; BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${inputCode} | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code}`
-      .ensureTempDir()
-      .stdout(() => {})
-      .stderr("Choice: bar\n")
-      .run();
+    expect(exitCode).toBe(0);
+    expect(stderr.length).toBe(0);
+    expect(stdout.toString()).toEqual("\x1b[B\x0D");
   });
 });
 

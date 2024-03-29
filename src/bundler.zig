@@ -520,7 +520,7 @@ pub const Bundler = struct {
         bundler.configureLinkerWithAutoJSX(true);
     }
 
-    pub fn runEnvLoader(this: *Bundler, load_default_env: bool) !void {
+    pub fn runEnvLoader(this: *Bundler, is_script_runner: bool) !void {
         switch (this.options.env.behavior) {
             .prefix, .load_all, .load_all_without_inlining => {
                 // Step 1. Load the project root.
@@ -541,11 +541,11 @@ pub const Bundler = struct {
                 }
 
                 if (this.options.isTest() or this.env.isTest()) {
-                    try this.env.load(dir, this.options.env.files, .@"test", load_default_env);
+                    try this.env.load(dir, this.options.env.files, .@"test", is_script_runner);
                 } else if (this.options.production) {
-                    try this.env.load(dir, this.options.env.files, .production, load_default_env);
+                    try this.env.load(dir, this.options.env.files, .production, is_script_runner);
                 } else {
-                    try this.env.load(dir, this.options.env.files, .development, load_default_env);
+                    try this.env.load(dir, this.options.env.files, .development, is_script_runner);
                 }
             },
             .disable => {

@@ -468,7 +468,7 @@ pub const Loader = struct {
         dir: *Fs.FileSystem.DirEntry,
         env_files: []const []const u8,
         comptime suffix: DotEnvFileSuffix,
-        load_default_env: bool,
+        is_script_runner: bool,
     ) !void {
         const start = std.time.nanoTimestamp();
 
@@ -482,7 +482,7 @@ pub const Loader = struct {
             //
             // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
             // for more details on how this edge case works.
-            if (load_default_env)
+            if (!is_script_runner)
                 try this.loadDefaultFiles(dir, suffix);
         }
 

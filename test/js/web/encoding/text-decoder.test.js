@@ -231,6 +231,13 @@ describe("TextDecoder", () => {
     expect(() => {
       decoder.decode(new Uint8Array([0xc0])); // Invalid UTF8
     }).toThrow(TypeError);
+    let err;
+    try {
+      decoder.decode(new Uint8Array([0xc0, 0x80])); // Invalid UTF8
+    } catch (e) {
+      err = e;
+    }
+    expect(err.code).toBe("ERR_ENCODING_INVALID_ENCODED_DATA");
   });
 
   it("should not trim invalid byte sequences when fatal is false", () => {

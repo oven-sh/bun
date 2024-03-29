@@ -16,6 +16,7 @@ server.on("stream", (stream, headers, flags) => {
     ":status": 200,
     "set-cookie": setCookie,
   });
+  // errors here are not useful the test should handle on the client side
   stream.on("error", () => {});
 
   if (headers["x-wait-trailer"]) {

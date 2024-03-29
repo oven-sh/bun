@@ -247,20 +247,6 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, BunObject_callback_braces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
-    // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
-    // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
-    // auto mainShellFunc = shellShellCodeGenerator;
-    if (has_bun_garbage_collector_flag_enabled) {
-        auto parseIdent
-            = Identifier::fromString(vm, String("parse"_s));
-        auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
-        bunShell->putDirect(vm, parseIdent, parseFunc);
-
-        auto lexIdent = Identifier::fromString(vm, String("lex"_s));
-        auto lexFunc = JSFunction::create(vm, globalObject, 2, String("lex"_s), BunObject_callback_shellLex, ImplementationVisibility::Private);
-        bunShell->putDirect(vm, lexIdent, lexFunc);
-    }
-
     return bunShell;
 }
 

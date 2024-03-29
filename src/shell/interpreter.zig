@@ -358,14 +358,18 @@ pub const IO = struct {
 /// So environment strings can be ref counted or borrowed slices
 pub const EnvStr = packed struct {
     ptr: u48,
-    tag: Tag,
+    tag: Tag = .empty,
     len: usize = 0,
 
     const print = bun.Output.scoped(.EnvStr, true);
 
     const Tag = enum(u16) {
+        /// no value
+        empty,
+
         /// Dealloced by reference counting
         refcounted,
+
         /// Memory is managed elsewhere so don't dealloc it
         slice,
     };
@@ -373,32 +377,36 @@ pub const EnvStr = packed struct {
     inline fn initSlice(str: []const u8) EnvStr {
         if (str.len == 0)
             // Zero length strings may have invalid pointers, leading to a bad integer cast.
-            return .{ .tag = .slice, .ptr = @intCast(@intFromPtr(&"")), .len = 0 };
+            return .{ .tag = .empty, .ptr = 0, .len = 0 };
 
         return .{
-            .ptr = @intCast(@intFromPtr(str.ptr)),
+            .ptr = toPtr(str.ptr),
             .tag = .slice,
             .len = str.len,
         };
     }
 
+    fn toPtr(ptr_val: *const anyopaque) u48 {
+        const num: [8]u8 = @bitCast(@intFromPtr(ptr_val));
+        return @bitCast(num[0..6].*);
+    }
+
     fn initRefCounted(str: []const u8) EnvStr {
         if (str.len == 0)
-            // Zero length strings may have invalid pointers, leading to a bad integer cast.
-            // Instead of ref-counting zero lens, just be the same as the above initSlice
-            return .{ .tag = .slice, .ptr = @intCast(@intFromPtr(&"")), .len = 0 };
+            return .{ .tag = .empty, .ptr = 0, .len = 0 };
 
         return .{
-            .ptr = @intCast(@intFromPtr(RefCountedStr.init(str))),
+            .ptr = toPtr(RefCountedStr.init(str)),
             .tag = .refcounted,
         };
     }
 
     pub fn slice(this: EnvStr) []const u8 {
-        if (this.asRefCounted()) |refc| {
-            return refc.byteSlice();
-        }
-        return this.castSlice();
+        return switch (this.tag) {
+            .empty => "",
+            .slice => this.castSlice(),
+            .refcounted => this.castRefCounted().byteSlice(),
+        };
     }
 
     fn ref(this: EnvStr) void {

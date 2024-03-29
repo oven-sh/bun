@@ -1,12 +1,20 @@
+import type { ShellOutput } from "bun";
+
 type ShellInterpreter = any;
 type Resolve = (value: ShellOutput) => void;
 
 export function createBunShellTemplateFunction(ShellInterpreter) {
-  function lazyBufferToHumanReadableString() {
+  function lazyBufferToHumanReadableString(this: Buffer) {
     return this.toString();
   }
+
   class ShellError extends Error {
     #output?: ShellOutput = undefined;
+    info;
+    exitCode;
+    stdout;
+    stderr;
+
     constructor() {
       super("");
     }
@@ -30,24 +38,20 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       Object.assign(this, this.info);
     }
 
-    exitCode;
-    stdout;
-    stderr;
-
     text(encoding) {
-      return this.#output.text(encoding);
+      return this.#output!.text(encoding);
     }
 
     json() {
-      return this.#output.json();
+      return this.#output!.json();
     }
 
     arrayBuffer() {
-      return this.#output.arrayBuffer();
+      return this.#output!.arrayBuffer();
     }
 
     blob() {
-      return this.#output.blob();
+      return this.#output!.blob();
     }
   }
 
@@ -87,19 +91,20 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     #hasRun: boolean = false;
     #throws: boolean = true;
     // #immediate;
+
     constructor(core: ShellInterpreter, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
       // of the shell script's invocation. Just creating the error should be
       // relatively cheap, the costly work is actually computing the stacktrace
       // (`computeErrorInfo()` in ZigGlobalObject.cpp)
-      let potentialError = new ShellError();
+      let potentialError: ShellError | undefined = new ShellError();
       let resolve, reject;
 
       super((res, rej) => {
         resolve = code => {
           const out = new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code);
           if (this.#throws && code !== 0) {
-            potentialError.initialize(out, code);
+            potentialError!.initialize(out, code);
             rej(potentialError);
           } else {
             // Set to undefined to hint to the GC that this is unused so it can
@@ -109,7 +114,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
           }
         };
         reject = code => {
-          potentialError.initialize(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code), code);
+          potentialError!.initialize(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code), code);
           rej(potentialError);
         };
       });
@@ -150,7 +155,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       return this;
     }
 
-    env(newEnv: Record<string, string>): this {
+    env(newEnv: Record<string, string | undefined>): this {
       this.#throwIfRunning();
       if (typeof newEnv === "undefined") {
         newEnv = defaultEnv;

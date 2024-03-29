@@ -1,9 +1,5 @@
 Bun Shell makes shell scripting with JavaScript & TypeScript fun. It's a cross-platform bash-like shell with seamless JavaScript interop.
 
-{% callout type="note" %}
-**Alpha-quality software**: Bun Shell is an unstable API still under development. If you have feature requests or run into bugs, please open an issue. There may be breaking changes in the future.
-{% /callout %}
-
 Quickstart:
 
 ```js
@@ -53,16 +49,50 @@ const welcome = await $`echo "Hello World!"`.text();
 console.log(welcome); // Hello World!\n
 ```
 
-To get stdout, stderr, and the exit code, use await or `.run`:
+By default, `await`ing will return stdout and stderr as `Buffer`s, along with the exit code.
 
 ```js
 import { $ } from "bun";
+
+$.nothrow(); // by default, non-zero exit codes will throw an error.
 
 const { stdout, stderr, exitCode } = await $`echo "Hello World!"`.quiet();
 
 console.log(stdout); // Buffer(6) [ 72, 101, 108, 108, 111, 32 ]
 console.log(stderr); // Buffer(0) []
 console.log(exitCode); // 0
+```
+
+## Error handling
+
+By default, non-zero exit codes will throw an error, this can be configured by calling `$.nothrow()` or `$.throws(boolean)`:
+
+```js
+import { $ } from "bun";
+
+// default behavior, non-zero exit codes will throw an error
+$.throws(true);
+
+// shell promises will not throw, meaning you will have to check
+// for `exitCode` manually on every shell command.
+$.throws(false);
+
+$.nothrow(); // equivilent to $.throws(false)
+```
+
+The thrown `ShellError` contains information about the failure:
+
+```js
+import { $ } from "bun";
+
+try {
+  const output = await $`something-that-may-fail`.text();
+  console.log(output);
+} catch (err) {
+  console.log(`Failed with code ${err.exitCode}`);
+  console.log(output.stdout.toString());
+  console.log(output.stderr.toString());
+}
 ```
 
 ## Redirection

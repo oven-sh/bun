@@ -368,20 +368,22 @@ pub fn WindowsPipeReader(
         }
 
         fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
-            var this: *This = bun.cast(*This, fs.data);
             const nread_int = fs.result.int();
-            const continue_reading = !this.flags.is_paused;
-            this.flags.is_paused = true;
+            if (nread_int == uv.UV_ECANCELED) {
+                // we can be deinit at this point (when closing the reader and calling stopReading)
+                return;
+            }
+            var this: *This = bun.cast(*This, fs.data);
+
             bun.sys.syslog("onFileRead({}) = {d}", .{ bun.toFD(fs.file.fd), nread_int });
+            this.flags.is_paused = true;
 
             switch (nread_int) {
                 // 0 actually means EOF too
                 0, uv.UV_EOF => {
                     this.onRead(.{ .result = 0 }, "", .eof);
                 },
-                uv.UV_ECANCELED => {
-                    this.onRead(.{ .result = 0 }, "", .drained);
-                },
+                uv.UV_ECANCELED => unreachable,
                 else => {
                     if (fs.result.toError(.read)) |err| {
                         this.onRead(.{ .err = err }, "", .progress);
@@ -389,7 +391,8 @@ pub fn WindowsPipeReader(
                     }
                     // continue reading
                     defer {
-                        if (continue_reading) {
+                        // we check if someone unpaused after the onRead callback
+                        if (!this.flags.is_paused) {
                             _ = this.startReading();
                         }
                     }

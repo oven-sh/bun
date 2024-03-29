@@ -2822,15 +2822,30 @@ pub fn selfExePath() ![:0]u8 {
         // TODO open zig issue to make 'std.fs.selfExePath' return [:0]u8 directly
         // note: this doesn't use MAX_PATH_BYTES because on windows that's 32767*3+1 yet normal paths are 255.
         // should this fail it will still do so gracefully. 4096 is MAX_PATH_BYTES on posix.
-        var value: [4096]u8 = undefined;
+        var value: [
+            4096 + 1 // + 1 for the null terminator
+        ]u8 = undefined;
         var len: usize = 0;
+        var lock = Lock.init();
+
+        pub fn load() ![:0]u8 {
+            const init = try std.fs.selfExePath(&value);
+            @This().len = init.len;
+            value[@This().len] = 0;
+            set = true;
+            return value[0..@This().len :0];
+        }
     };
+
+    // try without a lock
     if (memo.set) return memo.value[0..memo.len :0];
-    const init = try std.fs.selfExePath(&memo.value);
-    memo.len = init.len;
-    memo.value[memo.len] = 0;
-    memo.set = true;
-    return memo.value[0..memo.len :0];
+
+    // make it thread-safe
+    memo.lock.lock();
+    defer memo.lock.unlock();
+    // two calls could happen concurrently, so we must check again
+    if (memo.set) return memo.value[0..memo.len :0];
+    return memo.load();
 }
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
 

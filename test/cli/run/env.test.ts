@@ -732,8 +732,9 @@ for (const shell of ["system", "bun"]) {
         ".env": "ENV_FILE_NAME=.env",
       });
 
-      expect(bunRunAsScript(tmp, "show-env", { ...env }, ["--shell=" + shell]).stdout)
-        .toBe("ENV_FILE_NAME=N/A, NODE_ENV=" + (isWindowsCMD ? "%NODE_ENV%" : ""));
+      expect(bunRunAsScript(tmp, "show-env", { ...env }, ["--shell=" + shell]).stdout).toBe(
+        "ENV_FILE_NAME=N/A, NODE_ENV=" + (isWindowsCMD ? "%NODE_ENV%" : ""),
+      );
     });
 
     for (const { NODE_ENV, expected, env_file } of [

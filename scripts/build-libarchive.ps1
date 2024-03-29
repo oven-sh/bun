@@ -8,7 +8,7 @@ try {
   Run cmake @CMAKE_FLAGS -DBUILD_SHARED_LIBS=OFF -DENABLE_TEST=OFF -DENABLE_INSTALL=OFF -DENABLE_WERROR=0 ..
   Run cmake  --build . --clean-first --config Release
 
-  Copy-Item libarchive\archive_static.lib $BUN_DEPS_OUT_DIR\archive.lib
+  Copy-Item libarchive\archive.lib $BUN_DEPS_OUT_DIR\archive.lib
   Write-Host "-> archive.lib"
 }
 finally {

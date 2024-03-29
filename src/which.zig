@@ -2,6 +2,8 @@ const std = @import("std");
 const bun = @import("root").bun;
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
+const debug = bun.Output.scoped(.which, true);
+
 fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
     bun.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;
@@ -14,15 +16,17 @@ fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
 
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
-pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
+pub fn which(buf: *bun.PathBuffer, path: []const u8, bin: []const u8) ?[:0]const u8 {
+    debug("which({s} in {s})", .{ bin, path });
     if (bun.Environment.os == .windows) {
         var convert_buf: bun.WPathBuffer = undefined;
-        const result = whichWin(&convert_buf, path, cwd, bin) orelse return null;
+        const result = whichWin(&convert_buf, path, bin) orelse return null;
         const result_converted = bun.strings.convertUTF16toUTF8InBuffer(buf, result) catch unreachable;
         buf[result_converted.len] = 0;
         std.debug.assert(result_converted.ptr == buf.ptr);
         return buf[0..result_converted.len :0];
     }
+
     if (bin.len == 0) return null;
 
     // handle absolute paths
@@ -37,11 +41,7 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         //   /foo/bar/baz as a path and you're in /home/jarred?
     }
 
-    if (cwd.len > 0) {
-        if (isValid(buf, std.mem.trimRight(u8, cwd, std.fs.path.sep_str), bin)) |len| {
-            return buf[0..len :0];
-        }
-    }
+    if (path.len == 0) return null;
 
     var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
     while (path_iter.next()) |segment| {
@@ -117,9 +117,9 @@ fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *[bun.MAX_PATH_BYTES]u8, pat
 }
 
 /// This is the windows version of `which`.
-/// It operates on wide strings.
+/// It returns a wide string.
 /// It is similar to Get-Command in powershell.
-pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u16 {
+fn whichWin(buf: *bun.WPathBuffer, path: []const u8, bin: []const u8) ?[:0]const u16 {
     if (bin.len == 0) return null;
     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
@@ -133,10 +133,7 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
         return searchBin(buf, bin_utf16.len, check_windows_extensions);
     }
 
-    // check if bin is in cwd
-    if (searchBinInPath(buf, &path_buf, cwd, bin, check_windows_extensions)) |bin_path| {
-        return bin_path;
-    }
+    if (path.len == 0) return null;
 
     // iterate over system path delimiter
     var path_iter = std.mem.tokenizeScalar(u8, path, ';');
@@ -147,15 +144,4 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
     }
 
     return null;
-}
-
-test "which" {
-    var buf: bun.fs.PathBuffer = undefined;
-    const realpath = bun.getenvZ("PATH") orelse unreachable;
-    const whichbin = which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "which");
-    try std.testing.expectEqualStrings(whichbin orelse return std.debug.assert(false), "/usr/bin/which");
-    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "baconnnnnn"));
-    try std.testing.expect(null != which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "zig"));
-    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "bin"));
-    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "usr"));
 }

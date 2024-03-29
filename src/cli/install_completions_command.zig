@@ -50,7 +50,7 @@ pub const InstallCompletionsCommand = struct {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         // don't install it if it's already there
-        if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, cwd, bunx_name) != null)
+        if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, bunx_name) != null)
             return;
 
         // first try installing the symlink into the same directory as the bun executable

@@ -1,11 +1,18 @@
 import { test, expect } from "bun:test";
 
-import { which } from "bun";
+import { $, which } from "bun";
 import { rmSync, chmodSync, mkdirSync, realpathSync } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
-import { cpSync, rmdirSync } from "js/node/fs/export-star-from";
-import { isIntelMacOS, isWindows } from "../../../harness";
+import { rmdirSync } from "js/node/fs/export-star-from";
+import { isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
+
+{
+  const delim = isWindows ? ";" : ":";
+  if (`${delim}${process.env.PATH}${delim}`.includes(`${delim}.${delim}`)) {
+    throw new Error("$PATH includes . which will break `Bun.which` tests. This is an environment configuration issue.");
+  }
+}
 
 function writeFixture(path: string) {
   var fs = require("fs");
@@ -52,10 +59,8 @@ if (isWindows) {
       basedir = realpathSync(basedir);
 
       process.chdir(basedir);
-      // Our cwd is not /tmp
-      expect(which("myscript.sh")).toBe(abs);
+      expect(which("myscript.sh")).toBe(null);
 
-      const orig = process.cwd();
       process.chdir(tmpdir());
       try {
         rmdirSync("myscript.sh");
@@ -96,16 +101,28 @@ if (isWindows) {
           PATH: "/not-tmp",
         }),
       ).toBe(null);
-
-      expect(
-        // cwd is checked first
-        which("myscript.sh", {
-          cwd: basedir,
-        }),
-      ).toBe(abs);
     } finally {
       process.chdir(origDir);
       rmSync(basedir, { recursive: true, force: true });
     }
   });
 }
+
+test("Bun.which does not look in the current directory", async () => {
+  const cwd = process.cwd();
+  const dir = tempDirWithFiles("which", {
+    "some_program_name": "#!/usr/bin/env sh\necho FAIL\nexit 0\n",
+    "some_program_name.cmd": "@echo FAIL\n@exit 0\n",
+  });
+  process.chdir(dir);
+  try {
+    if (!isWindows) {
+      await $`chmod +x ./some_program_name`;
+    }
+
+    expect(which("some_program_name")).toBe(null);
+    expect((await $`some_program_name`).exitCode).not.toBe(0);
+  } finally {
+    process.chdir(cwd);
+  }
+});

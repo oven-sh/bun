@@ -3597,7 +3597,7 @@ pub const Interpreter = struct {
                 }
 
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
+                const resolved = which(&path_buf, spawn_args.PATH, first_arg[0..first_arg_len]) orelse {
                     this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
                     return;
                 };
@@ -5895,7 +5895,7 @@ pub const Interpreter = struct {
                     var had_not_found = false;
                     for (args) |arg_raw| {
                         const arg = arg_raw[0..std.mem.len(arg_raw)];
-                        const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                        const resolved = which(&path_buf, PATH.slice(), arg) orelse {
                             had_not_found = true;
                             const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
                             _ = this.bltn.writeNoIO(.stdout, buf);
@@ -5933,7 +5933,7 @@ pub const Interpreter = struct {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
-                const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                const resolved = which(&path_buf, PATH.slice(), arg) orelse {
                     multiargs.had_not_found = true;
                     if (!this.bltn.stdout.needsIO()) {
                         const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});

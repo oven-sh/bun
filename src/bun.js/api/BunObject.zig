@@ -735,18 +735,11 @@ pub fn which(
     path_str = ZigString.Slice.fromUTF8NeverFree(
         globalThis.bunVM().bundler.env.get("PATH") orelse "",
     );
-    cwd_str = ZigString.Slice.fromUTF8NeverFree(
-        globalThis.bunVM().bundler.fs.top_level_dir,
-    );
 
     if (arguments.nextEat()) |arg| {
         if (!arg.isEmptyOrUndefinedOrNull() and arg.isObject()) {
             if (arg.get(globalThis, "PATH")) |str_| {
                 path_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
-            }
-
-            if (arg.get(globalThis, "cwd")) |str_| {
-                cwd_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
             }
         }
     }
@@ -754,7 +747,6 @@ pub fn which(
     if (Which.which(
         &path_buf,
         path_str.slice(),
-        cwd_str.slice(),
         bin_str.slice(),
     )) |bin_path| {
         return ZigString.init(bin_path).withEncoding().toValueGC(globalThis);

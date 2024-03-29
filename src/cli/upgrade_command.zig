@@ -612,7 +612,7 @@ pub const UpgradeCommand = struct {
                 }
 
                 if (comptime Environment.isPosix) {
-                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
+                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", "unzip") orelse {
                         save_dir.deleteFileZ(tmpname) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
                         Global.exit(1);

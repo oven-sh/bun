@@ -5,12 +5,12 @@ import { rmSync, chmodSync, mkdirSync, realpathSync } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { rmdirSync } from "js/node/fs/export-star-from";
-import { isIntelMacOS, isWindows, tempDirWithFiles } from "../../../harness";
+import { isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
 
 {
   const delim = isWindows ? ";" : ":";
   if (`${delim}${process.env.PATH}${delim}`.includes(`${delim}.${delim}`)) {
-    throw new Error("$PATH includes . which will mess up the test");
+    throw new Error("$PATH includes . which will break `Bun.which` tests. This is an environment configuration issue.");
   }
 }
 
@@ -108,7 +108,7 @@ if (isWindows) {
   });
 }
 
-test("which does not look in the current directory", async () => {
+test("Bun.which does not look in the current directory", async () => {
   const cwd = process.cwd();
   const dir = tempDirWithFiles("which", {
     "some_program_name": "#!/usr/bin/env sh\necho FAIL\nexit 0\n",

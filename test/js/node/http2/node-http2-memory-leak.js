@@ -32,7 +32,7 @@ async function runRequests(iterations) {
   for (let j = 0; j < iterations; j++) {
     let client = http2.connect(info.url, { rejectUnauthorized: false });
     let promises = [];
-    // 10 multiplex POST connections per iteration
+    // 100 multiplex POST connections per iteration
     for (let i = 0; i < 100; i++) {
       const { promise, resolve, reject } = Promise.withResolvers();
       const req = client.request({ ":path": "/post", ":method": "POST" });

@@ -1158,7 +1158,9 @@ extern "C"
       }
       if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
       {
-        uwsRes->AsyncSocket<true>::write("\r\n", 2);
+        if (send_crlf) {
+          uwsRes->AsyncSocket<true>::write("\r\n", 2);
+        }
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone();

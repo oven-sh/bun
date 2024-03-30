@@ -27,6 +27,8 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+
 var isWritable;
 
 var { inspect } = Bun;
@@ -113,7 +115,6 @@ var SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, Strin
 // Section: "Internal" modules
 // ----------------------------------------------------------------------------
 
-var internalGetStringWidth = $lazy("getStringWidth");
 /**
  * Returns the number of columns required to display the given string.
  */

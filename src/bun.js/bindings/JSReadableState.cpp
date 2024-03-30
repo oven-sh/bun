@@ -422,4 +422,4 @@ void JSReadableStateConstructor::initializeProperties(VM& vm, JSC::JSGlobalObjec
 
 const ClassInfo JSReadableStateConstructor::s_info = { "ReadableState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStateConstructor) };
 
-} // namespace Zig
+} // namespace WebCore

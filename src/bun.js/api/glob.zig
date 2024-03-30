@@ -231,9 +231,8 @@ pub const WalkTask = struct {
 };
 
 fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValue {
-    // if (globWalk.matchedPaths.items.len >= 0) {
     if (globWalk.matchedPaths.items.len == 0) {
-        return JSC.JSArray.from(globalThis, &[_]JSC.JSValue{});
+        return JSC.JSValue.createEmptyArray(globalThis, 0);
     }
 
     return BunString.toJSArray(globalThis, globWalk.matchedPaths.items[0..]);

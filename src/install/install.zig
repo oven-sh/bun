@@ -6438,7 +6438,7 @@ pub const PackageManager = struct {
                                     inline else => |exact_versions| {
                                         const fmt = if (exact_versions) "{}" else "^{}";
                                         break :brk try std.fmt.allocPrint(allocator, fmt, .{
-                                            request.version.value.npm,
+                                            request.resolution.value.npm.version.fmt(request.version_buf),
                                         });
                                     },
                                 }

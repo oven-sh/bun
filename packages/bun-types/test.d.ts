@@ -202,11 +202,16 @@ declare module "bun:test" {
      */
     skipIf(condition: boolean): (label: string, fn: () => void) => void;
     /**
+     * Marks this group of tests as to be written or to be fixed, if `condition` is true.
+     *
+     * @param condition if these tests should be skipped
+     */
+    todoIf(condition: boolean): (label: string, fn: () => void) => void;
+    /**
      * Returns a function that runs for each item in `table`.
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-
     each<T extends Readonly<[any, ...any[]]>>(
       table: readonly T[],
     ): (label: string, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
@@ -408,6 +413,18 @@ declare module "bun:test" {
      * @param condition if the test should be skipped
      */
     skipIf(
+      condition: boolean,
+    ): (
+      label: string,
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
+    /**
+     * Marks this test as to be written or to be fixed, if `condition` is true.
+     *
+     * @param condition if the test should be marked TODO
+     */
+    todoIf(
       condition: boolean,
     ): (
       label: string,

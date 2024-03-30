@@ -5885,17 +5885,17 @@ pub fn NewFunction(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    comptime functionPointer: JSHostFunctionType,
+    functionPointer: JSHostFunctionPtr,
     strong: bool,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, &functionPointer, strong, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false);
 }
 
 pub fn createCallback(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    comptime functionPointer: *const JSHostFunctionType,
+    functionPointer: JSHostFunctionPtr,
 ) JSValue {
     return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
 }

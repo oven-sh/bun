@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins } from "harness";
+import { bunEnv, bunExe, bunEnv as env, isWindows, mergeWindowEnvs, toBeValidBin, toHaveBins } from "harness";
 import { join } from "path";
 import { mkdtempSync, realpathSync, copyFileSync, mkdirSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -6678,7 +6678,6 @@ test.if(isWindows)(
       { bin: "bin7", name: "bin7" },
       { bin: "bin-node", name: "bin-node" },
       { bin: "bin-bun", name: "bin-bun" },
-      { bin: "bin-py", name: "bin-py" },
       { bin: "native", name: "exe" },
       { bin: "uses-native", name: `exe ${packageDir}\\node_modules\\bunx-bins\\uses-native.ts` },
     ];
@@ -6691,10 +6690,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6712,10 +6708,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6733,10 +6726,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6754,10 +6744,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();

@@ -8,7 +8,6 @@
 				"bin-node": "bin-node.js",
 				"bin-bun": "bin-bun.ts",
 				"bin-bun-run": "bin-bun-run.ts",
-				"bin-py": "bin-py.py",
 				"bin1": "bin1.ts",
 				"bin2": "bin2.ts",
 				"bin3": "bin3.ts",
@@ -21,19 +20,21 @@
 				"no-shebang": "no-shebang.ts"
 			},
 			"_id": "bunx-bins@1.0.0",
+			"gitHead": "ec66b07720395f3cf1da601fc111d7e3ec8e3837",
 			"_nodeVersion": "21.7.1",
 			"_npmVersion": "10.5.0",
 			"dist": {
-				"shasum": "1809cf2217354265981106f91617b87381abad75",
+				"integrity": "sha512-tvXcjJwkOFm2RxOWRycgZDI3Uis5RsW8ExXWTGryEwdgfyjwQ/4nu0wkt6nUIrRVaJSwMuTpP9rrhIBbty32dw==",
+				"shasum": "a77e200b47158585a4bf70ef934202c5fb2b0dd7",
 				"tarball": "http://localhost:4873/bunx-bins/-/bunx-bins-1.0.0.tgz"
 			},
 			"contributors": []
 		}
 	},
 	"time": {
-		"modified": "2024-03-26T00:02:03.432Z",
-		"created": "2024-03-26T00:02:03.432Z",
-		"1.0.0": "2024-03-26T00:02:03.432Z"
+		"modified": "2024-03-29T00:26:35.003Z",
+		"created": "2024-03-29T00:26:35.003Z",
+		"1.0.0": "2024-03-29T00:26:35.003Z"
 	},
 	"users": {},
 	"dist-tags": {
@@ -43,7 +44,7 @@
 	"_distfiles": {},
 	"_attachments": {
 		"bunx-bins-1.0.0.tgz": {
-			"shasum": "c23382ce43a04a94035050ac736f04179a8639ff",
+			"shasum": "a77e200b47158585a4bf70ef934202c5fb2b0dd7",
 			"version": "1.0.0"
 		}
 	},

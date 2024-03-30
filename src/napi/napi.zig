@@ -168,6 +168,8 @@ pub const napi_status = enum(c_uint) {
     would_deadlock = 21,
 };
 pub const napi_callback = ?*const fn (napi_env, napi_callback_info) callconv(.C) napi_value;
+
+/// expects `napi_env`, `callback_data`, `context`
 pub const napi_finalize = ?*const fn (napi_env, ?*anyopaque, ?*anyopaque) callconv(.C) void;
 pub const napi_property_descriptor = extern struct {
     utf8name: [*c]const u8,
@@ -1259,7 +1261,7 @@ pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*any
 
 pub const Finalizer = struct {
     fun: napi_finalize,
-    ctx: ?*anyopaque = null,
+    data: ?*anyopaque = null,
 };
 
 // TODO: generate comptime version of this instead of runtime checking
@@ -1290,7 +1292,7 @@ pub const ThreadSafeFunction = struct {
     env: napi_env,
 
     finalizer_task: JSC.AnyTask = undefined,
-    finalizer: Finalizer = Finalizer{ .fun = null, .ctx = null },
+    finalizer: Finalizer = Finalizer{ .fun = null, .data = null },
     channel: Queue,
 
     ctx: ?*anyopaque = null,
@@ -1398,7 +1400,7 @@ pub const ThreadSafeFunction = struct {
     pub fn finalize(opaq: *anyopaque) void {
         var this = bun.cast(*ThreadSafeFunction, opaq);
         if (this.finalizer.fun) |fun| {
-            fun(this.event_loop.global, opaq, this.finalizer.ctx);
+            fun(this.event_loop.global, this.finalizer.data, this.ctx);
         }
 
         if (this.callback == .js) {
@@ -1496,7 +1498,7 @@ pub export fn napi_create_threadsafe_function(
         .poll_ref = Async.KeepAlive.init(),
     };
 
-    function.finalizer = .{ .ctx = thread_finalize_data, .fun = thread_finalize_cb };
+    function.finalizer = .{ .data = thread_finalize_data, .fun = thread_finalize_cb };
     result.* = function;
     return .ok;
 }

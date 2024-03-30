@@ -469,7 +469,7 @@ jobs:
           noprefix: true
           nocontext: true
           description: |
-            ### ❌🪟 [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
+            ❌🪟 [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
 
             @${{ github.actor }}, there are **${{ steps.test.outputs.regressing_test_count }} test regressions** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
 
@@ -482,7 +482,7 @@ jobs:
         with:
           comment_tag: test-windows-${{ matrix.arch }}-${{ matrix.cpu }}
           message: |
-            ### ❌🪟 @${{ github.actor }}, there are **${{ steps.test.outputs.regressing_test_count }} test regressions** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
+            ❌🪟 @${{ github.actor }}, there are **${{ steps.test.outputs.regressing_test_count }} test regressions** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
 
             ${{ steps.test.outputs.regressing_tests }}
 

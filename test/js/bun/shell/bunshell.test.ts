@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 /**
  * Portions of these tests are derived from the [deno_task_shell](https://github.com/denoland/deno_task_shell/) tests, which are developed and maintained by the Deno authors.
  * Copyright 2018-2023 the Deno authors.
@@ -8,7 +7,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, stat } from "fs/promises";
-import { bunEnv, runWithErrorPromise, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 import { TestBuilder, sortedShellOutput } from "./util";
@@ -35,7 +34,7 @@ afterAll(async () => {
   await rm(temp_dir, { force: true, recursive: true });
 });
 
-const BUN = process.argv0;
+const BUN = bunExe();
 
 describe("bunshell", () => {
   describe("concurrency", () => {

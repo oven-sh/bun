@@ -417,7 +417,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - uses: secondlife/setup-cygwin@v1
+      - uses: secondlife/setup-cygwin@v3
         with:
           packages: bash
       - name: Install dependencies

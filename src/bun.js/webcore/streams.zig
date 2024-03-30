@@ -2677,8 +2677,9 @@ pub fn ReadableStreamSource(
         pub fn setRawModeFromJS(this: *ReadableStreamSourceType, global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) callconv(.C) JSValue {
             if (@hasDecl(Context, "setRawMode")) {
                 const flag = call_frame.argument(0);
-                std.debug.assert(flag.isBoolean());
-                std.debug.print("setRawMode {}\n", .{flag == .true});
+                if (Environment.allow_assert) {
+                    std.debug.assert(flag.isBoolean());
+                }
                 return switch (this.context.setRawMode(flag == .true)) {
                     .result => .undefined,
                     .err => |e| e.toJSC(global),

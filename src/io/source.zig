@@ -189,7 +189,6 @@ pub const Source = union(enum) {
     }
 
     pub fn setRawMode(this: Source, value: bool) bun.sys.Maybe(void) {
-        log("setRawMode({s}, {})", .{ @tagName(this), value });
         return switch (this) {
             .tty => |tty| {
                 if (tty

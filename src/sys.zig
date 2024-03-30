@@ -2387,6 +2387,10 @@ pub const File = struct {
         return getFileSize(self.handle);
     }
 
+    pub fn stat(self: File) Maybe(bun.Stat) {
+        return fstat(self.handle);
+    }
+
     pub const ReadToEndResult = struct {
         bytes: std.ArrayList(u8) = std.ArrayList(u8).init(default_allocator),
         err: ?Error = null,
@@ -2407,7 +2411,10 @@ pub const File = struct {
                 list.ensureUnusedCapacity(16) catch bun.outOfMemory();
             }
 
-            switch (bun.sys.pread(this.handle, list.unusedCapacitySlice(), total)) {
+            switch (if (comptime Environment.isPosix)
+                bun.sys.pread(this.handle, list.unusedCapacitySlice(), total)
+            else
+                bun.sys.read(this.handle, list.unusedCapacitySlice())) {
                 .err => |err| {
                     return .{ .err = err };
                 },

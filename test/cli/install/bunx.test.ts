@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterEach, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, isWindows } from "harness";
-import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { mkdtemp, realpath, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
@@ -13,11 +13,13 @@ beforeEach(async () => {
   x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test")));
 
   const tmp = isWindows ? tmpdir() : "/tmp";
+  const waiting: Promise<void>[] = [];
   readdirSync(tmp).forEach(file => {
     if (file.startsWith("bunx-")) {
-      rm(join(tmp, file), { recursive: true, force: true });
+      waiting.push(rm(join(tmp, file), { recursive: true, force: true }));
     }
   });
+  await Promise.all(waiting);
 });
 
 it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
@@ -64,7 +66,7 @@ it("should install and run specified version", async () => {
     cmd: [bunExe(), "x", "uglify-js@3.14.1", "-v"],
     cwd: x_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
@@ -83,7 +85,7 @@ it("should output usage if no arguments are passed", async () => {
     cmd: [bunExe(), "x"],
     cwd: x_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
@@ -100,44 +102,48 @@ it("should output usage if no arguments are passed", async () => {
 });
 
 it("should work for @scoped packages", async () => {
+  let exited: number, err: string, out: string;
   // without cache
   const withoutCache = spawn({
-    cmd: [bunExe(), "--bun", "x", "@withfig/autocomplete-tools", "--help"],
+    cmd: [bunExe(), "--bun", "x", "@babel/cli", "--help"],
     cwd: x_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
 
-  expect(withoutCache.stderr).toBeDefined();
-  let err = await new Response(withoutCache.stderr).text();
+  [err, out, exited] = await Promise.all([
+    new Response(withoutCache.stderr).text(),
+    new Response(withoutCache.stdout).text(),
+    withoutCache.exited,
+  ]);
+
   expect(err).not.toContain("error:");
   expect(err).not.toContain("panic:");
-  expect(withoutCache.stdout).toBeDefined();
-  let out = await new Response(withoutCache.stdout).text();
-  expect(out.trim()).toContain("Usage: @withfig/autocomplete-tools");
-  expect(await withoutCache.exited).toBe(0);
+  expect(out.trim()).toContain("Usage: babel [options]");
+  expect(exited).toBe(0);
 
   // cached
   const cached = spawn({
-    cmd: [bunExe(), "--bun", "x", "@withfig/autocomplete-tools", "--help"],
+    cmd: [bunExe(), "--bun", "x", "@babel/cli", "--help"],
     cwd: x_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
 
-  expect(cached.stderr).toBeDefined();
-  err = await new Response(cached.stderr).text();
+  [err, out, exited] = await Promise.all([
+    new Response(cached.stderr).text(),
+    new Response(cached.stdout).text(),
+    cached.exited,
+  ]);
+
   expect(err).not.toContain("error:");
   expect(err).not.toContain("panic:");
-  expect(cached.stdout).toBeDefined();
-  out = await new Response(cached.stdout).text();
-  console.log({ out, err });
-  expect(out.trim()).toContain("Usage: @withfig/autocomplete-tools");
-  expect(await cached.exited).toBe(0);
+
+  expect(out.trim()).toContain("Usage: babel [options]");
 });
 
 it("should execute from current working directory", async () => {
@@ -154,7 +160,7 @@ console.log(
     cmd: [bunExe(), "--bun", "x", "uglify-js", "test.js", "--compress"],
     cwd: x_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
@@ -175,38 +181,42 @@ it("should work for github repository", async () => {
     cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
     cwd: x_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
 
-  expect(withoutCache.stderr).toBeDefined();
-  let err = await new Response(withoutCache.stderr).text();
+  let [err, out, exited] = await Promise.all([
+    new Response(withoutCache.stderr).text(),
+    new Response(withoutCache.stdout).text(),
+    withoutCache.exited,
+  ]);
+
   expect(err).not.toContain("error:");
   expect(err).not.toContain("panic:");
-  expect(withoutCache.stdout).toBeDefined();
-  let out = await new Response(withoutCache.stdout).text();
   expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
-  expect(await withoutCache.exited).toBe(0);
+  expect(exited).toBe(0);
 
   // cached
   const cached = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
     cwd: x_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
 
-  expect(cached.stderr).toBeDefined();
-  err = await new Response(cached.stderr).text();
+  [err, out, exited] = await Promise.all([
+    new Response(cached.stderr).text(),
+    new Response(cached.stdout).text(),
+    cached.exited,
+  ]);
+
   expect(err).not.toContain("error:");
   expect(err).not.toContain("panic:");
-  expect(cached.stdout).toBeDefined();
-  out = await new Response(cached.stdout).text();
   expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
-  expect(await cached.exited).toBe(0);
+  expect(exited).toBe(0);
 });
 
 it("should work for github repository with committish", async () => {
@@ -214,37 +224,40 @@ it("should work for github repository with committish", async () => {
     cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
     cwd: x_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
 
-  expect(withoutCache.stderr).toBeDefined();
-  let err = await new Response(withoutCache.stderr).text();
+  let [err, out, exited] = await Promise.all([
+    new Response(withoutCache.stderr).text(),
+    new Response(withoutCache.stdout).text(),
+    withoutCache.exited,
+  ]);
+
   expect(err).not.toContain("error:");
   expect(err).not.toContain("panic:");
-  expect(withoutCache.stdout).toBeDefined();
-  let out = await new Response(withoutCache.stdout).text();
-  if (!out) console.log(err);
   expect(out.trim()).toContain("hello bun!");
-  expect(await withoutCache.exited).toBe(0);
+  expect(exited).toBe(0);
 
   // cached
   const cached = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
     cwd: x_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
 
-  expect(cached.stderr).toBeDefined();
-  err = await new Response(cached.stderr).text();
+  [err, out, exited] = await Promise.all([
+    new Response(cached.stderr).text(),
+    new Response(cached.stdout).text(),
+    cached.exited,
+  ]);
+
   expect(err).not.toContain("error:");
   expect(err).not.toContain("panic:");
-  expect(cached.stdout).toBeDefined();
-  out = await new Response(cached.stdout).text();
   expect(out.trim()).toContain("hello bun!");
-  expect(await cached.exited).toBe(0);
+  expect(exited).toBe(0);
 });

@@ -6708,10 +6708,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6729,10 +6726,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6750,10 +6744,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();

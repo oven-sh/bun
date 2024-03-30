@@ -1962,4 +1962,15 @@ void JSSQLStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 
 template void JSSQLStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
 template void JSSQLStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
+
+JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    return JSSQLStatementConstructor::create(
+        vm,
+        globalObject,
+        JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get())
+    );
 }
+
+} // namespace WebCore

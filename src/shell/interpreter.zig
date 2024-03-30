@@ -606,6 +606,7 @@ pub const EnvMap = struct {
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
+    command_ctx: *const bun.CLI.Command.Context,
     event_loop: JSC.EventLoopHandle,
     /// This is the arena used to allocate the input shell script's AST nodes,
     /// tokens, and a string pool used to store all strings.
@@ -992,6 +993,7 @@ pub const Interpreter = struct {
         script_heap.* = script_ast;
 
         const interpreter = switch (ThisInterpreter.init(
+            undefined, // command_ctx, unused when event_loop is .js
             .{ .js = globalThis.bunVM().event_loop },
             allocator,
             &arena,
@@ -1043,16 +1045,13 @@ pub const Interpreter = struct {
     /// If all initialization allocations succeed, the arena will be copied
     /// into the interpreter struct, so it is not a stale reference and safe to call `arena.deinit()` on error.
     pub fn init(
+        ctx: *const bun.CLI.Command.Context,
         event_loop: JSC.EventLoopHandle,
         allocator: Allocator,
         arena: *bun.ArenaAllocator,
         script: *ast.Script,
         jsobjs: []JSValue,
     ) shell.Result(*ThisInterpreter) {
-        var interpreter = allocator.create(ThisInterpreter) catch bun.outOfMemory();
-        interpreter.event_loop = event_loop;
-        interpreter.allocator = allocator;
-
         const export_env = brk: {
             // This will be set in the shell builtin to `process.env`
             if (event_loop == .js) break :brk EnvMap.init(allocator);
@@ -1108,7 +1107,9 @@ pub const Interpreter = struct {
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
 
+        const interpreter = allocator.create(ThisInterpreter) catch bun.outOfMemory();
         interpreter.* = .{
+            .command_ctx = ctx,
             .event_loop = event_loop,
 
             .script = script,
@@ -1143,7 +1144,7 @@ pub const Interpreter = struct {
         return .{ .result = interpreter };
     }
 
-    pub fn initAndRunFromFile(mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
+    pub fn initAndRunFromFile(ctx: *const bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
@@ -1180,7 +1181,7 @@ pub const Interpreter = struct {
         };
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
-        var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        var interp = switch (ThisInterpreter.init(ctx, .{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return 1;
@@ -1214,7 +1215,7 @@ pub const Interpreter = struct {
         return exit_code;
     }
 
-    pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
+    pub fn initAndRunFromSource(ctx: *bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
         bun.Analytics.Features.standalone_shell += 1;
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -1240,7 +1241,7 @@ pub const Interpreter = struct {
         };
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
-        var interp: *ThisInterpreter = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        var interp: *ThisInterpreter = switch (ThisInterpreter.init(ctx, .{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return 1;
@@ -2150,6 +2151,37 @@ pub const Interpreter = struct {
         }
 
         fn expandVar(this: *const Expansion, label: []const u8) EnvStr {
+            if (bun.strings.isAllASCIIDigit(label)) {
+                var int = std.fmt.parseInt(u32, label, 10) catch return EnvStr.initSlice("");
+                switch (this.base.interpreter.event_loop) {
+                    .js => |js| {
+                        if (int == 0) return EnvStr.initSlice(bun.selfExePath() catch "");
+                        int -= 1;
+
+                        const vm = js.virtual_machine;
+                        if (vm.main.len > 0) {
+                            if (int == 0) return EnvStr.initSlice(vm.main);
+                            int -= 1;
+                        }
+
+                        if (vm.worker) |worker| {
+                            if (worker.argv) |argv| {
+                                if (int >= argv.len) return EnvStr.initSlice("");
+                                return EnvStr.initSlice(argv[int].utf8Slice());
+                            }
+                        }
+                        const argv = vm.argv;
+                        if (int >= argv.len) return EnvStr.initSlice("");
+                        return EnvStr.initSlice(argv[int]);
+                    },
+                    .mini => {
+                        const ctx = this.base.interpreter.command_ctx;
+                        if (int >= 1 + ctx.passthrough.len) return EnvStr.initSlice("");
+                        if (int == 0) return EnvStr.initSlice(ctx.positionals[ctx.positionals.len - 1 - int]);
+                        return EnvStr.initSlice(ctx.passthrough[int - 1]);
+                    },
+                }
+            }
             const value = this.base.shell.shell_env.get(EnvStr.initSlice(label)) orelse brk: {
                 break :brk this.base.shell.export_env.get(EnvStr.initSlice(label)) orelse return EnvStr.initSlice("");
             };

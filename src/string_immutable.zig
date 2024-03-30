@@ -3634,6 +3634,15 @@ pub fn isAllASCII(slice: []const u8) bool {
     return true;
 }
 
+pub fn isAllASCIIDigit(slice: []const u8) bool {
+    for (slice) |c| {
+        if (c < '0' or c > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
 //#define U16_LEAD(supplementary) (UChar)(((supplementary)>>10)+0xd7c0)
 pub inline fn u16Lead(supplementary: anytype) u16 {
     return @as(u16, @intCast((supplementary >> 10) + 0xd7c0));

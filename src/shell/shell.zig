@@ -2226,8 +2226,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                 if (i == 0) {
                     switch (char) {
-                        '=', '0'...'9' => return .{ .start = start, .end = self.j },
-                        'a'...'z', 'A'...'Z', '_' => {},
+                        '=' => return .{ .start = start, .end = self.j },
+                        '0'...'9', 'a'...'z', 'A'...'Z', '_' => {},
                         else => return .{ .start = start, .end = self.j },
                     }
                 }

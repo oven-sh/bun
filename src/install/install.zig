@@ -6430,27 +6430,13 @@ pub const PackageManager = struct {
                 if (request.e_string) |e_string| {
                     e_string.data = switch (request.resolution.tag) {
                         .npm => brk: {
-                            if (comptime FeatureFlags.breaking_changes_1_1_0) {
-                                if (request.version.tag == .dist_tag) {
-                                    const fmt = if (options.exact_versions) "{}" else "^{}";
-                                    break :brk try std.fmt.allocPrint(allocator, fmt, .{
-                                        request.resolution.value.npm.version.fmt(request.version_buf),
-                                    });
-                                }
-                                break :brk null;
-                            } else {
-                                break :brk if (request.version.tag == .dist_tag and request.version.literal.isEmpty())
-                                    switch (options.exact_versions) {
-                                        false => std.fmt.allocPrint(allocator, "^{}", .{
-                                            request.resolution.value.npm.version.fmt(request.version_buf),
-                                        }) catch unreachable,
-                                        true => std.fmt.allocPrint(allocator, "{}", .{
-                                            request.resolution.value.npm.version.fmt(request.version_buf),
-                                        }) catch unreachable,
-                                    }
-                                else
-                                    null;
+                            if (request.version.tag == .dist_tag) {
+                                const fmt = if (options.exact_versions) "{}" else "^{}";
+                                break :brk try std.fmt.allocPrint(allocator, fmt, .{
+                                    request.resolution.value.npm.version.fmt(request.version_buf),
+                                });
                             }
+                            break :brk null;
                         },
                         .uninitialized => switch (request.version.tag) {
                             .uninitialized => try allocator.dupe(u8, latest),

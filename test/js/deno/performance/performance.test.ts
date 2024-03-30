@@ -1,4 +1,3 @@
-// flaky with setTimeout
 // Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 import { createDenoTest } from "deno:harness";
 const { test, assert, assertEquals, assertThrows } = createDenoTest(import.meta.path);

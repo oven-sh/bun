@@ -39,13 +39,14 @@ function source(name) {
       isClosed: {
         getter: "getIsClosedFromJS",
       },
-      ... name === 'File'
+      ...(name === "File"
         ? {
-          setRawMode : {
-            fn: "setRawModeFromJS",
-            length: 1,
+            setRawMode: {
+              fn: "setRawModeFromJS",
+              length: 1,
+            },
           }
-        } : {},
+        : {}),
     },
     klass: {},
     values: ["pendingPromise", "onCloseCallback", "onDrainCallback"],

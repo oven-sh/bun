@@ -2563,6 +2563,36 @@ describe("expect()", () => {
     expect(deepArray).not.toContainAllValues(["duck", [{ foo: "bar" }]]);
   });
 
+  test("toContainAnyValues", () => {
+    let o = { a: "foo", b: "bar", c: "baz" };
+    expect(o).toContainAnyValues(["qux", "foo"]);
+    expect(o).toContainAnyValues(["qux", "bar"]);
+    expect(o).toContainAnyValues(["qux", "baz"]);
+    expect(o).toContainAnyValues(["foo"]);
+    expect(o).toContainAnyValues(["foo", "fax"]);
+    expect(o).toContainAnyValues(["qux", "bar"]);
+    expect(o).toContainAnyValues(["qux", "baz", "rod"]);
+    expect(o).not.toContainAnyValues(["qux"]);
+    expect(o).not.toContainAnyValues(["bui", "mur"]);
+
+    o = {
+      a: "foo",
+      b: "bar",
+      c: "baz",
+      d: [{ a: "hii", b: "hello" }],
+      e: [1, 2],
+      f: 100,
+      g: 20n,
+      h: 20.5,
+    };
+    expect(o).toContainAnyValues(["foo"]);
+    expect(o).toContainAnyValues([[{ a: "hii", b: "hello" }]]);
+    expect(o).toContainAnyValues([[1, 2]]);
+    expect(o).toContainAnyValues([100]);
+    expect(o).toContainAnyValues([20n]);
+    expect(o).toContainAnyValues([20.5]);
+  });
+
   test("toBeTruthy()", () => {
     expect("test").toBeTruthy();
     expect(true).toBeTruthy();

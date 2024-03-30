@@ -431,6 +431,9 @@ export default [
       toContainValues: {
         fn: "toContainValues",
       },
+      toContainAllValues: {
+        fn: "toContainAllValues",
+      },
       toContainKeys: {
         fn: "toContainKeys",
         length: 1,

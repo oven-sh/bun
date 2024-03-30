@@ -2514,6 +2514,48 @@ describe("expect()", () => {
     expect(data).not.toContainValues(["qux", "foo"]);
   });
 
+  test("toContainAllValues", () => {
+    let o = { a: "foo", b: "bar", c: "baz" };
+    expect(o).toContainAllValues(["foo", "bar", "baz"]);
+    expect(o).toContainAllValues(["baz", "bar", "foo"]);
+    expect(o).not.toContainAllValues(["bar", "foo"]);
+
+    o = {
+      a: "foo",
+      b: "bar",
+      c: "baz",
+      d: [{ a: "hii", b: "hello" }],
+      e: [1, 2],
+      f: 100,
+    };
+    expect(o).toContainAllValues(["foo", "bar", "baz", [{ a: "hii", b: "hello" }], [1, 2], 100]);
+    expect(o).not.toContainAllValues(["foo", [{ a: "hii", b: "hello" }]]);
+
+    const shallow = {
+      hello: "world",
+      foo: 0,
+      bar: false,
+    };
+    const deep = {
+      message: shallow,
+      donald: "duck",
+    };
+    const deepArray = {
+      message: [shallow],
+      donald: "duck",
+    };
+
+    expect(shallow).toContainAllValues(["world", 0, false]);
+    expect(shallow).not.toContainAllValues(["world", false]);
+    expect(deep).toContainAllValues([{ hello: "world", foo: 0, bar: false }, "duck"]);
+    expect(deepArray).toContainAllValues(["duck", [{ hello: "world", foo: 0, bar: false }]]);
+
+    //NOT
+    expect(shallow).not.toContainAllValues(["foo", 0]);
+    expect(deep).not.toContainAllValues(["duck", { foo: "bar" }]);
+    expect(deepArray).not.toContainAllValues(["duck", [{ foo: "bar" }]]);
+  });
+
   test("toBeTruthy()", () => {
     expect("test").toBeTruthy();
     expect(true).toBeTruthy();

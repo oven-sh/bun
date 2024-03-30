@@ -2622,8 +2622,8 @@ pub const PackageManager = struct {
         defer node_gyp_file.close();
 
         var bytes: string = switch (Environment.os) {
-            else => "#!/usr/bin/env node\nrequire(\"child_process\").spawnSync(\"bun\",[\"x\",\"node-gyp\",...process.argv.slice(2)],{stdio:\"inherit\"})",
-            .windows => "@node -e \"require('child_process').spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'})\"",
+            else => "#!/usr/bin/env node\nrequire(\"child_process\").spawnSync(\"bun\",[\"x\",\"--silent\",\"node-gyp\",...process.argv.slice(2)],{stdio:\"inherit\"})",
+            .windows => "@node -e \"require('child_process').spawnSync('bun',['x','--silent','node-gyp',...process.argv.slice(2)],{stdio:'inherit'})\"",
         };
         var index: usize = 0;
         while (index < bytes.len) {

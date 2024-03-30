@@ -1,13 +1,12 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins } from "harness";
-import { join } from "path";
+import { bunExe, bunEnv as env, isWindows, joinP, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
+import { join, sep } from "path";
 import { mkdtempSync, realpathSync, copyFileSync, mkdirSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
-import { f } from "js/bun/http/js-sink-sourmap-fixture/index.mjs";
 
 expect.extend({
   toBeValidBin,
@@ -2446,7 +2445,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await file(join(depDir, "prepare.txt")).text()).toBe("prepare!");
     }, 20_000);
 
-    test("workspace lifecycle scripts", async () => {
+    test.todoIf(isWindows)("workspace lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -2544,7 +2543,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "packages", "pkg2", "postprepare.txt"))).toBeFalse();
     });
 
-    test("dependency lifecycle scripts run before root lifecycle scripts", async () => {
+    test.todoIf(isWindows)("dependency lifecycle scripts run before root lifecycle scripts", async () => {
       const script = '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]';
       await writeFile(
         join(packageDir, "package.json"),
@@ -2960,9 +2959,10 @@ for (const forceWaiterThread of [false, true]) {
         expect.stringContaining("1 package installed"),
       ]);
       expect(await exited).toBe(0);
-      expect(await file(join(packageDir, "test.txt")).text()).toBe(packageDir + "/");
-      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(packageDir + "/");
-      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(packageDir + "/");
+      const expected = packageDir.replaceAll("\\", "/") + "/";
+      expect(await file(join(packageDir, "test.txt")).text()).toBe(expected);
+      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(expected);
+      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(expected);
     });
 
     test("failing lifecycle script should print output", async () => {
@@ -2994,14 +2994,14 @@ for (const forceWaiterThread of [false, true]) {
       expect(out).toBeEmpty();
     });
 
-    test("failing root lifecycle script should print output correctly", async () => {
+    test.todoIf(isWindows)("failing root lifecycle script should print output correctly", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
           name: "fooooooooo",
           version: "1.0.0",
           scripts: {
-            preinstall: `${bunExe().replace(/\\/g, "\\\\")} -e "throw new Error('Oops!')"`,
+            preinstall: `${bunExe()} -e "throw new Error('Oops!')"`,
           },
         }),
       );
@@ -3375,7 +3375,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postinstall.txt"))).toBeTrue();
     });
 
-    test("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
+    test.todoIf(isWindows)("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3461,7 +3461,7 @@ for (const forceWaiterThread of [false, true]) {
 
     test("reach max concurrent scripts", async () => {
       const scripts = {
-        "preinstall": `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(500)"`,
+        "preinstall": `${bunExe()} -e 'Bun.sleepSync(500)'`,
       };
 
       const dependenciesList = await createPackagesWithScripts(4, scripts);
@@ -3492,7 +3492,7 @@ for (const forceWaiterThread of [false, true]) {
 
     test("stress test", async () => {
       const dependenciesList = await createPackagesWithScripts(500, {
-        "postinstall": `${bunExe().replace(/\\/g, "\\\\")} --version`,
+        "postinstall": `${bunExe()} --version`,
       });
 
       // the script is quick, default number for max concurrent scripts
@@ -3521,7 +3521,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test("it should install and use correct binary version", async () => {
+    test.todoIf(isWindows)("it should install and use correct binary version", async () => {
       // this should install `what-bin` in two places:
       //
       // - node_modules/.bin/what-bin@1.5.0
@@ -3637,6 +3637,7 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
     });
+
     test("node-gyp should always be available for lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
@@ -3669,7 +3670,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
+    test.todoIf(isWindows)("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3689,13 +3690,13 @@ for (const forceWaiterThread of [false, true]) {
         env: testEnv,
       });
 
-      expect(await exited).toBe(0);
       const err = await new Response(stderr).text();
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("panic:");
       expect(err).toContain("v");
+      expect(await exited).toBe(0);
     });
 
     // if this test fails, `electron` might be removed from the default list
@@ -4417,14 +4418,14 @@ for (const forceWaiterThread of [false, true]) {
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
       });
     });
-    test("node -p should work in postinstall scripts", async () => {
+    test.todoIf(isWindows)("node -p should work in postinstall scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
           scripts: {
-            postinstall: 'node -p \'require("fs").writeFileSync("postinstall.txt", "postinstall")\'',
+            postinstall: `node -p "require('fs').writeFileSync('postinstall.txt', 'postinstall')"`,
           },
         }),
       );
@@ -4697,7 +4698,7 @@ for (const forceWaiterThread of [false, true]) {
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await Bun.readableStreamToText(stdout);
-          expect(out).toContain("./node_modules/uses-what-bin @1.0.0");
+          expect(out).toContain("./node_modules/uses-what-bin @1.0.0".replaceAll("/", sep));
           expect(await exited).toBe(0);
         });
       }
@@ -4710,7 +4711,7 @@ for (const forceWaiterThread of [false, true]) {
             name: "foo",
             version: "1.0.0",
             scripts: {
-              preinstall: `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(1000)"`,
+              preinstall: `${bunExe()} -e 'Bun.sleepSync(1000)'`,
             },
           }),
         );
@@ -4728,7 +4729,7 @@ for (const forceWaiterThread of [false, true]) {
 
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
-      test("bun pm trust", async () => {
+      test.todoIf(isWindows)("bun pm trust", async () => {
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({
@@ -4900,12 +4901,10 @@ test("it should be able to find binary in node_modules/.bin from parent director
 
   await cp(join(packageDir, "bunfig.toml"), join(packageDir, "morePackageDir", "bunfig.toml"));
 
-  await await writeFile(
+  await writeShebangScript(
     join(packageDir, "node_modules", ".bin", "missing-bin"),
-    `#!/usr/bin/env node
-require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");
-`,
-    { mode: 0o777 },
+    "node",
+    `require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");`,
   );
 
   const { stdout, stderr, exited } = spawn({

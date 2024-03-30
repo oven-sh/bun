@@ -2,8 +2,17 @@
 // "readable-stream" npm package
 // just transpiled and debug logs added.
 
-const EE = $lazy("events");
 const StringDecoder = require("node:string_decoder").StringDecoder;
+
+const {
+  BufferList,
+  ReadableState,
+  maybeReadMore: _maybeReadMore,
+  resume,
+  emitReadable: _emitReadable,
+  // onEofChunk,
+  EE,
+} = $cpp("JSReadableHelper.cpp", "createNodeStreamBinding");
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
@@ -2118,34 +2127,38 @@ var require_add_abort_signal = __commonJS({
 });
 
 // node_modules/readable-stream/lib/internal/streams/state.js
-var require_state = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/state.js"(exports, module) {
-    "use strict";
-    var { MathFloor, NumberIsInteger } = require_primordials();
-    var { ERR_INVALID_ARG_VALUE } = require_errors().codes;
-    function highWaterMarkFrom(options, isDuplex, duplexKey) {
-      return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
+var { MathFloor, NumberIsInteger } = require_primordials();
+var { ERR_INVALID_ARG_VALUE } = require_errors().codes;
+function highWaterMarkFrom(options, isDuplex, duplexKey) {
+  return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
+}
+
+let hwm_object = 16;
+let hwm_bytes = 16 * 1024;
+
+function getDefaultHighWaterMark(objectMode) {
+  return objectMode ? hwm_object : hwm_bytes;
+}
+
+function setDefaultHighWaterMark(objectMode, value) {
+  if (objectMode) {
+    hwm_object = value;
+  } else {
+    hwm_bytes = value;
+  }
+}
+
+function getHighWaterMark(state, options, duplexKey, isDuplex) {
+  const hwm = highWaterMarkFrom(options, isDuplex, duplexKey);
+  if (hwm != null) {
+    if (!NumberIsInteger(hwm) || hwm < 0) {
+      const name = isDuplex ? `options.${duplexKey}` : "options.highWaterMark";
+      throw new ERR_INVALID_ARG_VALUE(name, hwm);
     }
-    function getDefaultHighWaterMark(objectMode) {
-      return objectMode ? 16 : 16 * 1024;
-    }
-    function getHighWaterMark(state, options, duplexKey, isDuplex) {
-      const hwm = highWaterMarkFrom(options, isDuplex, duplexKey);
-      if (hwm != null) {
-        if (!NumberIsInteger(hwm) || hwm < 0) {
-          const name = isDuplex ? `options.${duplexKey}` : "options.highWaterMark";
-          throw new ERR_INVALID_ARG_VALUE(name, hwm);
-        }
-        return MathFloor(hwm);
-      }
-      return getDefaultHighWaterMark(state.objectMode);
-    }
-    module.exports = {
-      getHighWaterMark,
-      getDefaultHighWaterMark,
-    };
-  },
-});
+    return MathFloor(hwm);
+  }
+  return getDefaultHighWaterMark(state.objectMode);
+}
 
 // node_modules/readable-stream/lib/internal/streams/from.js
 var require_from = __commonJS({
@@ -2256,10 +2269,8 @@ var require_readable = __commonJS({
       Promise: Promise2,
       SafeSet,
       SymbolAsyncIterator,
-      Symbol: Symbol2,
     } = require_primordials();
 
-    var ReadableState = $lazy("bun:stream").ReadableState;
     var { Stream, prependListener } = require_legacy();
 
     function Readable(options) {
@@ -2510,7 +2521,6 @@ var require_readable = __commonJS({
 
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();
-    const { maybeReadMore: _maybeReadMore, resume, emitReadable: _emitReadable } = $lazy("bun:stream");
     function maybeReadMore(stream, state) {
       process.nextTick(_maybeReadMore, stream, state);
     }
@@ -3445,7 +3455,6 @@ var require_writable = __commonJS({
     var Stream = require_legacy().Stream;
     var destroyImpl = require_destroy();
     var { addAbortSignal } = require_add_abort_signal();
-    var { getHighWaterMark, getDefaultHighWaterMark } = require_state();
     var {
       ERR_INVALID_ARG_TYPE,
       ERR_METHOD_NOT_IMPLEMENTED,
@@ -5225,6 +5234,8 @@ var require_stream = __commonJS({
     Stream._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk) {
       return new Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
     };
+    Stream.setDefaultHighWaterMark = setDefaultHighWaterMark;
+    Stream.getDefaultHighWaterMark = getDefaultHighWaterMark;
   },
 });
 
@@ -5234,9 +5245,8 @@ var kEnsureConstructed = Symbol("kEnsureConstructed");
  * Bun native stream wrapper
  *
  * This glue code lets us avoid using ReadableStreams to wrap Bun internal streams
- *
  */
-function createNativeStreamReadable(nativeType, Readable) {
+function createNativeStreamReadable(Readable) {
   var closer = [false];
   var handleNumberResult = function (nativeReadable, result, view, isClosed) {
     if (result > 0) {
@@ -5475,8 +5485,9 @@ var nativeReadableStreamPrototypes = {
   4: undefined,
   5: undefined,
 };
+
 function getNativeReadableStreamPrototype(nativeType, Readable) {
-  return (nativeReadableStreamPrototypes[nativeType] ||= createNativeStreamReadable(nativeType, Readable));
+  return (nativeReadableStreamPrototypes[nativeType] ??= createNativeStreamReadable(Readable));
 }
 
 function getNativeReadableStream(Readable, stream, options) {
@@ -5495,8 +5506,8 @@ function getNativeReadableStream(Readable, stream, options) {
   stream.$disturbed = true;
   return new NativeReadable(ptr, options);
 }
-/** --- Bun native stream wrapper ---  */
 
+/** --- Bun native stream wrapper ---  */
 var Readable = require_readable();
 var Writable = require_writable();
 var Duplex = require_duplex();
@@ -5546,7 +5557,6 @@ function NativeWritable_lazyConstruct(stream) {
   }
 }
 
-const WritablePrototypeWrite = Writable.prototype.write;
 function NativeWritablePrototypeWrite(chunk, encoding, cb) {
   var fileSink = this[_fileSink] ?? NativeWritable_lazyConstruct(this);
   var result = fileSink.write(chunk);
@@ -5582,6 +5592,7 @@ function NativeWritablePrototypeWrite(chunk, encoding, cb) {
   if (cb) cb(null, chunk.byteLength);
   return true;
 }
+
 const WritablePrototypeEnd = Writable.prototype.end;
 NativeWritable.prototype.end = function end(chunk, encoding, cb, native) {
   return WritablePrototypeEnd.$call(this, chunk, encoding, cb, native ?? this[_native]);

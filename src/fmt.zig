@@ -945,6 +945,35 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
             }
         }
     }
+
+    /// Function for testing in highlighter.test.ts
+    pub fn jsFunctionSyntaxHighlight(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+        const args = callframe.arguments(1);
+        if (args.len < 1) {
+            globalThis.throwNotEnoughArguments("code", 1, 0);
+        }
+
+        const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
+        defer code.deinit();
+        var buffer = bun.MutableString.initEmpty(bun.default_allocator);
+        defer buffer.deinit();
+        var writer = buffer.bufferedWriter();
+        var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
+        formatter.limited = false;
+        std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+            globalThis.throwError(err, "Error formatting code");
+            return .zero;
+        };
+
+        writer.flush() catch |err| {
+            globalThis.throwError(err, "Error formatting code");
+            return .zero;
+        };
+
+        var str = bun.String.createUTF8(buffer.list.items);
+        defer str.deref();
+        return str.toJS(globalThis);
+    }
 };
 
 pub fn quote(self: string) bun.fmt.QuotedFormatter {
@@ -1224,7 +1253,6 @@ fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, op
 pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Formatter(formatDurationOneDecimal) {
     return .{ .data = FormatDurationData{ .ns = ns } };
 }
-// };
 
 pub fn fmtSlice(data: anytype, comptime delim: []const u8) FormatSlice(@TypeOf(data), delim) {
     return .{ .slice = data };

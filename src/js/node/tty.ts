@@ -1,4 +1,8 @@
-const { setRawMode: ttySetMode, isTTY: isatty, getWindowSize: _getWindowSize } = $lazy("tty");
+const {
+  setRawMode: ttySetMode,
+  isatty,
+  getWindowSize: _getWindowSize,
+} = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 // primordials
 const NumberIsInteger = Number.isInteger;

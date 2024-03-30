@@ -6431,10 +6431,14 @@ pub const PackageManager = struct {
                     e_string.data = switch (request.resolution.tag) {
                         .npm => brk: {
                             if (request.version.tag == .dist_tag) {
-                                const fmt = if (options.exact_versions) "{}" else "^{}";
-                                break :brk try std.fmt.allocPrint(allocator, fmt, .{
-                                    request.resolution.value.npm.version.fmt(request.version_buf),
-                                });
+                                switch (options.exact_versions) {
+                                    inline else => |exact_versions| {
+                                        const fmt = if (exact_versions) "{}" else "^{}";
+                                        break :brk try std.fmt.allocPrint(allocator, fmt, .{
+                                            request.version.value.npm,
+                                        });
+                                    },
+                                }
                             }
                             break :brk null;
                         },

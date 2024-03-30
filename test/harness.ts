@@ -610,3 +610,37 @@ export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | Array
 export function joinP(...paths: string[]) {
   return join(...paths).replaceAll("\\", "/");
 }
+
+/**
+ * TODO: see if this is the default behavior of node child_process APIs if so,
+ * we need to do case-insensitive stuff within our Bun.spawn implementation
+ *
+ * Windows has case-insensitive environment variables, so sometimes an
+ * object like { Path: "...", PATH: "..." } will be passed. Bun lets
+ * the first one win, but we really want the LAST one to win.
+ *
+ * This is mostly needed if you want to override env vars, such like:
+ *   env: {
+ *     ...bunEnv,
+ *     PATH: "my path override here",
+ *   }
+ * becomes
+ *   env: mergeWindowEnvs([
+ *     bunEnv,
+ *     {
+ *       PATH: "my path override here",
+ *     },
+ *   ])
+ */
+export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
+  const keys: Record<string, string | undefined> = {};
+  const flat: Record<string, string | undefined> = {};
+  for (const env of envs) {
+    for (const key in env) {
+      if (!env[key]) continue;
+      const normalized = keys[key.toUpperCase()] ?? key;
+      flat[normalized] = env[key];
+    }
+  }
+  return flat;
+}

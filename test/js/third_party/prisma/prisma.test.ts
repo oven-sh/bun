@@ -1,5 +1,3 @@
-// @known-failing-on-windows: 1 failing
-
 import { test as bunTest, it as bunIt, expect, describe } from "bun:test";
 import { generate, generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";

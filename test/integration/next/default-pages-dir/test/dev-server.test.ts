@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "../../../../harness";
 import { Subprocess } from "bun";

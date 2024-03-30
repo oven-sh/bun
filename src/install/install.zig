@@ -2510,6 +2510,8 @@ pub const PackageManager = struct {
         unreachable;
     }
 
+    pub var using_fallback_temp_dir: bool = false;
+
     // We need a temporary directory that can be rename()
     // This is important for extracting files.
     //
@@ -2541,6 +2543,11 @@ pub const PackageManager = struct {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
                         Global.crash();
                     };
+
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("<r><yellow>warn<r>: bun is unable to access tempdir: {s}, using fallback", .{@errorName(err2)});
+                    }
+
                     continue :brk;
                 }
                 Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>", .{
@@ -2556,6 +2563,11 @@ pub const PackageManager = struct {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
                         Global.crash();
                     };
+
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("<r><d>info<r>: cannot move files from tempdir: {s}, using fallback", .{@errorName(err)});
+                    }
+
                     continue :brk;
                 }
 
@@ -2566,6 +2578,9 @@ pub const PackageManager = struct {
             };
             cache_directory.deleteFileZ(tmpname) catch {};
             break;
+        }
+        if (tried_dot_tmp) {
+            using_fallback_temp_dir = true;
         }
         if (this.options.log_level != .silent) {
             const elapsed = timer.read();

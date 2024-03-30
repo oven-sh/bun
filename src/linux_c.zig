@@ -666,3 +666,11 @@ pub extern "C" fn sys_pwritev2(
     offset: std.os.off_t,
     flags: c_uint,
 ) isize;
+
+// #define RENAME_NOREPLACE    (1 << 0)    /* Don't overwrite target */
+// #define RENAME_EXCHANGE     (1 << 1)    /* Exchange source and dest */
+// #define RENAME_WHITEOUT     (1 << 2)    /* Whiteout source */
+
+pub const RENAME_NOREPLACE = 1 << 0;
+pub const RENAME_EXCHANGE = 1 << 1;
+pub const RENAME_WHITEOUT = 1 << 2;

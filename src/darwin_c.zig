@@ -787,3 +787,17 @@ pub fn getErrno(rc: anytype) E {
     return std.c.getErrno(rc);
 }
 pub extern "c" fn umask(Mode) Mode;
+
+// #define RENAME_SECLUDE                  0x00000001
+// #define RENAME_SWAP                     0x00000002
+// #define RENAME_EXCL                     0x00000004
+// #define RENAME_RESERVED1                0x00000008
+// #define RENAME_NOFOLLOW_ANY             0x00000010
+pub const RENAME_SECLUDE = 0x00000001;
+pub const RENAME_SWAP = 0x00000002;
+pub const RENAME_EXCL = 0x00000004;
+pub const RENAME_RESERVED1 = 0x00000008;
+pub const RENAME_NOFOLLOW_ANY = 0x00000010;
+
+// int renameatx_np(int fromfd, const char *from, int tofd, const char *to, unsigned int flags);
+pub extern "c" fn renameatx_np(fromfd: c_int, from: ?[*:0]const u8, tofd: c_int, to: ?[*:0]const u8, flags: c_uint) c_int;

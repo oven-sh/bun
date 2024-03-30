@@ -132,7 +132,6 @@ pub const Source = union(enum) {
         return switch (tty.init(loop, bun.uvfdcast(fd))) {
             .err => |err| .{ .err = err },
             .result => brk: {
-                _ = tty.setMode(.raw);
                 break :brk .{ .result = tty };
             },
         };
@@ -186,5 +185,27 @@ pub const Source = union(enum) {
                 return .{ .err = bun.sys.Error.fromCode(errno, .open) };
             },
         }
+    }
+
+    pub fn setRawMode(this: Source, value: bool) bun.sys.Maybe(void) {
+        return switch (this) {
+            .tty => |tty| {
+                if (tty
+                    .setMode(if (value) .raw else .normal)
+                    .toError(.uv_tty_set_mode)) |err|
+                {
+                    return .{ .err = err };
+                } else {
+                    return .{ .result = {} };
+                }
+            },
+            else => .{
+                .err = .{
+                    .errno = @intFromEnum(bun.C.E.NOTSUP),
+                    .syscall = .uv_tty_set_mode,
+                    .fd = this.getFd(),
+                },
+            },
+        };
     }
 };

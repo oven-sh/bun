@@ -1108,6 +1108,16 @@ pub const WindowsBufferedReader = struct {
         this.source = null;
     }
 
+    pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.JSC.Maybe(void) {
+        const source = this.source orelse return .{
+            .err = .{
+                .errno = @intFromEnum(bun.C.E.BADF),
+                .syscall = .uv_tty_set_mode,
+            },
+        };
+        return source.setRawMode(value);
+    }
+
     comptime {
         bun.meta.banFieldType(WindowsOutputReader, bool); // Don't increase the size of the struct. Put them in flags instead.
     }

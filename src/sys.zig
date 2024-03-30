@@ -142,6 +142,7 @@ pub const Tag = enum(u8) {
 
     uv_spawn,
     uv_pipe,
+    uv_tty_set_mode,
 
     // Below this line are Windows API calls only.
 

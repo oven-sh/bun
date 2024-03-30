@@ -3021,6 +3021,43 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).toContain('error: preinstall script from "fooooooooo" exited with 1');
     });
 
+    test("exit 0 in lifecycle scripts works", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            postinstall: "exit 0",
+            prepare: "exit 0",
+            postprepare: "exit 0",
+          },
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await new Response(stderr).text();
+      expect(err).toContain("No packages! Deleted empty lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      const out = await new Response(stdout).text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        expect.stringContaining("done"),
+        "",
+      ]);
+      expect(await exited).toBe(0);
+    });
+
     test("--ignore-scripts should skip lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
@@ -3668,6 +3705,40 @@ for (const forceWaiterThread of [false, true]) {
 
       // if node-gyp isn't available, it would return a non-zero exit code
       expect(await exited).toBe(0);
+    });
+
+    test.todoIf(isWindows)("npm_config_node_gyp should be set in lifecycle scripts", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          scripts: {
+            install: "echo $npm_config_node_gyp > npm_config_node_gyp.txt",
+          },
+        }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await new Response(stderr).text();
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      expect(err).toContain("v");
+
+      expect(await exited).toBe(0);
+
+      expect(await exists(join(packageDir, "npm_config_node_gyp.txt"))).toBeTrue();
+      const ext = isWindows ? ".cmd" : "";
+      expect(await file(join(packageDir, "npm_config_node_gyp.txt")).text()).toEndWith(`${sep}node-gyp${ext}\n`);
     });
 
     test.todoIf(isWindows)("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
@@ -4453,6 +4524,41 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
+    });
+
+    test("ensureTempNodeGypScript works", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            preinstall: "node-gyp --version",
+          },
+        }),
+      );
+
+      const originalPath = env.PATH;
+      env.PATH = "";
+
+      let { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env,
+      });
+
+      env.PATH = originalPath;
+
+      let err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("No packages! Deleted empty lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
+      expect(await exited).toBe(0);
     });
 
     test("bun pm trust and untrusted on missing package", async () => {

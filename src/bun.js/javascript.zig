@@ -785,6 +785,11 @@ pub const VirtualMachine = struct {
                 bun.spawn.WaiterThread.setShouldUseWaiterThread();
             }
 
+            // Only allowed for testing
+            if (map.get("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING") != null) {
+                ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
+            }
+
             if (strings.eqlComptime(gc_level, "1")) {
                 this.aggressive_garbage_collection = .mild;
                 has_bun_garbage_collector_flag_enabled = true;

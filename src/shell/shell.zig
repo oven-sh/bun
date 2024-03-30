@@ -108,23 +108,20 @@ pub const ShellErr = union(enum) {
     pub fn throwMini(this: @This()) void {
         defer this.deinit(bun.default_allocator);
         switch (this) {
-            .sys => {
-                const err = this.sys;
-                const str = std.fmt.allocPrint(bun.default_allocator, "bunsh: {s}: {}", .{ err.message, err.path }) catch bun.outOfMemory();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{str});
+            .sys => |err| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>bunsh: {s}: {}<r>", .{ err.message, err.path });
                 bun.Global.exit(1);
             },
-            .custom => {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{this.custom});
+            .custom => |custom| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>{s}<r>", .{custom});
                 bun.Global.exit(1);
             },
-            .invalid_arguments => {
-                const str = std.fmt.allocPrint(bun.default_allocator, "bunsh: invalid arguments: {s}", .{this.invalid_arguments.val}) catch bun.outOfMemory();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{str});
+            .invalid_arguments => |invalid_arguments| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>bunsh: invalid arguments: {s}<r>", .{invalid_arguments.val});
                 bun.Global.exit(1);
             },
-            .todo => {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>TODO: {s}<r>", .{this.todo});
+            .todo => |todo| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>TODO: {s}<r>", .{todo});
                 bun.Global.exit(1);
             },
         }

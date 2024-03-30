@@ -170,3 +170,5 @@ pub const windows_bunx_fast_path = true; // Disabled to simplify fixing the bunx
 // order than via Bun.file.writer() so we turn it off until there's a unified,
 // buffered writer abstraction shared throughout Bun
 pub const nonblocking_stdout_and_stderr_on_posix = false;
+
+pub const breaking_changes_1_2 = false;

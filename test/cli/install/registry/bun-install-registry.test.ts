@@ -2445,7 +2445,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await file(join(depDir, "prepare.txt")).text()).toBe("prepare!");
     }, 20_000);
 
-    test.todoIf(isWindows)("workspace lifecycle scripts", async () => {
+    test("workspace lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -2543,7 +2543,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "packages", "pkg2", "postprepare.txt"))).toBeFalse();
     });
 
-    test.todoIf(isWindows)("dependency lifecycle scripts run before root lifecycle scripts", async () => {
+    test("dependency lifecycle scripts run before root lifecycle scripts", async () => {
       const script = '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]';
       await writeFile(
         join(packageDir, "package.json"),
@@ -2994,7 +2994,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(out).toBeEmpty();
     });
 
-    test.todoIf(isWindows)("failing root lifecycle script should print output correctly", async () => {
+    test("failing root lifecycle script should print output correctly", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3412,7 +3412,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postinstall.txt"))).toBeTrue();
     });
 
-    test.todoIf(isWindows)("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
+    test("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3558,7 +3558,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test.todoIf(isWindows)("it should install and use correct binary version", async () => {
+    test("it should install and use correct binary version", async () => {
       // this should install `what-bin` in two places:
       //
       // - node_modules/.bin/what-bin@1.5.0
@@ -3707,7 +3707,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test.todoIf(isWindows)("npm_config_node_gyp should be set in lifecycle scripts", async () => {
+    test("npm_config_node_gyp should be set in lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3741,7 +3741,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await file(join(packageDir, "npm_config_node_gyp.txt")).text()).toEndWith(`${sep}node-gyp${ext}\n`);
     });
 
-    test.todoIf(isWindows)("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
+    test("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -4489,7 +4489,7 @@ for (const forceWaiterThread of [false, true]) {
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
       });
     });
-    test.todoIf(isWindows)("node -p should work in postinstall scripts", async () => {
+    test("node -p should work in postinstall scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -4835,7 +4835,7 @@ for (const forceWaiterThread of [false, true]) {
 
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
-      test.todoIf(isWindows)("bun pm trust", async () => {
+      test("bun pm trust", async () => {
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({

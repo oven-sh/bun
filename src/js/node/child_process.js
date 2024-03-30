@@ -351,7 +351,7 @@ function execFile(file, args, options, callback) {
       ? function onDataEncoded(chunk) {
           total += chunk.length;
 
-          if (total * 4 > maxBuffer) {
+          if (total > maxBuffer) {
             const out = child[kind];
             const encoding = out.readableEncoding;
             const actualLen = Buffer.byteLength(chunk, encoding);
@@ -361,14 +361,19 @@ function execFile(file, args, options, callback) {
               for (let i = 0, length = array.length; i < length; i++) {
                 encodedLength += Buffer.byteLength(array[i], encoding);
               }
-            } else {
-              encodedLength += actualLen;
             }
-            const truncatedLen = maxBuffer - (encodedLength - actualLen);
-            $arrayPush(array, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
 
-            ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
-            kill();
+            encodedLength += actualLen;
+
+            if (encodedLength > maxBuffer) {
+              let combined = ArrayPrototypeJoin.$call(array, "") + chunk;
+              combined = StringPrototypeSlice.$call(combined, 0, maxBuffer);
+              array = [combined];
+              ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+              kill();
+            } else {
+              array = [ArrayPrototypeJoin.$call(array, "") + chunk];
+            }
           } else {
             $arrayPush(array, chunk);
           }

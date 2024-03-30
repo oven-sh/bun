@@ -116,7 +116,7 @@ function bound(obj) {
     userInfo: obj.userInfo.bind(obj),
     version: obj.version.bind(obj),
     machine: obj.machine.bind(obj),
-    devNull: process.platform === "win32" ? "NUL" : "/dev/null",
+    devNull: process.platform === "win32" ? "\\\\.\\nul" : "/dev/null",
     EOL: process.platform === "win32" ? "\r\n" : "\n",
     constants: $processBindingConstants.os,
   };

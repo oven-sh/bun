@@ -2674,6 +2674,21 @@ pub fn ReadableStreamSource(
             return ReadableStream.fromNative(globalThis, out_value);
         }
 
+        pub fn setRawModeFromJS(this: *ReadableStreamSourceType, global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) callconv(.C) JSValue {
+            if (@hasDecl(Context, "setRawMode")) {
+                const flag = call_frame.argument(0);
+                if (Environment.allow_assert) {
+                    std.debug.assert(flag.isBoolean());
+                }
+                return switch (this.context.setRawMode(flag == .true)) {
+                    .result => .undefined,
+                    .err => |e| e.toJSC(global),
+                };
+            }
+
+            @compileError("setRawMode is not implemented on " ++ @typeName(Context));
+        }
+
         const supports_ref = setRefUnrefFn != null;
 
         pub usingnamespace @field(JSC.Codegen, "JS" ++ name_ ++ "InternalReadableStreamSource");
@@ -2711,6 +2726,7 @@ pub fn ReadableStreamSource(
                     this.onPullFromJS(buffer.slice(), view),
                 );
             }
+
             pub fn start(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 JSC.markBinding(@src());
                 this.globalThis = globalThis;
@@ -2759,6 +2775,7 @@ pub fn ReadableStreamSource(
                     else => return result.toJS(globalThis),
                 }
             }
+
             pub fn cancel(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 _ = globalObject; // autofix
                 JSC.markBinding(@src());
@@ -2766,6 +2783,7 @@ pub fn ReadableStreamSource(
                 this.cancel();
                 return JSC.JSValue.jsUndefined();
             }
+
             pub fn setOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
                 JSC.markBinding(@src());
                 this.close_handler = JSReadableStreamSource.onClose;
@@ -3944,6 +3962,13 @@ pub const FileReader = struct {
 
         this.pending.result = .{ .err = .{ .Error = err } };
         this.pending.run();
+    }
+
+    pub fn setRawMode(this: *FileReader, flag: bool) bun.sys.Maybe(void) {
+        if (!Environment.isWindows) {
+            @panic("FileReader.setRawMode must not be called on " ++ comptime Environment.os.displayString());
+        }
+        return this.reader.setRawMode(flag);
     }
 
     pub const Source = ReadableStreamSource(

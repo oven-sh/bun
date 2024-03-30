@@ -34,8 +34,10 @@
 //! Prior Art:
 //! - https://github.com/ScoopInstaller/Shim/blob/master/src/shim.cs
 //!
-//! The compiled binary is 12800 bytes and is `@embedFile`d into Bun itself.
+//! The compiled binary is 13312 bytes and is `@embedFile`d into Bun itself.
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
+//!
+//! Questions about this file should be directed at @paperdave.
 const builtin = @import("builtin");
 const dbg = builtin.mode == .Debug;
 
@@ -54,11 +56,9 @@ const Flags = @import("./BinLinkingShim.zig").Flags;
 pub inline fn wliteral(comptime str: []const u8) []const u16 {
     if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
     comptime var output: [str.len]u16 = undefined;
-
     for (str, 0..) |c, i| {
         output[i] = c;
     }
-
     const Static = struct {
         pub const literal: []const u16 = output[0..output.len];
     };
@@ -116,6 +116,8 @@ const k32 = struct {
     const GetExitCodeProcess = w.kernel32.GetExitCodeProcess;
     /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
     const GetConsoleMode = w.kernel32.GetConsoleMode;
+    /// https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-sethandleinformation
+    const SetHandleInformation = w.kernel32.SetHandleInformation;
     /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
     extern "kernel32" fn SetConsoleMode(
         hConsoleHandle: w.HANDLE, // [in]
@@ -128,7 +130,7 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
     if (!is_standalone) {
         bunDebugMessage(fmt, args);
     } else {
-        std.log.debug(if (fmt[fmt.len - 1] == '\n') fmt else fmt ++ "\n", args);
+        std.log.debug(fmt, args);
     }
 }
 
@@ -177,7 +179,7 @@ const FailReason = enum {
             .CouldNotDirectLaunch => if (!is_standalone)
                 "bin metadata is corrupt (invalid utf16)"
             else
-                // Unreachable is ok because Direct Launch is not supported in standalone mode
+                // unreachable is ok because Direct Launch is not supported in standalone mode
                 unreachable,
         };
     }
@@ -192,7 +194,9 @@ const FailReason = enum {
         try writer.writeAll("error: ");
         switch (reason) {
             inline else => |r| {
-                if (is_standalone and r == .CouldNotDirectLaunch) unreachable;
+                if (is_standalone and r == .CouldNotDirectLaunch)
+                    // unreachable is ok because Direct Launch is not supported in standalone mode
+                    unreachable;
 
                 const template = comptime getFormatTemplate(r) ++ "\n\n";
 
@@ -344,8 +348,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     assert(@intFromPtr(cmd_line_u16.ptr) % 2 == 0); // alignment assumption
 
     if (dbg) {
-        debug("CommandLine: {}\n", .{fmt16(cmd_line_u16[0 .. cmd_line_b_len / 2])});
-        debug("ImagePathName: {}\n", .{fmt16(image_path_u16[0 .. image_path_b_len / 2])});
+        debug("CommandLine: {}", .{fmt16(cmd_line_u16[0 .. cmd_line_b_len / 2])});
+        debug("ImagePathName: {}", .{fmt16(image_path_u16[0 .. image_path_b_len / 2])});
     }
 
     var buf1: [w.PATH_MAX_WIDE + "\"\" ".len]u16 = undefined;
@@ -392,8 +396,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             .MaximumLength = path_len_bytes,
             .Buffer = buf1_u16,
         };
-        if (dbg) debug("NtCreateFile({s})\n", .{fmt16(unicodeStringToU16(nt_name))});
-        if (dbg) debug("NtCreateFile({any})\n", .{(unicodeStringToU16(nt_name))});
+        if (dbg) debug("NtCreateFile({s})", .{fmt16(unicodeStringToU16(nt_name))});
+        if (dbg) debug("NtCreateFile({any})", .{(unicodeStringToU16(nt_name))});
         var attr = w.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
             .RootDirectory = null,
@@ -405,8 +409,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         // NtCreateFile will fail for absolute paths if we do not pass an OBJECT name
         // so we need the prefix here. This is an extra sanity check.
         if (dbg) {
-            std.debug.assert(std.mem.startsWith(u16, unicodeStringToU16(nt_name), &nt_object_prefix));
-            std.debug.assert(std.mem.endsWith(u16, unicodeStringToU16(nt_name), comptime wliteral(".bunx")));
+            assert(std.mem.startsWith(u16, unicodeStringToU16(nt_name), &nt_object_prefix));
+            assert(std.mem.endsWith(u16, unicodeStringToU16(nt_name), comptime wliteral(".bunx")));
         }
         const rc = nt.NtCreateFile(
             &metadata_handle,
@@ -422,7 +426,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             0,
         );
         if (rc != .SUCCESS) {
-            if (dbg) debug("error opening: {s}\n", .{@tagName(rc)});
+            if (dbg) debug("error opening: {s}", .{@tagName(rc)});
             if (rc == .OBJECT_NAME_NOT_FOUND)
                 mode.fail(.ShimNotFound);
             mode.fail(.CouldNotOpenShim);
@@ -462,11 +466,11 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         break :find_args cmd_line_u8[0..0];
     };
 
-    if (dbg) debug("UserArgs: '{s}' ({d} bytes)\n", .{ user_arguments_u8, user_arguments_u8.len });
+    if (dbg) debug("UserArgs: '{s}' ({d} bytes)", .{ user_arguments_u8, user_arguments_u8.len });
 
-    std.debug.assert(user_arguments_u8.len % 2 == 0);
-    std.debug.assert(user_arguments_u8.len != 2);
-    std.debug.assert(user_arguments_u8.len == 0 or user_arguments_u8[0] == ' ');
+    assert(user_arguments_u8.len % 2 == 0);
+    assert(user_arguments_u8.len != 2);
+    assert(user_arguments_u8.len == 0 or user_arguments_u8[0] == ' ');
 
     // Read the metadata file into the memory right after the image path.
     //
@@ -482,15 +486,18 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     var read_ptr: [*]u16 = brk: {
         var left = image_path_b_len / 2 - (if (is_standalone) ".exe".len else ".bunx".len) - 1;
         var ptr: [*]u16 = buf1_u16[nt_object_prefix.len + left ..];
-        if (dbg) debug("left = {d}, at {}, after {}\n", .{ left, ptr[0], ptr[1] });
+        if (dbg) debug("left = {d}, at {}, after {}", .{ left, ptr[0], ptr[1] });
 
         // if this is false, potential out of bounds memory access
-        std.debug.assert(@intFromPtr(ptr) - left * @sizeOf(std.meta.Child(@TypeOf(ptr))) >= @intFromPtr(buf1_u16));
+        if (dbg)
+            assert(
+                @intFromPtr(ptr) - left * @sizeOf(std.meta.Child(@TypeOf(ptr))) >= @intFromPtr(buf1_u16),
+            );
         // we start our search right before the . as we know the extension is '.bunx'
-        std.debug.assert(ptr[1] == '.');
+        assert(ptr[1] == '.');
 
         while (true) {
-            if (dbg) debug("1 - {}\n", .{std.unicode.fmtUtf16le(ptr[0..1])});
+            if (dbg) debug("1 - {}", .{std.unicode.fmtUtf16le(ptr[0..1])});
             if (ptr[0] == '\\') {
                 left -= 1;
                 // ptr is of type [*]u16, which means -= operates on number of ITEMS, not BYTES
@@ -502,12 +509,13 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 return mode.fail(.NoDirname);
             }
             ptr -= 1;
-            std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
+            if (dbg)
+                assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
         }
         // inlined loop to do this again, because the completion case is different
         // using `inline for` caused comptime issues that made the code much harder to read
         while (true) {
-            if (dbg) debug("2 - {}\n", .{std.unicode.fmtUtf16le(ptr[0..1])});
+            if (dbg) debug("2 - {}", .{std.unicode.fmtUtf16le(ptr[0..1])});
             if (ptr[0] == '\\') {
                 // ptr is at the position marked S, so move forward one *character*
                 break :brk ptr + 1;
@@ -517,17 +525,18 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 return mode.fail(.NoDirname);
             }
             ptr -= 1;
-            std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
+            if (dbg)
+                assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
         }
-        comptime unreachable;
+        @compileError("unreachable - the loop breaks this entire block");
     };
-    std.debug.assert(read_ptr[0] != '\\');
-    std.debug.assert((read_ptr - 1)[0] == '\\');
+    assert(read_ptr[0] != '\\');
+    assert((read_ptr - 1)[0] == '\\');
 
     const read_max_len = buf1.len * 2 - (@intFromPtr(read_ptr) - @intFromPtr(buf1_u16));
 
-    if (dbg) debug("read_ptr = buf1 + {d}\n", .{(@intFromPtr(read_ptr) - @intFromPtr(buf1_u16))});
-    if (dbg) debug("max_read_len = {d}\n", .{read_max_len});
+    if (dbg) debug("read_ptr = buf1 + {d}", .{(@intFromPtr(read_ptr) - @intFromPtr(buf1_u16))});
+    if (dbg) debug("max_read_len = {d}", .{read_max_len});
 
     // Do the read!
     //
@@ -549,25 +558,25 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         // In the context of this program, I don't think that is possible, but I will handle it
         read_max_len,
         else => |rc| {
-            if (dbg) debug("error reading: {s}\n", .{@tagName(rc)});
+            if (dbg) debug("error reading: {s}", .{@tagName(rc)});
             return mode.fail(.CouldNotReadShim);
         },
     };
 
     _ = nt.NtClose(metadata_handle);
 
-    if (dbg) debug("BufferAfterRead: '{}'\n", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
+    if (dbg) debug("BufferAfterRead: '{}'", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
 
     read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + read_len - @sizeOf(Flags));
     const flags: Flags = @as(*align(1) Flags, @ptrCast(read_ptr)).*;
 
     if (dbg) {
         const flags_u16: u16 = @as(*align(1) u16, @ptrCast(read_ptr)).*;
-        debug("FlagsInt: {d}\n", .{flags_u16});
+        debug("FlagsInt: {d}", .{flags_u16});
 
-        debug("Flags:\n", .{});
+        debug("Flags:", .{});
         inline for (comptime std.meta.fieldNames(Flags)) |name| {
-            debug("    {s}: {}\n", .{ name, @field(flags, name) });
+            debug("    {s}: {}", .{ name, @field(flags, name) });
         }
     }
 
@@ -635,8 +644,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             const shebang_bin_path_len_bytes = shebang_metadata.bin_path_len_bytes;
 
             if (dbg) {
-                debug("bin_path_len_bytes: {}\n", .{shebang_metadata.bin_path_len_bytes});
-                debug("args_len_bytes: {}\n", .{shebang_metadata.args_len_bytes});
+                debug("bin_path_len_bytes: {}", .{shebang_metadata.bin_path_len_bytes});
+                debug("args_len_bytes: {}", .{shebang_metadata.args_len_bytes});
             }
 
             // magic number related to how BinLinkingShim.zig writes the metadata
@@ -648,7 +657,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 (@as(u64, shebang_arg_len_u8) +| @as(u64, shebang_bin_path_len_bytes)) + validation_length_offset != read_len)
             {
                 if (dbg)
-                    debug("read_len: {}\n", .{read_len});
+                    debug("read_len: {}", .{read_len});
 
                 return mode.fail(.InvalidShimBounds);
             }
@@ -663,11 +672,11 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 //
                 // This optimization can save an additional ~10-20ms depending on the machine
                 // as we do not have to launch a second process.
-                if (dbg) debug("direct_launch_with_bun_js\n", .{});
+                if (dbg) debug("direct_launch_with_bun_js", .{});
                 // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
                 //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^  ^ read_ptr
                 const len = (@intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - shebang_arg_len_u8) / 2 - nt_object_prefix.len - "\"\x00".len;
-                const launch_slice = buf1_u16[nt_object_prefix.len..][0..len :'"'];
+                const launch_slice = buf1_u16[nt_object_prefix.len..][0..len :'"']; // assert we slice at the "
                 bun_ctx.direct_launch_with_bun_js(
                     launch_slice,
                     bun_ctx.cli_context,
@@ -678,6 +687,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             // Copy the shebang bin path
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //                                                                  ^~~~^
+            //                                                                  ^ read_ptr
             // BUF2: 'node !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
             read_ptr = @ptrFromInt(@intFromPtr(read_ptr) - shebang_arg_len_u8);
             @memcpy(buf2_u8, @as([*]u8, @ptrCast(read_ptr))[0..shebang_arg_len_u8]);
@@ -687,33 +697,58 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
             // Copy the filename in. There is no leading " but there is a trailing "
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^   ^ read_ptr
+            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
-            const length_of_filename_u8 = @intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - shebang_arg_len_u8;
+            const length_of_filename_u8 = @intFromPtr(read_ptr) -
+                @intFromPtr(buf1_u8) - 2 * (nt_object_prefix.len + "\x00".len);
+            const filename = buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8];
+            if (dbg) {
+                const sliced = std.mem.bytesAsSlice(u16, filename);
+                debug("filename and quote: '{}'", .{fmt16(@alignCast(sliced))});
+                debug("last char of above is '{}'", .{sliced[sliced.len - 1]});
+                assert(sliced[sliced.len - 1] == '\"');
+            }
+
             @memcpy(
                 buf2_u8[shebang_arg_len_u8 + 2 * "\"".len ..][0..length_of_filename_u8],
-                buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8],
+                filename,
             );
-            read_ptr = @ptrFromInt(@intFromPtr(buf2_u8) + length_of_filename_u8 + 2 * ("\"".len + nt_object_prefix.len));
+            // the pointer is now going to act as a write pointer for remaining data.
+            // note that it points into buf2 now, not buf1. this will write arguments and the null terminator
+            // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
+            //                                                                   ^ write_ptr
+            if (dbg) {
+                debug("advance = {} + {} + {}\n", .{ shebang_arg_len_u8, "\"".len, length_of_filename_u8 });
+            }
+            const advance = shebang_arg_len_u8 + 2 * "\"".len + length_of_filename_u8;
+            var write_ptr: [*]u16 = @ptrFromInt(@intFromPtr(buf2_u8) + advance);
+            assert((write_ptr - 1)[0] == '"');
 
             if (user_arguments_u8.len > 0) {
                 // Copy the user arguments in:
                 // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags!!!!!!!!!!!'
                 //        ^~~~~X^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
-                //        |    |filename_len                                         where the user args go
+                //        |    |filename_len                                         write_ptr
                 //        |    the quote
                 //        shebang_arg_len
-                @memcpy(@as([*]u8, @ptrCast(read_ptr)), user_arguments_u8);
-                read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + user_arguments_u8.len);
+                @memcpy(@as([*]u8, @ptrCast(write_ptr)), user_arguments_u8);
+                write_ptr = @ptrFromInt(@intFromPtr(write_ptr) + user_arguments_u8.len);
             }
 
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
             //                                                                           ^ null terminator
-            @as(*align(1) u16, @ptrCast(read_ptr)).* = 0;
+            write_ptr[0] = 0;
 
             break :spawn_command_line @ptrCast(buf2_u16);
         },
     };
+
+    if (!is_standalone) {
+        // Prepare stdio for the child process, as after this we are going to *immediatly* exit
+        // it is likely that the c-runtime's atexit will not be called as we end the process ourselves.
+        bun.Output.Source.Stdio.restore();
+        bun.C.windows_enable_stdio_inheritance();
+    }
 
     // I attempted to use lower level methods for this, but it really seems
     // too difficult and not worth the stability risks.
@@ -745,9 +780,10 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         .wShowWindow = 0,
         .cbReserved2 = 0,
         .lpReserved2 = null,
-        .hStdInput = ProcessParameters.hStdInput,
-        .hStdOutput = ProcessParameters.hStdOutput,
-        .hStdError = ProcessParameters.hStdError,
+        // The standard handles outside of standalone may be tampered with.
+        .hStdInput = if (is_standalone) ProcessParameters.hStdInput else bun.win32.STDIN_FD.cast(),
+        .hStdOutput = if (is_standalone) ProcessParameters.hStdOutput else bun.win32.STDOUT_FD.cast(),
+        .hStdError = if (is_standalone) ProcessParameters.hStdError else bun.win32.STDERR_FD.cast(),
     };
 
     inline for (.{ 0, 1 }) |attempt_number| iteration: {
@@ -759,8 +795,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             null,
             null,
             1, // true
-            if (is_standalone) 0 else w.CREATE_UNICODE_ENVIRONMENT,
-            if (is_standalone) null else @constCast(bun_ctx.environment),
+            0,
+            null,
             null,
             &startup_info,
             &process,
@@ -768,8 +804,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         if (did_process_spawn == 0) {
             const spawn_err = k32.GetLastError();
             if (dbg) {
-                debug("CreateProcessW failed: {s}\n", .{@tagName(spawn_err)});
-                debug("attempt number: {d}\n", .{attempt_number});
+                debug("CreateProcessW failed: {s}", .{@tagName(spawn_err)});
+                debug("attempt number: {d}", .{attempt_number});
             }
             return switch (spawn_err) {
                 .FILE_NOT_FOUND => if (flags.has_shebang) {
@@ -849,14 +885,15 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
         var exit_code: w.DWORD = 255;
         _ = k32.GetExitCodeProcess(process.hProcess, &exit_code);
+        if (dbg) debug("exit_code: {d}", .{exit_code});
 
         _ = nt.NtClose(process.hProcess);
         _ = nt.NtClose(process.hThread);
 
         nt.RtlExitUserProcess(exit_code);
-        comptime unreachable;
+        @compileError("unreachable - RtlExitUserProcess does not return");
     }
-    comptime unreachable;
+    @compileError("unreachable - above loop should not exit");
 }
 
 pub const FromBunRunContext = struct {
@@ -888,8 +925,9 @@ pub const FromBunRunContext = struct {
 /// this returns void, to which the caller should still try invoking the exe directly. This
 /// is to handle version mismatches where bun.exe's decoder is too new than the .bunx file.
 pub fn tryStartupFromBunJS(context: FromBunRunContext) void {
-    std.debug.assert(!std.mem.startsWith(u16, context.base_path, &nt_object_prefix));
-    comptime std.debug.assert(!is_standalone);
+    assert(!std.mem.startsWith(u16, context.base_path, &nt_object_prefix));
+    comptime assert(!is_standalone);
+    comptime assert(bun.FeatureFlags.windows_bunx_fast_path);
     launcher(.launch, context);
 }
 
@@ -922,16 +960,17 @@ pub const ReadWithoutLaunchResult = union {
 /// The cost of spawning is about 5-12ms, and the unicode conversions are way
 /// faster than that, so this is a huge win.
 pub fn readWithoutLaunch(context: FromBunShellContext) ReadWithoutLaunchResult {
-    std.debug.assert(!std.mem.startsWith(u16, context.base_path, &nt_object_prefix));
-    comptime std.debug.assert(!is_standalone);
+    assert(!std.mem.startsWith(u16, context.base_path, &nt_object_prefix));
+    comptime assert(!is_standalone);
+    comptime assert(bun.FeatureFlags.windows_bunx_fast_path);
     return launcher(.read_without_launch, context);
 }
 
 /// Main function for `bun_shim_impl.exe`
 pub inline fn main() noreturn {
-    comptime std.debug.assert(is_standalone);
-    comptime std.debug.assert(builtin.single_threaded);
-    comptime std.debug.assert(!builtin.link_libc);
-    comptime std.debug.assert(!builtin.link_libcpp);
+    comptime assert(is_standalone);
+    comptime assert(builtin.single_threaded);
+    comptime assert(!builtin.link_libc);
+    comptime assert(!builtin.link_libcpp);
     launcher(.launch, {});
 }

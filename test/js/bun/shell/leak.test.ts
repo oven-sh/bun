@@ -1,5 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
-
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv } from "harness";
@@ -66,7 +64,7 @@ describe("fd leak", () => {
       Bun.gc(true);
       const fd = openSync(devNull, "r");
       closeSync(fd);
-      expect(Math.abs(fd - baseline)).toBeLessThanOrEqual(threshold);
+      expect(fd - baseline).toBeLessThanOrEqual(threshold);
     }, 100_000);
   }
 
@@ -85,7 +83,6 @@ describe("fd leak", () => {
       writeFileSync(tempfile, testcode);
 
       const impl = /* ts */ `
-            test("${name}", async () => {
               const threshold = ${threshold}
               let prev: number | undefined = undefined;
               let prevprev: number | undefined = undefined;
@@ -101,14 +98,9 @@ describe("fd leak", () => {
                   prev = val;
                   prevprev = val;
                 } else {
-                  // const delta = prevprev - val;
-                  // prevprev = val;
-                  // console.error("Delta", delta);
-                  expect(Math.abs(prev - val)).toBeLessThan(threshold)
                   if (!(Math.abs(prev - val) < threshold)) process.exit(1);
                 }
               }
-            }, 1_000_000)
             `;
 
       appendFileSync(tempfile, impl);

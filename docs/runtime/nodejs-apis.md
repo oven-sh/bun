@@ -56,7 +56,7 @@ Some methods are not optimized yet.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟡 Missing `Dir` `openAsBlob` `opendir` `opendirSync` `statfs` `statfsSync`
+🟡 Missing `statfs` `statfsSync`, `opendirSync`. `Dir` is partially implemented.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 

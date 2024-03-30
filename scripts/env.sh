@@ -43,6 +43,9 @@ mkdir -p $BUN_DEPS_OUT_DIR
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "C Compiler: ${CC}"
     echo "C++ Compiler: ${CXX}"
+    if [[ $(uname -s) == 'Darwin' ]]; then
+        echo "OSX Deployment Target: ${CMAKE_OSX_DEPLOYMENT_TARGET}"
+    fi
 fi
 
 

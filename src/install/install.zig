@@ -301,7 +301,7 @@ const NetworkTask = struct {
         name: string,
         allocator: std.mem.Allocator,
         scope: *const Npm.Registry.Scope,
-        loaded_manifest: ?Npm.PackageManifest,
+        loaded_manifest: ?*const Npm.PackageManifest,
         warn_on_error: bool,
     ) !void {
         this.url_buf = blk: {
@@ -337,6 +337,21 @@ const NetworkTask = struct {
 
                 return error.InvalidURL;
             }
+
+            if (!(tmp.hasPrefixComptime("https://") or tmp.hasPrefixComptime("http://"))) {
+                const msg = .{
+                    .fmt = "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                    .args = .{tmp},
+                };
+
+                if (warn_on_error)
+                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
+                else
+                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
+
+                return error.InvalidURL;
+            }
+
             // This actually duplicates the string! So we defer deref the WTF managed one above.
             break :blk try tmp.toOwnedSlice(allocator);
         };
@@ -408,7 +423,7 @@ const NetworkTask = struct {
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
-                .loaded_manifest = loaded_manifest,
+                .loaded_manifest = if (loaded_manifest) |manifest| manifest.* else null,
             },
         };
 
@@ -448,6 +463,16 @@ const NetworkTask = struct {
             );
         } else {
             this.url_buf = tarball_url;
+        }
+
+        if (!(strings.hasPrefixComptime(this.url_buf, "https://") or strings.hasPrefixComptime(this.url_buf, "http://"))) {
+            const msg = .{
+                .fmt = "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
+                .args = .{ bun.fmt.QuotedFormatter{ .text = this.url_buf }, bun.fmt.QuotedFormatter{ .text = tarball.name.slice() } },
+            };
+
+            this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
+            return error.InvalidURL;
         }
 
         this.response_buffer = try MutableString.init(allocator, 0);
@@ -1090,6 +1115,15 @@ pub const PackageInstall = struct {
             }
         },
 
+        pub fn fail(err: anyerror, step: Step) Result {
+            return .{
+                .fail = .{
+                    .err = err,
+                    .step = step,
+                },
+            };
+        }
+
         pub const Tag = enum {
             success,
             fail,
@@ -1251,6 +1285,7 @@ pub const PackageInstall = struct {
 
                 var in_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
                 var out_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
+                var copy_file_state: bun.CopyFileState = .{};
 
                 while (try walker.next()) |entry| {
                     if (entry.kind != .file) continue;
@@ -1301,7 +1336,7 @@ pub const PackageInstall = struct {
                             _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                         }
 
-                        bun.copyFile(in_file.handle, outfile.handle) catch |err| {
+                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
                             progress_.root.end();
 
                             progress_.refresh();
@@ -1334,23 +1369,17 @@ pub const PackageInstall = struct {
     fn installWithHardlink(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
+        var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir);
         defer cached_package_dir.close();
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
             &[_]bun.OSPathSlice{},
             &[_]bun.OSPathSlice{},
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
+        ) catch |err| return Result.fail(err, .opening_cache_dir);
         defer walker_.deinit();
 
-        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
+        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_cache_dir);
 
         defer subdir.close();
 
@@ -1359,36 +1388,41 @@ pub const PackageInstall = struct {
         var to_copy_buf: []u16 = undefined;
         var to_copy_buf2: []u16 = undefined;
         if (comptime Environment.isWindows) {
-            var fd_path_buf: bun.PathBuffer = undefined;
+            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(subdir.fd, &buf, buf.len, 0);
+            if (dest_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                    // If this code path is reached, it should have a toSystemErrno mapping
+                    Output.warn("Failed to get destination path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
+                    break :brk error.Unexpected;
+                };
+                return Result.fail(err, .copying_files);
+            }
+            const dest_path = buf[0..dest_path_length];
+            if (buf[dest_path.len - 1] != '\\') {
+                buf[dest_path.len] = '\\';
+                to_copy_buf = buf[dest_path.len + 1 ..];
+            } else {
+                to_copy_buf = buf[dest_path.len..];
+            }
 
-            // buf[0] = '\\';
-            // buf[1] = '\\';
-            // buf[2] = '?';
-            // buf[3] = '\\';
-            // const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
-            // strings.copyU8IntoU16(buf[4..], dest_path);
-            // buf[dest_path.len + 4] = '\\';
-            // to_copy_buf = buf[dest_path.len + 5 ..];
-
-            // buf2[0] = '\\';
-            // buf2[1] = '\\';
-            // buf2[2] = '?';
-            // buf2[3] = '\\';
-            // const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
-            // strings.copyU8IntoU16(buf2[4..], cache_path);
-            // buf2[cache_path.len + 4] = '\\';
-            // to_copy_buf2 = buf2[cache_path.len + 5 ..];
-
-            // TODO(dylan-conway): find out why //?/ isn't working
-            const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
-            strings.copyU8IntoU16(&buf, dest_path);
-            buf[dest_path.len] = '\\';
-            to_copy_buf = buf[dest_path.len + 1 ..];
-
-            const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
-            strings.copyU8IntoU16(&buf2, cache_path);
-            buf2[cache_path.len] = '\\';
-            to_copy_buf2 = buf2[cache_path.len + 1 ..];
+            const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(cached_package_dir.fd, &buf2, buf2.len, 0);
+            if (cache_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                    // If this code path is reached, it should have a toSystemErrno mapping
+                    Output.warn("Failed to get cache path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
+                    break :brk error.Unexpected;
+                };
+                return Result.fail(err, .copying_files);
+            }
+            const cache_path = buf2[0..cache_path_length];
+            if (buf2[cache_path.len - 1] != '\\') {
+                buf2[cache_path.len] = '\\';
+                to_copy_buf2 = buf2[cache_path.len + 1 ..];
+            } else {
+                to_copy_buf2 = buf2[cache_path.len..];
+            }
         }
 
         const FileCopier = struct {
@@ -1464,17 +1498,12 @@ pub const PackageInstall = struct {
         ) catch |err| {
             if (comptime Environment.isWindows) {
                 if (err == error.FailedToCopyFile) {
-                    return Result{
-                        .fail = .{ .err = err, .step = .copying_files },
-                    };
+                    return Result.fail(err, .copying_files);
                 }
             } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
                 return err;
             }
-
-            return Result{
-                .fail = .{ .err = err, .step = .copying_files },
-            };
+            return Result.fail(err, .copying_files);
         };
 
         return Result{
@@ -2092,11 +2121,11 @@ pub const PackageManager = struct {
             };
         }
 
-        this.env.loadCCachePath(this_bundler.fs);
+        this.env.loadCCachePath();
 
         {
             var node_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-            if (this.env.getNodePath(this_bundler.fs, &node_path)) |node_pathZ| {
+            if (this.env.getNodePath(&node_path)) |node_pathZ| {
                 _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
             } else brk: {
                 const current_path = this.env.get("PATH") orelse "";
@@ -3195,7 +3224,7 @@ pub const PackageManager = struct {
                                     "incorrect peer dependency \"{}@{}\"",
                                     .{
                                         existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                        existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                        existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
                                     },
                                 ) catch unreachable;
                                 successFn(this, dependency_id, existing_id);
@@ -3232,7 +3261,7 @@ pub const PackageManager = struct {
                                     "incorrect peer dependency \"{}@{}\"",
                                     .{
                                         existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                        existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                        existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
                                     },
                                 ) catch unreachable;
                                 successFn(this, dependency_id, list.items[0]);
@@ -3304,7 +3333,12 @@ pub const PackageManager = struct {
 
             .folder => {
                 // relative to cwd
-                const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, this.lockfile.str(&version.value.folder), this);
+                const folder_path = this.lockfile.str(&version.value.folder);
+                const folder_path_abs = if (std.fs.path.isAbsolute(folder_path)) folder_path else blk: {
+                    var buf2: bun.PathBuffer = undefined;
+                    break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{folder_path}, .auto);
+                };
+                const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -3321,9 +3355,14 @@ pub const PackageManager = struct {
             },
             .workspace => {
                 // package name hash should be used to find workspace path from map
-                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
+                const workspace_path_raw: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
+                const workspace_path = this.lockfile.str(workspace_path_raw);
+                const workspace_path_u8 = if (std.fs.path.isAbsolute(workspace_path)) workspace_path else blk: {
+                    var buf2: bun.PathBuffer = undefined;
+                    break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{workspace_path}, .auto);
+                };
 
-                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(workspace_path), this);
+                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, workspace_path_u8, this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -3763,7 +3802,7 @@ pub const PackageManager = struct {
                                         this.lockfile.str(&result.package.name),
                                         label,
                                         this.lockfile.str(&result.package.name),
-                                        result.package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                        result.package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
                                     });
                                 }
                                 // Resolve dependencies first
@@ -3865,7 +3904,7 @@ pub const PackageManager = struct {
                                         name_str,
                                         this.allocator,
                                         this.scopeForPackageName(name_str),
-                                        loaded_manifest,
+                                        if (loaded_manifest) |*manifest| manifest else null,
                                         dependency.behavior.isOptional() or !this.options.do.install_peer_dependencies,
                                     );
                                     this.enqueueNetworkTask(network_task);
@@ -4076,7 +4115,7 @@ pub const PackageManager = struct {
                                 this.lockfile.str(&result.package.name),
                                 label,
                                 this.lockfile.str(&result.package.name),
-                                result.package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                result.package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
                             });
                         }
                         // We shouldn't see any dependencies
@@ -4333,10 +4372,13 @@ pub const PackageManager = struct {
                 false,
             ) catch |err| {
                 const note = .{
-                    .fmt = "error occured while resolving {s}",
-                    .args = .{
-                        lockfile.str(&dependency.realname()),
-                    },
+                    .fmt = "error occured while resolving {}",
+                    .args = .{bun.fmt.fmtPath(u8, lockfile.str(&dependency.realname()), .{
+                        .path_sep = switch (dependency.version.tag) {
+                            .folder => .auto,
+                            else => .any,
+                        },
+                    })},
                 };
 
                 if (dependency.behavior.isOptional() or dependency.behavior.isPeer())
@@ -4891,7 +4933,7 @@ pub const PackageManager = struct {
                                     .{
                                         bun.span(@errorName(err)),
                                         extract.name.slice(),
-                                        extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items),
+                                        extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
                                     },
                                 ) catch unreachable;
                             }
@@ -4910,7 +4952,7 @@ pub const PackageManager = struct {
                             const args = .{
                                 bun.span(@errorName(err)),
                                 extract.name.slice(),
-                                extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items),
+                                extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
                             };
                             if (comptime log_level.showProgress()) {
                                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
@@ -5088,7 +5130,7 @@ pub const PackageManager = struct {
                         continue;
                     }
                     manager.extracted_count += 1;
-                    bun.Analytics.Features.extracted_packages = true;
+                    bun.Analytics.Features.extracted_packages += 1;
 
                     // GitHub and tarball URL dependencies are not fully resolved until after the tarball is downloaded & extracted.
                     if (manager.processExtractedTarballPackage(&package_id, resolution, task.data.extract, comptime log_level)) |pkg| brk: {
@@ -6460,9 +6502,14 @@ pub const PackageManager = struct {
         }
 
         var fs = try Fs.FileSystem.init(null);
-        const original_cwd = strings.withoutTrailingSlash(fs.top_level_dir);
+        const top_level_dir_no_trailing_slash = strings.withoutTrailingSlash(fs.top_level_dir);
+        if (comptime Environment.isWindows) {
+            _ = Path.pathToPosixBuf(u8, strings.withoutTrailingSlash(fs.top_level_dir), &cwd_buf);
+        } else {
+            @memcpy(cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
+        }
 
-        bun.copy(u8, &cwd_buf, original_cwd);
+        const original_cwd: string = cwd_buf[0..top_level_dir_no_trailing_slash.len];
 
         var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
 
@@ -6628,7 +6675,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(entries_option.entries, &[_][]u8{}, .production);
+        try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
@@ -7639,7 +7686,15 @@ pub const PackageManager = struct {
             // add
             // remove
             outer: for (positionals) |positional| {
-                var input = std.mem.trim(u8, positional, " \n\r\t");
+                var input: []u8 = @constCast(std.mem.trim(u8, positional, " \n\r\t"));
+                {
+                    var temp: [2048]u8 = undefined;
+                    const len = std.mem.replace(u8, input, "\\\\", "/", &temp);
+                    bun.path.platformToPosixInPlace(u8, &temp);
+                    const input2 = temp[0 .. input.len - len];
+                    @memcpy(input[0..input2.len], input2);
+                    input.len = input2.len;
+                }
                 switch (op) {
                     .link, .unlink => if (!strings.hasPrefixComptime(input, "link:")) {
                         input = std.fmt.allocPrint(allocator, "{0s}@link:{0s}", .{input}) catch unreachable;
@@ -8469,7 +8524,7 @@ pub const PackageManager = struct {
 
             var resolution_buf: [512]u8 = undefined;
             const extern_string_buf = this.lockfile.buffers.extern_strings.items;
-            const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf)}) catch unreachable;
+            const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
             var installer = PackageInstall{
                 .progress = this.progress,
                 .cache_dir = undefined,
@@ -8686,7 +8741,7 @@ pub const PackageManager = struct {
                                     Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
                                         count,
                                         alias,
-                                        resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                        resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
                                     });
                                 }
 
@@ -8747,7 +8802,7 @@ pub const PackageManager = struct {
                                         // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
                                         // This caused bugs. We can't assert on it because they could come from old lockfiles
                                         if (resolution.value.npm.url.isEmpty()) {
-                                            Output.debugWarn("package {s}@{} missing tarball_url", .{ name, resolution.fmt(buf) });
+                                            Output.debugWarn("package {s}@{} missing tarball_url", .{ name, resolution.fmt(buf, .posix) });
                                         }
                                     }
 
@@ -9131,6 +9186,7 @@ pub const PackageManager = struct {
             this.lockfile = try this.lockfile.maybeCloneFilteringRootPackages(
                 this.options.local_package_features,
                 this.options.enable.exact_versions,
+                log_level,
             );
         }
 
@@ -9522,16 +9578,19 @@ pub const PackageManager = struct {
             .auto,
         );
 
-        // might need to read scripts from disk if we are migrating from package-lock.json
+        const buf = this.lockfile.buffers.string_bytes.items;
+        // need to clone because this is a copy before Lockfile.cleanWithLogger
+        const name = this.allocator.dupe(u8, root_package.name.slice(buf)) catch bun.outOfMemory();
+        const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
 
         if (root_package.scripts.hasAny()) {
             const add_node_gyp_rebuild_script = root_package.scripts.install.isEmpty() and root_package.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
 
             this.root_lifecycle_scripts = root_package.scripts.createList(
                 this.lockfile,
-                this.lockfile.buffers.string_bytes.items,
-                strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
-                root_package.name.slice(this.lockfile.buffers.string_bytes.items),
+                buf,
+                top_level_dir_without_trailing_slash,
+                name,
                 .root,
                 add_node_gyp_rebuild_script,
             );
@@ -9540,9 +9599,9 @@ pub const PackageManager = struct {
                 // no scripts exist but auto node gyp script needs to be added
                 this.root_lifecycle_scripts = root_package.scripts.createList(
                     this.lockfile,
-                    this.lockfile.buffers.string_bytes.items,
-                    strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
-                    root_package.name.slice(this.lockfile.buffers.string_bytes.items),
+                    buf,
+                    top_level_dir_without_trailing_slash,
+                    name,
                     .root,
                     true,
                 );
@@ -9900,6 +9959,7 @@ pub const PackageManager = struct {
             manager.package_json_updates,
             manager.log,
             manager.options.enable.exact_versions,
+            log_level,
         );
         if (manager.lockfile.packages.len > 0) {
             root = manager.lockfile.packages.get(0);
@@ -9916,14 +9976,18 @@ pub const PackageManager = struct {
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
-        {
-            // append scripts to lockfile before generating new metahash
-            manager.loadRootLifecycleScripts(root);
-
+        // append scripts to lockfile before generating new metahash
+        manager.loadRootLifecycleScripts(root);
+        defer {
             if (manager.root_lifecycle_scripts) |root_scripts| {
-                root_scripts.appendToLockfile(manager.lockfile);
+                manager.allocator.free(root_scripts.package_name);
             }
+        }
 
+        if (manager.root_lifecycle_scripts) |root_scripts| {
+            root_scripts.appendToLockfile(manager.lockfile);
+        }
+        {
             const packages = manager.lockfile.packages.slice();
             for (packages.items(.resolution), packages.items(.meta), packages.items(.scripts)) |resolution, meta, scripts| {
                 if (resolution.tag == .workspace) {

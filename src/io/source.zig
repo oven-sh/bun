@@ -8,75 +8,81 @@ pub const Source = union(enum) {
     pipe: *Pipe,
     tty: *Tty,
     file: *File,
+    sync_file: *File,
 
     const Pipe = uv.Pipe;
     const Tty = uv.uv_tty_t;
+
     pub const File = struct {
         fs: uv.fs_t,
+        // we need a new fs_t to close the file
+        // the current one is used for write/reading/canceling
+        // we dont wanna to free any data that is being used in uv loop
+        close_fs: uv.fs_t,
         iov: uv.uv_buf_t,
         file: uv.uv_file,
     };
 
     pub fn isClosed(this: Source) bool {
-        switch (this) {
-            .pipe => |pipe| return pipe.isClosed(),
-            .tty => |tty| return tty.isClosed(),
-            .file => |file| return file.file == -1,
-        }
+        return switch (this) {
+            .pipe => |pipe| pipe.isClosed(),
+            .tty => |tty| tty.isClosed(),
+            .sync_file, .file => |file| file.file == -1,
+        };
     }
 
     pub fn isActive(this: Source) bool {
-        switch (this) {
-            .pipe => |pipe| return pipe.isActive(),
-            .tty => |tty| return tty.isActive(),
-            .file => return true,
-        }
+        return switch (this) {
+            .pipe => |pipe| pipe.isActive(),
+            .tty => |tty| tty.isActive(),
+            .sync_file, .file => true,
+        };
     }
 
     pub fn getHandle(this: Source) *uv.Handle {
-        switch (this) {
-            .pipe => return @ptrCast(this.pipe),
-            .tty => return @ptrCast(this.tty),
-            .file => unreachable,
-        }
+        return switch (this) {
+            .pipe => @ptrCast(this.pipe),
+            .tty => @ptrCast(this.tty),
+            .sync_file, .file => unreachable,
+        };
     }
     pub fn toStream(this: Source) *uv.uv_stream_t {
-        switch (this) {
-            .pipe => return @ptrCast(this.pipe),
-            .tty => return @ptrCast(this.tty),
-            .file => unreachable,
-        }
+        return switch (this) {
+            .pipe => @ptrCast(this.pipe),
+            .tty => @ptrCast(this.tty),
+            .sync_file, .file => unreachable,
+        };
     }
 
     pub fn getFd(this: Source) bun.FileDescriptor {
-        switch (this) {
-            .pipe => return this.pipe.fd(),
-            .tty => return this.tty.fd(),
-            .file => return bun.FDImpl.fromUV(this.file.file).encode(),
-        }
+        return switch (this) {
+            .pipe => |pipe| pipe.fd(),
+            .tty => |tty| tty.fd(),
+            .sync_file, .file => |file| bun.FDImpl.fromUV(file.file).encode(),
+        };
     }
 
     pub fn setData(this: Source, data: ?*anyopaque) void {
         switch (this) {
-            .pipe => this.pipe.data = data,
-            .tty => this.tty.data = data,
-            .file => this.file.fs.data = data,
+            .pipe => |pipe| pipe.data = data,
+            .tty => |tty| tty.data = data,
+            .sync_file, .file => |file| file.fs.data = data,
         }
     }
 
     pub fn getData(this: Source) ?*anyopaque {
-        switch (this) {
-            .pipe => |pipe| return pipe.data,
-            .tty => |tty| return tty.data,
-            .file => |file| return file.fs.data,
-        }
+        return switch (this) {
+            .pipe => |pipe| pipe.data,
+            .tty => |tty| tty.data,
+            .sync_file, .file => |file| file.fs.data,
+        };
     }
 
     pub fn ref(this: Source) void {
         switch (this) {
             .pipe => this.pipe.ref(),
             .tty => this.tty.ref(),
-            .file => return,
+            .sync_file, .file => return,
         }
     }
 
@@ -84,16 +90,16 @@ pub const Source = union(enum) {
         switch (this) {
             .pipe => this.pipe.unref(),
             .tty => this.tty.unref(),
-            .file => return,
+            .sync_file, .file => return,
         }
     }
 
     pub fn hasRef(this: Source) bool {
-        switch (this) {
-            .pipe => return this.pipe.hasRef(),
-            .tty => return this.tty.hasRef(),
-            .file => return false,
-        }
+        return switch (this) {
+            .pipe => |pipe| pipe.hasRef(),
+            .tty => |tty| tty.hasRef(),
+            .sync_file, .file => false,
+        };
     }
 
     pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Pipe) {
@@ -125,11 +131,14 @@ pub const Source = union(enum) {
 
         return switch (tty.init(loop, bun.uvfdcast(fd))) {
             .err => |err| .{ .err = err },
-            .result => .{ .result = tty },
+            .result => brk: {
+                break :brk .{ .result = tty };
+            },
         };
     }
 
     pub fn openFile(fd: bun.FileDescriptor) *Source.File {
+        std.debug.assert(fd.isValid() and bun.uvfdcast(fd) != -1);
         log("openFile (fd = {})", .{fd});
         const file = bun.default_allocator.create(Source.File) catch bun.outOfMemory();
 
@@ -139,26 +148,64 @@ pub const Source = union(enum) {
     }
 
     pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(Source) {
-        log("open (fd = {})", .{fd});
-        const rc = bun.windows.GetFileType(fd.cast());
+        const rc = bun.windows.libuv.uv_guess_handle(bun.uvfdcast(fd));
+        log("open(fd: {}, type: {d})", .{ fd, @tagName(rc) });
+
         switch (rc) {
-            bun.windows.FILE_TYPE_PIPE => {
+            .named_pipe => {
                 switch (openPipe(loop, fd)) {
                     .result => |pipe| return .{ .result = .{ .pipe = pipe } },
                     .err => |err| return .{ .err = err },
                 }
             },
-            bun.windows.FILE_TYPE_CHAR => {
+            .tty => {
                 switch (openTty(loop, fd)) {
                     .result => |tty| return .{ .result = .{ .tty = tty } },
                     .err => |err| return .{ .err = err },
                 }
             },
+            .file => {
+                return .{
+                    .result = .{
+                        .file = openFile(fd),
+                    },
+                };
+            },
             else => {
-                return .{ .result = .{
-                    .file = openFile(fd),
-                } };
+                const errno = bun.windows.getLastErrno();
+
+                if (errno == .SUCCESS) {
+                    return .{
+                        .result = .{
+                            .file = openFile(fd),
+                        },
+                    };
+                }
+
+                return .{ .err = bun.sys.Error.fromCode(errno, .open) };
             },
         }
+    }
+
+    pub fn setRawMode(this: Source, value: bool) bun.sys.Maybe(void) {
+        return switch (this) {
+            .tty => |tty| {
+                if (tty
+                    .setMode(if (value) .raw else .normal)
+                    .toError(.uv_tty_set_mode)) |err|
+                {
+                    return .{ .err = err };
+                } else {
+                    return .{ .result = {} };
+                }
+            },
+            else => .{
+                .err = .{
+                    .errno = @intFromEnum(bun.C.E.NOTSUP),
+                    .syscall = .uv_tty_set_mode,
+                    .fd = this.getFd(),
+                },
+            },
+        };
     }
 };

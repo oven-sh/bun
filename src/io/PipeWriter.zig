@@ -767,7 +767,7 @@ fn BaseWindowsPipeWriter(
 
         fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
             const file = bun.cast(*Source.File, handle.data);
-            file.fs.deinit();
+            handle.deinit();
             bun.default_allocator.destroy(file);
         }
 
@@ -786,9 +786,12 @@ fn BaseWindowsPipeWriter(
             if (this.source) |source| {
                 switch (source) {
                     .file => |file| {
-                        file.fs.deinit();
-                        file.fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&onFileClose));
+                        // always use close_fs here because we can have a operation in progress
+                        file.close_fs.data = file;
+                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, @ptrCast(&onFileClose));
+                    },
+                    .sync_file => {
+                        // no-op
                     },
                     .pipe => |pipe| {
                         pipe.data = pipe;
@@ -830,6 +833,26 @@ fn BaseWindowsPipeWriter(
         pub fn startWithPipe(this: *WindowsPipeWriter, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
             std.debug.assert(this.source == null);
             this.source = .{ .pipe = pipe };
+            this.setParent(this.parent);
+            return this.startWithCurrentPipe();
+        }
+
+        pub fn startSync(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
+            std.debug.assert(this.source == null);
+            const source = Source{
+                .sync_file = Source.openFile(fd),
+            };
+            source.setData(this);
+            this.source = source;
+            this.setParent(this.parent);
+            return this.startWithCurrentPipe();
+        }
+
+        pub fn startWithFile(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.JSC.Maybe(void) {
+            std.debug.assert(this.source == null);
+            const source: bun.io.Source = .{ .file = Source.openFile(fd) };
+            source.setData(this);
+            this.source = source;
             this.setParent(this.parent);
             return this.startWithCurrentPipe();
         }
@@ -935,6 +958,9 @@ pub fn WindowsBufferedWriter(
 
             const pipe = this.source orelse return;
             switch (pipe) {
+                .sync_file => {
+                    @panic("This code path shouldn't be reached - sync_file in PipeWriter.zig");
+                },
                 .file => |file| {
                     this.pending_payload_size = buffer.len;
                     file.fs.deinit();
@@ -1027,6 +1053,35 @@ pub const StreamBuffer = struct {
         var byte_list = bun.ByteList.fromList(this.list);
         defer this.list = byte_list.listManaged(this.list.allocator);
         byte_list.writeTypeAsBytesAssumeCapacity(T, data);
+    }
+
+    pub fn writeOrFallback(this: *StreamBuffer, buffer: anytype, comptime writeFn: anytype) ![]const u8 {
+        if (comptime @TypeOf(writeFn) == @TypeOf(&writeLatin1) and writeFn == &writeLatin1) {
+            if (bun.strings.isAllASCII(buffer)) {
+                return buffer;
+            }
+
+            {
+                var byte_list = bun.ByteList.fromList(this.list);
+                defer this.list = byte_list.listManaged(this.list.allocator);
+                _ = try byte_list.writeLatin1(this.list.allocator, buffer);
+            }
+
+            return this.list.items[this.cursor..];
+        } else if (comptime @TypeOf(writeFn) == @TypeOf(&writeUTF16) and writeFn == &writeUTF16) {
+            {
+                var byte_list = bun.ByteList.fromList(this.list);
+                defer this.list = byte_list.listManaged(this.list.allocator);
+
+                _ = try byte_list.writeUTF16(this.list.allocator, buffer);
+            }
+
+            return this.list.items[this.cursor..];
+        } else if (comptime @TypeOf(writeFn) == @TypeOf(&write) and writeFn == &write) {
+            return buffer;
+        } else {
+            @compileError("Unsupported writeFn " ++ @typeName(@TypeOf(writeFn)));
+        }
     }
 
     pub fn writeLatin1(this: *StreamBuffer, buffer: []const u8) !void {
@@ -1150,8 +1205,15 @@ pub fn WindowsStreamingWriter(
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            const result = fs.result;
+            if (result.int() == uv.UV_ECANCELED) {
+                fs.deinit();
+                return;
+            }
             const this = bun.cast(*WindowsWriter, fs.data);
-            if (fs.result.toError(.write)) |err| {
+
+            fs.deinit();
+            if (result.toError(.write)) |err| {
                 this.close();
                 onError(this.parent, err);
                 return;
@@ -1189,6 +1251,9 @@ pub fn WindowsStreamingWriter(
             this.current_payload = this.outgoing;
             this.outgoing = temp;
             switch (pipe) {
+                .sync_file => {
+                    @panic("sync_file pipe write should not be reachable");
+                },
                 .file => |file| {
                     file.fs.deinit();
                     file.fs.setData(this);
@@ -1237,11 +1302,39 @@ pub fn WindowsStreamingWriter(
                 return .{ .done = 0 };
             }
 
+            if (this.source != null and this.source.? == .sync_file) {
+                defer this.outgoing.reset();
+                var remain = StreamBuffer.writeOrFallback(&this.outgoing, buffer, comptime writeFn) catch {
+                    return .{ .err = bun.sys.Error.oom };
+                };
+                const initial_len = remain.len;
+                const fd = bun.toFD(this.source.?.sync_file.file);
+
+                while (remain.len > 0) {
+                    switch (bun.sys.write(fd, remain)) {
+                        .err => |err| {
+                            return .{ .err = err };
+                        },
+                        .result => |wrote| {
+                            remain = remain[wrote..];
+                            if (wrote == 0) {
+                                break;
+                            }
+                        },
+                    }
+                }
+
+                const wrote = initial_len - remain.len;
+                if (wrote == 0) {
+                    return .{ .done = wrote };
+                }
+                return .{ .wrote = wrote };
+            }
+
             const had_buffered_data = this.outgoing.isNotEmpty();
             writeFn(&this.outgoing, buffer) catch {
                 return .{ .err = bun.sys.Error.oom };
             };
-
             if (had_buffered_data) {
                 return .{ .pending = 0 };
             }
@@ -1250,15 +1343,15 @@ pub fn WindowsStreamingWriter(
         }
 
         pub fn writeUTF16(this: *WindowsWriter, buf: []const u16) WriteResult {
-            return writeInternal(this, buf, StreamBuffer.writeUTF16);
+            return writeInternal(this, buf, &StreamBuffer.writeUTF16);
         }
 
         pub fn writeLatin1(this: *WindowsWriter, buffer: []const u8) WriteResult {
-            return writeInternal(this, buffer, StreamBuffer.writeLatin1);
+            return writeInternal(this, buffer, &StreamBuffer.writeLatin1);
         }
 
         pub fn write(this: *WindowsWriter, buffer: []const u8) WriteResult {
-            return writeInternal(this, buffer, StreamBuffer.write);
+            return writeInternal(this, buffer, &StreamBuffer.write);
         }
 
         pub fn flush(this: *WindowsWriter) WriteResult {

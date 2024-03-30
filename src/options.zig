@@ -580,13 +580,11 @@ pub const Target = enum {
         });
         array.set(Target.bun, &[_]string{
             "bun",
-            "worker",
             "node",
         });
         array.set(Target.bun_macro, &[_]string{
             "macro",
             "bun",
-            "worker",
             "node",
         });
 
@@ -875,7 +873,7 @@ pub const Loader = enum(u8) {
     }
 };
 
-pub const defaultLoaders = ComptimeStringMap(Loader, .{
+const default_loaders_posix = .{
     .{ ".jsx", Loader.jsx },
     .{ ".json", Loader.json },
     .{ ".js", Loader.jsx },
@@ -895,7 +893,16 @@ pub const defaultLoaders = ComptimeStringMap(Loader, .{
     .{ ".node", Loader.napi },
     .{ ".txt", Loader.text },
     .{ ".text", Loader.text },
-});
+};
+const default_loaders_win32 = default_loaders_posix ++ .{
+    .{ ".sh", Loader.bunsh },
+};
+
+const default_loaders = if (Environment.isWindows) default_loaders_win32 else default_loaders_posix;
+pub const defaultLoaders = ComptimeStringMap(
+    Loader,
+    default_loaders,
+);
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub const ESMConditions = struct {
@@ -1671,8 +1678,8 @@ pub const BundleOptions = struct {
             .transform_options = transform,
         };
 
-        Analytics.Features.define = Analytics.Features.define or transform.define != null;
-        Analytics.Features.loaders = Analytics.Features.loaders or transform.loaders != null;
+        Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
+        Analytics.Features.loaders += @as(usize, @intFromBool(transform.loaders != null));
 
         if (transform.env_files.len > 0) {
             opts.env.files = transform.env_files;
@@ -1752,13 +1759,11 @@ pub const BundleOptions = struct {
 
         opts.polyfill_node_globals = opts.target == .browser;
 
-        Analytics.Features.framework = Analytics.Features.framework or opts.framework != null;
-        Analytics.Features.filesystem_router = Analytics.Features.filesystem_router or opts.routes.routes_enabled;
-        Analytics.Features.origin = Analytics.Features.origin or transform.origin != null;
-        Analytics.Features.public_folder = Analytics.Features.public_folder or opts.routes.static_dir_enabled;
-        Analytics.Features.macros = Analytics.Features.macros or opts.target == .bun_macro;
-        Analytics.Features.external = Analytics.Features.external or transform.external.len > 0;
-        Analytics.Features.single_page_app_routing = Analytics.Features.single_page_app_routing or opts.routes.single_page_app_routing;
+        Analytics.Features.framework += @as(usize, @intFromBool(opts.framework != null));
+        Analytics.Features.filesystem_router += @as(usize, @intFromBool(opts.routes.routes_enabled));
+        Analytics.Features.origin += @as(usize, @intFromBool(opts.origin.href.len > 0));
+        Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
+        Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
         return opts;
     }
 };

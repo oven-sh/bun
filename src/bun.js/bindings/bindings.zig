@@ -2017,6 +2017,7 @@ pub const AbortSignal = extern opaque {
         this: *AbortSignal,
         reason: JSValue,
     ) *AbortSignal {
+        bun.Analytics.Features.abort_signal += 1;
         return cppFn("signal", .{ this, reason });
     }
 
@@ -2118,15 +2119,15 @@ pub const JSPromise = extern struct {
             };
         }
 
-        pub fn get(this: *Strong) *JSC.JSPromise {
+        pub fn get(this: *const Strong) *JSC.JSPromise {
             return this.strong.get().?.asPromise().?;
         }
 
-        pub fn value(this: *Strong) JSValue {
+        pub fn value(this: *const Strong) JSValue {
             return this.strong.get().?;
         }
 
-        pub fn valueOrEmpty(this: *Strong) JSValue {
+        pub fn valueOrEmpty(this: *const Strong) JSValue {
             return this.strong.get() orelse .zero;
         }
 
@@ -2559,34 +2560,58 @@ pub const JSFunction = extern struct {
     pub const name = "JSC::JSFunction";
     pub const namespace = "JSC";
 
-    // pub fn createFromSourceCode(
-    //     global: *JSGlobalObject,
-    //     function_name: ?[*]const u8,
-    //     function_name_len: u16,
-    //     args: ?[*]JSValue,
-    //     args_len: u16,
-    //     source: *const SourceCode,
-    //     origin: *SourceOrigin,
-    //     exception: *?*JSObject,
-    // ) *JSFunction {
-    //     return cppFn("createFromSourceCode", .{
-    //         global,
-    //         function_name,
-    //         function_name_len,
-    //         args,
-    //         args_len,
-    //         source,
-    //         origin,
-    //         exception,
-    //     });
-    // }
+    const ImplementationVisibility = enum(u8) {
+        public,
+        private,
+        private_recursive,
+    };
+
+    /// In WebKit: Intrinsic.h
+    const Intrinsic = enum(u8) {
+        none,
+        _,
+    };
+
+    const CreateJSFunctionOptions = struct {
+        implementation_visibility: ImplementationVisibility = .public,
+        intrinsic: Intrinsic = .none,
+        constructor: ?*const JSHostFunctionType = null,
+    };
+
+    extern fn JSFunction__createFromZig(
+        global: *JSGlobalObject,
+        fn_name: bun.String,
+        implementation: *const JSHostFunctionType,
+        arg_count: u32,
+        implementation_visibility: ImplementationVisibility,
+        intrinsic: Intrinsic,
+        constructor: ?*const JSHostFunctionType,
+    ) JSValue;
+
+    pub fn create(
+        global: *JSGlobalObject,
+        fn_name: anytype,
+        implementation: *const JSHostFunctionType,
+        function_length: u32,
+        options: CreateJSFunctionOptions,
+    ) JSValue {
+        return JSFunction__createFromZig(
+            global,
+            switch (@TypeOf(fn_name)) {
+                bun.String => fn_name,
+                else => bun.String.init(fn_name),
+            },
+            implementation,
+            function_length,
+            options.implementation_visibility,
+            options.intrinsic,
+            options.constructor,
+        );
+    }
 
     pub fn optimizeSoon(value: JSValue) void {
         cppFn("optimizeSoon", .{value});
     }
-    // pub fn toString(this: *JSFunction, globalThis: *JSGlobalObject) *const JSString {
-    //     return cppFn("toString", .{ this, globalThis });
-    // }
 
     extern fn JSC__JSFunction__getSourceCode(value: JSValue, out: *ZigString) bool;
 
@@ -2597,8 +2622,6 @@ pub const JSFunction = extern struct {
 
     pub const Extern = [_][]const u8{
         "fromString",
-        // "createFromSourceCode",
-
         "getName",
         "displayName",
         "calculatedDisplayName",
@@ -3003,7 +3026,7 @@ pub const JSGlobalObject = extern struct {
         return cppFn("deleteModuleRegistryEntry", .{ this, name_ });
     }
 
-    fn bunVM_(this: *JSGlobalObject) *anyopaque {
+    fn bunVMUnsafe(this: *JSGlobalObject) *anyopaque {
         return cppFn("bunVM", .{this});
     }
 
@@ -3013,16 +3036,16 @@ pub const JSGlobalObject = extern struct {
             // you most likely need to run
             //   make clean-jsc-bindings
             //   make bindings -j10
-            const assertion = this.bunVM_() == @as(*anyopaque, @ptrCast(JSC.VirtualMachine.get()));
+            const assertion = this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(JSC.VirtualMachine.get()));
             if (!assertion) @breakpoint();
             std.debug.assert(assertion);
         }
-        return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVM_())));
+        return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
     }
 
     /// We can't do the threadlocal check when queued from another thread
     pub fn bunVMConcurrently(this: *JSGlobalObject) *JSC.VirtualMachine {
-        return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVM_())));
+        return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
     }
 
     pub fn handleRejectedPromises(this: *JSGlobalObject) void {
@@ -3608,8 +3631,8 @@ pub const JSValue = enum(JSValueReprInt) {
                     return this.asInt32();
                 }
 
-                if (this.isNumber()) {
-                    return @as(i32, @truncate(this.coerceDoubleTruncatingIntoInt64()));
+                if (this.getNumber()) |num| {
+                    return coerceJSValueDoubleTruncatingT(i32, num);
                 }
 
                 return this.coerceToInt32(globalThis);
@@ -4184,21 +4207,28 @@ pub const JSValue = enum(JSValueReprInt) {
         return jsNumberFromDouble(@floatFromInt(i));
     }
 
-    pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
-        const double_value = this.asDouble();
+    fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
+        return coerceJSValueDoubleTruncatingTT(T, T, num);
+    }
 
-        if (std.math.isNan(double_value))
-            return std.math.minInt(i64);
-
-        // coerce NaN or Infinity to either -maxInt or maxInt
-        if (std.math.isInf(double_value)) {
-            return if (double_value < 0) @as(i64, std.math.minInt(i64)) else @as(i64, std.math.maxInt(i64));
+    fn coerceJSValueDoubleTruncatingTT(comptime T: type, comptime Out: type, num: f64) Out {
+        if (std.math.isNan(num)) {
+            return 0;
         }
 
-        return @as(
-            i64,
-            @intFromFloat(double_value),
-        );
+        if (num <= std.math.minInt(T) or std.math.isNegativeInf(num)) {
+            return std.math.minInt(T);
+        }
+
+        if (num >= std.math.maxInt(T) or std.math.isPositiveInf(num)) {
+            return std.math.maxInt(T);
+        }
+
+        return @intFromFloat(num);
+    }
+
+    pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
+        return coerceJSValueDoubleTruncatingT(i64, this.asNumber());
     }
 
     /// Decimal values are truncated without rounding.
@@ -5062,16 +5092,7 @@ pub const JSValue = enum(JSValueReprInt) {
         if (comptime bun.Environment.allow_assert) {
             std.debug.assert(this.isNumber());
         }
-        const double = this.asDouble();
-        if (std.math.isPositiveInf(double)) {
-            return std.math.maxInt(i52);
-        } else if (std.math.isNegativeInf(double)) {
-            return std.math.minInt(i52);
-        } else if (std.math.isNan(double)) {
-            return 0;
-        }
-
-        return @as(i64, @intFromFloat(@max(@min(double, std.math.maxInt(i52)), std.math.minInt(i52))));
+        return coerceJSValueDoubleTruncatingTT(i52, i64, this.asNumber());
     }
 
     pub fn toInt32(this: JSValue) i32 {
@@ -5079,8 +5100,8 @@ pub const JSValue = enum(JSValueReprInt) {
             return asInt32(this);
         }
 
-        if (this.isNumber()) {
-            return @as(i32, @intCast(@min(@max(this.asInt52(), std.math.minInt(i32)), std.math.maxInt(i32))));
+        if (this.getNumber()) |num| {
+            return coerceJSValueDoubleTruncatingT(i32, num);
         }
 
         if (comptime bun.Environment.allow_assert) {
@@ -5388,7 +5409,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
         const External = extern struct {
             bytes: ?[*]const u8,
-            size: isize,
+            size: usize,
             handle: ?*anyopaque,
         };
 
@@ -5402,7 +5423,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub inline fn serialize(this: JSValue, global: *JSGlobalObject) ?SerializedScriptValue {
         const value = Bun__serializeJSValue(global, this);
         return if (value.bytes) |bytes|
-            .{ .data = bytes[0..@intCast(value.size)], .handle = value.handle.? }
+            .{ .data = bytes[0..value.size], .handle = value.handle.? }
         else
             null;
     }
@@ -5837,8 +5858,11 @@ pub const JSHostFunctionPtr = *const JSHostFunctionType;
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
 pub const JSArray = struct {
-    pub fn from(globalThis: *JSGlobalObject, arguments: []const JSC.JSValue) JSValue {
-        return JSC.JSValue.c(JSC.C.JSObjectMakeArray(globalThis, arguments.len, @as(?[*]const JSC.C.JSObjectRef, @ptrCast(arguments.ptr)), null));
+    // TODO(@paperdave): this can throw
+    extern fn JSArray__constructArray(*JSGlobalObject, [*]const JSValue, usize) JSValue;
+
+    pub fn create(global: *JSGlobalObject, items: []const JSValue) JSValue {
+        return JSArray__constructArray(global, items.ptr, items.len);
     }
 };
 
@@ -6265,22 +6289,23 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
 }
 
 // DOMCall Fields
-pub const __DOMCall_ptr = JSC.API.Bun.FFIObject.dom_call;
-pub const __DOMCall__reader_u8 = JSC.API.Bun.FFIObject.Reader.DOMCalls.u8;
-pub const __DOMCall__reader_u16 = JSC.API.Bun.FFIObject.Reader.DOMCalls.u16;
-pub const __DOMCall__reader_u32 = JSC.API.Bun.FFIObject.Reader.DOMCalls.u32;
-pub const __DOMCall__reader_ptr = JSC.API.Bun.FFIObject.Reader.DOMCalls.ptr;
-pub const __DOMCall__reader_i8 = JSC.API.Bun.FFIObject.Reader.DOMCalls.i8;
-pub const __DOMCall__reader_i16 = JSC.API.Bun.FFIObject.Reader.DOMCalls.i16;
-pub const __DOMCall__reader_i32 = JSC.API.Bun.FFIObject.Reader.DOMCalls.i32;
-pub const __DOMCall__reader_f32 = JSC.API.Bun.FFIObject.Reader.DOMCalls.f32;
-pub const __DOMCall__reader_f64 = JSC.API.Bun.FFIObject.Reader.DOMCalls.f64;
-pub const __DOMCall__reader_i64 = JSC.API.Bun.FFIObject.Reader.DOMCalls.i64;
-pub const __DOMCall__reader_u64 = JSC.API.Bun.FFIObject.Reader.DOMCalls.u64;
-pub const __DOMCall__reader_intptr = JSC.API.Bun.FFIObject.Reader.DOMCalls.intptr;
+const Bun = JSC.API.Bun;
+pub const __DOMCall_ptr = Bun.FFIObject.dom_call;
+pub const __DOMCall__reader_u8 = Bun.FFIObject.Reader.DOMCalls.u8;
+pub const __DOMCall__reader_u16 = Bun.FFIObject.Reader.DOMCalls.u16;
+pub const __DOMCall__reader_u32 = Bun.FFIObject.Reader.DOMCalls.u32;
+pub const __DOMCall__reader_ptr = Bun.FFIObject.Reader.DOMCalls.ptr;
+pub const __DOMCall__reader_i8 = Bun.FFIObject.Reader.DOMCalls.i8;
+pub const __DOMCall__reader_i16 = Bun.FFIObject.Reader.DOMCalls.i16;
+pub const __DOMCall__reader_i32 = Bun.FFIObject.Reader.DOMCalls.i32;
+pub const __DOMCall__reader_f32 = Bun.FFIObject.Reader.DOMCalls.f32;
+pub const __DOMCall__reader_f64 = Bun.FFIObject.Reader.DOMCalls.f64;
+pub const __DOMCall__reader_i64 = Bun.FFIObject.Reader.DOMCalls.i64;
+pub const __DOMCall__reader_u64 = Bun.FFIObject.Reader.DOMCalls.u64;
+pub const __DOMCall__reader_intptr = Bun.FFIObject.Reader.DOMCalls.intptr;
 pub const DOMCalls = &.{
-    .{ .ptr = JSC.API.Bun.FFIObject.dom_call },
-    JSC.API.Bun.FFIObject.Reader.DOMCalls,
+    .{ .ptr = Bun.FFIObject.dom_call },
+    Bun.FFIObject.Reader.DOMCalls,
 };
 
 extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void) void;
@@ -6319,5 +6344,7 @@ pub const ScriptExecutionStatus = enum(i32) {
 };
 
 comptime {
-    _ = bun.String.BunString__getStringWidth;
+    // this file is gennerated, but cant be placed in the build/codegen folder
+    // because zig will complain about outside-of-module stuff
+    _ = @import("./GeneratedJS2Native.zig");
 }

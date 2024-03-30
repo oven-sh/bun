@@ -159,13 +159,7 @@ pub const BunxCommand = struct {
 
     fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-        subpath[0.."node_modules/".len].* = "node_modules/".*;
-        @memcpy(subpath["node_modules/".len..][0..package_name.len], package_name);
-        subpath["node_modules/".len + package_name.len] = std.fs.path.sep;
-        subpath["node_modules/".len + package_name.len + 1 ..][0.."package.json".len].* = "package.json".*;
-        subpath["node_modules/".len + package_name.len + 1 + "package.json".len] = 0;
-
-        const subpath_z: [:0]const u8 = subpath[0 .. "node_modules/".len + package_name.len + 1 + "package.json".len :0];
+        const subpath_z = std.fmt.bufPrintZ(&subpath, "node_modules/{s}/package.json", .{package_name}) catch unreachable;
         return try getBinNameFromSubpath(bundler, dir_fd, subpath_z);
     }
 
@@ -429,11 +423,18 @@ pub const BunxCommand = struct {
 
         debug("bunx_cache_dir: {s}", .{bunx_cache_dir});
 
+        const bin_extension = switch (Environment.os) {
+            .windows => ".exe",
+            .mac => "",
+            .linux => "",
+            .wasm => "",
+        };
+
         var absolute_in_cache_dir_buf: bun.PathBuffer = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(
             &absolute_in_cache_dir_buf,
-            bun.pathLiteral("{s}/node_modules/.bin/{s}"),
-            .{ bunx_cache_dir, initial_bin_name },
+            bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"),
+            .{ bunx_cache_dir, initial_bin_name, bin_extension },
         ) catch return error.PathTooLong;
 
         const passthrough = passthrough_list.items;
@@ -448,7 +449,6 @@ pub const BunxCommand = struct {
                 destination_ = bun.which(
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
-                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     initial_bin_name,
                 );
             }
@@ -459,7 +459,6 @@ pub const BunxCommand = struct {
             if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
-                if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                 absolute_in_cache_dir,
             )) |destination| {
                 const out = bun.asByteSlice(destination);
@@ -507,13 +506,14 @@ pub const BunxCommand = struct {
                 try Run.runBinary(
                     ctx,
                     try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                    destination,
                     this_bundler.fs.top_level_dir,
                     this_bundler.env,
                     passthrough,
                     null,
                 );
                 // runBinary is noreturn
-                comptime unreachable;
+                @compileError("unreachable");
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -522,14 +522,13 @@ pub const BunxCommand = struct {
             if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
+                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bin_extension }) catch unreachable;
 
                     // Only use the system-installed version if there is no version specified
                     if (update_request.version.literal.isEmpty()) {
                         destination_ = bun.which(
                             &path_buf,
                             bunx_cache_dir,
-                            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                             package_name_for_bin,
                         );
                     }
@@ -537,20 +536,20 @@ pub const BunxCommand = struct {
                     if (destination_ orelse bun.which(
                         &path_buf,
                         bunx_cache_dir,
-                        if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                         absolute_in_cache_dir,
                     )) |destination| {
                         const out = bun.asByteSlice(destination);
                         try Run.runBinary(
                             ctx,
                             try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                            destination,
                             this_bundler.fs.top_level_dir,
                             this_bundler.env,
                             passthrough,
                             null,
                         );
                         // runBinary is noreturn
-                        comptime unreachable;
+                        @compileError("unreachable");
                     }
                 }
             } else |err| {
@@ -571,10 +570,10 @@ pub const BunxCommand = struct {
         }
 
         var args = std.BoundedArray([]const u8, 7).fromSlice(&.{
-            try std.fs.selfExePathAlloc(ctx.allocator),
+            try bun.selfExePath(),
             "add",
-            "--no-summary",
             install_param,
+            "--no-summary",
         }) catch
             unreachable; // upper bound is known
 
@@ -597,44 +596,53 @@ pub const BunxCommand = struct {
         const argv_to_use = args.slice();
 
         debug("installing package: {s}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
-        var child_process = std.ChildProcess.init(argv_to_use, default_allocator);
-        child_process.cwd_dir = bunx_install_dir;
-        debug("cwd: {}", .{bun.toFD(bunx_install_dir.fd)});
-        // https://github.com/ziglang/zig/issues/5190
-        if (Environment.isWindows) {
-            child_process.cwd = bunx_cache_dir;
-        }
         this_bundler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true") catch bun.outOfMemory();
-        var env_map = try this_bundler.env.map.stdEnvMap(ctx.allocator);
-        defer env_map.deinit();
-        child_process.env_map = env_map.get();
-        child_process.stderr_behavior = .Inherit;
-        child_process.stdin_behavior = .Inherit;
-        child_process.stdout_behavior = .Inherit;
 
-        if (Environment.isWindows) {
-            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
-        } else {
-            try child_process.spawn();
-        }
+        const spawn_result = switch ((bun.spawnSync(&.{
+            .argv = argv_to_use,
 
-        const term = try child_process.wait();
+            .envp = try this_bundler.env.map.createNullDelimitedEnvMap(bun.default_allocator),
 
-        switch (term) {
-            .Exited => |exit_code| {
-                if (exit_code != 0) {
-                    Global.exit(exit_code);
-                }
-            },
-            .Signal, .Stopped => |signal| {
-                Global.raiseIgnoringPanicHandler(signal);
-            },
-            .Unknown => {
+            .cwd = bunx_cache_dir,
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
+
+            .windows = if (Environment.isWindows) .{
+                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(this_bundler.env)),
+            } else {},
+        }) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error <b>{s}<r>", .{ install_param, @errorName(err) });
+            Global.exit(1);
+        })) {
+            .err => |err| {
+                _ = err; // autofix
                 Global.exit(1);
             },
+            .result => |result| result,
+        };
+
+        switch (spawn_result.status) {
+            .exited => |exit| {
+                if (exit.signal.valid()) {
+                    Global.raiseIgnoringPanicHandler(exit.signal);
+                }
+
+                if (exit.code != 0) {
+                    Global.exit(exit.code);
+                }
+            },
+            .signaled => |signal| {
+                Global.raiseIgnoringPanicHandler(signal);
+            },
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error:\n{}", .{ install_param, err });
+                Global.exit(1);
+            },
+            else => {},
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}"), .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, initial_bin_name, bin_extension }) catch unreachable;
 
         // Similar to "npx":
         //
@@ -643,44 +651,44 @@ pub const BunxCommand = struct {
         if (bun.which(
             &path_buf,
             bunx_cache_dir,
-            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
             try Run.runBinary(
                 ctx,
                 try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                destination,
                 this_bundler.fs.top_level_dir,
                 this_bundler.env,
                 passthrough,
                 null,
             );
             // runBinary is noreturn
-            comptime unreachable;
+            @compileError("unreachable");
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
         if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, result_package_name)) |package_name_for_bin| {
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
+                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bin_extension }) catch unreachable;
 
                 if (bun.which(
                     &path_buf,
                     bunx_cache_dir,
-                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);
                     try Run.runBinary(
                         ctx,
                         try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                        destination,
                         this_bundler.fs.top_level_dir,
                         this_bundler.env,
                         passthrough,
                         null,
                     );
                     // runBinary is noreturn
-                    comptime unreachable;
+                    @compileError("unreachable");
                 }
             }
         } else |_| {}

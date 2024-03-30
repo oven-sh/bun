@@ -465,6 +465,7 @@ describe("Client Basics", () => {
   it("getDefaultSettings", () => {
     const settings = http2.getDefaultSettings();
     expect(settings).toEqual({
+      enableConnectProtocol: false,
       headerTableSize: 4096,
       enablePush: true,
       initialWindowSize: 65535,
@@ -483,6 +484,7 @@ describe("Client Basics", () => {
       maxConcurrentStreams: 4,
       maxHeaderListSize: 5,
       maxHeaderSize: 5,
+      enableConnectProtocol: false,
     };
     const buffer = http2.getPackedSettings(settings);
     expect(buffer.byteLength).toBe(36);

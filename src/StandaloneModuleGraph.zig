@@ -277,19 +277,16 @@ pub const StandaloneModuleGraph = struct {
         }.toClean;
 
         const cloned_executable_fd: bun.FileDescriptor = brk: {
-            var self_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-            const self_exe = std.fs.selfExePath(&self_buf) catch |err| {
+            const self_exe = bun.selfExePath() catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get self executable path: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
-            self_buf[self_exe.len] = 0;
-            const self_exeZ = self_buf[0..self_exe.len :0];
 
             if (comptime Environment.isWindows) {
                 // copy self and then open it for writing
 
                 var in_buf: bun.WPathBuffer = undefined;
-                strings.copyU8IntoU16(&in_buf, self_exeZ);
+                strings.copyU8IntoU16(&in_buf, self_exe);
                 in_buf[self_exe.len] = 0;
                 const in = in_buf[0..self_exe.len :0];
                 var out_buf: bun.WPathBuffer = undefined;
@@ -301,7 +298,6 @@ pub const StandaloneModuleGraph = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                     Global.exit(1);
                 };
-
                 const file = bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     out,
@@ -322,7 +318,7 @@ pub const StandaloneModuleGraph = struct {
             if (comptime Environment.isMac) {
                 // if we're on a mac, use clonefile() if we can
                 // failure is okay, clonefile is just a fast path.
-                if (Syscall.clonefile(self_exeZ, zname) == .result) {
+                if (Syscall.clonefile(self_exe, zname) == .result) {
                     switch (Syscall.open(zname, std.os.O.RDWR | std.os.O.CLOEXEC, 0)) {
                         .result => |res| break :brk res,
                         .err => {},
@@ -376,7 +372,7 @@ pub const StandaloneModuleGraph = struct {
             };
             const self_fd = brk2: {
                 for (0..3) |retry| {
-                    switch (Syscall.open(self_exeZ, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
+                    switch (Syscall.open(self_exe, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
                         .result => |res| break :brk2 res,
                         .err => |err| {
                             if (retry < 2) {
@@ -720,7 +716,6 @@ pub const StandaloneModuleGraph = struct {
                         if (bun.which(
                             &whichbuf,
                             bun.getenvZ("PATH") orelse return error.FileNotFound,
-                            "",
                             bun.argv()[0],
                         )) |path| {
                             return bun.toFD((try std.fs.cwd().openFileZ(path, .{})).handle);
@@ -733,10 +728,8 @@ pub const StandaloneModuleGraph = struct {
             .openbsd, .mac => {
                 // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
                 // opened with no modification.
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const self_exe_path = try std.fs.selfExePath(&buf);
-                buf[self_exe_path.len] = 0;
-                const file = try std.fs.openFileAbsoluteZ(buf[0..self_exe_path.len :0].ptr, .{});
+                const self_exe_path = try bun.selfExePath();
+                const file = try std.fs.openFileAbsoluteZ(self_exe_path.ptr, .{});
                 return bun.toFD(file.handle);
             },
             .windows => {
@@ -747,7 +740,7 @@ pub const StandaloneModuleGraph = struct {
                 const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
 
                 return bun.sys.openFileAtWindows(
-                    bun.invalid_fd,
+                    bun.FileDescriptor.cwd(),
                     nt_path,
                     // access_mask
                     w.SYNCHRONIZE | w.GENERIC_READ,

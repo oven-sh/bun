@@ -1644,6 +1644,9 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
     return hrtime;
 }
 
+#if OS(WINDOWS)
+extern "C" void Bun__ForceFileSinkToBeSynchronousOnWindows(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+#endif
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
 {
     auto& vm = globalObject->vm();
@@ -1668,7 +1671,20 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
         return {};
     }
 
-    return result;
+    ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
+    JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
+
+#if OS(WINDOWS)
+        Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject);
+        // Node.js docs - https://nodejs.org/api/process.html#a-note-on-process-io
+        // > Files: synchronous on Windows and POSIX
+        // > TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
+        // > Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
+        // > Synchronous writes avoid problems such as output written with console.log() or console.error() being unexpectedly interleaved, or not written at all if process.exit() is called before an asynchronous write completes. See process.exit() for more information.
+        Bun__ForceFileSinkToBeSynchronousOnWindows(globalThis, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+#endif
+
+    return resultObject->getIndex(globalObject, 0);
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -2352,11 +2368,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubEmptyFunction, (JSGlobalObject * globalObje
 JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
-}
-
-static JSValue Process_stubEmptyObject(VM& vm, JSObject* processObject)
-{
-    return JSC::constructEmptyObject(processObject->globalObject());
 }
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)

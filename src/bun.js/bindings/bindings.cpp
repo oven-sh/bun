@@ -1,4 +1,9 @@
+
 #include "root.h"
+
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/DeleteAllCodeEffort.h"
 
 #include "headers.h"
 
@@ -44,6 +49,7 @@
 #include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
+#include "JavaScriptCore/JSObjectInlines.h"
 
 #include "wtf/Assertions.h"
 #include "wtf/text/ExternalStringImpl.h"
@@ -1980,7 +1986,10 @@ CPP_DECL JSC__JSString* JSC__jsTypeStringForValue(JSC__JSGlobalObject* globalObj
 
 JSC__JSValue JSC__JSPromise__asValue(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1)
 {
-    return JSC::JSValue::encode(JSC::JSValue(arg0));
+    JSValue value = JSC::JSValue(arg0);
+    ASSERT_WITH_MESSAGE(!value.isEmpty(), "JSPromise.asValue() called on a empty JSValue");
+    ASSERT_WITH_MESSAGE(value.inherits<JSC::JSPromise>(), "JSPromise::asValue() called on a non-promise object");
+    return JSC::JSValue::encode(value);
 }
 JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 {
@@ -2916,7 +2925,7 @@ void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
 {
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
     ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
-
+    ASSERT_WITH_MESSAGE(!JSValue::decode(JSValue2).inherits<JSC::JSPromise>(), "Called .resolve() with another Promise. Did you mean to do that?");
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
 
@@ -3057,7 +3066,7 @@ void JSC__JSInternalPromise__rejectAsHandledException(JSC__JSInternalPromise* ar
 JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)
 {
-    return reinterpret_cast<JSC::JSInternalPromise*>(
+    return jsCast<JSC::JSInternalPromise*>(
         JSC::JSInternalPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
 }
 
@@ -3635,7 +3644,9 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JS
                 jc = pathString.characterAt(j);
             }
 
-            PropertyName propName = PropertyName(Identifier::fromString(vm, pathString.substring(i, j - i)));
+            String propNameStr = pathString.substring(i, j - i);
+            PropertyName propName = PropertyName(Identifier::fromString(vm, propNameStr));
+
             currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
@@ -4584,8 +4595,11 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
     WTF::releaseFastMallocFreeMemory();
 
     if (sync) {
+        vm->clearSourceProviderCaches();
+        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     } else {
+        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
 
@@ -5456,6 +5470,38 @@ extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject
 extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* globalObject)
 {
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
+}
+
+extern "C" EncodedJSValue JSFunction__createFromZig(
+    JSC::JSGlobalObject* global,
+    BunString fn_name,
+    NativeFunction implementation,
+    unsigned arg_count,
+    ImplementationVisibility implementation_visibility,
+    Intrinsic intrinsic,
+    NativeFunction constructorOrNull)
+{
+    VM& vm = global->vm();
+    auto name = fn_name.toWTFString();
+    return JSValue::encode(JSFunction::create(
+        vm,
+        global,
+        arg_count,
+        name,
+        implementation,
+        implementation_visibility,
+        intrinsic,
+        constructorOrNull ? constructorOrNull : JSC::callHostFunctionAsConstructor,
+        nullptr));
+}
+
+extern "C" EncodedJSValue JSArray__constructArray(
+    JSC::JSGlobalObject* global,
+    const JSValue* values,
+    size_t values_len)
+{
+    return JSValue::encode(
+        JSC::constructArray(global, (ArrayAllocationProfile*)nullptr, values, values_len));
 }
 
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)

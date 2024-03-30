@@ -133,7 +133,7 @@ pub const Run = struct {
             try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
-        try bundle.runEnvLoader();
+        try bundle.runEnvLoader(false);
         const mini = JSC.MiniEventLoop.initGlobal(bundle.env);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
         return try bun.shell.Interpreter.initAndRunFromFile(mini, entry_path);
@@ -142,21 +142,23 @@ pub const Run = struct {
     pub fn boot(ctx_: Command.Context, entry_path: string) !void {
         var ctx = ctx_;
         JSC.markBinding(@src());
-        bun.JSC.initialize();
 
-        if (strings.endsWithComptime(entry_path, ".bun.sh")) {
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+        }
+
+        if (strings.endsWithComptime(entry_path, comptime if (Environment.isWindows) ".sh" else ".bun.sh")) {
             const exit_code = try bootBunShell(&ctx, entry_path);
             Global.exitWide(exit_code);
             return;
         }
 
+        // The shell does not need to initialize JSC.
+        // JSC initialization costs 1-3ms
+        bun.JSC.initialize();
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
         var arena = try Arena.init();
-
-        if (!ctx.debug.loaded_bunfig) {
-            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
-        }
 
         run = .{
             .vm = try VirtualMachine.init(
@@ -218,16 +220,6 @@ pub const Run = struct {
                 b.options.macro_remap = macros;
             },
             .unspecified => {},
-        }
-
-        // Set NODE_ENV to a value if something else hadn't already set it
-        const node_env_entry = try b.env.map.getOrPutWithoutValue("NODE_ENV");
-        if (!node_env_entry.found_existing) {
-            node_env_entry.key_ptr.* = try b.env.allocator.dupe(u8, node_env_entry.key_ptr.*);
-            node_env_entry.value_ptr.* = .{
-                .value = try b.env.allocator.dupe(u8, "development"),
-                .conditional = false,
-            };
         }
 
         b.configureRouter(false) catch {

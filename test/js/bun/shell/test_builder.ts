@@ -16,6 +16,7 @@ export class TestBuilder {
   private expected_error: ShellError | string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
   private _doesNotExist: string[] = [];
+  private _timeout: number | undefined = undefined;
 
   private tempdir: string | undefined = undefined;
   private _env: { [key: string]: string } | undefined = undefined;
@@ -30,6 +31,16 @@ export class TestBuilder {
     this.promise = promise;
   }
 
+  /**
+   * Start the test builder with a command:
+   *
+   * @example
+   * ```ts
+   * await TestBuilder.command`echo hi!`.stdout('hi!\n').run()
+
+   * TestBuilder.command`echo hi!`.stdout('hi!\n').runAsTest('echo works')
+   * ```
+   */
   static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
     try {
       if (process.env.BUN_DEBUG_SHELL_LOG_CMD === "1") console.info("[ShellTestBuilder] Cmd", strings.join(""));
@@ -53,6 +64,20 @@ export class TestBuilder {
     return this;
   }
 
+  /**
+   * Create a file in a temp directory
+   * @param path Path to the new file, this will be inside the TestBuilder's temp directory
+   * @param contents Contents of the new file
+   * @returns
+   *
+   * @example
+   * ```ts
+   * TestBuilder.command`ls .`
+   *   .file('hi.txt', 'hi!')
+   *   .file('hello.txt', 'hello!')
+   *   .runAsTest('List files')
+   * ```
+   */
   file(path: string, contents: string): this {
     const tempdir = this.getTempDir();
     fs.writeFileSync(join(tempdir, path), contents);
@@ -76,6 +101,11 @@ export class TestBuilder {
     return this;
   }
 
+  /**
+   * Expect output from stdout
+   *
+   * @param expected - can either be a string or a function which itself calls `expect()`
+   */
   stdout(expected: string | ((stdout: string, tempDir: string) => void)): this {
     this.expected_stdout = expected;
     return this;
@@ -86,6 +116,12 @@ export class TestBuilder {
     return this;
   }
 
+  /**
+   * Makes this test use a temp directory:
+   * - The shell's cwd will be set to the temp directory
+   * - All FS functions on the `TestBuilder` will use this temp directory.
+   * @returns
+   */
   ensureTempDir(): this {
     this.getTempDir();
     return this;
@@ -135,6 +171,11 @@ export class TestBuilder {
       return this.tempdir!;
     }
     return this.tempdir;
+  }
+
+  timeout(ms: number): this {
+    this._timeout = ms;
+    return this;
   }
 
   async run(): Promise<undefined> {
@@ -190,9 +231,13 @@ export class TestBuilder {
   runAsTest(name: string) {
     // biome-ignore lint/complexity/noUselessThisAlias: <explanation>
     const tb = this;
-    test(name, async () => {
-      await tb.run();
-    });
+    test(
+      name,
+      async () => {
+        await tb.run();
+      },
+      this._timeout,
+    );
   }
 
   // async run(): Promise<undefined> {

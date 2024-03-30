@@ -368,8 +368,18 @@ describe("TTY", () => {
     expect(process.stdout instanceof tty.WriteStream).toBe(true);
     expect(process.stderr instanceof tty.WriteStream).toBe(true);
     expect(process.stdin.isTTY).toBeUndefined();
-    expect(process.stdout.isTTY).toBeDefined();
-    expect(process.stderr.isTTY).toBeDefined();
+
+    if (tty.isatty(1)) {
+      expect(process.stdout.isTTY).toBeDefined();
+    } else {
+      expect(process.stdout.isTTY).toBeUndefined();
+    }
+
+    if (tty.isatty(2)) {
+      expect(process.stderr.isTTY).toBeDefined();
+    } else {
+      expect(process.stderr.isTTY).toBeUndefined();
+    }
   });
   it("read and write stream prototypes", () => {
     expect(tty.ReadStream.prototype.setRawMode).toBeInstanceOf(Function);

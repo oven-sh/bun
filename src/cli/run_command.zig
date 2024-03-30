@@ -64,13 +64,13 @@ pub const RunCommand = struct {
         "zsh",
     };
 
-    fn findShellImpl(PATH: string, cwd: string) ?stringZ {
+    fn findShellImpl(PATH: string) ?stringZ {
         if (comptime Environment.isWindows) {
             return "C:\\Windows\\System32\\cmd.exe";
         }
 
         inline for (shells_to_search) |shell| {
-            if (which(&path_buf, PATH, cwd, shell)) |shell_| {
+            if (which(&path_buf, PATH, shell)) |shell_| {
                 return shell_;
             }
         }
@@ -101,7 +101,7 @@ pub const RunCommand = struct {
 
     /// Find the "best" shell to use
     /// Cached to only run once
-    pub fn findShell(PATH: string, cwd: string) ?stringZ {
+    pub fn findShell(PATH: string) ?stringZ {
         const bufs = struct {
             pub var shell_buf_once: [bun.MAX_PATH_BYTES]u8 = undefined;
             pub var found_shell: [:0]const u8 = "";
@@ -110,7 +110,7 @@ pub const RunCommand = struct {
             return bufs.found_shell;
         }
 
-        if (findShellImpl(PATH, cwd)) |found| {
+        if (findShellImpl(PATH)) |found| {
             if (found.len < bufs.shell_buf_once.len) {
                 @memcpy(bufs.shell_buf_once[0..found.len], found);
                 bufs.shell_buf_once[found.len] = 0;
@@ -275,7 +275,7 @@ pub const RunCommand = struct {
         silent: bool,
         use_system_shell: bool,
     ) !bool {
-        const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        const shell_bin = findShell(env.get("PATH") orelse "") orelse return error.MissingShell;
 
         const script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
@@ -336,7 +336,7 @@ pub const RunCommand = struct {
             return true;
         }
 
-        var argv = [_]string{
+        const argv = [_]string{
             shell_bin,
             if (Environment.isWindows) "/c" else "-c",
             combined_script,
@@ -347,57 +347,76 @@ pub const RunCommand = struct {
             Output.flush();
         }
 
-        var child_process = std.ChildProcess.init(&argv, allocator);
+        const spawn_result = switch ((bun.spawnSync(&.{
+            .argv = &argv,
+            .argv0 = shell_bin.ptr,
 
-        var buf_map = try env.map.stdEnvMap(allocator);
-        defer buf_map.deinit();
-        child_process.env_map = buf_map.get();
-        child_process.cwd = cwd;
-        child_process.stderr_behavior = .Inherit;
-        child_process.stdin_behavior = .Inherit;
-        child_process.stdout_behavior = .Inherit;
+            // TODO: remember to free this when we add --filter or --concurrent
+            // in the meantime we don't need to free it.
+            .envp = try env.map.createNullDelimitedEnvMap(bun.default_allocator),
 
-        if (Environment.isWindows) {
-            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
-        } else {
-            try child_process.spawn();
-        }
+            .cwd = cwd,
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
 
-        const result = child_process.wait() catch |err| {
+            .windows = if (Environment.isWindows) .{
+                .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
+            } else {},
+        }) catch |err| {
             if (!silent) {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
             }
 
             Output.flush();
             return true;
+        })) {
+            .err => |err| {
+                if (!silent) {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{}", .{ name, err });
+                }
+
+                Output.flush();
+                return true;
+            },
+            .result => |result| result,
         };
 
-        switch (result) {
-            .Exited => |code| {
-                if (code > 0) {
-                    if (code != 2 and !silent) {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
+        switch (spawn_result.status) {
+            .exited => |exit_code| {
+                if (exit_code.signal.valid() and exit_code.signal != .SIGINT and !silent) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
+                    Output.flush();
+
+                    Global.raiseIgnoringPanicHandler(exit_code.signal);
+                }
+
+                if (exit_code.code != 0) {
+                    if (exit_code.code != 2 and !silent) {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, exit_code.code });
                         Output.flush();
                     }
 
-                    Global.exit(code);
+                    Global.exit(exit_code.code);
                 }
             },
-            .Signal => |signal| {
-                if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr) });
-                    Output.flush();
-                }
 
-                Global.raiseIgnoringPanicHandler(signal);
+            .signaled => |signal| {
+                if (signal.valid() and signal != .SIGINT and !silent) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
+                    Output.flush();
+
+                    Global.raiseIgnoringPanicHandler(signal);
+                }
             },
-            .Stopped => |signal| {
+
+            .err => |err| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {}<r>", .{ name, bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr) });
-                    Output.flush();
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{}", .{ name, err });
                 }
 
-                Global.raiseIgnoringPanicHandler(signal);
+                Output.flush();
+                return true;
             },
 
             else => {},
@@ -412,7 +431,7 @@ pub const RunCommand = struct {
     fn basenameOrBun(str: []const u8) []const u8 {
         // The full path is not used here, because on windows it is dependant on the
         // username. Before windows we checked bun_node_dir, but this is not allowed on Windows.
-        if (strings.hasSuffixComptime(str, "/bun-node/node" ++ bun.exe_suffix)) {
+        if (strings.hasSuffixComptime(str, "/bun-node/node" ++ bun.exe_suffix) or (Environment.isWindows and strings.hasSuffixComptime(str, "\\bun-node\\node" ++ bun.exe_suffix))) {
             return "bun";
         }
         return std.fs.path.basename(str);
@@ -427,6 +446,7 @@ pub const RunCommand = struct {
     pub fn runBinary(
         ctx: Command.Context,
         executable: []const u8,
+        executableZ: [:0]const u8,
         cwd: string,
         env: *DotEnv.Loader,
         passthrough: []const string,
@@ -436,7 +456,7 @@ pub const RunCommand = struct {
         // wrapper exe.  we build the full exe path even though we could do
         // a relative lookup, because in the case we do find it, we have to
         // generate this full path anyways.
-        if (Environment.isWindows and bun.strings.hasSuffixComptime(executable, ".exe")) {
+        if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path and bun.strings.hasSuffixComptime(executable, ".exe")) {
             std.debug.assert(std.fs.path.isAbsolute(executable));
 
             // Using @constCast is safe because we know that
@@ -455,6 +475,7 @@ pub const RunCommand = struct {
         try runBinaryWithoutBunxPath(
             ctx,
             executable,
+            executableZ,
             cwd,
             env,
             passthrough,
@@ -462,9 +483,21 @@ pub const RunCommand = struct {
         );
     }
 
-    pub fn runBinaryWithoutBunxPath(
+    fn runBinaryGenericError(executable: []const u8, silent: bool, err: bun.sys.Error) noreturn {
+        if (!silent) {
+            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{}", .{ basenameOrBun(executable), err.withPath(executable) });
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
+        }
+
+        Global.exit(1);
+    }
+
+    fn runBinaryWithoutBunxPath(
         ctx: Command.Context,
         executable: []const u8,
+        executableZ: [*:0]const u8,
         cwd: string,
         env: *DotEnv.Loader,
         passthrough: []const string,
@@ -480,90 +513,143 @@ pub const RunCommand = struct {
             argv = try array_list.toOwnedSlice();
         }
 
-        var child_process = std.ChildProcess.init(argv, ctx.allocator);
-
-        var buf_map = try env.map.stdEnvMap(ctx.allocator);
-        defer buf_map.deinit();
-        child_process.cwd = cwd;
-        child_process.env_map = buf_map.get();
-        child_process.stderr_behavior = .Inherit;
-        child_process.stdin_behavior = .Inherit;
-        child_process.stdout_behavior = .Inherit;
         const silent = ctx.debug.silent;
+        const spawn_result = bun.spawnSync(&.{
+            .argv = argv,
+            .argv0 = executableZ,
 
-        if (Environment.isWindows) {
-            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
-        } else {
-            try child_process.spawn();
-        }
+            // TODO: remember to free this when we add --filter or --concurrent
+            // in the meantime we don't need to free it.
+            .envp = try env.map.createNullDelimitedEnvMap(bun.default_allocator),
 
-        const result = child_process.wait() catch |err| {
-            if (err == error.AccessDenied) {
-                if (comptime Environment.isPosix) {
-                    var stat = std.mem.zeroes(std.c.Stat);
-                    const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
-                    if (rc == 0) {
-                        if (std.os.S.ISDIR(stat.mode)) {
-                            if (!silent)
-                                Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
-                            if (@errorReturnTrace()) |trace| {
-                                std.debug.dumpStackTrace(trace.*);
-                            }
-                            Global.exit(1);
+            .cwd = cwd,
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
+            .use_execve_on_macos = silent,
+
+            .windows = if (Environment.isWindows) .{
+                .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
+            } else {},
+        }) catch |err| {
+            // an error occurred before the process was spawned
+            print_error: {
+                if (!silent) {
+                    if (comptime Environment.isPosix) {
+                        switch (bun.sys.stat(executable[0.. :0])) {
+                            .result => |stat| {
+                                if (bun.S.ISDIR(stat.mode)) {
+                                    Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{basenameOrBun(executable)});
+                                    break :print_error;
+                                }
+                            },
+                            .err => |err2| {
+                                switch (err2.getErrno()) {
+                                    .NOENT, .PERM, .NOTDIR => {
+                                        Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error:\n{}", .{ basenameOrBun(executable), err2 });
+                                        break :print_error;
+                                    },
+                                    else => {},
+                                }
+                            },
                         }
                     }
-                }
-            }
 
-            if (!silent) {
-                Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to <r><red>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
+                    if (@errorReturnTrace()) |trace| {
+                        std.debug.dumpStackTrace(trace.*);
+                    }
+                }
             }
             Global.exit(1);
         };
-        switch (result) {
-            .Exited => |code| {
-                if (!silent) {
-                    const is_probably_trying_to_run_a_pkg_script =
-                        original_script_for_bun_run != null and
-                        ((code == 1 and bun.strings.eqlComptime(original_script_for_bun_run.?, "test")) or
-                        (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
-                        "install",
-                        "kill",
-                        "link",
-                    }) and ctx.positionals.len == 1));
 
-                    if (is_probably_trying_to_run_a_pkg_script) {
-                        // if you run something like `bun run test`, you get a confusing message because
-                        // you don't usually think about your global path, let alone "/bin/test"
-                        //
-                        // test exits with code 1, the other ones i listed exit with code 2
-                        //
-                        // so for these script names, print the entire exe name.
-                        Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ executable, code });
-                        Output.note("a package.json script \"{s}\" was not found", .{original_script_for_bun_run.?});
-                    }
-                    // 128 + 2 is the exit code of a process killed by SIGINT, which is caused by CTRL + C
-                    else if (code > 0 and code != 130) {
-                        Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ basenameOrBun(executable), code });
-                    }
-                }
-                Global.exit(code);
+        switch (spawn_result) {
+            .err => |err| {
+                // an error occurred while spawning the process
+                runBinaryGenericError(executable, silent, err);
             },
-            .Signal, .Stopped => |sig| {
-                // forward the signal to the shell / parent process
-                if (sig != 0) {
-                    Output.flush();
-                    Global.raiseIgnoringPanicHandler(sig);
-                } else if (!silent) {
-                    std.debug.panic("\"{s}\" stopped by signal code 0, which isn't supposed to be possible", .{executable});
+            .result => |result| {
+                switch (result.status) {
+                    // An error occurred after the process was spawned.
+                    .err => |err| {
+                        runBinaryGenericError(executable, silent, err);
+                    },
+
+                    .signaled => |signal| {
+                        if (!silent) {
+                            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to signal <b>{s}<r>", .{
+                                basenameOrBun(executable),
+                                signal.name() orelse "unknown",
+                            });
+                            if (@errorReturnTrace()) |trace| {
+                                std.debug.dumpStackTrace(trace.*);
+                            }
+                        }
+
+                        Output.flush();
+                        Global.raiseIgnoringPanicHandler(@intFromEnum(signal));
+                    },
+
+                    .exited => |exit_code| {
+                        // A process can be both signaled and exited
+                        if (exit_code.signal.valid()) {
+                            if (!silent) {
+                                Output.prettyErrorln("<r><red>error<r>: \"<b>{s}<r>\" exited with signal <b>{s}<r>", .{
+                                    basenameOrBun(executable),
+                                    exit_code.signal.name() orelse "unknown",
+                                });
+                                if (@errorReturnTrace()) |trace| {
+                                    std.debug.dumpStackTrace(trace.*);
+                                }
+                            }
+
+                            Output.flush();
+                            Global.raiseIgnoringPanicHandler(@intFromEnum(exit_code.signal));
+                        }
+
+                        const code = exit_code.code;
+                        if (code != 0) {
+                            if (!silent) {
+                                const is_probably_trying_to_run_a_pkg_script =
+                                    original_script_for_bun_run != null and
+                                    ((code == 1 and bun.strings.eqlComptime(original_script_for_bun_run.?, "test")) or
+                                    (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
+                                    "install",
+                                    "kill",
+                                    "link",
+                                }) and ctx.positionals.len == 1));
+
+                                if (is_probably_trying_to_run_a_pkg_script) {
+                                    // if you run something like `bun run test`, you get a confusing message because
+                                    // you don't usually think about your global path, let alone "/bin/test"
+                                    //
+                                    // test exits with code 1, the other ones i listed exit with code 2
+                                    //
+                                    // so for these script names, print the entire exe name.
+                                    Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ executable, code });
+                                    Output.note("a package.json script \"{s}\" was not found", .{original_script_for_bun_run.?});
+                                }
+                                // 128 + 2 is the exit code of a process killed by SIGINT, which is caused by CTRL + C
+                                else if (code > 0 and code != 130) {
+                                    Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ basenameOrBun(executable), code });
+                                } else {
+                                    Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to exit code <b>{d}<r>", .{
+                                        basenameOrBun(executable),
+                                        code,
+                                    });
+                                }
+
+                                if (@errorReturnTrace()) |trace| {
+                                    std.debug.dumpStackTrace(trace.*);
+                                }
+                            }
+                        }
+
+                        Global.exit(code);
+                    },
+                    .running => @panic("Unexpected state: process is running"),
                 }
-                Global.exit(128 + @as(u8, @as(u7, @truncate(sig))));
-            },
-            .Unknown => |sig| {
-                if (!silent) {
-                    Output.errGeneric("\"<b>{s}<r>\" stopped with unknown state <b>{d}<r>", .{ basenameOrBun(executable), sig });
-                }
-                Global.exit(1);
             },
         }
     }
@@ -620,8 +706,6 @@ pub const RunCommand = struct {
         return try allocator.dupeZ(u8, target_path_buffer[0 .. converted.len + file_name.len :0]);
     }
 
-    var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-
     pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
@@ -636,10 +720,9 @@ pub const RunCommand = struct {
                 argv0 = bun.argv()[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
-                var self = try std.fs.selfExePath(&self_exe_bin_path_buf);
+                const self = try bun.selfExePath();
                 if (self.len > 0) {
-                    self.ptr[self.len] = 0;
-                    argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
+                    argv0 = self.ptr;
                     optional_bun_path.* = self;
                 }
             }
@@ -764,7 +847,7 @@ pub const RunCommand = struct {
 
         this_bundler.configureLinker();
 
-        var root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
+        const root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
             if (!log_errors) return error.CouldntReadCurrentDirectory;
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
@@ -796,20 +879,7 @@ pub const RunCommand = struct {
                 }
             }
 
-            // TODO: evaluate if we can skip running this in nested calls to bun run
-            // The reason why it's unclear:
-            // - Some scripts may do NODE_ENV=production bun run foo
-            //   This would cause potentially a different .env file to be loaded
-            this_bundler.runEnvLoader() catch {};
-
-            if (root_dir_info.getEntries(0)) |dir| {
-                // Run .env again if it exists in a parent dir
-                if (this_bundler.options.production) {
-                    this_bundler.env.load(dir, this_bundler.options.env.files, .production) catch {};
-                } else {
-                    this_bundler.env.load(dir, this_bundler.options.env.files, .development) catch {};
-                }
-            }
+            this_bundler.runEnvLoader(true) catch {};
         }
 
         this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
@@ -827,7 +897,7 @@ pub const RunCommand = struct {
 
         if (this_bundler.env.get("npm_execpath") == null) {
             // we don't care if this fails
-            if (std.fs.selfExePathAlloc(ctx.allocator)) |self_exe_path| {
+            if (bun.selfExePath()) |self_exe_path| {
                 this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
             } else |_| {}
         }
@@ -1420,7 +1490,7 @@ pub const RunCommand = struct {
         }
 
         // Run absolute/relative path
-        if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
+        if (std.fs.path.isAbsolute(script_name_to_search) or
             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
         {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
@@ -1439,7 +1509,6 @@ pub const RunCommand = struct {
 
         if (script_name_to_search.len == 1 and script_name_to_search[0] == '-') {
             // read from stdin
-
             var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
             var list = std.ArrayList(u8).init(stack_fallback.get());
             errdefer list.deinit();
@@ -1468,7 +1537,7 @@ pub const RunCommand = struct {
             return true;
         }
 
-        if (Environment.isWindows) try_bunx_file: {
+        if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path) try_bunx_file: {
             // Attempt to find a ".bunx" file on disk, and run it, skipping the
             // wrapper exe.  we build the full exe path even though we could do
             // a relative lookup, because in the case we do find it, we have to
@@ -1508,11 +1577,12 @@ pub const RunCommand = struct {
         }
 
         if (path_for_which.len > 0) {
-            if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
+            if (which(&path_buf, path_for_which, script_name_to_search)) |destination| {
                 const out = bun.asByteSlice(destination);
                 return try runBinaryWithoutBunxPath(
                     ctx,
                     try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                    destination,
                     this_bundler.fs.top_level_dir,
                     this_bundler.env,
                     passthrough,
@@ -1588,7 +1658,10 @@ pub const BunXFastPath = struct {
     var environment_buffer: bun.WPathBuffer = undefined;
 
     /// If this returns, it implies the fast path cannot be taken
-    fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+    fn tryLaunch(ctx_const: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+        if (!bun.FeatureFlags.windows_bunx_fast_path) return;
+
+        var ctx = ctx_const;
         std.debug.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
@@ -1613,6 +1686,7 @@ pub const BunXFastPath = struct {
             const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
             i += result.len + 1;
         }
+        ctx.passthrough = passthrough;
 
         const run_ctx = shim_impl.FromBunRunContext{
             .handle = handle,

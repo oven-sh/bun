@@ -1157,7 +1157,7 @@ pub const Subprocess = struct {
                                     return error.UnexpectedCreatingStdin;
                                 },
                             }
-
+                            pipe.writer.setParent(pipe);
                             subprocess.weak_file_sink_stdin_ptr = pipe;
                             subprocess.flags.has_stdin_destructor_called = false;
 
@@ -1283,6 +1283,10 @@ pub const Subprocess = struct {
 
             return switch (this.*) {
                 .pipe => |pipe| {
+                    if (pipe.signal.ptr == @as(*anyopaque, @ptrCast(this))) {
+                        pipe.signal.clear();
+                    }
+
                     pipe.deref();
 
                     this.* = .{ .ignore = {} };
@@ -1638,7 +1642,7 @@ pub const Subprocess = struct {
 
                     if (argv0 == null) {
                         var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                        const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+                        const resolved = Which.which(&path_buf, PATH, arg0.slice()) orelse {
                             globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                             return .zero;
                         };
@@ -1648,7 +1652,7 @@ pub const Subprocess = struct {
                         };
                     } else {
                         var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                        const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
+                        const resolved = Which.which(&path_buf, PATH, bun.sliceTo(argv0.?, 0)) orelse {
                             globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                             return .zero;
                         };
@@ -1867,7 +1871,7 @@ pub const Subprocess = struct {
             }
         }
 
-        var windows_ipc_env_buf: if (Environment.isWindows) ["BUN_INTERNAL_IPC_FD=\\\\.\\pipe\\BUN_IPC_00000000-0000-0000-0000-000000000000".len * 2]u8 else void = undefined;
+        var windows_ipc_env_buf: if (Environment.isWindows) ["BUN_INTERNAL_IPC_FD=\\\\.\\pipe\\BUN_IPC_00000000-0000-0000-0000-000000000000\x00".len]u8 else void = undefined;
         if (ipc_mode != .none) {
             if (comptime is_sync) {
                 globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});

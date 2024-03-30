@@ -80,6 +80,7 @@ pub const LifecycleScriptSubprocess = struct {
             return;
 
         const process = this.process orelse return;
+
         this.handleExit(process.status);
     }
 
@@ -87,6 +88,8 @@ pub const LifecycleScriptSubprocess = struct {
     var cwd_z_buf: bun.PathBuffer = undefined;
 
     pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
+        bun.Analytics.Features.lifecycle_scripts += 1;
+
         if (!this.has_incremented_alive_count) {
             this.has_incremented_alive_count = true;
             _ = alive_count.fetchAdd(1, .Monotonic);
@@ -122,7 +125,7 @@ pub const LifecycleScriptSubprocess = struct {
         this.current_script_index = next_script_index;
         this.has_called_process_exit = false;
 
-        const shell_bin = bun.CLI.RunCommand.findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        const shell_bin = bun.CLI.RunCommand.findShell(env.get("PATH") orelse "") orelse return error.MissingShell;
 
         var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.script.len + 1);
         defer copy_script.deinit();
@@ -168,6 +171,8 @@ pub const LifecycleScriptSubprocess = struct {
                     .loop = JSC.EventLoopHandle.init(&manager.event_loop),
                 }
             else {},
+
+            .stream = false,
         };
 
         this.remaining_fds = 0;
@@ -175,15 +180,24 @@ pub const LifecycleScriptSubprocess = struct {
 
         if (comptime Environment.isPosix) {
             if (spawned.stdout) |stdout| {
-                this.stdout.setParent(this);
-                this.remaining_fds += 1;
-                try this.stdout.start(stdout, true).unwrap();
+                if (!spawned.memfds[1]) {
+                    this.stdout.setParent(this);
+                    this.remaining_fds += 1;
+                    try this.stdout.start(stdout, true).unwrap();
+                } else {
+                    this.stdout.setParent(this);
+                    this.stdout.startMemfd(stdout);
+                }
             }
-
             if (spawned.stderr) |stderr| {
-                this.stderr.setParent(this);
-                this.remaining_fds += 1;
-                try this.stderr.start(stderr, true).unwrap();
+                if (!spawned.memfds[2]) {
+                    this.stderr.setParent(this);
+                    this.remaining_fds += 1;
+                    try this.stderr.start(stderr, true).unwrap();
+                } else {
+                    this.stderr.setParent(this);
+                    this.stderr.startMemfd(stderr);
+                }
             }
         } else if (comptime Environment.isWindows) {
             if (spawned.stdout == .buffer) {
@@ -217,21 +231,31 @@ pub const LifecycleScriptSubprocess = struct {
 
     pub fn printOutput(this: *LifecycleScriptSubprocess) void {
         if (!this.manager.options.log_level.isVerbose()) {
-            if (this.stdout.buffer().items.len +| this.stderr.buffer().items.len == 0) {
+            var stdout = this.stdout.finalBuffer();
+
+            // Reuse the memory
+            if (stdout.items.len == 0 and stdout.capacity > 0 and this.stderr.buffer().capacity == 0) {
+                this.stderr.buffer().* = stdout.*;
+                stdout.* = std.ArrayList(u8).init(bun.default_allocator);
+            }
+
+            var stderr = this.stderr.finalBuffer();
+
+            if (stdout.items.len +| stderr.items.len == 0) {
                 return;
             }
 
             Output.disableBuffering();
             Output.flush();
 
-            if (this.stdout.buffer().items.len > 0) {
-                Output.errorWriter().print("{s}\n", .{this.stdout.buffer().items}) catch {};
-                this.stdout.buffer().clearAndFree();
+            if (stdout.items.len > 0) {
+                Output.errorWriter().print("{s}\n", .{stdout.items}) catch {};
+                stdout.clearAndFree();
             }
 
-            if (this.stderr.buffer().items.len > 0) {
-                Output.errorWriter().print("{s}\n", .{this.stderr.buffer().items}) catch {};
-                this.stderr.buffer().clearAndFree();
+            if (stderr.items.len > 0) {
+                Output.errorWriter().print("{s}\n", .{stderr.items}) catch {};
+                stderr.clearAndFree();
             }
 
             Output.enableBuffering();
@@ -386,7 +410,7 @@ pub const LifecycleScriptSubprocess = struct {
         });
 
         if (comptime log_level.isVerbose()) {
-            Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Starting scripts for <b>\"{s}\"<r>", .{
+            Output.prettyErrorln("<d>[Scripts]<r> Starting scripts for <b>\"{s}\"<r>", .{
                 list.package_name,
             });
         }

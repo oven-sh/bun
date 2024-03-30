@@ -220,4 +220,13 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("compile/Utf8", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(JSON.stringify({\u{6211}: "\u{6211}"}));
+      `,
+    },
+    run: { stdout: '{"\u{6211}":"\u{6211}"}' },
+  });
 });

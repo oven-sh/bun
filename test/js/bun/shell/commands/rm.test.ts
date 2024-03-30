@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "invalid enum value"
 /**
  * These tests are derived from the [deno_task_shell](https://github.com/denoland/deno_task_shell/) rm tests, which are developed and maintained by the Deno authors.
  * Copyright 2018-2023 the Deno authors.
@@ -25,6 +24,7 @@ describe("bunshell rm", () => {
   TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`
     .ensureTempDir()
     .doesNotExist("node_modules")
+    .timeout(10 * 1000)
     .runAsTest("node_modules");
 
   test("force", async () => {

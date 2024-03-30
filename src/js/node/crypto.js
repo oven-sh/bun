@@ -5,6 +5,21 @@ const StreamModule = require("node:stream");
 const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
+const {
+  symmetricKeySize,
+  asymmetricKeyDetails,
+  asymmetricKeyType,
+  equals,
+  exports,
+  createSecretKey,
+  createPublicKey,
+  createPrivateKey,
+  generateKeySync,
+  generateKeyPairSync,
+  sign: nativeSign,
+  verify: nativeVerify,
+} = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
+
 const MAX_STRING_LENGTH = 536870888;
 var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
@@ -1465,32 +1480,32 @@ var require_algorithms = __commonJS({
       "ecdsa-with-SHA1": {
         sign: "ecdsa",
         hash: "sha1",
-        id: "",
+        id: "3021300906052b0e03021a05000414",
       },
       sha1: {
         sign: "ecdsa/rsa",
         hash: "sha1",
-        id: "",
+        id: "3021300906052b0e03021a05000414",
       },
       sha256: {
         sign: "ecdsa/rsa",
         hash: "sha256",
-        id: "",
+        id: "3031300d060960864801650304020105000420",
       },
       sha224: {
         sign: "ecdsa/rsa",
         hash: "sha224",
-        id: "",
+        id: "302d300d06096086480165030402040500041c",
       },
       sha384: {
         sign: "ecdsa/rsa",
         hash: "sha384",
-        id: "",
+        id: "3041300d060960864801650304020205000430",
       },
       sha512: {
         sign: "ecdsa/rsa",
         hash: "sha512",
-        id: "",
+        id: "3051300d060960864801650304020305000440",
       },
       "DSA-SHA": {
         sign: "dsa",
@@ -12024,20 +12039,6 @@ const harcoded_curves = [
 function getCurves() {
   return harcoded_curves;
 }
-const {
-  symmetricKeySize,
-  asymmetricKeyDetails,
-  asymmetricKeyType,
-  equals,
-  exports,
-  createSecretKey,
-  createPublicKey,
-  createPrivateKey,
-  generateKeySync,
-  generateKeyPairSync,
-  sign: nativeSign,
-  verify: nativeVerify,
-} = $lazy("internal/crypto");
 
 class KeyObject {
   // we use $bunNativePtr so that util.types.isKeyObject can detect it

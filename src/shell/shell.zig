@@ -150,6 +150,11 @@ pub fn Result(comptime T: anytype) type {
         pub const success: @This() = @This(){
             .result = std.mem.zeroes(T),
         };
+
+        pub fn asErr(this: @This()) ?ShellErr {
+            if (this == .err) return this.err;
+            return null;
+        }
     };
 }
 
@@ -191,13 +196,13 @@ pub const GlobalJS = struct {
         return this.globalThis.bunVM();
     }
 
-    pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) bun.shell.ShellErr {
+    pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
             .invalid_arguments = .{ .val = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory() },
         };
     }
 
-    pub inline fn throwTODO(this: @This(), msg: []const u8) bun.shell.ShellErr {
+    pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
             .todo = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg}) catch bun.outOfMemory(),
         };
@@ -207,14 +212,14 @@ pub const GlobalJS = struct {
         this.globalThis.throwValue(err.toJSC(this.globalThis));
     }
 
-    pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) bun.shell.ShellErr {
+    pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
         const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
         return .{
             .custom = str,
         };
     }
 
-    pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) bun.shell.ShellErr {
+    pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory();
         return .{
             .custom = str,
@@ -246,7 +251,7 @@ pub const GlobalJS = struct {
         return loop.platformEventLoop();
     }
 
-    pub inline fn actuallyThrow(this: @This(), shellerr: bun.shell.ShellErr) void {
+    pub inline fn actuallyThrow(this: @This(), shellerr: ShellErr) void {
         shellerr.throwJS(this.globalThis);
     }
 };
@@ -272,21 +277,21 @@ pub const GlobalMini = struct {
         return this.mini;
     }
 
-    // pub inline fn throwShellErr(this: @This(), shell_err: bun.shell.ShellErr
+    // pub inline fn throwShellErr(this: @This(), shell_err: ShellErr
 
-    pub inline fn throwTODO(this: @This(), msg: []const u8) bun.shell.ShellErr {
+    pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
             .todo = std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg}) catch bun.outOfMemory(),
         };
     }
 
-    pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) bun.shell.ShellErr {
+    pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
             .invalid_arguments = .{ .val = std.fmt.allocPrint(this.allocator(), fmt, args) catch bun.outOfMemory() },
         };
     }
 
-    pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) bun.shell.ShellErr {
+    pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
         const str = std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
         return .{
             .custom = str,
@@ -311,14 +316,14 @@ pub const GlobalMini = struct {
         return this.mini.top_level_dir;
     }
 
-    pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) bun.shell.ShellErr {
+    pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         const str = std.fmt.allocPrint(this.allocator(), fmt, args) catch bun.outOfMemory();
         return .{
             .custom = str,
         };
     }
 
-    pub inline fn actuallyThrow(this: @This(), shellerr: bun.shell.ShellErr) void {
+    pub inline fn actuallyThrow(this: @This(), shellerr: ShellErr) void {
         _ = this; // autofix
         shellerr.throwMini();
     }
@@ -2588,16 +2593,6 @@ fn isValidVarNameSlowAscii(var_name: []const u8) bool {
 }
 
 var stderr_mutex = std.Thread.Mutex{};
-pub fn closefd(fd: bun.FileDescriptor) void {
-    if (Syscall.close2(fd)) |err| {
-        _ = err;
-        log("ERR closefd: {d}\n", .{fd});
-        // stderr_mutex.lock();
-        // defer stderr_mutex.unlock();
-        // const stderr = std.io.getStdErr().writer();
-        // err.toSystemError().format("error", .{}, stderr) catch @panic("damn");
-    }
-}
 
 pub fn hasEqSign(str: []const u8) ?u32 {
     if (isAllAscii(str)) {
@@ -2805,7 +2800,7 @@ pub fn handleTemplateValue(
             const idx = out_jsobjs.items.len;
             template_value.protect();
             try out_jsobjs.append(template_value);
-            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ bun.shell.LEX_JS_OBJREF_PREFIX, idx });
+            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
             try out_script.appendSlice(slice);
             return true;
         }
@@ -3193,3 +3188,163 @@ pub fn needsEscapeUtf8AsciiLatin1Slow(str: []const u8) bool {
     return false;
 }
 pub const ExitCode = eval.ExitCode;
+
+/// Used in JS tests, see `internal-for-testing.ts` and shell tests.
+pub const TestingAPIs = struct {
+    pub fn shellLex(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const arguments_ = callframe.arguments(1);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        const string_args = arguments.nextEat() orelse {
+            globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
+            return JSC.JSValue.jsUndefined();
+        };
+
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+
+        const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        };
+        defer {
+            for (jsstrings.items[0..]) |bunstr| {
+                bunstr.deref();
+            }
+            jsstrings.deinit();
+        }
+        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+        defer {
+            for (jsobjs.items) |jsval| {
+                jsval.unprotect();
+            }
+        }
+
+        var script = std.ArrayList(u8).init(arena.allocator());
+        if (!(shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        })) {
+            return .undefined;
+        }
+
+        const lex_result = brk: {
+            if (bun.strings.isAllASCII(script.items[0..])) {
+                var lexer = LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
+                lexer.lex() catch |err| {
+                    globalThis.throwError(err, "failed to lex shell");
+                    return JSValue.undefined;
+                };
+                break :brk lexer.get_result();
+            }
+            var lexer = LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
+            lexer.lex() catch |err| {
+                globalThis.throwError(err, "failed to lex shell");
+                return JSValue.undefined;
+            };
+            break :brk lexer.get_result();
+        };
+
+        if (lex_result.errors.len > 0) {
+            const str = lex_result.combineErrors(arena.allocator());
+            globalThis.throwPretty("{s}", .{str});
+            return .undefined;
+        }
+
+        var test_tokens = std.ArrayList(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+        for (lex_result.tokens) |tok| {
+            const test_tok = Test.TestToken.from_real(tok, lex_result.strpool);
+            test_tokens.append(test_tok) catch {
+                globalThis.throwOutOfMemory();
+                return JSValue.undefined;
+            };
+        }
+
+        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{}) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+
+        defer globalThis.bunVM().allocator.free(str);
+        var bun_str = bun.String.fromBytes(str);
+        return bun_str.toJS(globalThis);
+    }
+
+    pub fn shellParse(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const arguments_ = callframe.arguments(1);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        const string_args = arguments.nextEat() orelse {
+            globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
+            return JSC.JSValue.jsUndefined();
+        };
+
+        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+
+        const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        };
+        defer {
+            for (jsstrings.items[0..]) |bunstr| {
+                bunstr.deref();
+            }
+            jsstrings.deinit();
+        }
+        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+        defer {
+            for (jsobjs.items) |jsval| {
+                jsval.unprotect();
+            }
+        }
+        var script = std.ArrayList(u8).init(arena.allocator());
+        if (!(shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        })) {
+            return .undefined;
+        }
+
+        var out_parser: ?Parser = null;
+        var out_lex_result: ?LexResult = null;
+
+        const script_ast = Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], jsstrings.items[0..], &out_parser, &out_lex_result) catch |err| {
+            if (err == ParseError.Lex) {
+                std.debug.assert(out_lex_result != null);
+                const str = out_lex_result.?.combineErrors(arena.allocator());
+                globalThis.throwPretty("{s}", .{str});
+                return .undefined;
+            }
+
+            if (out_parser) |*p| {
+                const errstr = p.combineErrors();
+                globalThis.throwPretty("{s}", .{errstr});
+                return .undefined;
+            }
+
+            globalThis.throwError(err, "failed to lex/parse shell");
+            return .undefined;
+        };
+
+        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+
+        defer globalThis.bunVM().allocator.free(str);
+        var bun_str = bun.String.fromBytes(str);
+        return bun_str.toJS(globalThis);
+    }
+};

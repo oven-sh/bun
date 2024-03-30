@@ -132,7 +132,6 @@ pub fn printMetadata() void {
         \\<r>----- bun meta -----
     ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ maybe_baseline ++ " {s}\n" ++
         \\{s}: {}
-        \\
     , .{
         analytics_platform.version,
         cmd_label,
@@ -377,7 +376,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
             );
             Global.exit(1);
         },
-        error.InvalidArgument, error.InstallFailed, error.InvalidPackageJSON => {
+        error.InvalidArgument => {
             Global.exit(1);
         },
         error.SystemFdQuotaExceeded => {

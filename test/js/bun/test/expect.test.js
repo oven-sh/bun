@@ -2493,10 +2493,15 @@ describe("expect()", () => {
       d: [{ a: "hii", b: "hello" }],
       e: [1, 2],
       f: 100,
+      g: 20n,
+      h: 20.5,
     };
     expect(o).toContainValues([100]);
     expect(o).toContainValues(["foo", [{ a: "hii", b: "hello" }]]);
     expect(o).toContainValues(["foo", [1, 2]]);
+    expect(o).toContainValues(["foo"]);
+    expect(o).toContainValues([20n]);
+    expect(o).toContainValues([20.5]);
     expect(o).toContainValues(["foo"]);
     expect(o).toContainValues(["foo", [{ a: "hii", b: "hello" }]]);
     expect(o).toContainValues(["baz", "bar", "foo"]);
@@ -2527,8 +2532,10 @@ describe("expect()", () => {
       d: [{ a: "hii", b: "hello" }],
       e: [1, 2],
       f: 100,
+      g: 20n,
+      h: 20.5,
     };
-    expect(o).toContainAllValues(["foo", "bar", "baz", [{ a: "hii", b: "hello" }], [1, 2], 100]);
+    expect(o).toContainAllValues(["foo", "bar", "baz", [{ a: "hii", b: "hello" }], [1, 2], 100, 20n, 20.5]);
     expect(o).not.toContainAllValues(["foo", [{ a: "hii", b: "hello" }]]);
 
     const shallow = {

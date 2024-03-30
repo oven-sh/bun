@@ -937,18 +937,10 @@ pub const Expect = struct {
             outer: {
                 while (itr.next()) |item| {
                     var i: u32 = 0;
-                    var hasKey = false;
                     while (i < count) : (i += 1) {
                         const key = expected.getIndex(globalObject, i);
-                        if (!item.jestDeepEquals(key, globalObject)) {
-                            hasKey = true;
-                            break;
-                        }
-                    }
-                    if (!hasKey) {
-                        pass = false;
-                        break :outer;
-                    }
+                        if (item.jestDeepEquals(key, globalObject)) break;
+                    } else break :outer;
                 }
                 pass = true;
             }

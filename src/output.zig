@@ -171,27 +171,9 @@ pub const Source = struct {
         pub fn init() void {
             bun.windows.libuv.uv_disable_stdio_inheritance();
 
-            const peb = std.os.windows.peb();
-            var stdout = peb.ProcessParameters.hStdOutput;
-            var stderr = peb.ProcessParameters.hStdError;
-            var stdin = peb.ProcessParameters.hStdInput;
-
-            const handle_identifiers = &.{ std.os.windows.STD_INPUT_HANDLE, std.os.windows.STD_OUTPUT_HANDLE, std.os.windows.STD_ERROR_HANDLE };
-            const handles = &.{ &stdin, &stdout, &stderr };
-            inline for (0..3) |fd_i| {
-                if (handles[fd_i].* == std.os.windows.INVALID_HANDLE_VALUE) {
-                    handles[fd_i].* = bun.windows.CreateFileW(
-                        comptime bun.strings.w("NUL" ++ .{0}).ptr,
-                        if (fd_i > 0) std.os.windows.GENERIC_WRITE else std.os.windows.GENERIC_READ,
-                        0,
-                        null,
-                        std.os.windows.OPEN_EXISTING,
-                        0,
-                        null,
-                    );
-                    _ = SetStdHandle(handle_identifiers[fd_i], handles[fd_i].*);
-                }
-            }
+            const stdin = w.GetStdHandle(w.STD_INPUT_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
+            const stdout = w.GetStdHandle(w.STD_OUTPUT_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
+            const stderr = w.GetStdHandle(w.STD_ERROR_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
 
             bun.win32.STDERR_FD = if (stderr != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stderr) else bun.invalid_fd;
             bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;

@@ -3964,6 +3964,9 @@ pub const FileReader = struct {
     }
 
     pub fn setRawMode(this: *FileReader, flag: bool) bun.sys.Maybe(void) {
+        if (!Environment.isWindows) {
+            @panic("FileReader.setRawMode must not be called on " ++ comptime Environment.os.displayString());
+        }
         return this.reader.setRawMode(flag);
     }
 

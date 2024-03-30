@@ -112,8 +112,9 @@ pub const Source = union(enum) {
         const file_fd = bun.uvfdcast(fd);
 
         return switch (pipe.open(file_fd)) {
-            .err => |err| .{
-                .err = err,
+            .err => |err| brk: {
+                bun.default_allocator.destroy(pipe);
+                break :brk .{ .err = err };
             },
             .result => .{
                 .result = pipe,
@@ -125,13 +126,16 @@ pub const Source = union(enum) {
         log("openTTY (fd = {})", .{fd});
         const tty = bun.default_allocator.create(Source.Tty) catch bun.outOfMemory();
 
-        return switch (tty.init(loop, bun.uvfdcast(fd))) {
-            .err => |err| .{ .err = err },
-            .result => brk: {
-                _ = tty.setMode(.raw);
-                break :brk .{ .result = tty };
+        switch (tty.init(loop, bun.uvfdcast(fd))) {
+            .err => |err| {
+                bun.default_allocator.destroy(tty);
+                return .{ .err = err };
             },
-        };
+            .result => {
+                _ = tty.setMode(.raw);
+                return .{ .result = tty };
+            },
+        }
     }
 
     pub fn openFile(fd: bun.FileDescriptor) *Source.File {
@@ -146,27 +150,31 @@ pub const Source = union(enum) {
 
     pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(Source) {
         log("open (fd = {})", .{fd});
+        // For some reason GetFileType doesn't actually always return the correct type.
+        // For example, when piping stdin from a file, it still returns FILE_TYPE_CHAR,
+        // even though it's not a tty.
+        // Therefore, if we fail to create it as a tty, we'll try to create it as a normal
+        // file.
         const rc = bun.windows.GetFileType(fd.cast());
         switch (rc) {
             bun.windows.FILE_TYPE_PIPE => {
                 switch (openPipe(loop, fd)) {
                     .result => |pipe| return .{ .result = .{ .pipe = pipe } },
-                    .err => |err| return .{ .err = err },
+                    .err => {},
                 }
             },
             bun.windows.FILE_TYPE_CHAR => {
                 switch (openTty(loop, fd)) {
                     .result => |tty| return .{ .result = .{ .tty = tty } },
-                    .err => |err| return .{ .err = err },
+                    .err => {},
                 }
             },
-            else => {
-                return .{
-                    .result = .{
-                        .file = openFile(fd),
-                    },
-                };
-            },
+            else => {}
         }
+        return .{
+            .result = .{
+                .file = openFile(fd),
+            },
+        };
     }
 };

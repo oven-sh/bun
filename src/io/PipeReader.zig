@@ -472,6 +472,11 @@ pub fn WindowsPipeReader(
             if (this.source) |source| {
                 switch (source) {
                     .sync_file, .file => |file| {
+                        if (!this.flags.is_paused) {
+                            // always cancel the current one
+                            file.fs.cancel();
+                            this.flags.is_paused = true;
+                        }
                         // always use close_fs here because we can have a operation in progress
                         file.close_fs.data = file;
                         _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, @ptrCast(&onFileClose));

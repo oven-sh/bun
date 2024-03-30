@@ -400,7 +400,7 @@ pub const Closer = struct {
         var closer = Closer.new(.{});
         // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
         closer.io_request.data = closer;
-        if (uv.uv_fs_close(loop, &closer.io_request, fd, &onClose).errEnum()) |err| {
+        if (uv.uv_fs_close(loop, &closer.io_request, fd, onClose).errEnum()) |err| {
             Output.debugWarn("libuv close() failed = {}", .{err});
             closer.destroy();
             return;

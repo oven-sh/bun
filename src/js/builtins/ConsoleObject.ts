@@ -139,7 +139,7 @@ export function write(this: Console, input) {
 // to do extra work at startup, since most people do not need `console.Console`.
 // TODO: probably could extract `getStringWidth`; probably make that a native function. note how it is copied from `readline.js`
 export function createConsoleConstructor(console: typeof globalThis.console) {
-  const { inspect, formatWithOptions } = require("node:util");
+  const { inspect, formatWithOptions, stripVTControlCharacters } = require("node:util");
   const { isBuffer } = require("node:buffer");
 
   const StringPrototypeIncludes = String.prototype.includes;
@@ -163,22 +163,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kMinute = 60 * kSecond;
   const kHour = 60 * kMinute;
 
-  // Regex used for ansi escape code splitting
-  // Adopted from https://github.com/chalk/ansi-regex/blob/HEAD/index.js
-  // License: MIT, authors: @sindresorhus, Qix-, arjunmehta and LitoMore
-  // Matches all ansi escape code sequences in a string
-  var ansiPattern =
-    "[\\u001B\\u009B][[\\]()#;?]*" +
-    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*" +
-    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)" +
-    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))";
-  var ansi = new RegExp(ansiPattern, "g");
-
-  function stripVTControlCharacters(str) {
-    return (RegExpPrototypeSymbolReplace as any).$call(ansi, str, "");
-  }
-
-  var internalGetStringWidth = $lazy("getStringWidth");
+  const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 
   /**
    * Returns the number of columns required to display the given string.

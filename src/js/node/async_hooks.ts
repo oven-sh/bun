@@ -22,7 +22,7 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
-const { cleanupLater, setAsyncHooksEnabled } = $lazy("async_hooks");
+const [setAsyncHooksEnabled, cleanupLater] = $cpp("NodeAsyncHooks.cpp", "createAsyncHooksBinding");
 
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {

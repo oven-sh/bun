@@ -1,7 +1,6 @@
-import { $ } from "bun";
 import { TestBuilder, redirect } from "./util";
-
-const BUN = process.argv0;
+import { shellInternals } from "bun:internal-for-testing";
+const { parse } = shellInternals;
 
 describe("parse shell", () => {
   test("basic", () => {
@@ -33,7 +32,7 @@ describe("parse shell", () => {
       ],
     };
 
-    const result = $.parse`echo foo`;
+    const result = parse`echo foo`;
     expect(JSON.parse(result)).toEqual(expected);
   });
 
@@ -55,7 +54,7 @@ describe("parse shell", () => {
       ],
     };
 
-    const result = JSON.parse($.parse`echo foo > lmao.txt`);
+    const result = JSON.parse(parse`echo foo > lmao.txt`);
     expect(result).toEqual(expected);
   });
 
@@ -85,7 +84,7 @@ describe("parse shell", () => {
       ],
     };
 
-    const result = JSON.parse($.parse`"FOO $NICE!"`);
+    const result = JSON.parse(parse`"FOO $NICE!"`);
     console.log("Result", JSON.stringify(result));
     expect(result).toEqual(expected);
   });
@@ -121,7 +120,7 @@ describe("parse shell", () => {
         },
       ],
     };
-    const result = JSON.parse($.parse`echo > foo.txt | echo hi`);
+    const result = JSON.parse(parse`echo > foo.txt | echo hi`);
     // console.log(result);
     expect(result).toEqual(expected);
   });
@@ -169,7 +168,7 @@ describe("parse shell", () => {
         },
       ],
     };
-    const result = JSON.parse($.parse`echo foo && echo bar || echo lmao`);
+    const result = JSON.parse(parse`echo foo && echo bar || echo lmao`);
     // console.log(result);
     expect(result).toEqual(expected);
   });
@@ -237,7 +236,7 @@ describe("parse shell", () => {
       ],
     };
 
-    const result = $.parse`FOO=bar && echo foo && echo bar | echo lmao | cat > foo.txt`;
+    const result = parse`FOO=bar && echo foo && echo bar | echo lmao | cat > foo.txt`;
     // console.log(result);
     expect(JSON.parse(result)).toEqual(expected);
   });
@@ -270,7 +269,7 @@ describe("parse shell", () => {
       ],
     };
 
-    const result = JSON.parse($.parse`FOO=bar BAR=baz export LMAO=nice`);
+    const result = JSON.parse(parse`FOO=bar BAR=baz export LMAO=nice`);
     console.log("Result", JSON.stringify(result));
     expect(result).toEqual(expected);
   });
@@ -308,7 +307,7 @@ describe("parse shell", () => {
 
     const buffer = new Uint8Array(1 << 20);
     const buffer2 = new Uint8Array(1 << 20);
-    const result = JSON.parse($.parse`echo foo > ${buffer} && echo foo > ${buffer2}`);
+    const result = JSON.parse(parse`echo foo > ${buffer} && echo foo > ${buffer2}`);
 
     // console.log("Result", JSON.stringify(result));
     expect(result).toEqual(expected);
@@ -390,7 +389,7 @@ describe("parse shell", () => {
       ],
     };
 
-    const result = JSON.parse($.parse`echo "$(echo 1; echo 2)"`);
+    const result = JSON.parse(parse`echo "$(echo 1; echo 2)"`);
     expect(result).toEqual(expected);
   });
 
@@ -470,7 +469,7 @@ describe("parse shell", () => {
         },
       ],
     };
-    const result = JSON.parse($.parse`echo $(ls foo) && echo nice`);
+    const result = JSON.parse(parse`echo $(ls foo) && echo nice`);
     expect(result).toEqual(expected);
   });
 
@@ -536,7 +535,7 @@ describe("parse shell", () => {
           },
         ],
       };
-      const result = JSON.parse($.parse`echo $(FOO=bar $FOO)`);
+      const result = JSON.parse(parse`echo $(FOO=bar $FOO)`);
       expect(result).toEqual(expected);
     });
 
@@ -575,7 +574,7 @@ describe("parse shell", () => {
           },
         ],
       };
-      const result = JSON.parse($.parse`FOO=bar BAR=baz; BUN_DEBUG_QUIET_LOGS=1 echo`);
+      const result = JSON.parse(parse`FOO=bar BAR=baz; BUN_DEBUG_QUIET_LOGS=1 echo`);
       expect(result).toEqual(expected);
     });
   });

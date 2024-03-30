@@ -768,7 +768,7 @@ var require_wasi = __commonJS({
         },
         randomFillSync: array => crypto.getRandomValues(array),
         isTTY: fd => require("node:tty").isatty(fd),
-        fs: Bun.fs(),
+        fs: require("node:fs"),
         path: require("node:path"),
       };
 

@@ -751,6 +751,7 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal/*.js"
         "${BUN_SRC}/js/internal/*.ts"
+        "${BUN_SRC}/js/internal-for-testing.ts"
     )
     file(GLOB BUN_TS_FUNCTIONS ${CONFIGURE_DEPENDS} "${BUN_SRC}/js/builtins/*.ts")
 
@@ -758,6 +759,8 @@ if(NOT NO_CODEGEN)
 
     add_custom_command(
         OUTPUT
+        "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
+        "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
         "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
         "${BUN_WORKDIR}/codegen/InternalModuleRegistry+createInternalModuleById.h"
         "${BUN_WORKDIR}/codegen/InternalModuleRegistry+enum.h"
@@ -765,25 +768,18 @@ if(NOT NO_CODEGEN)
         "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
         "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
+        "${BUN_WORKDIR}/codegen/GeneratedJS2Native.h"
+        "${BUN_SRC}/bun.js/bindings/GeneratedJS2Native.zig"
         COMMAND ${BUN_EXECUTABLE} run "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
         DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Bundling JS modules"
+        COMMENT "Bundling JS"
     )
 endif()
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
     "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
     "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
-)
-
-add_custom_command(
-    OUTPUT "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
-    "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
-    COMMAND ${BUN_EXECUTABLE} run "${BUN_SRC}/codegen/bundle-functions.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
-    DEPENDS ${BUN_TS_FUNCTIONS} ${CODEGEN_FILES}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Bundling JS builtin functions"
 )
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
@@ -866,6 +862,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
         "${BUN_IDENTIFIER_CACHE_OUT}"
         "${BUN_SRC}/api/schema.zig"
+        "${BUN_SRC}/bun.js/bindings/GeneratedJS2Native.zig"
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Building zig code"
         VERBATIM

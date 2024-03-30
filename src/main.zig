@@ -15,8 +15,8 @@ comptime {
     std.debug.assert(builtin.target.cpu.arch.endian() == .little);
 }
 
-pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, addr: ?usize) noreturn {
-    MainPanicHandler.handle_panic(msg, error_return_trace, addr);
+pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, addr: ?usize) noreturn {
+    MainPanicHandler.handle_panic(msg, trace, addr);
 }
 
 const CrashReporter = @import("./crash_reporter.zig");

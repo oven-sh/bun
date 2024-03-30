@@ -13,7 +13,9 @@
 using JSC__JSGlobalObject = JSC::JSGlobalObject;
 using JSC__JSValue = JSC::EncodedJSValue;
 using JSC__CallFrame = JSC::CallFrame;
+
 namespace Zig {
+class GlobalObject;
 }
 
 #include "headers-handwritten.h"

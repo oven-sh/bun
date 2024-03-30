@@ -8,6 +8,7 @@
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/JSFunction.h"
 #include "wtf/URL.h"
 #include "JSFetchHeaders.h"
 #include "JSDOMExceptionHandling.h"
@@ -401,4 +402,20 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
     return JSValue::encode(jsUndefined());
 }
+
+JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject) {
+    auto* obj = constructEmptyObject(globalObject);
+    VM& vm = globalObject->vm();
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setHeader"_s)),
+        JSC::JSFunction::create(vm, globalObject, 3, "setHeader"_s, jsHTTPSetHeader, ImplementationVisibility::Public), NoIntrinsic);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getHeader"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public), NoIntrinsic);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignHeaders"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "assignHeaders"_s, jsHTTPAssignHeaders, ImplementationVisibility::Public), NoIntrinsic);
+    return obj;
 }
+
+} // namespace Bun

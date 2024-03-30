@@ -261,7 +261,7 @@ const SingleValueHeaders = bun.ComptimeStringMap(void, .{
     .{"x-content-type-options"},
 });
 
-pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     JSC.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
@@ -296,7 +296,7 @@ pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject,
     }
 }
 
-pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+pub fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
     var settings: FullSettingsPayload = .{};
     const args_list = callframe.arguments(1);
 
@@ -406,11 +406,6 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
     const bytes = std.mem.asBytes(&settings)[0..FullSettingsPayload.byteSize];
     const binary_type: BinaryType = .Buffer;
     return binary_type.toJS(bytes, globalObject);
-}
-
-comptime {
-    _ = BUN__HTTP2__getUnpackedSettings;
-    _ = BUN__HTTP2_getPackedSettings;
 }
 
 const Handlers = struct {
@@ -2541,3 +2536,11 @@ pub const H2FrameParser = struct {
         this.deinit();
     }
 };
+
+pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
+    return JSC.JSArray.create(global, &.{
+        H2FrameParser.getConstructor(global),
+        JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 0, .{}),
+        JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 0, .{}),
+    });
+}

@@ -3,7 +3,7 @@ const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Server: NetServer, [Symbol.for("::bunternal::")]: InternalTCPSocket } = net;
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
-const { rootCertificates, canonicalizeIP } = $lazy("internal/tls");
+const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];

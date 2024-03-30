@@ -3,6 +3,7 @@
 
 #include "root.h"
 #include "helpers.h"
+
 namespace WebCore {
 
 JSC::EncodedJSValue KeyObject__AsymmetricKeyType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -18,4 +19,6 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
 JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
-}
+JSC::JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject);
+
+} // namespace WebCore

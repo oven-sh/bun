@@ -2,7 +2,12 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const { getHeader, setHeader, assignHeaders: assignHeadersFast } = $lazy("http");
+
+const {
+  getHeader,
+  setHeader,
+  assignHeaders: assignHeadersFast,
+} = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding");
 
 const GlobalPromise = globalThis.Promise;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;

@@ -1,3 +1,0 @@
-EventModifierInit.h : UIEventInit.idl EventInit.idl
-UIEventInit.idl :
-EventInit.idl :

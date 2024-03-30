@@ -1,4 +1,21 @@
-import { applyReplacements } from "./replacements";
+import { applyReplacements, function_replacements } from "./replacements";
+
+function escapeRegex(str: string) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function createStopRegex(allow_comma: boolean) {
+  return new RegExp(
+    "((?:[(,=;:{]|return|\\=\\>)\\s*)\\/[^\\/\\*]|\\/\\*|\\/\\/|['\"}`\\)" +
+      (allow_comma ? "," : "") +
+      "]|(?<!\\$)\\brequire\\(|(" +
+      function_replacements.map(x => escapeRegex(x) + "\\(").join("|") +
+      ")",
+  );
+}
+
+const stop_regex_comma = createStopRegex(true);
+const stop_regex_no_comma = createStopRegex(false);
 
 /**
  * Slices a string until it hits a }, but keeping in mind JS comments,
@@ -18,11 +35,7 @@ export function sliceSourceCode(
   let i = 0;
   let result = "";
   while (contents.length) {
-    const match = contents.match(
-      endOnComma && bracketCount <= 1
-        ? /((?:[(,=;:{]|return|\=\>)\s*)\/[^\/\*]|\/\*|\/\/|['"}`\),]|(?<!\$)\brequire\(|(\$assert\(|\$debug\()/
-        : /((?:[(,=;:{]|return|\=\>)\s*)\/[^\/\*]|\/\*|\/\/|['"}`\)]|(?<!\$)\brequire\(|(\$assert\(|\$debug\()/,
-    );
+    const match = contents.match(endOnComma && bracketCount <= 1 ? stop_regex_comma : stop_regex_no_comma);
     i = match?.index ?? contents.length;
     if (match?.[2]) {
       i += match[2].length - 1;

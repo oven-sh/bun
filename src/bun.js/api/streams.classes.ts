@@ -39,6 +39,13 @@ function source(name) {
       isClosed: {
         getter: "getIsClosedFromJS",
       },
+      ... name === 'File'
+        ? {
+          setRawMode : {
+            fn: "setRawModeFromJS",
+            length: 1,
+          }
+        } : {},
     },
     klass: {},
     values: ["pendingPromise", "onCloseCallback", "onDrainCallback"],

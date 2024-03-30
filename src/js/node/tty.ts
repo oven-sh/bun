@@ -25,12 +25,24 @@ Object.defineProperty(ReadStream, "prototype", {
     const Prototype = Object.create(require("node:fs").ReadStream.prototype);
 
     Prototype.setRawMode = function (flag) {
-      const err = ttySetMode(this.fd, !!flag);
-      if (err) {
-        this.emit("error", new Error("setRawMode failed with errno: " + err));
+      const handle = this.$bunNativePtr;
+      if (!handle) {
+        this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
         return this;
       }
+
+      // If you call setRawMode before you call on('data'), the stream will
+      // not be constructed, leading to EBADF
+      this[require('node:stream')[Symbol.for("::bunternal::")].kEnsureConstructed]();
+
+      const err = handle.setRawMode(!!flag);
+      if (err) {
+        this.emit("error", err);
+        return this;
+      }
+
       this.isRaw = flag;
+      
       return this;
     };
 

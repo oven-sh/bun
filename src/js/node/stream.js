@@ -5228,6 +5228,8 @@ var require_stream = __commonJS({
   },
 });
 
+var kEnsureConstructed = Symbol("kEnsureConstructed");
+
 /**
  * Bun native stream wrapper
  *
@@ -5274,7 +5276,6 @@ function createNativeStreamReadable(nativeType, Readable) {
 
   const MIN_BUFFER_SIZE = 512;
   var NativeReadable = class NativeReadable extends Readable {
-    #bunNativePtr;
     #refCount = 0;
     #constructed = false;
     #remainingChunk = undefined;
@@ -5289,7 +5290,7 @@ function createNativeStreamReadable(nativeType, Readable) {
       } else {
         this.#highWaterMark = 256 * 1024;
       }
-      this.#bunNativePtr = ptr;
+      this.$bunNativePtr = ptr;
       this.#constructed = false;
       this.#remainingChunk = undefined;
       this.#pendingRead = false;
@@ -5315,7 +5316,7 @@ function createNativeStreamReadable(nativeType, Readable) {
         return;
       }
 
-      var ptr = this.#bunNativePtr;
+      var ptr = this.$bunNativePtr;
       $debug("ptr @ NativeReadable._read", ptr, this.__id);
       if (!ptr) {
         this.push(null);
@@ -5331,6 +5332,7 @@ function createNativeStreamReadable(nativeType, Readable) {
     }
 
     #internalConstruct(ptr) {
+      $assert(this.#constructed === false);
       this.#constructed = true;
 
       const result = ptr.start(this.#highWaterMark);
@@ -5426,13 +5428,13 @@ function createNativeStreamReadable(nativeType, Readable) {
     }
 
     _destroy(error, callback) {
-      var ptr = this.#bunNativePtr;
+      var ptr = this.$bunNativePtr;
       if (!ptr) {
         callback(error);
         return;
       }
 
-      this.#bunNativePtr = undefined;
+      this.$bunNativePtr = undefined;
       ptr.updateRef(false);
 
       $debug("NativeReadable destroyed", this.__id);
@@ -5441,7 +5443,7 @@ function createNativeStreamReadable(nativeType, Readable) {
     }
 
     ref() {
-      var ptr = this.#bunNativePtr;
+      var ptr = this.$bunNativePtr;
       if (ptr === undefined) return;
       if (this.#refCount++ === 0) {
         ptr.updateRef(true);
@@ -5449,11 +5451,16 @@ function createNativeStreamReadable(nativeType, Readable) {
     }
 
     unref() {
-      var ptr = this.#bunNativePtr;
+      var ptr = this.$bunNativePtr;
       if (ptr === undefined) return;
       if (this.#refCount-- === 1) {
         ptr.updateRef(false);
       }
+    }
+
+    [kEnsureConstructed]() {
+      if (this.#constructed) return;
+      this.#internalConstruct(this.$bunNativePtr);
     }
   };
 
@@ -5637,7 +5644,7 @@ Object.defineProperty(exports, "promises", {
   },
 });
 
-exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici };
+exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici, kEnsureConstructed };
 exports.eos = require_end_of_stream();
 exports.EventEmitter = EE;
 

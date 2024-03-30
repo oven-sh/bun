@@ -1,10 +1,9 @@
-import type { Dirent } from "fs";
-
 // Hardcoded module "node:fs/promises"
-const constants = $processBindingConstants.fs;
+import type { Dirent } from "fs";
 const EventEmitter = require("node:events");
+const fs = $zig("node_fs_binding.zig", "createBinding");
+const constants = $processBindingConstants.fs;
 
-var PromisePrototypeThen = Promise.prototype.then;
 var PromisePrototypeFinally = Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
 var ObjectFreeze = Object.freeze;
@@ -20,8 +19,6 @@ const kTransfer = Symbol("kTransfer");
 const kTransferList = Symbol("kTransferList");
 const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
-
-var fs = Bun.fs();
 
 function watch(
   filename: string | Buffer | URL,
@@ -152,6 +149,7 @@ const private_symbols = {
   kUnref,
   kFd,
   FileHandle: null,
+  fs,
 };
 
 const exports = {

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 // flaky with setTimeout
 // Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 import { createDenoTest } from "deno:harness";

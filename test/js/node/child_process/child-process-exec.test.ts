@@ -72,5 +72,20 @@ describe("child_process.exec", () => {
       expect(out.trim()).toHaveLength(1024 * 100);
       expect(other).toBe("");
     });
+
+    test("exceeding maxBuffer should truncate output length", async () => {
+      const { resolve, reject, promise } = Promise.withResolvers();
+      exec(script, { maxBuffer: 1024 * 255 - 1, shell: Bun.which("bash") }, (err, stdout, stderr) => {
+        resolve({ stdout, stderr, err });
+      });
+      const { stdout, stderr, err } = await promise;
+      expect(err.message).toContain("maxBuffer length exceeded");
+      expect(err.message).toContain(io);
+      const out = (io === "stdout" ? stdout : stderr).trim();
+      const other = (io === "stdout" ? stderr : stdout).trim();
+      expect(out.length).toBeLessThanOrEqual(1024 * 255 - 1);
+      expect(out.length).toBeGreaterThan(1024 * 100);
+      expect(other).toBe("");
+    });
   });
 });

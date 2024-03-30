@@ -654,16 +654,16 @@ function execSync(command, options) {
 }
 
 function stdioStringToArray(stdio, channel) {
-  const options = [];
+  let options;
 
   switch (stdio) {
     case "ignore":
     case "overlapped":
     case "pipe":
-      $arrayPush(options, stdio, stdio, stdio);
+      options = [stdio, stdio, stdio];
       break;
     case "inherit":
-      $arrayPush(options, 0, 1, 2);
+      options = [0, 1, 2];
       break;
     default:
       throw new ERR_INVALID_ARG_VALUE("stdio", stdio);

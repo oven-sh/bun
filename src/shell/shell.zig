@@ -18,14 +18,14 @@ const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIter
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 
-pub const eval = @import("./interpreter.zig");
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
 
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
-pub const Interpreter = eval.Interpreter;
+pub const Interpreter = interpret.Interpreter;
 pub const Subprocess = subproc.ShellSubprocess;
+pub const ExitCode = interpret.ExitCode;
 pub const IOWriter = Interpreter.IOWriter;
 pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
@@ -3187,7 +3187,6 @@ pub fn needsEscapeUtf8AsciiLatin1Slow(str: []const u8) bool {
     }
     return false;
 }
-pub const ExitCode = eval.ExitCode;
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub const TestingAPIs = struct {

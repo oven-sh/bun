@@ -34,8 +34,6 @@ const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
-const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
@@ -6980,7 +6978,7 @@ pub const Interpreter = struct {
                 target: [:0]const u8,
                 result: ?Maybe(?bun.FileDescriptor) = null,
 
-                task: shell.eval.ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
+                task: ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
 
                 pub fn runFromThreadPool(this: *@This()) void {
                     const fd = switch (ShellSyscall.openat(this.cwd, this.target, os.O.RDONLY | os.O.DIRECTORY, 0)) {
@@ -7022,7 +7020,7 @@ pub const Interpreter = struct {
 
                 err: ?Syscall.Error = null,
 
-                task: shell.eval.ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
+                task: ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
                 event_loop: JSC.EventLoopHandle,
 
                 pub fn runFromThreadPool(this: *@This()) void {

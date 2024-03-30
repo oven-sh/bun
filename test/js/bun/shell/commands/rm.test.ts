@@ -24,6 +24,7 @@ describe("bunshell rm", () => {
   TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`
     .ensureTempDir()
     .doesNotExist("node_modules")
+    .timeout(10 * 1000)
     .runAsTest("node_modules");
 
   test("force", async () => {

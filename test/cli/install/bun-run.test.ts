@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { file, spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
 import { bunEnv, bunExe, bunEnv as env, isWindows } from "harness";
@@ -13,9 +12,6 @@ beforeEach(async () => {
   run_dir = await realpath(
     await mkdtemp(join(tmpdir(), "bun-run.test." + Math.trunc(Math.random() * 9999999).toString(32))),
   );
-});
-afterEach(async () => {
-  // await rm(run_dir, { force: true, recursive: true });
 });
 
 for (let withRun of [false, true]) {

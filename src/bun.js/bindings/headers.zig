@@ -362,7 +362,6 @@ pub extern fn Reader__intptr__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC_
 pub extern fn Zig__GlobalObject__create(arg0: ?*anyopaque, arg1: i32, arg2: bool, arg3: bool, arg4: ?*anyopaque) *bindings.JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: *bindings.JSGlobalObject) ?*anyopaque;
 pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque) bool;
-pub extern fn Bun__Path__create(arg0: *bindings.JSGlobalObject, arg1: bool) JSC__JSValue;
 pub extern fn ArrayBufferSink__assignToStream(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, arg2: ?*anyopaque, arg3: [*c]*anyopaque) JSC__JSValue;
 pub extern fn ArrayBufferSink__createObject(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, onDestroyPtrTag: usize) JSC__JSValue;
 pub extern fn ArrayBufferSink__detachPtr(JSValue0: JSC__JSValue) void;

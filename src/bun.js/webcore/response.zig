@@ -1304,7 +1304,11 @@ pub const Fetch = struct {
                     error.STORE_LOOKUP => bun.String.static("Issuer certificate lookup error"),
                     error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
                     error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
-                    else => bun.String.static("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
+
+                    else => |e| bun.String.createFormat("{s} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
+                        @errorName(e),
+                        path,
+                    }) catch bun.outOfMemory(),
                 },
                 .path = path,
             };
@@ -1683,6 +1687,7 @@ pub const Fetch = struct {
         JSC.markBinding(@src());
         const globalThis = ctx.ptr();
         const arguments = callframe.arguments(2);
+        bun.Analytics.Features.fetch += 1;
 
         var exception_val = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_val;

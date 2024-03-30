@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 /**
  * Portions of these tests are derived from the [deno_task_shell](https://github.com/denoland/deno_task_shell/) tests, which are developed and maintained by the Deno authors.
  * Copyright 2018-2023 the Deno authors.
@@ -7,8 +6,8 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm } from "fs/promises";
-import { bunEnv, runWithErrorPromise, tempDirWithFiles } from "harness";
+import { mkdir, mkdtemp, realpath, rm, stat } from "fs/promises";
+import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 import { TestBuilder, sortedShellOutput } from "./util";
@@ -35,7 +34,7 @@ afterAll(async () => {
   await rm(temp_dir, { force: true, recursive: true });
 });
 
-const BUN = process.argv0;
+const BUN = bunExe();
 
 describe("bunshell", () => {
   describe("concurrency", () => {
@@ -793,8 +792,7 @@ describe("deno_task", () => {
 
   test("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
-    const code = /* ts */ `
-    import { $ } from 'bun'
+    const code = /* ts */ `import { $ } from 'bun'
 
     $.throws(true)
 
@@ -816,6 +814,66 @@ describe("deno_task", () => {
       .exitCode(1)
       .stdout(s => expect(s).toInclude(`[eval]:${lineNr}`))
       .run();
+  });
+
+  test("big_data", async () => {
+    const writerCode = /* ts */ `
+
+    const writer = Bun.stdout.writer();
+    const buf = new Uint8Array(128 * 1024).fill('a'.charCodeAt(0))
+    for (let i = 0; i < 10; i++) {
+      writer.write(buf);
+      await writer.flush();
+    }
+    `;
+
+    const tmpdir = TestBuilder.tmpdir();
+    // I think writing 1mb of 'a's to the terminal breaks CI so redirect to a FD instead
+    const { stdout, stderr, exitCode } = await $`${BUN} -e ${writerCode} > ${tmpdir}/output.txt`.env(bunEnv);
+
+    expect(stderr.length).toEqual(0);
+    expect(stdout.length).toEqual(0);
+    expect(exitCode).toEqual(0);
+
+    const s = await stat(`${tmpdir}/output.txt`);
+    expect(s.size).toEqual(10 * 128 * 1024);
+  });
+
+  // https://github.com/oven-sh/bun/issues/9458
+  test("input", async () => {
+    const inputCode = /* ts */ `
+    const downArrow = '\\x1b[B';
+    const enterKey = '\\x0D';
+    await Bun.sleep(100)
+    const writer = Bun.stdout.writer();
+    writer.write(downArrow)
+    await Bun.sleep(100)
+    writer.write(enterKey)
+    writer.flush()
+    `;
+
+    const code = /* ts */ `
+    import { expect } from 'bun:test'
+    const expected = [
+      '\\x1b[B',
+      '\\x0D'
+    ]
+    let i = 0
+    const writer = Bun.stdout.writer();
+    process.stdin.on("data", async chunk => {
+      const input = chunk.toString();
+      expect(input).toEqual(expected[i++])
+      writer.write(input)
+      await writer.flush()
+    });
+    `;
+
+    const { stdout, stderr, exitCode } =
+      await Bun.$`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${inputCode} | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code}`;
+
+    expect(exitCode).toBe(0);
+    expect(stderr.length).toBe(0);
+    expect(stdout.toString()).toEqual("\x1b[B\x0D");
   });
 });
 

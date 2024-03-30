@@ -397,6 +397,14 @@ pub const String = extern struct {
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
+    pub fn createFormat(comptime fmt: []const u8, args: anytype) !String {
+        var sba = std.heap.stackFallback(16384, bun.default_allocator);
+        const alloc = sba.get();
+        const buf = try std.fmt.allocPrint(alloc, fmt, args);
+        defer alloc.free(buf);
+        return createUTF8(buf);
+    }
+
     pub fn createFromOSPath(os_path: bun.OSPathSlice) String {
         return switch (@TypeOf(os_path)) {
             []const u8 => createUTF8(os_path),
@@ -1175,7 +1183,7 @@ pub const String = extern struct {
         return try concat(strings.len, allocator, strings);
     }
 
-    pub export fn BunString__getStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub export fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {

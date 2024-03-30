@@ -12,9 +12,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <sys/termios.h>
+#include <sys/ioctl.h>
 #else
 #include <uv.h>
 #include <windows.h>
+#include <corecrt_io.h>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
@@ -193,7 +195,12 @@ extern "C" void windows_enable_stdio_inheritance()
 // close_range is glibc > 2.33, which is very new
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
+// https://github.com/oven-sh/bun/issues/9669
+#ifdef __NR_close_range
     return syscall(__NR_close_range, start, end, flags);
+#else
+    return ENOSYS;
+#endif
 }
 
 static void unset_cloexec(int fd)
@@ -408,7 +415,7 @@ extern "C" void bun_initialize_process()
     // This is less of an issue for macOS due to posix_spawn
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
     // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
-    bun_close_range(0, ~0U, CLOSE_RANGE_CLOEXEC);
+    bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
 
 #if OS(LINUX) || OS(DARWIN)
@@ -477,7 +484,86 @@ extern "C" void bun_initialize_process()
         sigaction(SIGTERM, &sa, nullptr);
         sigaction(SIGINT, &sa, nullptr);
     }
+#elif OS(WINDOWS)
+    for (int fd = 0; fd <= 2; ++fd) {
+        auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));
+        if (handle == INVALID_HANDLE_VALUE || GetFileType(handle) == FILE_TYPE_UNKNOWN) {
+            // Ignore _close result. If it fails or not depends on used Windows
+            // version. We will just check _open result.
+            _close(fd);
+            if (fd != _open("nul", O_RDWR)) {
+                RELEASE_ASSERT_NOT_REACHED();
+            } else {
+                switch (fd) {
+                case 0: {
+                    SetStdHandle(STD_INPUT_HANDLE, uv_get_osfhandle(fd));
+                    ASSERT(GetStdHandle(STD_INPUT_HANDLE) == uv_get_osfhandle(fd));
+                    break;
+                }
+                case 1: {
+                    SetStdHandle(STD_OUTPUT_HANDLE, uv_get_osfhandle(fd));
+                    ASSERT(GetStdHandle(STD_OUTPUT_HANDLE) == uv_get_osfhandle(fd));
+                    break;
+                }
+                case 2: {
+                    SetStdHandle(STD_ERROR_HANDLE, uv_get_osfhandle(fd));
+                    ASSERT(GetStdHandle(STD_ERROR_HANDLE) == uv_get_osfhandle(fd));
+                    break;
+                }
+                default: {
+                    ASSERT_NOT_REACHED();
+                }
+                }
+            }
+        }
+    }
 #endif
 
     atexit(Bun__onExit);
 }
+
+#if OS(WINDOWS)
+extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
+{
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+#else
+
+static bool can_open_as_nonblocking_tty(int32_t fd)
+{
+    int result;
+#if OS(LINUX) || OS(FreeBSD)
+    int dummy = 0;
+
+    result = ioctl(fd, TIOCGPTN, &dummy) != 0;
+#elif OS(DARWIN)
+
+    char dummy[256];
+
+    result = ioctl(fd, TIOCPTYGNAME, &dummy) != 0;
+
+#else
+
+#error "TODO"
+
+#endif
+
+    return result;
+}
+
+extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
+{
+    if (!can_open_as_nonblocking_tty(fd)) {
+        return -1;
+    }
+
+    char pathbuf[PATH_MAX + 1];
+    if (ttyname_r(fd, pathbuf, sizeof(pathbuf)) != 0) {
+        return -1;
+    }
+
+    return open(pathbuf, mode | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+}
+
+#endif

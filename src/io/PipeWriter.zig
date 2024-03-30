@@ -767,7 +767,7 @@ fn BaseWindowsPipeWriter(
 
         fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
             const file = bun.cast(*Source.File, handle.data);
-            file.fs.deinit();
+            handle.deinit();
             bun.default_allocator.destroy(file);
         }
 
@@ -786,9 +786,9 @@ fn BaseWindowsPipeWriter(
             if (this.source) |source| {
                 switch (source) {
                     .file => |file| {
-                        file.fs.deinit();
-                        file.fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &file.fs, file.file, @ptrCast(&onFileClose));
+                        // always use close_fs here because we can have a operation in progress
+                        file.close_fs.data = file;
+                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, @ptrCast(&onFileClose));
                     },
                     .sync_file => {
                         // no-op
@@ -842,6 +842,15 @@ fn BaseWindowsPipeWriter(
             const source = Source{
                 .sync_file = Source.openFile(fd),
             };
+            source.setData(this);
+            this.source = source;
+            this.setParent(this.parent);
+            return this.startWithCurrentPipe();
+        }
+
+        pub fn startWithFile(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.JSC.Maybe(void) {
+            std.debug.assert(this.source == null);
+            const source: bun.io.Source = .{ .file = Source.openFile(fd) };
             source.setData(this);
             this.source = source;
             this.setParent(this.parent);
@@ -1052,17 +1061,20 @@ pub const StreamBuffer = struct {
                 return buffer;
             }
 
-            var byte_list = bun.ByteList.fromList(this.list);
-            defer this.list = byte_list.listManaged(this.list.allocator);
-
-            _ = try byte_list.writeLatin1(this.list.allocator, buffer);
+            {
+                var byte_list = bun.ByteList.fromList(this.list);
+                defer this.list = byte_list.listManaged(this.list.allocator);
+                _ = try byte_list.writeLatin1(this.list.allocator, buffer);
+            }
 
             return this.list.items[this.cursor..];
         } else if (comptime @TypeOf(writeFn) == @TypeOf(&writeUTF16) and writeFn == &writeUTF16) {
-            var byte_list = bun.ByteList.fromList(this.list);
-            defer this.list = byte_list.listManaged(this.list.allocator);
+            {
+                var byte_list = bun.ByteList.fromList(this.list);
+                defer this.list = byte_list.listManaged(this.list.allocator);
 
-            _ = try byte_list.writeUTF16(this.list.allocator, buffer);
+                _ = try byte_list.writeUTF16(this.list.allocator, buffer);
+            }
 
             return this.list.items[this.cursor..];
         } else if (comptime @TypeOf(writeFn) == @TypeOf(&write) and writeFn == &write) {
@@ -1193,8 +1205,15 @@ pub fn WindowsStreamingWriter(
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            const result = fs.result;
+            if (result.int() == uv.UV_ECANCELED) {
+                fs.deinit();
+                return;
+            }
             const this = bun.cast(*WindowsWriter, fs.data);
-            if (fs.result.toError(.write)) |err| {
+
+            fs.deinit();
+            if (result.toError(.write)) |err| {
                 this.close();
                 onError(this.parent, err);
                 return;

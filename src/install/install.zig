@@ -1115,6 +1115,15 @@ pub const PackageInstall = struct {
             }
         },
 
+        pub fn fail(err: anyerror, step: Step) Result {
+            return .{
+                .fail = .{
+                    .err = err,
+                    .step = step,
+                },
+            };
+        }
+
         pub const Tag = enum {
             success,
             fail,
@@ -1360,23 +1369,17 @@ pub const PackageInstall = struct {
     fn installWithHardlink(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
+        var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir);
         defer cached_package_dir.close();
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
             &[_]bun.OSPathSlice{},
             &[_]bun.OSPathSlice{},
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
+        ) catch |err| return Result.fail(err, .opening_cache_dir);
         defer walker_.deinit();
 
-        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
+        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_cache_dir);
 
         defer subdir.close();
 
@@ -1385,36 +1388,41 @@ pub const PackageInstall = struct {
         var to_copy_buf: []u16 = undefined;
         var to_copy_buf2: []u16 = undefined;
         if (comptime Environment.isWindows) {
-            var fd_path_buf: bun.PathBuffer = undefined;
+            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(subdir.fd, &buf, buf.len, 0);
+            if (dest_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                    // If this code path is reached, it should have a toSystemErrno mapping
+                    Output.warn("Failed to get destination path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
+                    break :brk error.Unexpected;
+                };
+                return Result.fail(err, .copying_files);
+            }
+            const dest_path = buf[0..dest_path_length];
+            if (buf[dest_path.len - 1] != '\\') {
+                buf[dest_path.len] = '\\';
+                to_copy_buf = buf[dest_path.len + 1 ..];
+            } else {
+                to_copy_buf = buf[dest_path.len..];
+            }
 
-            // buf[0] = '\\';
-            // buf[1] = '\\';
-            // buf[2] = '?';
-            // buf[3] = '\\';
-            // const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
-            // strings.copyU8IntoU16(buf[4..], dest_path);
-            // buf[dest_path.len + 4] = '\\';
-            // to_copy_buf = buf[dest_path.len + 5 ..];
-
-            // buf2[0] = '\\';
-            // buf2[1] = '\\';
-            // buf2[2] = '?';
-            // buf2[3] = '\\';
-            // const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
-            // strings.copyU8IntoU16(buf2[4..], cache_path);
-            // buf2[cache_path.len + 4] = '\\';
-            // to_copy_buf2 = buf2[cache_path.len + 5 ..];
-
-            // TODO(dylan-conway): find out why //?/ isn't working
-            const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
-            strings.copyU8IntoU16(&buf, dest_path);
-            buf[dest_path.len] = '\\';
-            to_copy_buf = buf[dest_path.len + 1 ..];
-
-            const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
-            strings.copyU8IntoU16(&buf2, cache_path);
-            buf2[cache_path.len] = '\\';
-            to_copy_buf2 = buf2[cache_path.len + 1 ..];
+            const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(cached_package_dir.fd, &buf2, buf2.len, 0);
+            if (cache_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                    // If this code path is reached, it should have a toSystemErrno mapping
+                    Output.warn("Failed to get cache path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
+                    break :brk error.Unexpected;
+                };
+                return Result.fail(err, .copying_files);
+            }
+            const cache_path = buf2[0..cache_path_length];
+            if (buf2[cache_path.len - 1] != '\\') {
+                buf2[cache_path.len] = '\\';
+                to_copy_buf2 = buf2[cache_path.len + 1 ..];
+            } else {
+                to_copy_buf2 = buf2[cache_path.len..];
+            }
         }
 
         const FileCopier = struct {
@@ -1490,17 +1498,12 @@ pub const PackageInstall = struct {
         ) catch |err| {
             if (comptime Environment.isWindows) {
                 if (err == error.FailedToCopyFile) {
-                    return Result{
-                        .fail = .{ .err = err, .step = .copying_files },
-                    };
+                    return Result.fail(err, .copying_files);
                 }
             } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
                 return err;
             }
-
-            return Result{
-                .fail = .{ .err = err, .step = .copying_files },
-            };
+            return Result.fail(err, .copying_files);
         };
 
         return Result{
@@ -2118,11 +2121,11 @@ pub const PackageManager = struct {
             };
         }
 
-        this.env.loadCCachePath(this_bundler.fs);
+        this.env.loadCCachePath();
 
         {
             var node_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-            if (this.env.getNodePath(this_bundler.fs, &node_path)) |node_pathZ| {
+            if (this.env.getNodePath(&node_path)) |node_pathZ| {
                 _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
             } else brk: {
                 const current_path = this.env.get("PATH") orelse "";
@@ -5127,7 +5130,7 @@ pub const PackageManager = struct {
                         continue;
                     }
                     manager.extracted_count += 1;
-                    bun.Analytics.Features.extracted_packages = true;
+                    bun.Analytics.Features.extracted_packages += 1;
 
                     // GitHub and tarball URL dependencies are not fully resolved until after the tarball is downloaded & extracted.
                     if (manager.processExtractedTarballPackage(&package_id, resolution, task.data.extract, comptime log_level)) |pkg| brk: {
@@ -6672,7 +6675,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(entries_option.entries, &[_][]u8{}, .production);
+        try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 

@@ -8,19 +8,13 @@
 /// - Run "make dev"
 pub const BunObject = struct {
     // --- Callbacks ---
-    pub const DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = dump_mimalloc;
-    pub const _Os = Bun._Os;
-    pub const _Path = Bun._Path;
     pub const allocUnsafe = Bun.allocUnsafe;
     pub const build = Bun.JSBundler.buildFn;
     pub const connect = JSC.wrapStaticMethod(JSC.API.Listener, "connect", false);
     pub const deflateSync = JSC.wrapStaticMethod(JSZlib, "deflateSync", true);
     pub const file = WebCore.Blob.constructBunFile;
-    pub const fs = Bun.fs;
     pub const gc = Bun.runGC;
     pub const generateHeapSnapshot = Bun.generateHeapSnapshot;
-    pub const getImportedStyles = Bun.getImportedStyles;
-    pub const getPublicPath = Bun.getPublicPathJS;
     pub const gunzipSync = JSC.wrapStaticMethod(JSZlib, "gunzipSync", true);
     pub const gzipSync = JSC.wrapStaticMethod(JSZlib, "gzipSync", true);
     pub const indexOfLine = Bun.indexOfLine;
@@ -42,8 +36,6 @@ pub const BunObject = struct {
     pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
     pub const stringWidth = Bun.stringWidth;
-    pub const shellParse = Bun.shellParse;
-    pub const shellLex = Bun.shellLex;
     pub const braces = Bun.braces;
     pub const shellEscape = Bun.shellEscape;
     // --- Callbacks ---
@@ -128,19 +120,14 @@ pub const BunObject = struct {
         // --- Getters --
 
         // -- Callbacks --
-        @export(BunObject.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump, .{ .name = callbackName("DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump") });
-        @export(BunObject._Os, .{ .name = callbackName("_Os") });
-        @export(BunObject._Path, .{ .name = callbackName("_Path") });
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
         @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
         @export(BunObject.connect, .{ .name = callbackName("connect") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
         @export(BunObject.file, .{ .name = callbackName("file") });
-        @export(BunObject.fs, .{ .name = callbackName("fs") });
         @export(BunObject.gc, .{ .name = callbackName("gc") });
         @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
-        @export(BunObject.getImportedStyles, .{ .name = callbackName("getImportedStyles") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
@@ -162,8 +149,6 @@ pub const BunObject = struct {
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
         @export(BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
-        @export(BunObject.shellParse, .{ .name = callbackName("shellParse") });
-        @export(BunObject.shellLex, .{ .name = callbackName("shellLex") });
         @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         // -- Callbacks --
     }
@@ -301,163 +286,6 @@ pub fn getCSSImports() []ZigString {
         ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
     }
     return css_imports_list_strings[0..tail];
-}
-
-pub fn shellLex(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
-    const arguments_ = callframe.arguments(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-    const string_args = arguments.nextEat() orelse {
-        globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
-        return JSC.JSValue.jsUndefined();
-    };
-
-    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-    defer arena.deinit();
-
-    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-    var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-    var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-        globalThis.throwOutOfMemory();
-        return .undefined;
-    };
-    defer {
-        for (jsstrings.items[0..]) |bunstr| {
-            bunstr.deref();
-        }
-        jsstrings.deinit();
-    }
-    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-    defer {
-        for (jsobjs.items) |jsval| {
-            jsval.unprotect();
-        }
-    }
-
-    var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    })) {
-        return .undefined;
-    }
-
-    const lex_result = brk: {
-        if (bun.strings.isAllASCII(script.items[0..])) {
-            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
-            lexer.lex() catch |err| {
-                globalThis.throwError(err, "failed to lex shell");
-                return JSValue.undefined;
-            };
-            break :brk lexer.get_result();
-        }
-        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
-        lexer.lex() catch |err| {
-            globalThis.throwError(err, "failed to lex shell");
-            return JSValue.undefined;
-        };
-        break :brk lexer.get_result();
-    };
-
-    if (lex_result.errors.len > 0) {
-        const str = lex_result.combineErrors(arena.allocator());
-        globalThis.throwPretty("{s}", .{str});
-        return .undefined;
-    }
-
-    var test_tokens = std.ArrayList(Shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    };
-    for (lex_result.tokens) |tok| {
-        const test_tok = Shell.Test.TestToken.from_real(tok, lex_result.strpool);
-        test_tokens.append(test_tok) catch {
-            globalThis.throwOutOfMemory();
-            return JSValue.undefined;
-        };
-    }
-
-    const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{}) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    };
-
-    defer globalThis.bunVM().allocator.free(str);
-    var bun_str = bun.String.fromBytes(str);
-    return bun_str.toJS(globalThis);
-}
-
-pub fn shellParse(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
-    const arguments_ = callframe.arguments(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-    const string_args = arguments.nextEat() orelse {
-        globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
-        return JSC.JSValue.jsUndefined();
-    };
-
-    var arena = bun.ArenaAllocator.init(bun.default_allocator);
-    defer arena.deinit();
-
-    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-    var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-    var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-        globalThis.throwOutOfMemory();
-        return .undefined;
-    };
-    defer {
-        for (jsstrings.items[0..]) |bunstr| {
-            bunstr.deref();
-        }
-        jsstrings.deinit();
-    }
-    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-    defer {
-        for (jsobjs.items) |jsval| {
-            jsval.unprotect();
-        }
-    }
-    var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    })) {
-        return .undefined;
-    }
-
-    var out_parser: ?bun.shell.Parser = null;
-    var out_lex_result: ?bun.shell.LexResult = null;
-
-    const script_ast = bun.shell.Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], jsstrings.items[0..], &out_parser, &out_lex_result) catch |err| {
-        if (err == bun.shell.ParseError.Lex) {
-            std.debug.assert(out_lex_result != null);
-            const str = out_lex_result.?.combineErrors(arena.allocator());
-            globalThis.throwPretty("{s}", .{str});
-            return .undefined;
-        }
-
-        if (out_parser) |*p| {
-            const errstr = p.combineErrors();
-            globalThis.throwPretty("{s}", .{errstr});
-            return .undefined;
-        }
-
-        globalThis.throwError(err, "failed to lex/parse shell");
-        return .undefined;
-    };
-
-    const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    };
-
-    defer globalThis.bunVM().allocator.free(str);
-    var bun_str = bun.String.fromBytes(str);
-    return bun_str.toJS(globalThis);
 }
 
 const ShellTask = struct {
@@ -735,18 +563,11 @@ pub fn which(
     path_str = ZigString.Slice.fromUTF8NeverFree(
         globalThis.bunVM().bundler.env.get("PATH") orelse "",
     );
-    cwd_str = ZigString.Slice.fromUTF8NeverFree(
-        globalThis.bunVM().bundler.fs.top_level_dir,
-    );
 
     if (arguments.nextEat()) |arg| {
         if (!arg.isEmptyOrUndefinedOrNull() and arg.isObject()) {
             if (arg.get(globalThis, "PATH")) |str_| {
                 path_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
-            }
-
-            if (arg.get(globalThis, "cwd")) |str_| {
-                cwd_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
             }
         }
     }
@@ -754,7 +575,6 @@ pub fn which(
     if (Which.which(
         &path_buf,
         path_str.slice(),
-        cwd_str.slice(),
         bin_str.slice(),
     )) |bin_path| {
         return ZigString.init(bin_path).withEncoding().toValueGC(globalThis);
@@ -1423,41 +1243,9 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(globalObject);
 }
 
-fn fs(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    var module = JSC.Node.NodeJSFS.new(.{
-        .node_fs = .{
-            .vm = globalObject.bunVM(),
-        },
-    });
-
-    return module.toJS(globalObject);
-}
-
-fn _Os(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    return Node.Os.create(globalObject);
-}
-
-fn _Path(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    const arguments = callframe.arguments(1);
-    const args = arguments.slice();
-    const is_windows = args.len == 1 and args[0].toBoolean();
-    return Node.Path.create(globalObject, is_windows);
-}
-
-/// @deprecated
-fn getImportedStyles(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    defer flushCSSImports();
-    const styles = getCSSImports();
-    if (styles.len == 0) {
-        return JSC.JSValue.createEmptyArray(globalObject, 0);
-    }
-
-    return JSValue.createStringArray(globalObject, styles.ptr, styles.len, true);
-}
-
 extern fn dump_zone_malloc_stats() void;
 
-pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+export fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     globalObject.bunVM().arena.dumpStats();
     if (comptime bun.is_heap_breakdown_enabled) {
         dump_zone_malloc_stats();
@@ -3526,6 +3314,7 @@ const UnsafeObject = struct {
             .gcAggressionLevel = &gcAggressionLevel,
             .segfault = &__debug__doSegfault,
             .arrayBufferToString = &arrayBufferToString,
+            .mimallocDump = &dump_mimalloc,
         };
         inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |name| {
             object.put(
@@ -3797,7 +3586,8 @@ pub const Timer = struct {
             if (vm.isInspectorEnabled()) {
                 Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
             }
-
+            vm.eventLoop().enter();
+            defer vm.eventLoop().exit();
             const result = callback.callWithGlobalThis(
                 globalThis,
                 args,
@@ -4053,8 +3843,7 @@ pub const Timer = struct {
                 if (this.cancelled) {
                     _ = uv.uv_timer_stop(&this.timer);
                 }
-                // libuv runs on the same thread
-                return this.runFromJSThread();
+                this.runFromJSThread();
             }
 
             fn onRequest(req: *bun.io.Request) bun.io.Action {
@@ -4146,6 +3935,8 @@ pub const Timer = struct {
                 _ = this.scheduled_count.fetchAdd(1, .Monotonic);
                 const ms: usize = @max(interval orelse this.interval, 1);
                 if (Environment.isWindows) {
+                    // we MUST update the timer so we avoid early firing
+                    uv.uv_update_time(uv.Loop.get());
                     if (uv.uv_timer_start(&this.timer, TimerReference.onUVRequest, @intCast(ms), 0) != 0) @panic("unable to start timer");
                     return;
                 }
@@ -5474,9 +5265,6 @@ const InternalTestingAPIs = struct {
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
-        _ = Crypto.JSPasswordObject.JSPasswordObject__create;
-        BunObject.exportAll();
-        @export(InternalTestingAPIs.BunInternalFunction__syntaxHighlighter, .{ .name = "BunInternalFunction__syntaxHighlighter" });
-    }
+    _ = Crypto.JSPasswordObject.JSPasswordObject__create;
+    BunObject.exportAll();
 }

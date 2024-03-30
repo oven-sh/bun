@@ -1,7 +1,10 @@
 
 #include "root.h"
 
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/DeleteAllCodeEffort.h"
+
 #include "headers.h"
 
 #include "BunClientData.h"
@@ -46,6 +49,7 @@
 #include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
+#include "JavaScriptCore/JSObjectInlines.h"
 
 #include "wtf/Assertions.h"
 #include "wtf/text/ExternalStringImpl.h"
@@ -3738,7 +3742,9 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JS
                 jc = pathString.characterAt(j);
             }
 
-            PropertyName propName = PropertyName(Identifier::fromString(vm, pathString.substring(i, j - i)));
+            String propNameStr = pathString.substring(i, j - i);
+            PropertyName propName = PropertyName(Identifier::fromString(vm, propNameStr));
+
             currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
@@ -5562,6 +5568,38 @@ extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject
 extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* globalObject)
 {
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
+}
+
+extern "C" EncodedJSValue JSFunction__createFromZig(
+    JSC::JSGlobalObject* global,
+    BunString fn_name,
+    NativeFunction implementation,
+    unsigned arg_count,
+    ImplementationVisibility implementation_visibility,
+    Intrinsic intrinsic,
+    NativeFunction constructorOrNull)
+{
+    VM& vm = global->vm();
+    auto name = fn_name.toWTFString();
+    return JSValue::encode(JSFunction::create(
+        vm,
+        global,
+        arg_count,
+        name,
+        implementation,
+        implementation_visibility,
+        intrinsic,
+        constructorOrNull ? constructorOrNull : JSC::callHostFunctionAsConstructor,
+        nullptr));
+}
+
+extern "C" EncodedJSValue JSArray__constructArray(
+    JSC::JSGlobalObject* global,
+    const JSValue* values,
+    size_t values_len)
+{
+    return JSValue::encode(
+        JSC::constructArray(global, (ArrayAllocationProfile*)nullptr, values, values_len));
 }
 
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)

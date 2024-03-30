@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, expect, test } from "bun:test";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { bunExe, bunEnv as env } from "harness";
@@ -48,8 +47,6 @@ describe("esbuild integration test", () => {
     expect(err).toBe("");
     expect(out).toContain("0.19.8");
     expect(await exited).toBe(0);
-
-    await rm(packageDir, { recursive: true, force: true });
   });
 
   test("install and use estrella", async () => {
@@ -200,7 +197,5 @@ describe("esbuild integration test", () => {
     expect(err).toBe("");
     expect(out).toBe('console.log("hello"),console.log("estrella");\n');
     expect(await exited).toBe(0);
-
-    await rm(packageDir, { recursive: true, force: true });
   });
 });

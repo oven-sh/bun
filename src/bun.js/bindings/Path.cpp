@@ -1,7 +1,8 @@
-
+#include "Path.h"
 #include "root.h"
 #include "headers.h"
 #include "BunClientData.h"
+#include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSMicrotask.h>
@@ -172,25 +173,27 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
             Path_functionToNamespacedPath, ImplementationVisibility::Public),
         0);
 
-    if (isWindows) {
-        path->putDirect(vm, clientData->builtinNames().sepPublicName(),
-            JSC::jsString(vm, WTF::String("\\"_s)), 0);
-        path->putDirect(vm, clientData->builtinNames().delimiterPublicName(),
-            JSC::jsString(vm, WTF::String(";"_s)), 0);
-    } else {
-        path->putDirect(vm, clientData->builtinNames().sepPublicName(),
-            JSC::jsString(vm, WTF::String("/"_s)), 0);
-        path->putDirect(vm, clientData->builtinNames().delimiterPublicName(),
-            JSC::jsString(vm, WTF::String(":"_s)), 0);
-    }
-
     return path;
 }
 
 } // namespace Zig
 
-extern JSC__JSValue Bun__Path__create(JSC::JSGlobalObject* globalObject, bool isWindows)
+namespace Bun {
+
+JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(JSC::JSValue(Zig::createPath(
-        globalObject, isWindows)));
+    auto binding = constructEmptyArray(globalObject, nullptr, 2);
+    binding->putByIndexInline(
+        globalObject,
+        (unsigned)0,
+        Zig::createPath(globalObject, false),
+        false);
+    binding->putByIndexInline(
+        globalObject,
+        (unsigned)1,
+        Zig::createPath(globalObject, true),
+        false);
+    return binding;
 }
+
+} // namespace Bun

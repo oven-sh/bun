@@ -16,6 +16,7 @@
 #else
 #include <uv.h>
 #include <windows.h>
+#include <corecrt_io.h>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
@@ -482,6 +483,39 @@ extern "C" void bun_initialize_process()
 
         sigaction(SIGTERM, &sa, nullptr);
         sigaction(SIGINT, &sa, nullptr);
+    }
+#elif OS(WINDOWS)
+    for (int fd = 0; fd <= 2; ++fd) {
+        auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));
+        if (handle == INVALID_HANDLE_VALUE || GetFileType(handle) == FILE_TYPE_UNKNOWN) {
+            // Ignore _close result. If it fails or not depends on used Windows
+            // version. We will just check _open result.
+            _close(fd);
+            if (fd != _open("nul", O_RDWR)) {
+                RELEASE_ASSERT_NOT_REACHED();
+            } else {
+                switch (fd) {
+                case 0: {
+                    SetStdHandle(STD_INPUT_HANDLE, uv_get_osfhandle(fd));
+                    ASSERT(GetStdHandle(STD_INPUT_HANDLE) == uv_get_osfhandle(fd));
+                    break;
+                }
+                case 1: {
+                    SetStdHandle(STD_OUTPUT_HANDLE, uv_get_osfhandle(fd));
+                    ASSERT(GetStdHandle(STD_OUTPUT_HANDLE) == uv_get_osfhandle(fd));
+                    break;
+                }
+                case 2: {
+                    SetStdHandle(STD_ERROR_HANDLE, uv_get_osfhandle(fd));
+                    ASSERT(GetStdHandle(STD_ERROR_HANDLE) == uv_get_osfhandle(fd));
+                    break;
+                }
+                default: {
+                    ASSERT_NOT_REACHED();
+                }
+                }
+            }
+        }
     }
 #endif
 

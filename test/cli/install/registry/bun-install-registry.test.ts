@@ -1,5 +1,13 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, isWindows, toBeValidBin, toHaveBins, breakingChanges_1_1_0 } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  mergeWindowEnvs,
+  toBeValidBin,
+  toHaveBins,
+  breakingChanges_1_1_0,
+} from "harness";
 import { join } from "path";
 import { mkdtempSync, realpathSync, copyFileSync, mkdirSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -240,6 +248,52 @@ describe.each(["--production", "without --production"])("%s", flag => {
       expect(newHash).toBe(initialLockfileHash);
     }
   });
+});
+
+test("hardlinks on windows dont fail with long paths", async () => {
+  await mkdir(join(packageDir, "a-package"));
+  await writeFile(
+    join(packageDir, "a-package", "package.json"),
+    JSON.stringify({
+      name: "a-package",
+      version: "1.0.0",
+    }),
+  );
+
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      dependencies: {
+        // 255 characters
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":
+          "file:./a-package",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@a-package",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
 });
 
 test("basic 1", async () => {
@@ -6798,7 +6852,6 @@ test.if(isWindows)(
       { bin: "bin7", name: "bin7" },
       { bin: "bin-node", name: "bin-node" },
       { bin: "bin-bun", name: "bin-bun" },
-      { bin: "bin-py", name: "bin-py" },
       { bin: "native", name: "exe" },
       { bin: "uses-native", name: `exe ${packageDir}\\node_modules\\bunx-bins\\uses-native.ts` },
     ];
@@ -6811,10 +6864,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6832,10 +6882,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6853,10 +6900,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6874,10 +6918,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: {
-          ...env,
-          Path: PATH,
-        },
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();

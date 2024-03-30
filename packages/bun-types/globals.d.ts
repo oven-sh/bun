@@ -1772,7 +1772,7 @@ declare global {
      * Load a CommonJS module within an ES Module. Bun's transpiler rewrites all
      * calls to `require` with `import.meta.require` when transpiling ES Modules
      * for the runtime.
-     * 
+     *
      * Warning: **This API is not stable** and may change or be removed in the
      * future. Use at your own risk.
      */

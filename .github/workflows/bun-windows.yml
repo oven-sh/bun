@@ -18,6 +18,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/*.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -29,6 +30,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - ".github/workflows/*.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"

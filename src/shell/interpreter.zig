@@ -3926,6 +3926,8 @@ pub const Interpreter = struct {
             mv: Mv,
             ls: Ls,
             exit: Exit,
+            true: True,
+            false: False,
         };
 
         const Result = @import("../result.zig").Result;
@@ -3943,6 +3945,8 @@ pub const Interpreter = struct {
             mv,
             ls,
             exit,
+            true,
+            false,
 
             pub fn parentType(this: Kind) type {
                 _ = this;
@@ -3962,6 +3966,8 @@ pub const Interpreter = struct {
                     .mv => "usage: mv [-f | -i | -n] [-hv] source target\n       mv [-f | -i | -n] [-v] source ... directory\n",
                     .ls => "usage: ls [-@ABCFGHILOPRSTUWabcdefghiklmnopqrstuvwxy1%,] [--color=when] [-D format] [file ...]\n",
                     .exit => "usage: exit [n]\n",
+                    .true => "",
+                    .false => "",
                 };
             }
 
@@ -3979,6 +3985,8 @@ pub const Interpreter = struct {
                     .mv => "mv",
                     .ls => "ls",
                     .exit => "exit",
+                    .true => "true",
+                    .false => "false",
                 };
             }
 
@@ -4141,6 +4149,8 @@ pub const Interpreter = struct {
                 .mv => this.callImplWithType(Mv, Ret, "mv", field, args_),
                 .ls => this.callImplWithType(Ls, Ret, "ls", field, args_),
                 .exit => this.callImplWithType(Exit, Ret, "exit", field, args_),
+                .true => this.callImplWithType(True, Ret, "true", field, args_),
+                .false => this.callImplWithType(False, Ret, "false", field, args_),
             };
         }
 
@@ -8710,6 +8720,40 @@ pub const Interpreter = struct {
                 _ = this;
             }
         };
+
+        pub const True = struct {
+            bltn: *Builtin,
+
+            pub fn start(this: *@This()) Maybe(void) {
+                this.bltn.done(0);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(_: *@This(), _: usize, _: ?JSC.SystemError) void {
+                // no IO is done
+            }
+
+            pub fn deinit(this: *@This()) void {
+                _ = this;
+            }
+        };
+
+        pub const False = struct {
+            bltn: *Builtin,
+
+            pub fn start(this: *@This()) Maybe(void) {
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(_: *@This(), _: usize, _: ?JSC.SystemError) void {
+                // no IO is done
+            }
+
+            pub fn deinit(this: *@This()) void {
+                _ = this;
+            }
+        };
     };
 
     /// This type is reference counted, but deinitialization is queued onto the event loop
@@ -9719,6 +9763,8 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.Touch.ShellTouchOutputTask,
         Interpreter.Builtin.Cat,
         Interpreter.Builtin.Exit,
+        Interpreter.Builtin.True,
+        Interpreter.Builtin.False,
         shell.subproc.PipeReader.CapturedWriter,
     });
 

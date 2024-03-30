@@ -1,5 +1,14 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, isWindows, joinP, mergeWindowEnvs, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  joinP,
+  mergeWindowEnvs,
+  toBeValidBin,
+  toHaveBins,
+  writeShebangScript,
+} from "harness";
 import { join, sep } from "path";
 import { mkdtempSync, realpathSync, copyFileSync, mkdirSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";

@@ -260,13 +260,9 @@ function execFile(file, args, options, callback) {
   } else {
     encoding = null;
   }
-  let stdoutLen = 0;
-  let stderrLen = 0;
   let killed = false;
   let exited = false;
   let timeoutId;
-  let encodedStdoutLen;
-  let encodedStderrLen;
 
   let ex = null;
 
@@ -348,6 +344,55 @@ function execFile(file, args, options, callback) {
     }, options.timeout).unref();
   }
 
+  const onData = (array, kind) => {
+    let total = 0;
+    let encodedLength;
+    return encoding
+      ? function onDataEncoded(chunk) {
+          total += chunk.length;
+
+          if (total > maxBuffer) {
+            const out = child[kind];
+            const encoding = out.readableEncoding;
+            const actualLen = Buffer.byteLength(chunk, encoding);
+            if (encodedLength === undefined) {
+              encodedLength = 0;
+
+              for (let i = 0, length = array.length; i < length; i++) {
+                encodedLength += Buffer.byteLength(array[i], encoding);
+              }
+            }
+
+            encodedLength += actualLen;
+
+            if (encodedLength > maxBuffer) {
+              let combined = ArrayPrototypeJoin.$call(array, "") + chunk;
+              combined = StringPrototypeSlice.$call(combined, 0, maxBuffer);
+              array = [combined];
+              ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+              kill();
+            } else {
+              array = [ArrayPrototypeJoin.$call(array, "") + chunk];
+            }
+          } else {
+            $arrayPush(array, chunk);
+          }
+        }
+      : function onDataRaw(chunk) {
+          total += chunk.length;
+
+          if (total > maxBuffer) {
+            const truncatedLen = maxBuffer - (total - chunk.length);
+            $arrayPush(array, chunk.slice(0, truncatedLen));
+
+            ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+            kill();
+          } else {
+            $arrayPush(array, chunk);
+          }
+        };
+  };
+
   if (child.stdout) {
     if (encoding) child.stdout.setEncoding(encoding);
 
@@ -355,44 +400,9 @@ function execFile(file, args, options, callback) {
       "data",
       maxBuffer === Infinity
         ? function onUnlimitedSizeBufferedData(chunk) {
-            ArrayPrototypePush.$call(_stdout, chunk);
+            $arrayPush(_stdout, chunk);
           }
-        : encoding
-          ? function onChildStdoutEncoded(chunk) {
-              stdoutLen += chunk.length;
-
-              if (stdoutLen * 4 > maxBuffer) {
-                const encoding = child.stdout.readableEncoding;
-                const actualLen = Buffer.byteLength(chunk, encoding);
-                if (encodedStdoutLen === undefined) {
-                  for (let i = 0; i < _stdout.length; i++) {
-                    encodedStdoutLen += Buffer.byteLength(_stdout[i], encoding);
-                  }
-                } else {
-                  encodedStdoutLen += actualLen;
-                }
-                const truncatedLen = maxBuffer - (encodedStdoutLen - actualLen);
-                ArrayPrototypePush.$call(_stdout, StringPrototypeSlice.$apply(chunk, 0, truncatedLen));
-
-                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
-                kill();
-              } else {
-                ArrayPrototypePush.$call(_stdout, chunk);
-              }
-            }
-          : function onChildStdoutRaw(chunk) {
-              stdoutLen += chunk.length;
-
-              if (stdoutLen > maxBuffer) {
-                const truncatedLen = maxBuffer - (stdoutLen - chunk.length);
-                ArrayPrototypePush.$call(_stdout, chunk.slice(0, truncatedLen));
-
-                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
-                kill();
-              } else {
-                ArrayPrototypePush.$call(_stdout, chunk);
-              }
-            },
+        : onData(_stdout, "stdout"),
     );
   }
 
@@ -403,44 +413,9 @@ function execFile(file, args, options, callback) {
       "data",
       maxBuffer === Infinity
         ? function onUnlimitedSizeBufferedData(chunk) {
-            ArrayPrototypePush.$call(_stderr, chunk);
+            $arrayPush(_stderr, chunk);
           }
-        : encoding
-          ? function onChildStderrEncoded(chunk) {
-              stderrLen += chunk.length;
-
-              if (stderrLen * 4 > maxBuffer) {
-                const encoding = child.stderr.readableEncoding;
-                const actualLen = Buffer.byteLength(chunk, encoding);
-                if (encodedStderrLen === undefined) {
-                  for (let i = 0; i < _stderr.length; i++) {
-                    encodedStderrLen += Buffer.byteLength(_stderr[i], encoding);
-                  }
-                } else {
-                  encodedStderrLen += actualLen;
-                }
-                const truncatedLen = maxBuffer - (encodedStderrLen - actualLen);
-                ArrayPrototypePush.$call(_stderr, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
-
-                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
-                kill();
-              } else {
-                ArrayPrototypePush.$call(_stderr, chunk);
-              }
-            }
-          : function onChildStderrRaw(chunk) {
-              stderrLen += chunk.length;
-
-              if (stderrLen > maxBuffer) {
-                const truncatedLen = maxBuffer - (stderrLen - chunk.length);
-                ArrayPrototypePush.$call(_stderr, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
-
-                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
-                kill();
-              } else {
-                ArrayPrototypePush.$call(_stderr, chunk);
-              }
-            },
+        : onData(_stderr, "stderr"),
     );
   }
 
@@ -679,22 +654,22 @@ function execSync(command, options) {
 }
 
 function stdioStringToArray(stdio, channel) {
-  const options = [];
+  let options;
 
   switch (stdio) {
     case "ignore":
     case "overlapped":
     case "pipe":
-      ArrayPrototypePush.$call(options, stdio, stdio, stdio);
+      options = [stdio, stdio, stdio];
       break;
     case "inherit":
-      ArrayPrototypePush.$call(options, 0, 1, 2);
+      options = [0, 1, 2];
       break;
     default:
       throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 
-  if (channel) ArrayPrototypePush.$call(options, channel);
+  if (channel) $arrayPush(options, channel);
 
   return options;
 }
@@ -1187,8 +1162,8 @@ class ChildProcess extends EventEmitter {
     //   if (options.envPairs === undefined) options.envPairs = [];
     //   else validateArray(options.envPairs, "options.envPairs");
 
-    //   ArrayPrototypePush.$call(options.envPairs, `NODE_CHANNEL_FD=${ipcFd}`);
-    //   ArrayPrototypePush.$call(
+    //   $arrayPush(options.envPairs, `NODE_CHANNEL_FD=${ipcFd}`);
+    //   $arrayPush(
     //     options.envPairs,
     //     `NODE_CHANNEL_SERIALIZATION_MODE=${serialization}`
     //   );
@@ -1794,7 +1769,7 @@ function genericNodeError(message, options) {
 //       const pos = ArrayPrototypeIndexOf(types, "object");
 //       if (pos !== -1) {
 //         ArrayPrototypeSplice.$call(types, pos, 1);
-//         ArrayPrototypePush.$call(instances, "Object");
+//         $arrayPush(instances, "Object");
 //       }
 //     }
 

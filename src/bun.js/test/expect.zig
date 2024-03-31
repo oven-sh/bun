@@ -1098,7 +1098,7 @@ pub const Expect = struct {
         const arguments = arguments_.ptr[0..arguments_.len];
 
         if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toContainValue() takes 1 argument", .{});
+            globalObject.throwInvalidArguments("toContainValues() takes 1 argument", .{});
             return .zero;
         }
 
@@ -1106,7 +1106,7 @@ pub const Expect = struct {
 
         const expected = arguments[0];
         expected.ensureStillAlive();
-        const value: JSValue = this.getValue(globalObject, thisValue, "toContainValue", "<green>expected<r>") orelse return .zero;
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainValues", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
         var pass = true;
@@ -1136,14 +1136,14 @@ pub const Expect = struct {
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
-            const fmt = comptime getSignature("toContainValue", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            const fmt = comptime getSignature("toContainValues", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
-        const fmt = comptime getSignature("toContainValue", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        const fmt = comptime getSignature("toContainValues", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
         globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
@@ -1159,7 +1159,7 @@ pub const Expect = struct {
         const arguments = arguments_.ptr[0..arguments_.len];
 
         if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toContainValue() takes 1 argument", .{});
+            globalObject.throwInvalidArguments("toContainAllValues() takes 1 argument", .{});
             return .zero;
         }
 
@@ -1167,7 +1167,7 @@ pub const Expect = struct {
 
         const expected = arguments[0];
         expected.ensureStillAlive();
-        const value: JSValue = this.getValue(globalObject, thisValue, "toContainValue", "<green>expected<r>") orelse return .zero;
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainAllValues", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
         var pass = false;
@@ -1203,14 +1203,14 @@ pub const Expect = struct {
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
-            const fmt = comptime getSignature("toContainValue", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            const fmt = comptime getSignature("toContainAllValues", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
-        const fmt = comptime getSignature("toContainValue", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        const fmt = comptime getSignature("toContainAllValues", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
         globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
@@ -1226,7 +1226,7 @@ pub const Expect = struct {
         const arguments = arguments_.ptr[0..arguments_.len];
 
         if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toContainValue() takes 1 argument", .{});
+            globalObject.throwInvalidArguments("toContainAnyValues() takes 1 argument", .{});
             return .zero;
         }
 
@@ -1234,7 +1234,7 @@ pub const Expect = struct {
 
         const expected = arguments[0];
         expected.ensureStillAlive();
-        const value: JSValue = this.getValue(globalObject, thisValue, "toContainValue", "<green>expected<r>") orelse return .zero;
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainAnyValues", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
         var pass = false;
@@ -1264,14 +1264,14 @@ pub const Expect = struct {
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
-            const fmt = comptime getSignature("toContainValue", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            const fmt = comptime getSignature("toContainAnyValues", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
-        const fmt = comptime getSignature("toContainValue", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        const fmt = comptime getSignature("toContainAnyValues", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
         globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }

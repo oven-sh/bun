@@ -41,14 +41,14 @@ inline void generateNativeModule_AbortControllerModule(
   // https://github.com/mysticatea/abort-controller/blob/a935d38e09eb95d6b633a8c42fcceec9969e7b05/dist/abort-controller.js#L125
   abortController->putDirect(
       vm, signalIdent, abortSignal,
-      static_cast<unsigned>(PropertyAttribute::DontEnum));
+      static_cast<unsigned>(PropertyAttribute::DontDelete));
 
   abortController->putDirect(
       vm, controllerIdent, abortController,
-      static_cast<unsigned>(PropertyAttribute::DontEnum));
+      static_cast<unsigned>(PropertyAttribute::DontDelete));
 
   abortController->putDirect(
       vm, vm.propertyNames->defaultKeyword, abortController,
-      static_cast<unsigned>(PropertyAttribute::DontEnum));
+      static_cast<unsigned>(PropertyAttribute::DontDelete));
 }
 } // namespace Zig

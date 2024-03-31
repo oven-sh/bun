@@ -1033,6 +1033,7 @@ pub const HelpCommand = struct {
 
         Output.flush();
     }
+
     pub fn execWithReason(_: std.mem.Allocator, comptime reason: Reason) void {
         @setCold(true);
         printWithReason(reason, false);
@@ -1040,6 +1041,7 @@ pub const HelpCommand = struct {
         if (reason == .invalid_command) {
             std.process.exit(1);
         }
+        std.process.exit(0);
     }
 };
 

@@ -10,8 +10,6 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const Syscall = bun.sys;
 
-const exe_suffix = bun.exe_suffix;
-
 const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
@@ -661,30 +659,32 @@ pub const StandaloneModuleGraph = struct {
         return try StandaloneModuleGraph.fromBytes(allocator, to_read, offsets);
     }
 
-    fn isBuiltInExe(argv0: []const u8) bool {
+    /// heuristic: `bun build --compile` won't be supported if the name is "bun", "bunx", or "node".
+    /// this is a cheap way to avoid the extra overhead of opening the executable, and also just makes sense.
+    fn isBuiltInExe(comptime T: type, argv0: []const T) bool {
         if (argv0.len == 0) return false;
 
         if (argv0.len == 3) {
-            if (bun.strings.eqlComptimeIgnoreLen(argv0, "bun" ++ exe_suffix)) {
+            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bun"), false)) {
                 return true;
             }
         }
 
         if (argv0.len == 4) {
-            if (bun.strings.eqlComptimeIgnoreLen(argv0, "bunx" ++ exe_suffix)) {
+            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bunx"), false)) {
                 return true;
             }
 
-            if (bun.strings.eqlComptimeIgnoreLen(argv0, "node" ++ exe_suffix)) {
+            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "node"), false)) {
                 return true;
             }
         }
 
         if (comptime Environment.isDebug) {
-            if (bun.strings.eqlComptime(argv0, "bun-debug")) {
+            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bun-debug"), true)) {
                 return true;
             }
-            if (bun.strings.eqlComptime(argv0, "bun-debugx")) {
+            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bun-debugx"), true)) {
                 return true;
             }
         }
@@ -693,13 +693,10 @@ pub const StandaloneModuleGraph = struct {
     }
 
     fn openSelf() std.fs.OpenSelfExeError!bun.FileDescriptor {
-        // heuristic: `bun build --compile` won't be supported if the name is "bun", "bunx", or "node".
-        // this is a cheap way to avoid the extra overhead
-        // of opening the executable and also just makes sense.
         if (!Environment.isWindows) {
             const argv = bun.argv();
             if (argv.len > 0) {
-                if (isBuiltInExe(argv[0])) {
+                if (isBuiltInExe(u8, argv[0])) {
                     return error.FileNotFound;
                 }
             }
@@ -738,6 +735,13 @@ pub const StandaloneModuleGraph = struct {
 
                 var nt_path_buf: bun.WPathBuffer = undefined;
                 const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
+
+                const basename_start = std.mem.lastIndexOfScalar(u16, nt_path, '\\') orelse
+                    return error.FileNotFound;
+                const basename = nt_path[basename_start + 1 .. nt_path.len - ".exe".len];
+                if (isBuiltInExe(u16, basename)) {
+                    return error.FileNotFound;
+                }
 
                 return bun.sys.openFileAtWindows(
                     bun.FileDescriptor.cwd(),

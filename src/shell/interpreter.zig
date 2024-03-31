@@ -62,7 +62,7 @@ pub fn OOM(e: anyerror) noreturn {
     @panic("Out of memory");
 }
 
-const log = bun.Output.scoped(.SHELL, false);
+const log = bun.Output.scoped(.SHELL, true);
 
 pub fn assert(cond: bool, comptime msg: []const u8) void {
     if (bun.Environment.allow_assert) {
@@ -152,7 +152,7 @@ const CowFd = struct {
     refcount: u32 = 1,
     being_used: bool = false,
 
-    const print = bun.Output.scoped(.CowFd, false);
+    const print = bun.Output.scoped(.CowFd, true);
 
     pub fn init(fd: bun.FileDescriptor) *CowFd {
         const this = bun.default_allocator.create(CowFd) catch bun.outOfMemory();
@@ -2246,7 +2246,7 @@ pub const Interpreter = struct {
         }
 
         pub const ShellGlobTask = struct {
-            const print = bun.Output.scoped(.ShellGlobTask, false);
+            const print = bun.Output.scoped(.ShellGlobTask, true);
 
             task: WorkPoolTask = .{ .callback = &runFromThreadPool },
 
@@ -4578,7 +4578,7 @@ pub const Interpreter = struct {
         }
 
         pub const Cat = struct {
-            const print = bun.Output.scoped(.ShellCat, false);
+            const print = bun.Output.scoped(.ShellCat, true);
 
             bltn: *Builtin,
             opts: Opts = .{},
@@ -5114,7 +5114,7 @@ pub const Interpreter = struct {
                     try writer.print("ShellTouchTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
                 }
 
-                const print = bun.Output.scoped(.ShellTouchTask, false);
+                const print = bun.Output.scoped(.ShellTouchTask, true);
 
                 pub fn deinit(this: *ShellTouchTask) void {
                     if (this.err) |e| {
@@ -5498,7 +5498,7 @@ pub const Interpreter = struct {
                 event_loop: JSC.EventLoopHandle,
                 concurrent_task: JSC.EventLoopTask,
 
-                const print = bun.Output.scoped(.ShellMkdirTask, false);
+                const print = bun.Output.scoped(.ShellMkdirTask, true);
 
                 fn takeOutput(this: *ShellMkdirTask) ArrayList(u8) {
                     const out = this.created_directories;
@@ -6370,7 +6370,7 @@ pub const Interpreter = struct {
             };
 
             pub const ShellLsTask = struct {
-                const print = bun.Output.scoped(.ShellLsTask, false);
+                const print = bun.Output.scoped(.ShellLsTask, true);
                 ls: *Ls,
                 opts: Opts,
 
@@ -7003,7 +7003,7 @@ pub const Interpreter = struct {
             } = .idle,
 
             pub const ShellMvCheckTargetTask = struct {
-                const print = bun.Output.scoped(.MvCheckTargetTask, false);
+                const print = bun.Output.scoped(.MvCheckTargetTask, true);
                 mv: *Mv,
 
                 cwd: bun.FileDescriptor,
@@ -7041,7 +7041,7 @@ pub const Interpreter = struct {
 
             pub const ShellMvBatchedTask = struct {
                 const BATCH_SIZE = 5;
-                const print = bun.Output.scoped(.MvBatchedTask, false);
+                const print = bun.Output.scoped(.MvBatchedTask, true);
 
                 mv: *Mv,
                 sources: []const [*:0]const u8,
@@ -7948,7 +7948,7 @@ pub const Interpreter = struct {
             }
 
             pub const ShellRmTask = struct {
-                const print = bun.Output.scoped(.AsyncRmTask, false);
+                const print = bun.Output.scoped(.AsyncRmTask, true);
 
                 rm: *Rm,
                 opts: Opts,
@@ -9070,7 +9070,7 @@ pub const Interpreter = struct {
 
         pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOWriterRefCount";
 
-        const print = bun.Output.scoped(.IOWriter, false);
+        const print = bun.Output.scoped(.IOWriter, true);
 
         const ChildPtr = IOWriterChildPtr;
 

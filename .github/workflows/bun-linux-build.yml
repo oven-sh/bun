@@ -260,6 +260,7 @@ jobs:
           TMPDIR: ${{runner.temp}}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
           node packages/bun-internal-test/src/runner.node.mjs || true

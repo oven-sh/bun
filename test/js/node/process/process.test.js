@@ -240,7 +240,7 @@ it("process.binding", () => {
 
 it("process.argv in testing", () => {
   expect(process.argv).toBeInstanceOf(Array);
-  expect(process.argv[0]).toBe(bunExe());
+  expect(process.argv[0]).toBe(process.execPath);
 
   // assert we aren't creating a new process.argv each call
   expect(process.argv).toBe(process.argv);

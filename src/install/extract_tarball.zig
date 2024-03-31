@@ -440,7 +440,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 .npm => folder_name[name.len + 1 ..],
                 else => folder_name,
             },
-            .{},
+            .{ .is_directory = true },
         ) catch break :create_index;
     }
 

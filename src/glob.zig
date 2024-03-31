@@ -149,6 +149,9 @@ pub fn GlobWalker_(
         /// If the pattern contains "./" or "../"
         has_relative_components: bool = false,
 
+        end_byte_of_basename_excluding_special_syntax: u32 = 0,
+        basename_excluding_special_syntax_component_idx: u32 = 0,
+
         patternComponents: ArrayList(Component) = .{},
         matchedPaths: ArrayList(BunString) = .{},
         i: u32 = 0,
@@ -201,8 +204,34 @@ pub fn GlobWalker_(
 
             pub fn init(this: *Iterator) !Maybe(void) {
                 log("Iterator init pattern={s}", .{this.walker.pattern});
+                const root_work_item = brk: {
+                    var use_posix = bun.Environment.isPosix;
+                    const is_absolute = if (bun.Environment.isPosix) std.fs.path.isAbsolute(this.walker.pattern) else std.fs.path.isAbsolute(this.walker.pattern) or is_absolute: {
+                        use_posix = true;
+                        break :is_absolute std.fs.path.isAbsolutePosix(this.walker.pattern);
+                    };
+
+                    if (!is_absolute) break :brk WorkItem.new(this.walker.cwd, 0, .directory);
+
+                    const component_idx = this.walker.basename_excluding_special_syntax_component_idx;
+                    var path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
+                    if (this.walker.pattern.len == this.walker.end_byte_of_basename_excluding_special_syntax) {
+                        path_without_special_syntax = (if (use_posix) std.fs.path.dirnamePosix(path_without_special_syntax) else std.fs.path.dirnameWindows(path_without_special_syntax)) orelse p: {
+                            break :p path_without_special_syntax;
+                        };
+                        // component_idx -= 1;
+                        // component_idx -= 1;
+                    }
+
+                    break :brk WorkItem.new(
+                        path_without_special_syntax,
+                        component_idx,
+                        .directory,
+                    );
+                };
+
                 var path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.walker.pathBuf;
-                const root_path = this.walker.cwd;
+                const root_path = root_work_item.path;
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
                 const root_path_z = path_buf[0..root_path.len :0];
@@ -217,7 +246,6 @@ pub fn GlobWalker_(
 
                 this.cwd_fd = cwd_fd;
 
-                const root_work_item = WorkItem.new(this.walker.cwd, 0, .directory);
                 switch (try this.transitionToDirIterState(root_work_item, true)) {
                     .err => |err| return .{ .err = err },
                     else => {},
@@ -609,6 +637,13 @@ pub fn GlobWalker_(
                 Dot,
                 /// ../
                 DotBack,
+
+                fn isSpecialSyntax(this: SyntaxHint) bool {
+                    return switch (this) {
+                        .Literal => false,
+                        else => true,
+                    };
+                }
             };
         };
 
@@ -646,9 +681,6 @@ pub fn GlobWalker_(
             const ptr = @intFromPtr(this);
             log("GlobWalker(0x{x}) components:", .{ptr});
             for (components.items) |cmp| {
-                if (cmp.syntax_hint == .None) {
-                    continue;
-                }
                 switch (cmp.syntax_hint) {
                     .Single => log("  *", .{}),
                     .Double => log("  **", .{}),
@@ -673,6 +705,8 @@ pub fn GlobWalker_(
             only_files: bool,
         ) !Maybe(void) {
             var patternComponents = ArrayList(Component){};
+            this.basename_excluding_special_syntax_component_idx = 0;
+            this.end_byte_of_basename_excluding_special_syntax = @intCast(pattern.len);
             try GlobWalker.buildPatternComponents(
                 arena,
                 &patternComponents,
@@ -680,6 +714,8 @@ pub fn GlobWalker_(
                 &this.cp_len,
                 &this.pattern_codepoints,
                 &this.has_relative_components,
+                &this.end_byte_of_basename_excluding_special_syntax,
+                &this.basename_excluding_special_syntax_component_idx,
             );
 
             this.cwd = cwd;
@@ -999,19 +1035,6 @@ pub fn GlobWalker_(
             return name;
         }
 
-        fn appendMatchedPath(
-            this: *GlobWalker,
-            entry_name: []const u8,
-            dir_name: [:0]const u8,
-        ) !void {
-            const subdir_parts: []const []const u8 = &[_][]const u8{
-                dir_name[0..dir_name.len],
-                entry_name,
-            };
-            const name = try this.join(subdir_parts);
-            try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
-        }
-
         fn appendMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !void {
             const name = try this.arena.allocator().dupe(u8, symlink_full_path);
             try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
@@ -1073,23 +1096,21 @@ pub fn GlobWalker_(
             return false;
         }
 
-        fn addComponent(
-            allocator: Allocator,
+        fn makeComponent(
             pattern: []const u8,
-            patternComponents: *ArrayList(Component),
             start_cp: u32,
             end_cp: u32,
             start_byte: u32,
             end_byte: u32,
             has_relative_patterns: *bool,
-        ) !void {
+        ) ?Component {
             var component: Component = .{
                 .start = start_byte,
                 .len = end_byte - start_byte,
                 .start_cp = start_cp,
                 .end_cp = end_cp,
             };
-            if (component.len == 0) return;
+            if (component.len == 0) return null;
 
             out: {
                 if (component.len == 1 and pattern[component.start] == '.') {
@@ -1163,7 +1184,7 @@ pub fn GlobWalker_(
                 component.is_ascii = true;
             }
 
-            try patternComponents.append(allocator, component);
+            return component;
         }
 
         fn buildPatternComponents(
@@ -1173,6 +1194,8 @@ pub fn GlobWalker_(
             out_cp_len: *u32,
             out_pattern_cp: *[]u32,
             has_relative_patterns: *bool,
+            end_byte_of_basename_excluding_special_syntax: *u32,
+            basename_excluding_special_syntax_component_idx: *u32,
         ) !void {
             var start_cp: u32 = 0;
             var start_byte: u32 = 0;
@@ -1182,6 +1205,7 @@ pub fn GlobWalker_(
 
             var cp_len: u32 = 0;
             var prevIsBackslash = false;
+            var saw_special = false;
             while (iter.next(&cursor)) : (cp_len += 1) {
                 const c = cursor.c;
 
@@ -1189,16 +1213,21 @@ pub fn GlobWalker_(
                     '\\' => {
                         if (comptime isWindows) {
                             const end_cp = cp_len;
-                            try addComponent(
-                                arena.allocator(),
+                            if (makeComponent(
                                 pattern,
-                                patternComponents,
                                 start_cp,
                                 end_cp,
                                 start_byte,
                                 cursor.i,
                                 has_relative_patterns,
-                            );
+                            )) |component| {
+                                if (!saw_special and component.syntax_hint.isSpecialSyntax()) {
+                                    saw_special = true;
+                                    basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                                }
+                                try patternComponents.append(arena.allocator(), component);
+                            }
                             start_cp = cp_len + 1;
                             start_byte = cursor.i + cursor.width;
                             continue;
@@ -1219,16 +1248,21 @@ pub fn GlobWalker_(
                             end_cp += 1;
                             end_byte += cursor.width;
                         }
-                        try addComponent(
-                            arena.allocator(),
+                        if (makeComponent(
                             pattern,
-                            patternComponents,
                             start_cp,
                             end_cp,
                             start_byte,
                             end_byte,
                             has_relative_patterns,
-                        );
+                        )) |component| {
+                            if (!saw_special and component.syntax_hint.isSpecialSyntax()) {
+                                saw_special = true;
+                                basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                                end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                            }
+                            try patternComponents.append(arena.allocator(), component);
+                        }
                         start_cp = cp_len + 1;
                         start_byte = cursor.i + cursor.width;
                     },
@@ -1247,16 +1281,24 @@ pub fn GlobWalker_(
             out_pattern_cp.* = codepoints;
 
             const end_cp = cp_len;
-            try addComponent(
-                arena.allocator(),
+            if (makeComponent(
                 pattern,
-                patternComponents,
                 start_cp,
                 end_cp,
                 start_byte,
                 @intCast(pattern.len),
                 has_relative_patterns,
-            );
+            )) |component| {
+                if (!saw_special and component.syntax_hint.isSpecialSyntax()) {
+                    saw_special = true;
+                    basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                }
+                try patternComponents.append(arena.allocator(), component);
+            }
+
+            if (!saw_special)
+                end_byte_of_basename_excluding_special_syntax.* = @intCast(patternComponents.items.len);
         }
     };
 }

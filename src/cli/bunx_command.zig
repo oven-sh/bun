@@ -205,6 +205,7 @@ pub const BunxCommand = struct {
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
         var maybe_package_name: ?string = null;
         var verbose_install = false;
+        var silent_install = false;
         {
             var found_subcommand_name = false;
 
@@ -217,6 +218,8 @@ pub const BunxCommand = struct {
                 if (positional.len > 0 and positional[0] == '-') {
                     if (strings.eqlComptime(positional, "--verbose")) {
                         verbose_install = true;
+                    } else if (strings.eqlComptime(positional, "--silent")) {
+                        silent_install = true;
                     } else if (strings.eqlComptime(positional, "--bun") or strings.eqlComptime(positional, "-b")) {
                         ctx.debug.run_in_bun = true;
                     }
@@ -569,7 +572,7 @@ pub const BunxCommand = struct {
             package_json.writeAll("{}\n") catch {};
         }
 
-        var args = std.BoundedArray([]const u8, 7).fromSlice(&.{
+        var args = std.BoundedArray([]const u8, 8).fromSlice(&.{
             try bun.selfExePath(),
             "add",
             install_param,
@@ -590,6 +593,11 @@ pub const BunxCommand = struct {
 
         if (verbose_install) {
             args.append("--verbose") catch
+                unreachable; // upper bound is known
+        }
+
+        if (silent_install) {
+            args.append("--silent") catch
                 unreachable; // upper bound is known
         }
 

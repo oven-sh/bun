@@ -1,13 +1,21 @@
 import { file, spawn } from "bun";
-import { bunEnv, bunExe, bunEnv as env, isWindows, mergeWindowEnvs, toBeValidBin, toHaveBins } from "harness";
-import { join } from "path";
+import {
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  joinP,
+  mergeWindowEnvs,
+  toBeValidBin,
+  toHaveBins,
+  writeShebangScript,
+} from "harness";
+import { join, sep } from "path";
 import { mkdtempSync, realpathSync, copyFileSync, mkdirSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
-import { f } from "js/bun/http/js-sink-sourmap-fixture/index.mjs";
 
 expect.extend({
   toBeValidBin,
@@ -3006,9 +3014,10 @@ for (const forceWaiterThread of [false, true]) {
         expect.stringContaining("1 package installed"),
       ]);
       expect(await exited).toBe(0);
-      expect(await file(join(packageDir, "test.txt")).text()).toBe(packageDir + "/");
-      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(packageDir + "/");
-      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(packageDir + "/");
+      const expected = packageDir.replaceAll("\\", "/") + "/";
+      expect(await file(join(packageDir, "test.txt")).text()).toBe(expected);
+      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(expected);
+      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(expected);
     });
 
     test("failing lifecycle script should print output", async () => {
@@ -3047,7 +3056,7 @@ for (const forceWaiterThread of [false, true]) {
           name: "fooooooooo",
           version: "1.0.0",
           scripts: {
-            preinstall: `${bunExe().replace(/\\/g, "\\\\")} -e "throw new Error('Oops!')"`,
+            preinstall: `${bunExe()} -e "throw new Error('Oops!')"`,
           },
         }),
       );
@@ -3065,6 +3074,43 @@ for (const forceWaiterThread of [false, true]) {
       const err = await Bun.readableStreamToText(stderr);
       expect(err).toContain("error: Oops!");
       expect(err).toContain('error: preinstall script from "fooooooooo" exited with 1');
+    });
+
+    test("exit 0 in lifecycle scripts works", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            postinstall: "exit 0",
+            prepare: "exit 0",
+            postprepare: "exit 0",
+          },
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await new Response(stderr).text();
+      expect(err).toContain("No packages! Deleted empty lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      const out = await new Response(stdout).text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        expect.stringContaining("done"),
+        "",
+      ]);
+      expect(await exited).toBe(0);
     });
 
     test("--ignore-scripts should skip lifecycle scripts", async () => {
@@ -3507,7 +3553,7 @@ for (const forceWaiterThread of [false, true]) {
 
     test("reach max concurrent scripts", async () => {
       const scripts = {
-        "preinstall": `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(500)"`,
+        "preinstall": `${bunExe()} -e 'Bun.sleepSync(500)'`,
       };
 
       const dependenciesList = await createPackagesWithScripts(4, scripts);
@@ -3538,7 +3584,7 @@ for (const forceWaiterThread of [false, true]) {
 
     test("stress test", async () => {
       const dependenciesList = await createPackagesWithScripts(500, {
-        "postinstall": `${bunExe().replace(/\\/g, "\\\\")} --version`,
+        "postinstall": `${bunExe()} --version`,
       });
 
       // the script is quick, default number for max concurrent scripts
@@ -3683,6 +3729,7 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
     });
+
     test("node-gyp should always be available for lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
@@ -3715,6 +3762,40 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
+    test("npm_config_node_gyp should be set in lifecycle scripts", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          scripts: {
+            install: "echo $npm_config_node_gyp > npm_config_node_gyp.txt",
+          },
+        }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await new Response(stderr).text();
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      expect(err).toContain("v");
+
+      expect(await exited).toBe(0);
+
+      expect(await exists(join(packageDir, "npm_config_node_gyp.txt"))).toBeTrue();
+      const ext = isWindows ? ".cmd" : "";
+      expect(await file(join(packageDir, "npm_config_node_gyp.txt")).text()).toEndWith(`${sep}node-gyp${ext}\n`);
+    });
+
     test("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
@@ -3735,13 +3816,13 @@ for (const forceWaiterThread of [false, true]) {
         env: testEnv,
       });
 
-      expect(await exited).toBe(0);
       const err = await new Response(stderr).text();
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("panic:");
       expect(err).toContain("v");
+      expect(await exited).toBe(0);
     });
 
     // if this test fails, `electron` might be removed from the default list
@@ -4470,7 +4551,7 @@ for (const forceWaiterThread of [false, true]) {
           name: "foo",
           version: "1.0.0",
           scripts: {
-            postinstall: 'node -p \'require("fs").writeFileSync("postinstall.txt", "postinstall")\'',
+            postinstall: `node -p "require('fs').writeFileSync('postinstall.txt', 'postinstall')"`,
           },
         }),
       );
@@ -4498,6 +4579,41 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
+    });
+
+    test("ensureTempNodeGypScript works", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            preinstall: "node-gyp --version",
+          },
+        }),
+      );
+
+      const originalPath = env.PATH;
+      env.PATH = "";
+
+      let { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env,
+      });
+
+      env.PATH = originalPath;
+
+      let err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("No packages! Deleted empty lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
+      expect(await exited).toBe(0);
     });
 
     test("bun pm trust and untrusted on missing package", async () => {
@@ -4743,7 +4859,7 @@ for (const forceWaiterThread of [false, true]) {
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await Bun.readableStreamToText(stdout);
-          expect(out).toContain("./node_modules/uses-what-bin @1.0.0");
+          expect(out).toContain("./node_modules/uses-what-bin @1.0.0".replaceAll("/", sep));
           expect(await exited).toBe(0);
         });
       }
@@ -4756,7 +4872,7 @@ for (const forceWaiterThread of [false, true]) {
             name: "foo",
             version: "1.0.0",
             scripts: {
-              preinstall: `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(1000)"`,
+              preinstall: `${bunExe()} -e 'Bun.sleepSync(1000)'`,
             },
           }),
         );
@@ -4946,12 +5062,10 @@ test("it should be able to find binary in node_modules/.bin from parent director
 
   await cp(join(packageDir, "bunfig.toml"), join(packageDir, "morePackageDir", "bunfig.toml"));
 
-  await await writeFile(
+  await writeShebangScript(
     join(packageDir, "node_modules", ".bin", "missing-bin"),
-    `#!/usr/bin/env node
-require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");
-`,
-    { mode: 0o777 },
+    "node",
+    `require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");`,
   );
 
   const { stdout, stderr, exited } = spawn({
@@ -6736,7 +6850,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6754,7 +6868,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6772,7 +6886,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
@@ -6790,7 +6904,7 @@ test.if(isWindows)(
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: mergeWindowEnvs([bunEnv, { PATH: PATH }]),
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();

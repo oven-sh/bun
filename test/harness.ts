@@ -1,7 +1,7 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile } from "fs/promises";
-import { isAbsolute } from "path";
+import { readlink, readFile, writeFile } from "fs/promises";
+import { isAbsolute, sep, join } from "path";
 import { openSync, closeSync } from "node:fs";
 
 export const isMacOS = process.platform === "darwin";
@@ -36,6 +36,7 @@ for (let key in bunEnv) {
 }
 
 export function bunExe() {
+  if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
 }
 
@@ -560,6 +561,24 @@ export function toTOMLString(opts: object) {
   return ret;
 }
 
+const shebang_posix = (program: string) => `#!/usr/bin/env ${program}
+ `;
+
+const shebang_windows = (program: string) => `0</* :{
+   @echo off
+   ${program} %~f0 %*
+   exit /b %errorlevel%
+ :} */0;
+ `;
+
+export function writeShebangScript(path: string, program: string, data: string) {
+  if (!isWindows) {
+    return writeFile(path, shebang_posix(program) + "\n" + data, { mode: 0o777 });
+  } else {
+    return writeFile(path + ".cmd", shebang_windows(program) + "\n" + data);
+  }
+}
+
 export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
   var decoder = new (require("string_decoder").StringDecoder)("utf8");
   var str = "";
@@ -586,6 +605,10 @@ export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | Array
   if (str.length > 0) {
     yield str;
   }
+}
+
+export function joinP(...paths: string[]) {
+  return join(...paths).replaceAll("\\", "/");
 }
 
 /**

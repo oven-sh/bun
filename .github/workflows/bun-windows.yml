@@ -417,7 +417,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - uses: secondlife/setup-cygwin@v1
+      - uses: secondlife/setup-cygwin@v3
         with:
           packages: bash
       - name: Install dependencies
@@ -461,7 +461,7 @@ jobs:
 
             [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
       - uses: sarisia/actions-status-discord@v1
-        if: always() && steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
+        if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         with:
           title: ""
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
@@ -469,26 +469,29 @@ jobs:
           noprefix: true
           nocontext: true
           description: |
-            ### ❌🪟 [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
+            Pull Request
+            ### ❌ [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
 
-            @${{ github.actor }}, there are **${{ steps.test.outputs.regressing_test_count }} test regressions** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
+            @${{ github.actor }}, there are ${{ steps.test.outputs.failing_tests_count }} files with test failures on bun-windows-${{ matrix.arch }}-${{ matrix.cpu }}
 
-            ${{ steps.test.outputs.regressing_tests }}
+            ${{ steps.test.outputs.failing_tests }}
 
-            [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
+            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
       - name: Comment on PR
-        if: always() && steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
+        if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2
         with:
           comment_tag: test-windows-${{ matrix.arch }}-${{ matrix.cpu }}
           message: |
-            ### ❌🪟 @${{ github.actor }}, there are **${{ steps.test.outputs.regressing_test_count }} test regressions** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
+            ❌ @${{ github.actor }} ${{ steps.test.outputs.failing_tests_count }} files with test failures on bun-windows-${{ matrix.arch }}-${{ matrix.cpu }}
 
-            ${{ steps.test.outputs.regressing_tests }}
+            ${{ steps.test.outputs.failing_tests }}
 
-            [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
+            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
+
+            <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
       - name: Uncomment on PR
-        if: steps.test.outputs.regressing_tests == '' && github.event_name == 'pull_request'
+        if: steps.test.outputs.failing_tests == '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2
         with:
           comment_tag: test-windows-${{ matrix.arch }}-${{ matrix.cpu }}
@@ -498,5 +501,5 @@ jobs:
             ✅🪟 Test regressions on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }} have been resolved.
       - id: fail
         name: Fail the build
-        if: steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
+        if: steps.test.outputs.failing_tests != ''
         run: exit 1

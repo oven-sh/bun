@@ -350,6 +350,11 @@ pub const Jest = struct {
         );
         test_fn.put(
             globalObject,
+            ZigString.static("todoIf"),
+            JSC.NewFunction(globalObject, ZigString.static("todoIf"), 2, ThisTestScope.todoIf, false),
+        );
+        test_fn.put(
+            globalObject,
             ZigString.static("each"),
             JSC.NewFunction(globalObject, ZigString.static("each"), 2, ThisTestScope.each, false),
         );
@@ -384,6 +389,11 @@ pub const Jest = struct {
             globalObject,
             ZigString.static("skipIf"),
             JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, ThisDescribeScope.skipIf, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("todoIf"),
+            JSC.NewFunction(globalObject, ZigString.static("todoIf"), 2, ThisDescribeScope.todoIf, false),
         );
         describe.put(
             globalObject,
@@ -577,11 +587,15 @@ pub const TestScope = struct {
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, false);
+        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, .pass);
     }
 
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, true);
+        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, .skip);
+    }
+
+    pub fn todoIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "test.todoIf()", "todoIf", TestScope, .todo);
     }
 
     pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -1043,11 +1057,15 @@ pub const DescribeScope = struct {
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, false);
+        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, .pass);
     }
 
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, true);
+        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, .skip);
+    }
+
+    pub fn todoIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "describe.todoIf()", "todoIf", DescribeScope, .todo);
     }
 
     pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
@@ -1214,6 +1232,7 @@ pub const WrappedTestScope = struct {
     pub const todo = wrapTestFunction("test", TestScope.todo);
     pub const callIf = wrapTestFunction("test", TestScope.callIf);
     pub const skipIf = wrapTestFunction("test", TestScope.skipIf);
+    pub const todoIf = wrapTestFunction("test", TestScope.todoIf);
     pub const each = wrapTestFunction("test", TestScope.each);
 };
 
@@ -1224,6 +1243,7 @@ pub const WrappedDescribeScope = struct {
     pub const todo = wrapTestFunction("describe", DescribeScope.todo);
     pub const callIf = wrapTestFunction("describe", DescribeScope.callIf);
     pub const skipIf = wrapTestFunction("describe", DescribeScope.skipIf);
+    pub const todoIf = wrapTestFunction("describe", DescribeScope.todoIf);
     pub const each = wrapTestFunction("describe", DescribeScope.each);
 };
 
@@ -1662,7 +1682,7 @@ inline fn createIfScope(
     comptime property: string,
     comptime signature: string,
     comptime Scope: type,
-    comptime is_skip: bool,
+    comptime tag: Tag,
 ) JSValue {
     const arguments = callframe.arguments(1);
     const args = arguments.slice();
@@ -1674,13 +1694,16 @@ inline fn createIfScope(
 
     const name = ZigString.static(property);
     const value = args[0].toBooleanSlow(globalThis);
-    const skip = if (is_skip) Scope.skip else Scope.call;
-    const call = if (is_skip) Scope.call else Scope.skip;
 
-    if (value) {
-        return JSC.NewFunction(globalThis, name, 2, skip, false);
-    }
+    const truthy_falsey: [2]JSC.JSHostFunctionPtr = switch (tag) {
+        .pass => .{ Scope.call, Scope.skip },
+        .fail => @compileError("unreachable"),
+        .only => @compileError("unreachable"),
+        .skip => .{ Scope.skip, Scope.call },
+        .todo => .{ Scope.todo, Scope.call },
+    };
 
+    const call = truthy_falsey[if (value) 0 else 1];
     return JSC.NewFunction(globalThis, name, 2, call, false);
 }
 

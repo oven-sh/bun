@@ -23,6 +23,7 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         std.debug.assert(result_converted.ptr == buf.ptr);
         return buf[0..result_converted.len :0];
     }
+
     if (bin.len == 0) return null;
 
     // handle absolute paths
@@ -31,16 +32,22 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         buf[bin.len] = 0;
         const binZ: [:0]u8 = buf[0..bin.len :0];
         if (bun.sys.isExecutableFilePath(binZ)) return binZ;
-
-        // note that directories are often executable
-        // TODO: should we return null here? What about the case where ytou have
-        //   /foo/bar/baz as a path and you're in /home/jarred?
+        // Do not look absolute paths in $PATH
+        return null;
     }
 
-    if (cwd.len > 0) {
-        if (isValid(buf, std.mem.trimRight(u8, cwd, std.fs.path.sep_str), bin)) |len| {
-            return buf[0..len :0];
+    if (bun.strings.containsChar(bin, '/')) {
+        if (cwd.len > 0) {
+            if (isValid(
+                buf,
+                std.mem.trimRight(u8, cwd, std.fs.path.sep_str),
+                bun.strings.withoutPrefixComptime(bin, "./"),
+            )) |len| {
+                return buf[0..len :0];
+            }
         }
+        // Do not lookup paths with slashes in $PATH
+        return null;
     }
 
     var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
@@ -134,8 +141,18 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
     }
 
     // check if bin is in cwd
-    if (searchBinInPath(buf, &path_buf, cwd, bin, check_windows_extensions)) |bin_path| {
-        return bin_path;
+    if (bun.strings.containsChar(bin, '/')) {
+        if (searchBinInPath(
+            buf,
+            &path_buf,
+            cwd,
+            bun.strings.withoutPrefixComptime(bin, "./"),
+            check_windows_extensions,
+        )) |bin_path| {
+            return bin_path;
+        }
+        // Do not lookup paths with slashes in $PATH
+        return null;
     }
 
     // iterate over system path delimiter

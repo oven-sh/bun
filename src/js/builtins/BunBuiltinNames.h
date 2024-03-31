@@ -53,7 +53,6 @@ using namespace JSC;
     macro(closeRequested) \
     macro(code) \
     macro(connect) \
-    macro(consumeReadableStream) \
     macro(controlledReadableStream) \
     macro(controller) \
     macro(cork) \

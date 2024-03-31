@@ -339,7 +339,7 @@ pub fn WindowsPipeReader(
             var this = bun.cast(*This, stream.data);
 
             const nread_int = nread.int();
-            bun.sys.syslog("onStreamRead() = {d}", .{nread_int});
+            bun.sys.syslog("onStreamRead({}) = {d}", .{ stream.fd(), nread_int });
 
             // NOTE: pipes/tty need to call stopReading on errors (yeah)
             switch (nread_int) {

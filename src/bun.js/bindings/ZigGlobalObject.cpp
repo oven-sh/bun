@@ -2070,26 +2070,6 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
     return 0;
 }
 
-extern "C" JSC__JSValue ReadableStream__consume(Zig::GlobalObject* globalObject, JSC__JSValue stream, JSC__JSValue nativeType, JSC__JSValue nativePtr);
-extern "C" JSC__JSValue ReadableStream__consume(Zig::GlobalObject* globalObject, JSC__JSValue stream, JSC__JSValue nativeType, JSC__JSValue nativePtr)
-{
-    ASSERT(globalObject);
-
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-
-    auto& builtinNames = WebCore::builtinNames(vm);
-
-    auto function = globalObject->getDirect(vm, builtinNames.consumeReadableStreamPrivateName()).getObject();
-    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(nativePtr));
-    arguments.append(JSValue::decode(nativeType));
-    arguments.append(JSValue::decode(stream));
-
-    auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
-}
-
 extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativePtr)
 {
     auto& vm = globalObject->vm();

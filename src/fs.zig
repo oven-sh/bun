@@ -940,7 +940,7 @@ pub const FileSystem = struct {
 
         pub fn openDir(_: *RealFS, unsafe_dir_string: string) !std.fs.Dir {
             const dirfd = if (Environment.isWindows)
-                bun.sys.openDirAtWindowsA(bun.invalid_fd, unsafe_dir_string, true, true)
+                bun.sys.openDirAtWindowsA(bun.invalid_fd, unsafe_dir_string, .{ .iterable = true, .no_follow = false })
             else
                 bun.sys.openA(
                     unsafe_dir_string,

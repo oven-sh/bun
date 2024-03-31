@@ -743,11 +743,14 @@ endif()
 # requires all the JS files to be known, but also Bun will use all cores during bundling anyways.
 if(NOT NO_CODEGEN)
     file(GLOB BUN_TS_MODULES ${CONFIGURE_DEPENDS}
-        "${BUN_SRC}/js/builtins/*.js"
-        "${BUN_SRC}/js/builtins/*.ts"
-        "${BUN_SRC}/js/bun/*.js"
+        "${BUN_SRC}/js/node/*.ts"
+        "${BUN_SRC}/js/node/*.js"
         "${BUN_SRC}/js/bun/*.ts"
-        "${BUN_SRC}/js/internal-for-testing.ts"
+        "${BUN_SRC}/js/bun/*.js"
+        "${BUN_SRC}/js/builtins/*.ts"
+        "${BUN_SRC}/js/builtins/*.js"
+        "${BUN_SRC}/js/thirdparty/*.js"
+        "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal/*.js"
         "${BUN_SRC}/js/internal/*.ts"
         "${BUN_SRC}/js/node/*.js"

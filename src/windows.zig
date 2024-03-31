@@ -3022,7 +3022,12 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .OBJECT_NAME_NOT_FOUND => .NOENT,
         .NOT_A_DIRECTORY => .NOTDIR,
         .RETRY => .AGAIN,
+        .DIRECTORY_NOT_EMPTY => .EXIST,
         .FILE_TOO_LARGE => .@"2BIG",
+        .SHARING_VIOLATION => if (comptime Environment.isDebug) brk: {
+            bun.Output.debugWarn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE", .{});
+            break :brk .BUSY;
+        } else .BUSY,
         .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
             break :brk .INVAL;

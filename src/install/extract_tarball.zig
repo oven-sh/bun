@@ -229,8 +229,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 null,
                 logger.Loc.Empty,
                 this.package_manager.allocator,
-                "{s} decompressing \"{s}\"",
-                .{ @errorName(err), name },
+                "{s} decompressing \"{s}\" to \"{}\"",
+                .{ @errorName(err), name, bun.fmt.fmtPath(u8, std.mem.span(tmpname), .{}) },
             ) catch unreachable;
             return error.InstallFailed;
         };
@@ -318,16 +318,25 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         var folder_name_wbuf: bun.WPathBuffer = undefined;
         const folder_name_w = bun.strings.toWPathNormalized(&folder_name_wbuf, folder_name);
 
-        switch (bun.C.moveOpenedFileAtLoose(extract_fd_on_windows, bun.toFD(cache_dir.fd), folder_name_w, false)) {
+        switch (bun.C.moveOpenedFileAtLoose(extract_fd_on_windows, bun.toFD(cache_dir.fd), folder_name_w, true)) {
             .err => |err| {
-                this.package_manager.log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    this.package_manager.allocator,
-                    "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {}",
-                    .{ name, err, tmpname, bun.fmt.utf16(folder_name_w) },
-                ) catch unreachable;
-                return error.InstallFailed;
+                switch (err.getErrno()) {
+                    .PERM, .BUSY, .EXIST => {
+                        // two copies of bun are trying to extract the same package version to the same folder
+                        // lets let it slide.
+                    },
+
+                    else => {
+                        this.package_manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.package_manager.allocator,
+                            "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {}",
+                            .{ name, err, tmpname, bun.fmt.utf16(folder_name_w) },
+                        ) catch unreachable;
+                        return error.InstallFailed;
+                    },
+                }
             },
             .result => {},
         }

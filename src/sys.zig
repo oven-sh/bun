@@ -470,6 +470,21 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     return Maybe(bun.Stat){ .result = stat_ };
 }
 
+pub fn mkdiratA(dir_fd: bun.FileDescriptor, file_path: []const u8) Maybe(void) {
+    var buf: bun.WPathBuffer = undefined;
+    return mkdiratW(dir_fd, bun.strings.toWPathNormalized(&buf, file_path));
+}
+
+pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16) Maybe(void) {
+    const dir_to_make = openDirAtWindowsNtPath(dir_fd, file_path, .{ .iterable = false, .can_rename_or_delete = false });
+    if (dir_to_make == .err) {
+        return .{ .err = dir_to_make.err };
+    }
+
+    _ = close(dir_to_make.result);
+    return .{ .result = {} };
+}
+
 pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         .mac => Maybe(void).errnoSysP(system.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
@@ -606,16 +621,20 @@ pub fn normalizePathWindows(
     };
 }
 
-pub fn openDirAtWindowsNtPath(
+fn openDirAtWindowsNtPath(
     dirFd: bun.FileDescriptor,
     path: []const u16,
-    iterable: bool,
-    no_follow: bool,
+    options: WindowsOpenDirOptions,
 ) Maybe(bun.FileDescriptor) {
+    const iterable = options.iterable;
+    const no_follow = options.no_follow;
+    const can_rename_or_delete = options.can_rename_or_delete;
     assertIsValidWindowsPath(u16, path);
     const base_flags = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA |
         w.SYNCHRONIZE | w.FILE_TRAVERSE;
-    const flags: u32 = if (iterable) base_flags | w.FILE_LIST_DIRECTORY else base_flags;
+    const iterable_flag: u32 = if (iterable) w.FILE_LIST_DIRECTORY else 0;
+    const rename_flag: u32 = if (can_rename_or_delete) w.DELETE else 0;
+    const flags: u32 = iterable_flag | base_flags | rename_flag;
 
     const path_len_bytes: u16 = @truncate(path.len * 2);
     var nt_name = w.UNICODE_STRING{
@@ -639,6 +658,8 @@ pub fn openDirAtWindowsNtPath(
     const open_reparse_point: w.DWORD = if (no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
     var fd: w.HANDLE = w.INVALID_HANDLE_VALUE;
     var io: w.IO_STATUS_BLOCK = undefined;
+    const delete_share: u32 = if (can_rename_or_delete) w.FILE_SHARE_DELETE else 0;
+
     const rc = w.ntdll.NtCreateFile(
         &fd,
         flags,
@@ -646,7 +667,7 @@ pub fn openDirAtWindowsNtPath(
         &io,
         null,
         0,
-        w.FILE_SHARE_READ | w.FILE_SHARE_WRITE,
+        w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | delete_share,
         w.FILE_OPEN,
         w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
         null,
@@ -694,12 +715,17 @@ pub fn openDirAtWindowsNtPath(
     }
 }
 
-pub fn openDirAtWindowsT(
+pub const WindowsOpenDirOptions = packed struct {
+    iterable: bool = false,
+    no_follow: bool = false,
+    can_rename_or_delete: bool = false,
+};
+
+fn openDirAtWindowsT(
     comptime T: type,
     dirFd: bun.FileDescriptor,
     path: []const T,
-    iterable: bool,
-    no_follow: bool,
+    options: WindowsOpenDirOptions,
 ) Maybe(bun.FileDescriptor) {
     var wbuf: bun.WPathBuffer = undefined;
 
@@ -708,25 +734,23 @@ pub fn openDirAtWindowsT(
         .result => |norm| norm,
     };
 
-    return openDirAtWindowsNtPath(dirFd, norm, iterable, no_follow);
+    return openDirAtWindowsNtPath(dirFd, norm, options);
 }
 
 pub fn openDirAtWindows(
     dirFd: bun.FileDescriptor,
     path: []const u16,
-    iterable: bool,
-    no_follow: bool,
+    options: WindowsOpenDirOptions,
 ) Maybe(bun.FileDescriptor) {
-    return openDirAtWindowsT(u16, dirFd, path, iterable, no_follow);
+    return openDirAtWindowsT(u16, dirFd, path, options);
 }
 
 pub noinline fn openDirAtWindowsA(
     dirFd: bun.FileDescriptor,
     path: []const u8,
-    iterable: bool,
-    no_follow: bool,
+    options: WindowsOpenDirOptions,
 ) Maybe(bun.FileDescriptor) {
-    return openDirAtWindowsT(u8, dirFd, path, iterable, no_follow);
+    return openDirAtWindowsT(u8, dirFd, path, options);
 }
 
 /// For this function to open an absolute path, it must start with "\??\". Otherwise
@@ -924,7 +948,7 @@ pub noinline fn openFileAtWindowsA(
 pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode) Maybe(bun.FileDescriptor) {
     if (flags & O.DIRECTORY != 0) {
         // we interpret O_PATH as meaning that we don't want iteration
-        return openDirAtWindowsT(T, dir, path, flags & O.PATH == 0, flags & O.NOFOLLOW != 0);
+        return openDirAtWindowsT(T, dir, path, .{ .iterable = flags & O.PATH == 0, .no_follow = flags & O.NOFOLLOW != 0, .can_rename_or_delete = false });
     }
 
     const nonblock = flags & O.NONBLOCK != 0;
@@ -2511,3 +2535,5 @@ pub inline fn toLibUVOwnedFD(
         },
     };
 }
+
+pub const Dir = @import("./dir.zig");

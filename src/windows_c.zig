@@ -1378,7 +1378,7 @@ pub fn moveOpenedFileAtLoose(
 
     if (std.mem.lastIndexOfScalar(u16, new_path, '\\')) |last_slash| {
         const dirname = new_path[0..last_slash];
-        const fd = switch (bun.sys.openDirAtWindows(new_dir_fd, dirname, false, true)) {
+        const fd = switch (bun.sys.openDirAtWindows(new_dir_fd, dirname, .{ .can_rename_or_delete = true })) {
             .err => |e| return .{ .err = e },
             .result => |fd| fd,
         };

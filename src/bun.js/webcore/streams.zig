@@ -3710,10 +3710,33 @@ pub const FileReader = struct {
             }
         } else if (this.pending.state == .pending) {
             if (buf.len == 0) {
-                this.pending.result = .{ .done = {} };
+                {
+                    if (this.buffered.items.len == 0) {
+                        if (this.buffered.capacity > 0) {
+                            this.buffered.clearAndFree(bun.default_allocator);
+                        }
+
+                        if (this.reader.buffer().items.len != 0) {
+                            this.buffered = this.reader.buffer().moveToUnmanaged();
+                        }
+                    }
+
+                    var buffer = &this.buffered;
+                    defer buffer.clearAndFree(bun.default_allocator);
+                    if (buffer.items.len > 0) {
+                        if (this.pending_view.len >= buffer.items.len) {
+                            @memcpy(this.pending_view[0..buffer.items.len], buffer.items);
+                            this.pending.result = .{ .into_array_and_done = .{ .value = this.pending_value.get() orelse .zero, .len = @truncate(buffer.items.len) } };
+                        } else {
+                            this.pending.result = .{ .owned_and_done = bun.ByteList.fromList(buffer.*) };
+                            buffer.* = .{};
+                        }
+                    } else {
+                        this.pending.result = .{ .done = {} };
+                    }
+                }
                 this.pending_value.clear();
                 this.pending_view = &.{};
-                this.reader.buffer().clearAndFree();
                 this.pending.run();
                 return false;
             }

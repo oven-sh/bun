@@ -691,7 +691,7 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
 
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -701,7 +701,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
 
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -711,7 +711,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
 
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(invalid_fd, path_, true, false).unwrap();
+        const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -2371,7 +2371,15 @@ pub const MakePath = struct {
     }
 
     fn makeDirW(self: std.fs.Dir, sub_path: []const u16) !void {
-        try std.os.mkdiratW(self.fd, sub_path, 0o755);
+        const rc = sys.mkdiratW(toFD(self.fd), sub_path);
+        switch (rc) {
+            .err => |err| switch (err.getErrno()) {
+                .PERM, .BUSY, .EXIST => return error.PathAlreadyExists,
+                .NOENT => return error.FileNotFound,
+                else => return rc.unwrap(),
+            },
+            .result => {},
+        }
     }
 
     fn componentIterator(comptime T: type, path_: []const T) !std.fs.path.ComponentIterator(switch (builtin.target.os.tag) {

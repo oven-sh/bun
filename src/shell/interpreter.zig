@@ -18,6 +18,7 @@
 //!     use undefined memory.
 const std = @import("std");
 const builtin = @import("builtin");
+const string = []const u8;
 const bun = @import("root").bun;
 const os = std.os;
 const Arena = std.heap.ArenaAllocator;
@@ -508,16 +509,23 @@ pub const CowEnvMap = Cow(EnvMap, struct {
 
 pub const EnvMap = struct {
     map: MapType,
+
     pub const Iterator = MapType.Iterator;
 
     const MapType = std.ArrayHashMap(EnvStr, EnvStr, struct {
         pub fn hash(self: @This(), s: EnvStr) u32 {
             _ = self;
+            if (bun.Environment.isWindows) {
+                return bun.CaseInsensitiveASCIIStringContext.hash(undefined, s.slice());
+            }
             return std.array_hash_map.hashString(s.slice());
         }
         pub fn eql(self: @This(), a: EnvStr, b: EnvStr, b_index: usize) bool {
             _ = self;
             _ = b_index;
+            if (bun.Environment.isWindows) {
+                return bun.CaseInsensitiveASCIIStringContext.eql(undefined, a.slice(), b.slice(), undefined);
+            }
             return std.array_hash_map.eqlString(a.slice(), b.slice());
         }
     }, true);
@@ -4275,7 +4283,7 @@ pub const Interpreter = struct {
                 }
 
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
+                const resolved = which(&path_buf, spawn_args.PATH, first_arg[0..first_arg_len]) orelse {
                     this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
                     return;
                 };
@@ -4590,7 +4598,9 @@ pub const Interpreter = struct {
         args_slice: ?[]const [:0]const u8 = null,
         cwd: bun.FileDescriptor,
 
-        impl: union(Kind) {
+        impl: RealImpl,
+
+        const RealImpl = union(Kind) {
             cat: Cat,
             touch: Touch,
             mkdir: Mkdir,
@@ -4602,7 +4612,10 @@ pub const Interpreter = struct {
             rm: Rm,
             mv: Mv,
             ls: Ls,
-        },
+            exit: Exit,
+            true: True,
+            false: False,
+        };
 
         const Result = @import("../result.zig").Result;
 
@@ -4618,6 +4631,9 @@ pub const Interpreter = struct {
             rm,
             mv,
             ls,
+            exit,
+            true,
+            false,
 
             pub fn parentType(this: Kind) type {
                 _ = this;
@@ -4636,6 +4652,9 @@ pub const Interpreter = struct {
                     .rm => "usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n",
                     .mv => "usage: mv [-f | -i | -n] [-hv] source target\n       mv [-f | -i | -n] [-v] source ... directory\n",
                     .ls => "usage: ls [-@ABCFGHILOPRSTUWabcdefghiklmnopqrstuvwxy1%,] [--color=when] [-D format] [file ...]\n",
+                    .exit => "usage: exit [n]\n",
+                    .true => "",
+                    .false => "",
                 };
             }
 
@@ -4652,6 +4671,9 @@ pub const Interpreter = struct {
                     .rm => "rm",
                     .mv => "mv",
                     .ls => "ls",
+                    .exit => "exit",
+                    .true => "true",
+                    .false => "false",
                 };
             }
 
@@ -4813,6 +4835,9 @@ pub const Interpreter = struct {
                 .pwd => this.callImplWithType(Pwd, Ret, "pwd", field, args_),
                 .mv => this.callImplWithType(Mv, Ret, "mv", field, args_),
                 .ls => this.callImplWithType(Ls, Ret, "ls", field, args_),
+                .exit => this.callImplWithType(Exit, Ret, "exit", field, args_),
+                .true => this.callImplWithType(True, Ret, "true", field, args_),
+                .false => this.callImplWithType(False, Ret, "false", field, args_),
             };
         }
 
@@ -4882,26 +4907,6 @@ pub const Interpreter = struct {
             };
 
             switch (kind) {
-                .cat => {
-                    cmd.exec.bltn.impl = .{
-                        .cat = Cat{ .bltn = &cmd.exec.bltn },
-                    };
-                },
-                .touch => {
-                    cmd.exec.bltn.impl = .{
-                        .touch = Touch{ .bltn = &cmd.exec.bltn },
-                    };
-                },
-                .mkdir => {
-                    cmd.exec.bltn.impl = .{
-                        .mkdir = Mkdir{ .bltn = &cmd.exec.bltn },
-                    };
-                },
-                .@"export" => {
-                    cmd.exec.bltn.impl = .{
-                        .@"export" = Export{ .bltn = &cmd.exec.bltn },
-                    };
-                },
                 .rm => {
                     cmd.exec.bltn.impl = .{
                         .rm = Rm{
@@ -4918,36 +4923,10 @@ pub const Interpreter = struct {
                         },
                     };
                 },
-                .cd => {
-                    cmd.exec.bltn.impl = .{
-                        .cd = Cd{
-                            .bltn = &cmd.exec.bltn,
-                        },
-                    };
-                },
-                .which => {
-                    cmd.exec.bltn.impl = .{
-                        .which = Which{
-                            .bltn = &cmd.exec.bltn,
-                        },
-                    };
-                },
-                .pwd => {
-                    cmd.exec.bltn.impl = .{
-                        .pwd = Pwd{ .bltn = &cmd.exec.bltn },
-                    };
-                },
-                .mv => {
-                    cmd.exec.bltn.impl = .{
-                        .mv = Mv{ .bltn = &cmd.exec.bltn },
-                    };
-                },
-                .ls => {
-                    cmd.exec.bltn.impl = .{
-                        .ls = Ls{
-                            .bltn = &cmd.exec.bltn,
-                        },
-                    };
+                inline else => |tag| {
+                    cmd.exec.bltn.impl = @unionInit(RealImpl, @tagName(tag), .{
+                        .bltn = &cmd.exec.bltn,
+                    });
                 },
             }
 
@@ -6576,7 +6555,7 @@ pub const Interpreter = struct {
                     var had_not_found = false;
                     for (args) |arg_raw| {
                         const arg = arg_raw[0..std.mem.len(arg_raw)];
-                        const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                        const resolved = which(&path_buf, PATH.slice(), arg) orelse {
                             had_not_found = true;
                             const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
                             _ = this.bltn.writeNoIO(.stdout, buf);
@@ -6614,7 +6593,7 @@ pub const Interpreter = struct {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
-                const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
+                const resolved = which(&path_buf, PATH.slice(), arg) orelse {
                     multiargs.had_not_found = true;
                     if (!this.bltn.stdout.needsIO()) {
                         const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
@@ -9350,6 +9329,118 @@ pub const Interpreter = struct {
                 }
             };
         };
+
+        pub const Exit = struct {
+            bltn: *Builtin,
+            state: enum {
+                idle,
+                waiting_io,
+                err,
+                done,
+            } = .idle,
+
+            pub fn start(this: *Exit) Maybe(void) {
+                const args = this.bltn.argsSlice();
+                switch (args.len) {
+                    0 => {
+                        this.bltn.done(0);
+                        return Maybe(void).success;
+                    },
+                    1 => {
+                        const first_arg = args[0][0..std.mem.len(args[0]) :0];
+                        const exit_code: ExitCode = std.fmt.parseInt(u8, first_arg, 10) catch |err| switch (err) {
+                            error.Overflow => @intCast((std.fmt.parseInt(usize, first_arg, 10) catch return this.fail("exit: numeric argument required")) % 256),
+                            error.InvalidCharacter => return this.fail("exit: numeric argument required"),
+                        };
+                        this.bltn.done(exit_code);
+                        return Maybe(void).success;
+                    },
+                    else => {
+                        return this.fail("exit: too many arguments");
+                    },
+                }
+            }
+
+            fn fail(this: *Exit, msg: string) Maybe(void) {
+                if (this.bltn.stderr.needsIO()) {
+                    this.state = .waiting_io;
+                    this.bltn.stderr.enqueue(this, msg);
+                    return Maybe(void).success;
+                }
+                _ = this.bltn.writeNoIO(.stderr, msg);
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            pub fn next(this: *Exit) void {
+                switch (this.state) {
+                    .idle => unreachable,
+                    .waiting_io => {
+                        return;
+                    },
+                    .err => {
+                        this.bltn.done(1);
+                        return;
+                    },
+                    .done => {
+                        this.bltn.done(1);
+                        return;
+                    },
+                }
+            }
+
+            pub fn onIOWriterChunk(this: *Exit, _: usize, maybe_e: ?JSC.SystemError) void {
+                if (comptime bun.Environment.allow_assert) {
+                    std.debug.assert(this.state == .waiting_io);
+                }
+                if (maybe_e) |e| {
+                    defer e.deref();
+                    this.state = .err;
+                    this.next();
+                    return;
+                }
+                this.state = .done;
+                this.next();
+            }
+
+            pub fn deinit(this: *Exit) void {
+                _ = this;
+            }
+        };
+
+        pub const True = struct {
+            bltn: *Builtin,
+
+            pub fn start(this: *@This()) Maybe(void) {
+                this.bltn.done(0);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(_: *@This(), _: usize, _: ?JSC.SystemError) void {
+                // no IO is done
+            }
+
+            pub fn deinit(this: *@This()) void {
+                _ = this;
+            }
+        };
+
+        pub const False = struct {
+            bltn: *Builtin,
+
+            pub fn start(this: *@This()) Maybe(void) {
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(_: *@This(), _: usize, _: ?JSC.SystemError) void {
+                // no IO is done
+            }
+
+            pub fn deinit(this: *@This()) void {
+                _ = this;
+            }
+        };
     };
 
     /// This type is reference counted, but deinitialization is queued onto the event loop
@@ -10374,6 +10465,9 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.Touch,
         Interpreter.Builtin.Touch.ShellTouchOutputTask,
         Interpreter.Builtin.Cat,
+        Interpreter.Builtin.Exit,
+        Interpreter.Builtin.True,
+        Interpreter.Builtin.False,
         shell.subproc.PipeReader.CapturedWriter,
     });
 

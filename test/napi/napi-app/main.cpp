@@ -1,4 +1,4 @@
-#include "node.h"
+#include <node.h>
 
 #include <iostream>
 #include <napi.h>

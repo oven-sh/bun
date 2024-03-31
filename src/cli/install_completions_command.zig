@@ -46,15 +46,15 @@ pub const InstallCompletionsCommand = struct {
 
     const bunx_name = if (Environment.isDebug) "bunx-debug" else "bunx";
 
-    fn installBunxSymlinkPosix(allocator: std.mem.Allocator, cwd: []const u8) !void {
+    fn installBunxSymlinkPosix(cwd: []const u8) !void {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         // don't install it if it's already there
-        if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, cwd, bunx_name) != null)
+        if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, bunx_name) != null)
             return;
 
         // first try installing the symlink into the same directory as the bun executable
-        const exe = try std.fs.selfExePathAlloc(allocator);
+        const exe = try bun.selfExePath();
         var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var target = std.fmt.bufPrint(&target_buf, "{s}/" ++ bunx_name, .{std.fs.path.dirname(exe).?}) catch unreachable;
         std.os.symlink(exe, target) catch {
@@ -89,7 +89,7 @@ pub const InstallCompletionsCommand = struct {
         };
     }
 
-    fn installBunxSymlinkWindows(_: std.mem.Allocator, _: []const u8) !void {
+    fn installBunxSymlinkWindows(_: []const u8) !void {
         // Because symlinks are not always allowed on windows,
         // `bunx.exe` on windows is a hardlink to `bun.exe`
         // for this to work, we need to delete and recreate the hardlink every time
@@ -130,11 +130,11 @@ pub const InstallCompletionsCommand = struct {
         }
     }
 
-    fn installBunxSymlink(allocator: std.mem.Allocator, cwd: []const u8) !void {
+    fn installBunxSymlink(cwd: []const u8) !void {
         if (Environment.isWindows) {
-            try installBunxSymlinkWindows(allocator, cwd);
+            try installBunxSymlinkWindows(cwd);
         } else {
-            try installBunxSymlinkPosix(allocator, cwd);
+            try installBunxSymlinkPosix(cwd);
         }
     }
 
@@ -190,7 +190,7 @@ pub const InstallCompletionsCommand = struct {
             Global.exit(fail_exit_code);
         };
 
-        installBunxSymlink(allocator, cwd) catch {};
+        installBunxSymlink(cwd) catch {};
 
         if (Environment.isWindows) {
             installUninstallerWindows() catch {};

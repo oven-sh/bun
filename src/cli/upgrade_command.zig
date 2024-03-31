@@ -612,7 +612,7 @@ pub const UpgradeCommand = struct {
                 }
 
                 if (comptime Environment.isPosix) {
-                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
+                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", "unzip") orelse {
                         save_dir.deleteFileZ(tmpname) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
                         Global.exit(1);
@@ -756,7 +756,8 @@ pub const UpgradeCommand = struct {
                 }
             }
 
-            const destination_executable = std.fs.selfExePath(&current_executable_buf) catch return error.UpgradeFailedMissingExecutable;
+            const destination_executable = bun.selfExePath() catch return error.UpgradeFailedMissingExecutable;
+            @memcpy((&current_executable_buf).ptr, destination_executable);
             current_executable_buf[destination_executable.len] = 0;
 
             const target_filename_ = std.fs.path.basename(destination_executable);

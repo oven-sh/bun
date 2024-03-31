@@ -15,6 +15,10 @@ pub const Source = union(enum) {
 
     pub const File = struct {
         fs: uv.fs_t,
+        // we need a new fs_t to close the file
+        // the current one is used for write/reading/canceling
+        // we dont wanna to free any data that is being used in uv loop
+        close_fs: uv.fs_t,
         iov: uv.uv_buf_t,
         file: uv.uv_file,
     };
@@ -128,7 +132,6 @@ pub const Source = union(enum) {
         return switch (tty.init(loop, bun.uvfdcast(fd))) {
             .err => |err| .{ .err = err },
             .result => brk: {
-                _ = tty.setMode(.raw);
                 break :brk .{ .result = tty };
             },
         };
@@ -145,28 +148,64 @@ pub const Source = union(enum) {
     }
 
     pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(Source) {
-        log("open (fd = {})", .{fd});
-        const rc = bun.windows.GetFileType(fd.cast());
+        const rc = bun.windows.libuv.uv_guess_handle(bun.uvfdcast(fd));
+        log("open(fd: {}, type: {d})", .{ fd, @tagName(rc) });
+
         switch (rc) {
-            bun.windows.FILE_TYPE_PIPE => {
+            .named_pipe => {
                 switch (openPipe(loop, fd)) {
                     .result => |pipe| return .{ .result = .{ .pipe = pipe } },
                     .err => |err| return .{ .err = err },
                 }
             },
-            bun.windows.FILE_TYPE_CHAR => {
+            .tty => {
                 switch (openTty(loop, fd)) {
                     .result => |tty| return .{ .result = .{ .tty = tty } },
                     .err => |err| return .{ .err = err },
                 }
             },
-            else => {
+            .file => {
                 return .{
                     .result = .{
                         .file = openFile(fd),
                     },
                 };
             },
+            else => {
+                const errno = bun.windows.getLastErrno();
+
+                if (errno == .SUCCESS) {
+                    return .{
+                        .result = .{
+                            .file = openFile(fd),
+                        },
+                    };
+                }
+
+                return .{ .err = bun.sys.Error.fromCode(errno, .open) };
+            },
         }
+    }
+
+    pub fn setRawMode(this: Source, value: bool) bun.sys.Maybe(void) {
+        return switch (this) {
+            .tty => |tty| {
+                if (tty
+                    .setMode(if (value) .raw else .normal)
+                    .toError(.uv_tty_set_mode)) |err|
+                {
+                    return .{ .err = err };
+                } else {
+                    return .{ .result = {} };
+                }
+            },
+            else => .{
+                .err = .{
+                    .errno = @intFromEnum(bun.C.E.NOTSUP),
+                    .syscall = .uv_tty_set_mode,
+                    .fd = this.getFd(),
+                },
+            },
+        };
     }
 };

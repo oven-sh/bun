@@ -83,7 +83,7 @@ pub fn endsWithExtension(str: []const u8) bool {
 }
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by whichWin)
-fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: bool) ?[:0]const u16 {
+fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: bool) ?[:0]u16 {
     if (!check_windows_extensions)
         // On Windows, files without extensions are not executable
         // Therefore, we should only care about this check when the file already has an extension.
@@ -103,7 +103,7 @@ fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: 
 }
 
 /// Check if bin file exists in this path (internally used by whichWin)
-fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, bin: []const u8, check_windows_extensions: bool) ?[:0]const u16 {
+fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, bin: []const u8, check_windows_extensions: bool) ?[:0]u16 {
     if (path.len == 0) return null;
     const segment = if (std.fs.path.isAbsolute(path)) (PosixToWinNormalizer.resolveCWDWithExternalBuf(path_buf, path) catch return null) else path;
     const segment_utf16 = bun.strings.convertUTF8toUTF16InBuffer(buf, segment);
@@ -141,7 +141,7 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
     }
 
     // check if bin is in cwd
-    if (bun.strings.containsChar(bin, '/')) {
+    if (bun.strings.containsChar(bin, '/') or bun.strings.containsChar(bin, '\\')) {
         if (searchBinInPath(
             buf,
             &path_buf,
@@ -149,6 +149,7 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
             bun.strings.withoutPrefixComptime(bin, "./"),
             check_windows_extensions,
         )) |bin_path| {
+            bun.path.posixToPlatformInPlace(u16, bin_path);
             return bin_path;
         }
         // Do not lookup paths with slashes in $PATH

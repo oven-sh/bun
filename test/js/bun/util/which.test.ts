@@ -145,11 +145,11 @@ test("Bun.which does look in the current directory when given a path with a slas
 
     const suffix = isWindows ? ".cmd" : "";
 
-    expect(which("./some_program_name")).toBe(dir + "/some_program_name" + suffix);
+    expect(which("./some_program_name")).toBe(join(dir , "some_program_name" + suffix));
     expect((await $`./some_program_name`.text()).trim()).toBe(isWindows ? "win32" : "posix");
-    expect(which("./folder/other_app")).toBe(dir + "/folder/other_app" + suffix);
+    expect(which("./folder/other_app")).toBe(join(dir , "folder/other_app" + suffix));
     expect((await $`./folder/other_app`.text()).trim()).toBe(isWindows ? "win32" : "posix");
-    expect(which("folder/other_app")).toBe(dir + "/folder/other_app" + suffix);
+    expect(which("folder/other_app")).toBe(join(dir , "folder/other_app" + suffix));
     expect((await $`folder/other_app`.text()).trim()).toBe(isWindows ? "win32" : "posix");
   } finally {
     process.chdir(cwd);

@@ -254,7 +254,6 @@ declare function $closedPromise(): TODO;
 declare function $closedPromiseCapability(): TODO;
 declare function $code(): TODO;
 declare function $connect(): TODO;
-declare function $consumeReadableStream(): TODO;
 declare function $controlledReadableStream(): TODO;
 declare function $controller(): TODO;
 declare function $cork(): TODO;

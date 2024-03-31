@@ -7,7 +7,7 @@ const bun = @import("root").bun;
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
-        (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
+        (@intFromPtr(slice.ptr) + slice.len * @sizeOf(T)) <= (@intFromPtr(buffer.ptr) + buffer.len * @sizeOf(T)));
 }
 
 /// Checks if a slice's pointer is contained within another slice.

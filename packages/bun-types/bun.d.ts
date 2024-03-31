@@ -277,14 +277,14 @@ declare module "bun" {
 
     /**
      * Configure the shell to not throw an exception on non-zero exit codes. Throwing can be re-enabled with `.throws(true)`.
-     * 
+     *
      * By default, the shell with throw an exception on commands which return non-zero exit codes.
      */
     nothrow(): this;
 
     /**
      * Configure whether or not the shell should throw an exception on non-zero exit codes.
-     * 
+     *
      * By default, this is configured to `true`.
      */
     throws(shouldThrow: boolean): this;

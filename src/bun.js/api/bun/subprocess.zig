@@ -1248,6 +1248,17 @@ pub const Subprocess = struct {
             }
         }
 
+        fn clearSignal(this: *Writable, subprocess: *const Subprocess, signal: *JSC.WebCore.Signal) void {
+            if (@intFromPtr(signal.ptr) == @intFromPtr(this)) {
+                signal.clear();
+            }
+            if (comptime Environment.allow_assert) {
+                // signal should only be assigned to the Writable
+                // not the Subprocess
+                std.debug.assert(signal.ptr != @as(*anyopaque, @ptrCast(@constCast(subprocess))));
+            }
+        }
+
         pub fn toJS(this: *Writable, globalThis: *JSC.JSGlobalObject, subprocess: *Subprocess) JSValue {
             return switch (this.*) {
                 .fd => |fd| fd.toJS(globalThis),
@@ -1261,9 +1272,9 @@ pub const Subprocess = struct {
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;
                         subprocess.weak_file_sink_stdin_ptr = pipe;
-                        if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(subprocess)) {
-                            pipe.signal.clear();
-                        }
+
+                        clearSignal(this, subprocess, &pipe.signal);
+
                         return pipe.toJSWithDestructor(
                             globalThis,
                             JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
@@ -1283,9 +1294,7 @@ pub const Subprocess = struct {
 
             return switch (this.*) {
                 .pipe => |pipe| {
-                    if (pipe.signal.ptr == @as(*anyopaque, @ptrCast(this))) {
-                        pipe.signal.clear();
-                    }
+                    clearSignal(this, subprocess, &pipe.signal);
 
                     pipe.deref();
 

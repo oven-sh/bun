@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { rmdirSync } from "js/node/fs/export-star-from";
 import { isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
 
+$.nothrow();
+
 {
   const delim = isWindows ? ";" : ":";
   if (`${delim}${process.env.PATH}${delim}`.includes(`${delim}.${delim}`)) {

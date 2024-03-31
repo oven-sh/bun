@@ -712,7 +712,7 @@ pub const Loader = enum(u8) {
         map.set(Loader.wasm, "input.wasm");
         map.set(Loader.napi, "input.node");
         map.set(Loader.text, "input.txt");
-        map.set(Loader.bunsh, "input.bunsh");
+        map.set(Loader.bunsh, "input.sh");
         break :brk map;
     };
 
@@ -757,7 +757,7 @@ pub const Loader = enum(u8) {
         .{ "base64", Loader.base64 },
         .{ "txt", Loader.text },
         .{ "text", Loader.text },
-        .{ "bunsh", Loader.bunsh },
+        .{ "sh", Loader.bunsh },
         .{ "sqlite", Loader.sqlite },
         .{ "sqlite_embedded", Loader.sqlite_embedded },
     });
@@ -781,7 +781,7 @@ pub const Loader = enum(u8) {
         .{ "base64", Api.Loader.base64 },
         .{ "txt", Api.Loader.text },
         .{ "text", Api.Loader.text },
-        .{ "bunsh", Api.Loader.file },
+        .{ "sh", Api.Loader.file },
         .{ "sqlite", Api.Loader.sqlite },
     });
 

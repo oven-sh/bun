@@ -44,7 +44,7 @@ export class TestBuilder {
   static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
     try {
       if (process.env.BUN_DEBUG_SHELL_LOG_CMD === "1") console.info("[ShellTestBuilder] Cmd", strings.join(""));
-      const promise = Bun.$(strings, ...expressions);
+      const promise = Bun.$(strings, ...expressions).nothrow();
       const This = new this({ type: "ok", val: promise });
       This._testName = strings.join("");
       return This;

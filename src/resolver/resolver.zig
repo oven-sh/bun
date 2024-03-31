@@ -935,26 +935,33 @@ pub const Resolver = struct {
             // Fail now if there is no directory to resolve in. This can happen for
             // virtual modules (e.g. stdin) if a resolve directory is not specified.
             //
+            // TODO: This is skipped for now because it is impossible to set a
+            // resolveDir so we default to the top level directory instead (this
+            // is backwards compat with Bun 1.0 behavior)
+            // See https://github.com/oven-sh/bun/issues/8994 for more details.
             if (source_dir.len == 0) {
-                if (r.debug_logs) |*debug| {
-                    debug.addNote("Cannot resolve this path without a directory");
-                    r.flushDebugLogs(.fail) catch {};
-                }
+                // if (r.debug_logs) |*debug| {
+                //     debug.addNote("Cannot resolve this path without a directory");
+                //     r.flushDebugLogs(.fail) catch {};
+                // }
 
-                return .{ .failure = error.MissingResolveDir };
+                // return .{ .failure = error.MissingResolveDir };
+                break :brk Fs.FileSystem.instance.top_level_dir;
             }
 
-            // This can also be hit if you use plugins with odd specifiers, or
-            // call the module resolver from javascript (Bun.resolveSync) with a
-            // faulty parent specifier.
+            // This can also be hit if you use plugins with non-file namespaces,
+            // or call the module resolver from javascript (Bun.resolveSync)
+            // with a faulty parent specifier.
             if (!std.fs.path.isAbsolute(source_dir)) {
-                if (r.debug_logs) |*debug| {
-                    debug.addNote("Cannot resolve this path without an absolute directory");
-                    r.flushDebugLogs(.fail) catch {};
-                }
+                // if (r.debug_logs) |*debug| {
+                //     debug.addNote("Cannot resolve this path without an absolute directory");
+                //     r.flushDebugLogs(.fail) catch {};
+                // }
 
-                return .{ .failure = error.InvalidResolveDir };
+                // return .{ .failure = error.InvalidResolveDir };
+                break :brk Fs.FileSystem.instance.top_level_dir;
             }
+
             break :brk source_dir;
         };
 

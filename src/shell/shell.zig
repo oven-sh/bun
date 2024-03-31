@@ -545,7 +545,7 @@ pub const AST = struct {
         pub fn is_compound(self: *const Atom) bool {
             switch (self.*) {
                 .compound => return true,
-                else => return false,
+                .simple => return false,
             }
         }
 
@@ -583,8 +583,14 @@ pub const AST = struct {
 
         pub fn glob_hint(this: SimpleAtom) bool {
             return switch (this) {
-                .asterisk, .double_asterisk => true,
-                else => false,
+                .Var => false,
+                .Text => false,
+                .asterisk => true,
+                .double_asterisk => true,
+                .brace_begin => false,
+                .brace_end => false,
+                .comma => false,
+                .cmd_subst => false,
             };
         }
 
@@ -1015,7 +1021,20 @@ pub const Parser = struct {
                         try self.add_error("Unexpected token: `{s}`", .{if (peeked == .OpenParen) "(" else ")"});
                         return null;
                     },
-                    else => return null,
+                    .Pipe => return null,
+                    .DoublePipe => return null,
+                    .Ampersand => return null,
+                    .DoubleAmpersand => return null,
+                    .Redirect => return null,
+                    .Dollar => return null,
+                    .Eq => return null,
+                    .Semicolon => return null,
+                    .Newline => return null,
+                    .CmdSubstQuoted => return null,
+                    .CmdSubstEnd => return null,
+                    .JSObjRef => return null,
+                    .Delimit => return null,
+                    .Eof => return null,
                 }
             }
         }
@@ -1799,8 +1818,33 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 }
             } else if ((in_normal_space or in_redirect_operator) and self.tokens.items.len > 0 and
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
-                .Var, .Text, .BraceBegin, .Comma, .BraceEnd, .CmdSubstEnd => true,
-                else => false,
+                .Var,
+                .Text,
+                .BraceBegin,
+                .Comma,
+                .BraceEnd,
+                .CmdSubstEnd,
+                => true,
+
+                .Pipe,
+                .DoublePipe,
+                .Ampersand,
+                .DoubleAmpersand,
+                .Redirect,
+                .Dollar,
+                .Asterisk,
+                .DoubleAsterisk,
+                .Eq,
+                .Semicolon,
+                .Newline,
+                .CmdSubstBegin,
+                .CmdSubstQuoted,
+                .OpenParen,
+                .CloseParen,
+                .JSObjRef,
+                .Delimit,
+                .Eof,
+                => false,
             }) {
                 try self.tokens.append(.Delimit);
                 self.delimit_quote = false;

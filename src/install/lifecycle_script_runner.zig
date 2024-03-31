@@ -125,7 +125,7 @@ pub const LifecycleScriptSubprocess = struct {
         this.current_script_index = next_script_index;
         this.has_called_process_exit = false;
 
-        const shell_bin = bun.CLI.RunCommand.findShell(env.get("PATH") orelse "") orelse return error.MissingShell;
+        const shell_bin = bun.CLI.RunCommand.findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.script.len + 1);
         defer copy_script.deinit();

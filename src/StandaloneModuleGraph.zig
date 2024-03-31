@@ -716,6 +716,7 @@ pub const StandaloneModuleGraph = struct {
                         if (bun.which(
                             &whichbuf,
                             bun.getenvZ("PATH") orelse return error.FileNotFound,
+                            "",
                             bun.argv()[0],
                         )) |path| {
                             return bun.toFD((try std.fs.cwd().openFileZ(path, .{})).handle);

@@ -553,9 +553,9 @@ describe("parse shell", () => {
         ],
       };
 
-      let result = JSON.parse($.parse`if echo hi; then echo lmao; else echo lol; fi`);
+      let result = JSON.parse(parse`if echo hi; then echo lmao; else echo lol; fi`);
       expect(result).toEqual(expected);
-      result = JSON.parse($.parse`if echo hi
+      result = JSON.parse(parse`if echo hi
       then echo lmao
       else echo lol
       fi`);
@@ -683,7 +683,7 @@ describe("parse shell", () => {
         ],
       };
 
-      let result = JSON.parse($.parse`if a; then b; elif c; then d; else e; fi`);
+      let result = JSON.parse(parse`if a; then b; elif c; then d; else e; fi`);
       expect(result).toEqual(expected);
     });
 
@@ -794,7 +794,7 @@ describe("parse shell", () => {
           ],
         };
 
-        const result = JSON.parse($.parse`if echo hi; then echo lmao; else echo lol; fi | cat`);
+        const result = JSON.parse(parse`if echo hi; then echo lmao; else echo lol; fi | cat`);
         expect(result).toEqual(expected);
       });
     });
@@ -856,7 +856,7 @@ describe("parse shell", () => {
         ],
       };
 
-      const result = JSON.parse($.parse`echo hi && echo foo &`);
+      const result = JSON.parse(parse`echo hi && echo foo &`);
       expect(result).toEqual(expected);
     });
 
@@ -908,7 +908,7 @@ describe("parse shell", () => {
         ],
       };
 
-      const result = JSON.parse($.parse`echo hi | echo foo &`);
+      const result = JSON.parse(parse`echo hi | echo foo &`);
       expect(result).toEqual(expected);
     });
   });

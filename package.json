@@ -32,7 +32,6 @@
     "lint": "eslint './**/*.d.ts' --cache",
     "lint:fix": "eslint './**/*.d.ts' --cache --fix",
     "test": "node packages/bun-internal-test/src/runner.node.mjs ./build/bun-debug",
-    "test:release": "node packages/bun-internal-test/src/runner.node.mjs ./build-release/bun",
-    "update-known-failures": "node packages/bun-internal-test/src/update-known-windows-failures.mjs"
+    "test:release": "node packages/bun-internal-test/src/runner.node.mjs ./build-release/bun"
   }
 }

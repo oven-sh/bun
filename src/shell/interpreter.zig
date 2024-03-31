@@ -2105,6 +2105,9 @@ pub const Interpreter = struct {
                 .Var => |label| {
                     str_list.appendSlice(this.expandVar(label).slice()) catch bun.outOfMemory();
                 },
+                .VarArgv => |int| {
+                    str_list.appendSlice(this.expandVarArgv(int)) catch bun.outOfMemory();
+                },
                 .asterisk => {
                     str_list.append('*') catch bun.outOfMemory();
                 },
@@ -2151,41 +2154,42 @@ pub const Interpreter = struct {
         }
 
         fn expandVar(this: *const Expansion, label: []const u8) EnvStr {
-            if (bun.strings.isAllASCIIDigit(label)) {
-                var int = std.fmt.parseInt(u32, label, 10) catch return EnvStr.initSlice("");
-                switch (this.base.interpreter.event_loop) {
-                    .js => |js| {
-                        if (int == 0) return EnvStr.initSlice(bun.selfExePath() catch "");
-                        int -= 1;
-
-                        const vm = js.virtual_machine;
-                        if (vm.main.len > 0) {
-                            if (int == 0) return EnvStr.initSlice(vm.main);
-                            int -= 1;
-                        }
-
-                        if (vm.worker) |worker| {
-                            if (worker.argv) |argv| {
-                                if (int >= argv.len) return EnvStr.initSlice("");
-                                return EnvStr.initSlice(argv[int].utf8Slice());
-                            }
-                        }
-                        const argv = vm.argv;
-                        if (int >= argv.len) return EnvStr.initSlice("");
-                        return EnvStr.initSlice(argv[int]);
-                    },
-                    .mini => {
-                        const ctx = this.base.interpreter.command_ctx;
-                        if (int >= 1 + ctx.passthrough.len) return EnvStr.initSlice("");
-                        if (int == 0) return EnvStr.initSlice(ctx.positionals[ctx.positionals.len - 1 - int]);
-                        return EnvStr.initSlice(ctx.passthrough[int - 1]);
-                    },
-                }
-            }
             const value = this.base.shell.shell_env.get(EnvStr.initSlice(label)) orelse brk: {
                 break :brk this.base.shell.export_env.get(EnvStr.initSlice(label)) orelse return EnvStr.initSlice("");
             };
             return value;
+        }
+
+        fn expandVarArgv(this: *const Expansion, original_int: u8) []const u8 {
+            var int = original_int;
+            switch (this.base.interpreter.event_loop) {
+                .js => |js| {
+                    if (int == 0) return bun.selfExePath() catch "";
+                    int -= 1;
+
+                    const vm = js.virtual_machine;
+                    if (vm.main.len > 0) {
+                        if (int == 0) return vm.main;
+                        int -= 1;
+                    }
+
+                    if (vm.worker) |worker| {
+                        if (worker.argv) |argv| {
+                            if (int >= argv.len) return "";
+                            return argv[int].utf8Slice();
+                        }
+                    }
+                    const argv = vm.argv;
+                    if (int >= argv.len) return "";
+                    return argv[int];
+                },
+                .mini => {
+                    const ctx = this.base.interpreter.command_ctx;
+                    if (int >= 1 + ctx.passthrough.len) return "";
+                    if (int == 0) return ctx.positionals[ctx.positionals.len - 1 - int];
+                    return ctx.passthrough[int - 1];
+                },
+            }
         }
 
         fn currentWord(this: *Expansion) *const ast.SimpleAtom {
@@ -2218,6 +2222,7 @@ pub const Interpreter = struct {
             return switch (simple.*) {
                 .Text => |txt| txt.len,
                 .Var => |label| this.expandVar(label).len,
+                .VarArgv => |int| this.expandVarArgv(int).len,
                 .brace_begin, .brace_end, .comma, .asterisk => 1,
                 .double_asterisk => 2,
                 .cmd_subst => |subst| {

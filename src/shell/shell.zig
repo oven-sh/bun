@@ -570,6 +570,7 @@ pub const AST = struct {
 
     pub const SimpleAtom = union(enum) {
         Var: []const u8,
+        VarArgv: u8,
         Text: []const u8,
         asterisk,
         double_asterisk,
@@ -584,6 +585,7 @@ pub const AST = struct {
         pub fn glob_hint(this: SimpleAtom) bool {
             return switch (this) {
                 .Var => false,
+                .VarArgv => false,
                 .Text => false,
                 .asterisk => true,
                 .double_asterisk => true,
@@ -1017,6 +1019,14 @@ pub const Parser = struct {
                             if (should_break) break;
                         }
                     },
+                    .VarArgv => |int| {
+                        _ = self.expect(.VarArgv);
+                        try atoms.append(.{ .VarArgv = int });
+                        if (next_delimits) {
+                            _ = self.match(.Delimit);
+                            if (should_break) break;
+                        }
+                    },
                     .OpenParen, .CloseParen => {
                         try self.add_error("Unexpected token: `{s}`", .{if (peeked == .OpenParen) "(" else ")"});
                         return null;
@@ -1230,6 +1240,7 @@ pub const TokenTag = enum {
     OpenParen,
     CloseParen,
     Var,
+    VarArgv,
     Text,
     JSObjRef,
     Delimit,
@@ -1278,6 +1289,7 @@ pub const Token = union(TokenTag) {
     CloseParen,
 
     Var: TextRange,
+    VarArgv: u8,
     Text: TextRange,
     JSObjRef: u32,
 
@@ -1287,6 +1299,11 @@ pub const Token = union(TokenTag) {
     pub const TextRange = struct {
         start: u32,
         end: u32,
+
+        pub fn len(range: TextRange) u32 {
+            if (bun.Environment.allow_assert) std.debug.assert(range.start <= range.end);
+            return range.end - range.start;
+        }
     };
 
     pub fn asHumanReadable(self: Token, strpool: []const u8) []const u8 {
@@ -1621,12 +1638,23 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             // Handle variable
                             try self.break_word(false);
                             const var_tok = try self.eat_var();
-                            // empty var
-                            if (var_tok.start == var_tok.end) {
-                                try self.appendCharToStrPool('$');
-                                try self.break_word(false);
-                            } else {
-                                try self.tokens.append(.{ .Var = var_tok });
+
+                            switch (var_tok.len()) {
+                                0 => {
+                                    try self.appendCharToStrPool('$');
+                                    try self.break_word(false);
+                                },
+                                1 => blk: {
+                                    const c = self.strpool.items[var_tok.start];
+                                    if (c >= '0' and c <= '9') {
+                                        try self.tokens.append(.{ .VarArgv = c - '0' });
+                                        break :blk;
+                                    }
+                                    try self.tokens.append(.{ .Var = var_tok });
+                                },
+                                else => {
+                                    try self.tokens.append(.{ .Var = var_tok });
+                                },
                             }
                             self.word_start = self.j;
                             continue;
@@ -1819,6 +1847,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             } else if ((in_normal_space or in_redirect_operator) and self.tokens.items.len > 0 and
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
                 .Var,
+                .VarArgv,
                 .Text,
                 .BraceBegin,
                 .Comma,
@@ -2262,6 +2291,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         fn eat_var(self: *@This()) !Token.TextRange {
             const start = self.j;
             var i: usize = 0;
+            var is_int = false;
             // Eat until special character
             while (self.peek()) |result| {
                 defer i += 1;
@@ -2271,9 +2301,18 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 if (i == 0) {
                     switch (char) {
                         '=' => return .{ .start = start, .end = self.j },
-                        '0'...'9', 'a'...'z', 'A'...'Z', '_' => {},
+                        '0'...'9' => {
+                            is_int = true;
+                            _ = self.eat().?;
+                            try self.appendCharToStrPool(char);
+                            continue;
+                        },
+                        'a'...'z', 'A'...'Z', '_' => {},
                         else => return .{ .start = start, .end = self.j },
                     }
+                }
+                if (is_int) {
+                    return .{ .start = start, .end = self.j };
                 }
 
                 // if (char
@@ -2759,6 +2798,7 @@ pub const Test = struct {
         CloseParen,
 
         Var: []const u8,
+        VarArgv: u8,
         Text: []const u8,
         JSObjRef: u32,
 
@@ -2768,6 +2808,7 @@ pub const Test = struct {
         pub fn from_real(the_token: Token, buf: []const u8) TestToken {
             switch (the_token) {
                 .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
+                .VarArgv => |int| return .{ .VarArgv = int },
                 .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },
                 .JSObjRef => |val| return .{ .JSObjRef = val },
                 .Pipe => return .Pipe,

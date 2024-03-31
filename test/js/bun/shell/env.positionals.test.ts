@@ -51,3 +51,22 @@ test("$ argv: standalone: not enough args", async () => {
   const out = await new Response(stdout).text();
   expect(out.split("\n")).toEqual([script, "", "", ""]);
 });
+
+test("$ argv: standalone: only 10", async () => {
+  const script = path.join(import.meta.dir, "fixtures", "positionals2.bun.sh");
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "run", script, "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
+
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.split("\n")).toEqual([script, "a", "bb", "c", "d", "e", "f", "g", "h", "i", "a0", ""]);
+});

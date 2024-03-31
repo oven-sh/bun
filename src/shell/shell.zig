@@ -595,13 +595,6 @@ pub const AST = struct {
                 .cmd_subst => false,
             };
         }
-
-        pub fn mightNeedIO(this: SimpleAtom) bool {
-            return switch (this) {
-                .asterisk, .double_asterisk, .cmd_subst => true,
-                else => false,
-            };
-        }
     };
 
     pub const CompoundAtom = struct {

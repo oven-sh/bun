@@ -1,3 +1,4 @@
+#include "JavaScriptCore/JSCJSValue.h"
 #include "root.h"
 #include "headers.h"
 
@@ -353,13 +354,14 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
     // Node.js allows a second argument for parent
     JSValue from = {};
+
     if (callFrame->argumentCount() >= 2) {
-        auto fromValue = callFrame->uncheckedArgument(1);
+        JSValue fromValue = callFrame->uncheckedArgument(1);
 
         if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-            if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+            if (JSValue pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
                 if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
-                    auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
+                    auto* pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                     if (pathsArray->length() > 0) {
                         fromValue = pathsArray->getIndex(globalObject, 0);
                         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
@@ -370,12 +372,11 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
         if (fromValue.isString()) {
             from = fromValue;
-        } else {
-            goto use_default_from;
         }
-    } else {
-    use_default_from:
-        JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(thisValue);
+    }
+
+    if (!from) {
+        auto* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(thisValue);
         if (UNLIKELY(!thisObject)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwTypeError(globalObject, scope, "import.meta.resolve must be bound to an import.meta object"_s);

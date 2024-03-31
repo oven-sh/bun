@@ -11,6 +11,7 @@ describe("should work for static input", () => {
     "Hello\nWorld\n",
     "1",
     "💕 Red Heart ✨ Sparkles 🔥 Fire\n💕 Red Heart ✨ Sparkles\n💕 Red Heart\n💕\n\nnormal",
+    "a\n§\nb",
   ];
 
   for (let input of inputs) {
@@ -34,6 +35,7 @@ describe("should work for streaming input", () => {
     "Hello\nWorld\n",
     "1",
     "💕 Red Heart ✨ Sparkles 🔥 Fire\n 💕 Red Heart ✨ Sparkles\n 💕 Red Heart\n 💕 \n\nnormal",
+    "a\n§\nb",
   ];
 
   for (let input of inputs) {

@@ -138,7 +138,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         var argv = [_]?[*:0]const u8{
             shell_bin,
-            if (Environment.isWindows) "/c" else "-c",
+            if (Environment.isWindows) "/C" else "-c",
             combined_script,
             null,
         };

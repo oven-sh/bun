@@ -42,8 +42,10 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
+        pub usingnamespace bun.New(@This());
+
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
-            var this = bun.new(This, .{
+            var this = This.new(.{
                 .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
                 .allocator = allocator,
@@ -80,7 +82,8 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            bun.destroy(this);
+            this.promise.strong.deinit();
+            this.destroy();
         }
     };
 }

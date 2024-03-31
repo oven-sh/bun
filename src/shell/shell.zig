@@ -546,6 +546,8 @@ pub const AST = struct {
                 .@"-n",
                 .@"-d",
                 .@"-c",
+                .@"==",
+                .@"!=",
             };
 
             pub fn isSupported(op: Op) bool {
@@ -1388,9 +1390,9 @@ pub const Parser = struct {
         }
 
         if (if (self.inside_subshell == null)
-            self.match_any_comptime(&.{ .Semicolon, .Newline, .Eof })
+            self.check_any_comptime(&.{ .Semicolon, .Newline, .Eof })
         else
-            self.match_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
+            self.check_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
         {
             if (assigns.items.len == 0) {
                 try self.add_error("expected a command or assignment", .{});
@@ -1670,7 +1672,7 @@ pub const Parser = struct {
     }
 
     fn delimits(self: *Parser, tok: Token) bool {
-        return tok == .Delimit or tok == .Semicolon or tok == .Semicolon or tok == .Eof or (self.inside_subshell != null and tok == self.inside_subshell.?.closing_tok());
+        return tok == .Delimit or tok == .Semicolon or tok == .Semicolon or tok == .Eof or tok == .Newline or (self.inside_subshell != null and tok == self.inside_subshell.?.closing_tok());
     }
 
     fn expect_delimit(self: *Parser) Token {
@@ -2256,7 +2258,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         },
                         '\n' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word(true);
+                            try self.break_word_impl(true, true, false);
                             try self.tokens.append(.Newline);
                             continue;
                         },
@@ -3953,16 +3955,17 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
         }
 
         pub fn initWithSlice(vals: []const T) @This() {
+            if (bun.Environment.allow_assert) std.debug.assert(vals.len <= std.math.maxInt(u32));
             if (vals.len <= INLINED_MAX) {
                 var this: @This() = @This().zeroes;
                 @memcpy(this.inlined.items[0..vals.len], vals);
-                this.inlined.len += vals.len;
+                this.inlined.len += @intCast(vals.len);
                 return this;
             }
             var this: @This() = .{
                 .heap = ByteList.initCapacity(bun.default_allocator, vals.len) catch bun.outOfMemory(),
             };
-            this.heap.appendSliceAssumeCapacity(vals) catch bun.outOfMemory();
+            this.heap.appendSliceAssumeCapacity(vals);
             return this;
         }
 

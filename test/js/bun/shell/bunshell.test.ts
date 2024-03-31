@@ -878,6 +878,63 @@ describe("deno_task", () => {
 });
 
 describe("if_clause", () => {
+  TestBuilder.command/* sh */ `
+# The name of the package we're interested in
+package_name=react
+
+filename=package.json
+
+if [[ -f $filename ]]; then
+  echo The file $filename exists and is a regular file.
+  echo Checking for $package_name in dependencies...
+
+  # Attempt to extract the package version from dependencies
+  dep_version=$(jq -r ".dependencies[\"$package_name\"]" $filename)
+
+  # If not found in dependencies, try devDependencies
+  if [[ -z $dep_version ]] || [[ $dep_version == null ]]; then
+    dep_version=$(jq -r ".devDependencies[\"$package_name\"]" $filename)
+  fi
+
+  # Check if we got a non-empty, non-null version string
+  if [[ -n $dep_version ]] && [[ $dep_version != null ]]; then
+    echo The package $package_name is listed as a dependency with version: $dep_version.
+  else
+    echo The package $package_name is not listed as a dependency.
+  fi
+else
+  echo The file $filename does not exist or is not a regular file.
+fi
+`
+    .file(
+      "package.json",
+      `{
+  "private": true,
+  "name": "bun",
+  "dependencies": {
+    "@vscode/debugadapter": "^1.61.0",
+    "esbuild": "^0.17.15",
+    "eslint": "^8.20.0",
+    "eslint-config-prettier": "^8.5.0",
+    "mitata": "^0.1.3",
+    "peechy": "0.4.34",
+    "prettier": "^3.2.5",
+    "react": "next",
+    "react-dom": "next",
+    "source-map-js": "^1.0.2",
+    "typescript": "^5.0.2"
+  },
+  "devDependencies": {
+  },
+  "scripts": {
+  }
+}
+`,
+    )
+    .stdout(
+      "The file package.json exists and is a regular file.\nChecking for react in dependencies...\nThe package react is listed as a dependency with version: next.\n",
+    );
+
   TestBuilder.command`
   if
     echo cond;
@@ -1357,7 +1414,7 @@ cat redir_out`
   });
 });
 
-describe.todo("condexprs", () => {
+describe("condexprs", () => {
   TestBuilder.command`[[ -f package.json ]] && echo yes!`.file("package.json", "hi").stdout("yes!\n").runAsTest("-f");
   TestBuilder.command`[[ -f mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-f non-existent");
 
@@ -1376,7 +1433,15 @@ describe.todo("condexprs", () => {
 
   TestBuilder.command`[[ -n hey ]] | echo hi | cat`.stdout("hi\n").runAsTest("precedence: pipeline");
 
-  describe("ported from GNU bash", () => {
+  TestBuilder.command`[[ foo == foo ]] && echo yes!`.stdout("yes!\n").runAsTest("==");
+  TestBuilder.command`[[ foo == lol ]] && echo yes!`.exitCode(1).runAsTest("== fail");
+  TestBuilder.command`[[ foo != foo ]] && echo yes!`.exitCode(1).runAsTest("!= fail");
+  TestBuilder.command`[[ lmao != foo ]] && echo yes!`.stdout("yes!\n").runAsTest("!=");
+
+  TestBuilder.command`LOL=; [[ $LOl == $LOL ]] && echo yes!`.stdout("yes!\n").runAsTest("== empty");
+  TestBuilder.command`LOL=; [[ $LOl != $LOL ]] && echo yes!`.exitCode(1).runAsTest("!= empty");
+
+  describe.todo("ported from GNU bash", () => {
     TestBuilder.command`
     [[ foo > bar && $PWD -ef . ]]
     `

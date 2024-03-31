@@ -3511,7 +3511,7 @@ pub const Interpreter = struct {
                                 this.parent.childDone(this, if (bun.S.ISCHR(@intCast(st.mode))) 0 else 1);
                                 return;
                             },
-                            .@"-z", .@"-n" => @panic("This conditional expression op does not need `stat()`. This indicates a bug in Bun. Please file a GitHub issue."),
+                            .@"-z", .@"-n", .@"==", .@"!=" => @panic("This conditional expression op does not need `stat()`. This indicates a bug in Bun. Please file a GitHub issue."),
                             else => {
                                 if (bun.Environment.allow_assert) {
                                     inline for (ast.CondExpr.Op.SUPPORTED) |supported| {
@@ -3543,6 +3543,14 @@ pub const Interpreter = struct {
                 },
                 .@"-z" => this.parent.childDone(this, if (this.args.items.len == 0 or this.args.items[0].len == 0) 0 else 1),
                 .@"-n" => this.parent.childDone(this, if (this.args.items.len > 0 and this.args.items[0].len != 0) 0 else 1),
+                .@"==" => {
+                    const is_eq = this.args.items.len == 0 or (this.args.items.len >= 2 and bun.strings.eql(this.args.items[0], this.args.items[1]));
+                    this.parent.childDone(this, if (is_eq) 0 else 1);
+                },
+                .@"!=" => {
+                    const is_neq = this.args.items.len >= 2 and !bun.strings.eql(this.args.items[0], this.args.items[1]);
+                    this.parent.childDone(this, if (is_neq) 0 else 1);
+                },
                 // else => @panic("Invalid node op: " ++ @tagName(this.node.op) ++ ", this indicates a bug in Bun. Please file a GithHub issue."),
                 else => {
                     if (bun.Environment.allow_assert) {

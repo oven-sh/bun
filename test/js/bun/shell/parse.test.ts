@@ -981,33 +981,32 @@ describe("parse shell", () => {
 
     test("cmd edgecase", () => {
       const expected = {
-        stmts: [
+        "stmts": [
           {
-            exprs: [
+            "exprs": [
               {
-                assign: [
-                  { label: "FOO", value: { simple: { Text: "bar" } } },
-                  { label: "BAR", value: { simple: { Text: "baz" } } },
+                "assign": [
+                  { "label": "FOO", "value": { "simple": { "Text": "bar" } } },
+                  { "label": "BAR", "value": { "simple": { "Text": "baz" } } },
                 ],
               },
+            ],
+          },
+          {
+            "exprs": [
               {
-                cmd: {
-                  assigns: [
-                    {
-                      label: "BUN_DEBUG_QUIET_LOGS",
-                      value: { simple: { Text: "1" } },
-                    },
-                  ],
-                  name_and_args: [{ simple: { Text: "echo" } }],
-                  redirect: {
-                    stdin: false,
-                    stdout: false,
-                    stderr: false,
-                    append: false,
-                    duplicate_out: false,
-                    __unused: 0,
+                "cmd": {
+                  "assigns": [{ "label": "BUN_DEBUG_QUIET_LOGS", "value": { "simple": { "Text": "1" } } }],
+                  "name_and_args": [{ "simple": { "Text": "echo" } }],
+                  "redirect": {
+                    "stdin": false,
+                    "stdout": false,
+                    "stderr": false,
+                    "append": false,
+                    "duplicate_out": false,
+                    "__unused": 0,
                   },
-                  redirect_file: null,
+                  "redirect_file": null,
                 },
               },
             ],

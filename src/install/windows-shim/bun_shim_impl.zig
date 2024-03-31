@@ -7,6 +7,10 @@
 //! This also solves the 'Terminate batch job (Y/N)' problem you see when using NPM/Yarn,
 //! which is a HUGE dx win for developers.
 //!
+//! The approach implemented is a `.bunx` file which sits right next to the renamed
+//! launcher exe. We read that (see BinLinkingShim.zig for the creation of this file)
+//! and then we call NtCreateProcess to spawn the correct child process.
+//!
 //! Every attempt possible to make this file as minimal as possible has been made.
 //! Which has unfortunatly made is difficult to read. To make up for this, every
 //! part of this program is documented as much as possible, including links to
@@ -26,10 +30,6 @@
 //!         - https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-zwqueryeafile
 //!         - https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_get_ea_information
 //!         - https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_get_ea_information
-//!
-//! The approach implemented instead is a `.bunx` file which sits right next to the renamed
-//! launcher exe. We read that (see BunXShim.zig for the creation of this file) and do some
-//! clever tricks and then we can NtCreateProcess with the correct arguments.
 //!
 //! Prior Art:
 //! - https://github.com/ScoopInstaller/Shim/blob/master/src/shim.cs

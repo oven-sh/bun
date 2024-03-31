@@ -348,8 +348,9 @@ pub const TrustCommand = struct {
                         pm.sleep();
                     }
 
+                    const output_in_foreground = false;
                     switch (pm.options.log_level) {
-                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, info.scripts_list, log_level),
+                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, info.scripts_list, log_level, output_in_foreground),
                     }
 
                     if (pm.options.log_level.showProgress()) {

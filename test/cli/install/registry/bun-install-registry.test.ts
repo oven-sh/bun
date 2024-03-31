@@ -3,7 +3,6 @@ import {
   bunExe,
   bunEnv as env,
   isWindows,
-  joinP,
   mergeWindowEnvs,
   toBeValidBin,
   toHaveBins,
@@ -3863,7 +3862,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test.todo("default trusted dependencies should not be used of trustedDependencies is populated", async () => {
+    test("default trusted dependencies should not be used of trustedDependencies is populated", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3899,6 +3898,9 @@ for (const forceWaiterThread of [false, true]) {
         " + uses-what-bin@1.0.0",
         "",
         expect.stringContaining("3 packages installed"),
+        "",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
       ]);
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
@@ -3943,6 +3945,9 @@ for (const forceWaiterThread of [false, true]) {
         " + uses-what-bin@1.0.0",
         "",
         expect.stringContaining("3 packages installed"),
+        "",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
       ]);
       expect(await exited).toBe(0);
 
@@ -3950,7 +3955,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
     });
 
-    test.todo("does not run any scripts if trustedDependencies is an empty list", async () => {
+    test("does not run any scripts if trustedDependencies is an empty list", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3985,13 +3990,16 @@ for (const forceWaiterThread of [false, true]) {
         " + uses-what-bin@1.0.0",
         "",
         expect.stringContaining("3 packages installed"),
+        "",
+        " Blocked 2 postinstalls. Run `bun pm untrusted` for details.",
+        "",
       ]);
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
     });
 
-    test.todo("will run default trustedDependencies after install that didn't include them", async () => {
+    test("will run default trustedDependencies after install that didn't include them", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -4026,6 +4034,9 @@ for (const forceWaiterThread of [false, true]) {
         " + electron@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
+        "",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
       ]);
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
@@ -4928,6 +4939,109 @@ for (const forceWaiterThread of [false, true]) {
 
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
+    });
+  });
+  describe("stdout/stderr is inherited from root scripts during install", async () => {
+    test("without packages", async () => {
+      const exe = bunExe().replace(/\\/g, "\\\\");
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.2.3",
+          scripts: {
+            "preinstall": `${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
+            "install": `${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
+            "prepare": `${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
+      expect(err.split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install"),
+        "No packages! Deleted empty lockfile",
+        "",
+        `$ ${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
+        "preinstall stderr 🍦",
+        `$ ${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
+        `$ ${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
+        "",
+      ]);
+      const out = await Bun.readableStreamToText(stdout);
+      expect(out.split(/\r?\n/)).toEqual([
+        "install stdout 🚀",
+        "prepare stdout done ✅",
+        "",
+        expect.stringContaining("done"),
+        "",
+      ]);
+      expect(await exited).toBe(0);
+    });
+    test("with a package", async () => {
+      const exe = bunExe().replace(/\\/g, "\\\\");
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.2.3",
+          scripts: {
+            "preinstall": `${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
+            "install": `${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
+            "prepare": `${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
+          },
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
+      expect(err.split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install"),
+        " Resolving dependencies",
+        expect.stringContaining(" Resolved, downloaded and extracted "),
+        " Saved lockfile",
+        "",
+        `$ ${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
+        "preinstall stderr 🍦",
+        `$ ${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
+        `$ ${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
+        "",
+      ]);
+      const out = await Bun.readableStreamToText(stdout);
+      expect(out.split(/\r?\n/)).toEqual([
+        "install stdout 🚀",
+        "prepare stdout done ✅",
+        "",
+        " + no-deps@1.0.0",
+        "",
+        expect.stringContaining(" 1 package installed"),
+        "",
+      ]);
+      expect(await exited).toBe(0);
     });
   });
 }

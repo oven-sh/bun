@@ -1664,14 +1664,16 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         }
     }
 
-    // chmod 777
-    switch (bun.sys.fchmod(tmpfile.fd, 0o777)) {
-        .err => |err| {
-            tmpfile.dir().deleteFileZ(tmpname) catch {};
-            Output.prettyErrorln("<r><red>error:<r> failed to change lockfile permissions: {s}", .{@tagName(err.getErrno())});
-            Global.crash();
-        },
-        .result => {},
+    if (comptime Environment.isPosix) {
+        // chmod 777 on posix
+        switch (bun.sys.fchmod(tmpfile.fd, 0o777)) {
+            .err => |err| {
+                tmpfile.dir().deleteFileZ(tmpname) catch {};
+                Output.prettyErrorln("<r><red>error:<r> failed to change lockfile permissions: {s}", .{@tagName(err.getErrno())});
+                Global.crash();
+            },
+            .result => {},
+        }
     }
 
     tmpfile.promoteToCWD(tmpname, filename) catch |err| {
@@ -2675,19 +2677,8 @@ pub const Package = extern struct {
             const json = brk: {
                 const json_src = brk2: {
                     const json_path = bun.path.joinZ([_]string{ folder_name, "package.json" }, .auto);
-                    const json_file_fd = try bun.sys.openat(
-                        bun.toFD(node_modules.fd),
-                        json_path,
-                        std.os.O.RDONLY,
-                        0,
-                    ).unwrap();
-                    const json_file = json_file_fd.asFile();
-                    defer json_file.close();
-                    const json_stat_size = try json_file.getEndPos();
-                    const json_buf = try allocator.alloc(u8, json_stat_size + 64);
-                    errdefer allocator.free(json_buf);
-                    const json_len = try json_file.preadAll(json_buf, 0);
-                    break :brk2 logger.Source.initPathString(json_path, json_buf[0..json_len]);
+                    const buf = try bun.sys.File.readFrom(node_modules, json_path, allocator).unwrap();
+                    break :brk2 logger.Source.initPathString(json_path, buf);
                 };
 
                 initializeStore();

@@ -458,6 +458,26 @@ pub fn hash(content: []const u8) u64 {
     return std.hash.Wyhash.hash(0, content);
 }
 
+/// Get a decently random value from something detrministic
+/// Intended to be used for things like task ids or temporary file names
+pub fn hashWithRandomSeed(content: []const u8) u64 {
+    const random_seed = struct {
+        var seed_value: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+        pub fn get() u64 {
+            // This is slightly racy but its fine because this memoization is done as a performance optimization
+            // and we only need to do it once per process
+            var value = seed_value.load(.Monotonic);
+            while (value == 0) : (value = seed_value.load(.Monotonic)) {
+                rand(std.mem.asBytes(&value));
+                seed_value.store(value, .Monotonic);
+            }
+
+            return value;
+        }
+    }.get();
+    return hashWithSeed(random_seed, content);
+}
+
 pub fn hashWithSeed(seed: u64, content: []const u8) u64 {
     return std.hash.Wyhash.hash(seed, content);
 }
@@ -691,7 +711,7 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
 
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true }).unwrap();
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -701,7 +721,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
 
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true }).unwrap();
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -711,7 +731,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
 
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true }).unwrap();
+        const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -2347,14 +2367,140 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
 const builtin = @import("builtin");
 
 pub const MakePath = struct {
+    const w = std.os.windows;
+
+    // TODO(@paperdave): upstream making this public into zig std
+    // there is zero reason this must be copied
+    //
+    /// Calls makeOpenDirAccessMaskW iteratively to make an entire path
+    /// (i.e. creating any parent directories that do not exist).
+    /// Opens the dir if the path already exists and is a directory.
+    /// This function is not atomic, and if it returns an error, the file system may
+    /// have been modified regardless.
+    fn makeOpenPathAccessMaskW(self: std.fs.Dir, comptime T: type, sub_path: []const T, access_mask: u32, no_follow: bool) !std.fs.Dir {
+        const Iterator = std.fs.path.ComponentIterator(.windows, T);
+        var it = try Iterator.init(sub_path);
+        // If there are no components in the path, then create a dummy component with the full path.
+        var component = it.last() orelse Iterator.Component{
+            .name = &.{},
+            .path = sub_path,
+        };
+
+        while (true) {
+            const sub_path_w = if (comptime T == u16)
+                try w.wToPrefixedFileW(self.fd,
+                // TODO: report this bug
+                // they always copy it
+                // it doesn't need to be [:0]const u16
+                @ptrCast(component.path))
+            else
+                try w.sliceToPrefixedFileW(self.fd, component.path);
+            const is_last = it.peekNext() == null;
+            _ = is_last; // autofix
+            var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{
+                .no_follow = no_follow,
+                .create_disposition = w.FILE_OPEN_IF,
+            }) catch |err| switch (err) {
+                error.FileNotFound => |e| {
+                    component = it.previous() orelse return e;
+                    continue;
+                },
+                else => |e| return e,
+            };
+
+            component = it.next() orelse return result;
+            // Don't leak the intermediate file handles
+            result.close();
+        }
+    }
+    const MakeOpenDirAccessMaskWOptions = struct {
+        no_follow: bool,
+        create_disposition: u32,
+    };
+
+    fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_mask: u32, flags: MakeOpenDirAccessMaskWOptions) !std.fs.Dir {
+        var result = std.fs.Dir{
+            .fd = undefined,
+        };
+
+        const path_len_bytes = @as(u16, @intCast(std.mem.sliceTo(sub_path_w, 0).len * 2));
+        var nt_name = w.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(sub_path_w),
+        };
+        var attr = w.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(sub_path_w)) null else self.fd,
+            .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        };
+        const open_reparse_point: w.DWORD = if (flags.no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
+        var status: w.IO_STATUS_BLOCK = undefined;
+        const rc = w.ntdll.NtCreateFile(
+            &result.fd,
+            access_mask,
+            &attr,
+            &status,
+            null,
+            w.FILE_ATTRIBUTE_NORMAL,
+            w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
+            flags.create_disposition,
+            w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
+            null,
+            0,
+        );
+
+        switch (rc) {
+            .SUCCESS => return result,
+            .OBJECT_NAME_INVALID => return error.BadPathName,
+            .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+            .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+            .NOT_A_DIRECTORY => return error.NotDir,
+            // This can happen if the directory has 'List folder contents' permission set to 'Deny'
+            // and the directory is trying to be opened for iteration.
+            .ACCESS_DENIED => return error.AccessDenied,
+            .INVALID_PARAMETER => return error.BadPathName,
+            .SHARING_VIOLATION => return error.SharingViolation,
+            else => return w.unexpectedStatus(rc),
+        }
+    }
+
+    pub fn makeOpenPath(self: std.fs.Dir, sub_path: anytype, opts: std.fs.Dir.OpenDirOptions) !std.fs.Dir {
+        if (comptime Environment.isWindows) {
+            return makeOpenPathAccessMaskW(
+                self,
+                std.meta.Elem(@TypeOf(sub_path)),
+                sub_path,
+                w.STANDARD_RIGHTS_READ |
+                    w.FILE_READ_ATTRIBUTES |
+                    w.FILE_READ_EA |
+                    w.SYNCHRONIZE |
+                    w.FILE_TRAVERSE |
+                    w.DELETE | w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY | w.FILE_WRITE_ATTRIBUTES,
+                false,
+            );
+        }
+
+        return self.makeOpenPath(sub_path, opts);
+    }
+
     /// copy/paste of `std.fs.Dir.makePath` and related functions and modified to support u16 slices.
     /// inside `MakePath` scope to make deleting later easier.
     /// TODO(dylan-conway) delete `MakePath`
     pub fn makePath(comptime T: type, self: std.fs.Dir, sub_path: []const T) !void {
+        if (Environment.isWindows) {
+            var dir = try makeOpenPath(self, sub_path, .{});
+            dir.close();
+            return;
+        }
+
         var it = try componentIterator(T, sub_path);
         var component = it.last() orelse return;
         while (true) {
-            (if (T == u16) makeDirW else std.fs.Dir.makeDir)(self, component.path) catch |err| switch (err) {
+            std.fs.Dir.makeDir(self, component.path) catch |err| switch (err) {
                 error.PathAlreadyExists => {
                     // TODO stat the file and return an error if it's not a directory
                     // this is important because otherwise a dangling symlink
@@ -2367,18 +2513,6 @@ pub const MakePath = struct {
                 else => |e| return e,
             };
             component = it.next() orelse return;
-        }
-    }
-
-    fn makeDirW(self: std.fs.Dir, sub_path: []const u16) !void {
-        const rc = sys.mkdiratW(toFD(self.fd), sub_path);
-        switch (rc) {
-            .err => |err| switch (err.getErrno()) {
-                .PERM, .BUSY, .EXIST => return error.PathAlreadyExists,
-                .NOENT => return error.FileNotFound,
-                else => return rc.unwrap(),
-            },
-            .result => {},
         }
     }
 

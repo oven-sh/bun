@@ -858,7 +858,6 @@ pub const ExtractData = struct {
     resolved: string = "",
     json_path: string = "",
     json_buf: []u8 = "",
-    json_len: usize = 0,
 };
 
 pub const PackageInstall = struct {
@@ -1169,7 +1168,7 @@ pub const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .directory => {
-                            std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {};
+                            _ = bun.sys.mkdirat(bun.toFD(destination_dir_.fd), entry.path, 0o755);
                         },
                         .file => {
                             bun.copy(u8, &stackpath, entry.path);
@@ -1351,10 +1350,7 @@ pub const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-
+        var subdir = bun.MakePath.makeOpenPath(this.destination_dir, bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_cache_dir);
         defer subdir.close();
 
         this.file_count = FileCopier.copy(subdir, &walker_, this.progress) catch |err| return Result{
@@ -1379,7 +1375,7 @@ pub const PackageInstall = struct {
         ) catch |err| return Result.fail(err, .opening_cache_dir);
         defer walker_.deinit();
 
-        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_cache_dir);
+        var subdir = bun.MakePath.makeOpenPath(this.destination_dir, bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_cache_dir);
 
         defer subdir.close();
 
@@ -1438,8 +1434,7 @@ pub const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .directory => {
-                            const mkdirat = if (comptime Environment.isWindows) std.os.mkdiratW else std.os.mkdirat;
-                            mkdirat(destination_dir.fd, entry.path, 0o755) catch {};
+                            _ = bun.sys.mkdirat(bun.toFD(destination_dir.fd), entry.path, 0o755);
                         },
                         .file => {
                             if (comptime Environment.isWindows) {
@@ -1562,7 +1557,7 @@ pub const PackageInstall = struct {
                     switch (entry.kind) {
                         // directories are created
                         .directory => {
-                            std.os.mkdirat(dest_dir_fd.cast(), entry.path, 0o755) catch {};
+                            _ = bun.sys.mkdirat(dest_dir_fd, entry.path, 0o755);
                         },
                         // but each file in the directory is a symlink
                         .file => {
@@ -2524,9 +2519,9 @@ pub const PackageManager = struct {
         this.temp_dir_name = Fs.FileSystem.RealFS.getDefaultTempDir();
 
         var tried_dot_tmp = false;
-        var tempdir: std.fs.Dir = std.fs.cwd().makeOpenPath(this.temp_dir_name, .{}) catch brk: {
+        var tempdir: std.fs.Dir = bun.MakePath.makeOpenPath(std.fs.cwd(), this.temp_dir_name, .{}) catch brk: {
             tried_dot_tmp = true;
-            break :brk cache_directory.makeOpenPath(".tmp", .{}) catch |err| {
+            break :brk bun.MakePath.makeOpenPath(cache_directory, bun.pathLiteral(".tmp"), .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
                 Global.crash();
             };
@@ -2535,11 +2530,11 @@ pub const PackageManager = struct {
         const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, 999) catch unreachable;
         var timer: std.time.Timer = if (this.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
         brk: while (true) {
-            _ = tempdir.createFileZ(tmpname, .{ .truncate = true }) catch |err2| {
+            var file = tempdir.createFileZ(tmpname, .{ .truncate = true }) catch |err2| {
                 if (!tried_dot_tmp) {
                     tried_dot_tmp = true;
 
-                    tempdir = cache_directory.makeOpenPath(".tmp", .{}) catch |err| {
+                    tempdir = bun.MakePath.makeOpenPath(cache_directory, bun.pathLiteral(".tmp"), .{}) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
                         Global.crash();
                     };
@@ -2555,6 +2550,7 @@ pub const PackageManager = struct {
                 });
                 Global.crash();
             };
+            file.close();
 
             std.os.renameatZ(tempdir.fd, tmpname, cache_directory.fd, tmpname) catch |err| {
                 if (!tried_dot_tmp) {
@@ -4558,7 +4554,7 @@ pub const PackageManager = struct {
             .git, .github => {
                 const package_json_source = logger.Source.initPathString(
                     data.json_path,
-                    data.json_buf[0..data.json_len],
+                    data.json_buf,
                 );
                 var package = Lockfile.Package{};
 
@@ -4609,7 +4605,7 @@ pub const PackageManager = struct {
             .local_tarball, .remote_tarball => {
                 const package_json_source = logger.Source.initPathString(
                     data.json_path,
-                    data.json_buf[0..data.json_len],
+                    data.json_buf,
                 );
                 var package = Lockfile.Package{};
 
@@ -4657,10 +4653,10 @@ pub const PackageManager = struct {
 
                 return package;
             },
-            else => if (data.json_len > 0) {
+            else => if (data.json_buf.len > 0) {
                 const package_json_source = logger.Source.initPathString(
                     data.json_path,
-                    data.json_buf[0..data.json_len],
+                    data.json_buf,
                 );
                 initializeStore();
                 const json = json_parser.ParseJSONUTF8(
@@ -9263,7 +9259,7 @@ pub const PackageManager = struct {
         // no need to download packages you've already installed!!
         var skip_verify_installed_version_number = false;
         const cwd = std.fs.cwd();
-        const node_modules_folder = bun.openDir(cwd, "node_modules") catch brk: {
+        const node_modules_folder = bun.MakePath.makeOpenPath(cwd, "node_modules", .{ .iterate = true, .access_sub_paths = true }) catch brk: {
             skip_verify_installed_version_number = true;
             bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
                 if (err != error.EEXIST) {
@@ -9433,7 +9429,7 @@ pub const PackageManager = struct {
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
-                installer.node_modules_folder = bun.openDir(cwd, node_modules.relative_path) catch brk: {
+                installer.node_modules_folder = bun.MakePath.makeOpenPath(cwd, node_modules.relative_path, .{ .access_sub_paths = true, .iterate = true }) catch brk: {
                     // Avoid extra mkdir() syscall
                     //
                     // note: this will recursively delete any dangling symlinks

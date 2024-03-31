@@ -475,8 +475,29 @@ pub fn mkdiratA(dir_fd: bun.FileDescriptor, file_path: []const u8) Maybe(void) {
     return mkdiratW(dir_fd, bun.strings.toWPathNormalized(&buf, file_path));
 }
 
-pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16) Maybe(void) {
-    const dir_to_make = openDirAtWindowsNtPath(dir_fd, file_path, .{ .iterable = false, .can_rename_or_delete = false });
+pub fn mkdiratZ(dir_fd: bun.FileDescriptor, file_path: [*:0]const u8, mode: mode_t) Maybe(void) {
+    return switch (Environment.os) {
+        .mac => Maybe(void).errnoSysP(system.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse Maybe(void).success,
+        .linux => Maybe(void).errnoSysP(linux.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse Maybe(void).success,
+        else => @compileError("mkdir is not implemented on this platform"),
+    };
+}
+
+fn mkdiratPosix(dir_fd: bun.FileDescriptor, file_path: []const u8, mode: mode_t) Maybe(void) {
+    return mkdiratZ(
+        dir_fd,
+        &(std.os.toPosixPath(file_path) catch return .{ .err = Maybe(void){ .err = Error.oom } }),
+        mode,
+    );
+}
+
+pub const mkdirat = if (Environment.isWindows)
+    mkdiratW
+else
+    mkdiratPosix;
+
+pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Maybe(void) {
+    const dir_to_make = openDirAtWindowsNtPath(dir_fd, file_path, .{ .iterable = false, .can_rename_or_delete = true, .create = true });
     if (dir_to_make == .err) {
         return .{ .err = dir_to_make.err };
     }
@@ -631,7 +652,7 @@ fn openDirAtWindowsNtPath(
     const can_rename_or_delete = options.can_rename_or_delete;
     assertIsValidWindowsPath(u16, path);
     const base_flags = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA |
-        w.SYNCHRONIZE | w.FILE_TRAVERSE;
+        w.SYNCHRONIZE | w.FILE_TRAVERSE | w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY;
     const iterable_flag: u32 = if (iterable) w.FILE_LIST_DIRECTORY else 0;
     const rename_flag: u32 = if (can_rename_or_delete) w.DELETE else 0;
     const flags: u32 = iterable_flag | base_flags | rename_flag;
@@ -668,7 +689,7 @@ fn openDirAtWindowsNtPath(
         null,
         0,
         w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | delete_share,
-        w.FILE_OPEN,
+        if (options.create) w.FILE_OPEN_IF else w.FILE_OPEN,
         w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
         null,
         0,
@@ -719,6 +740,7 @@ pub const WindowsOpenDirOptions = packed struct {
     iterable: bool = false,
     no_follow: bool = false,
     can_rename_or_delete: bool = false,
+    create: bool = false,
 };
 
 fn openDirAtWindowsT(
@@ -2362,7 +2384,7 @@ pub const File = struct {
         }
 
         if (T == std.fs.Dir) {
-            return File{ .handle = bun.toFD(other.handle) };
+            return File{ .handle = bun.toFD(other.fd) };
         }
 
         if (comptime Environment.isWindows) {
@@ -2473,7 +2495,7 @@ pub const File = struct {
             .result => |s| s,
         };
 
-        list.ensureUnusedCapacity(size + 16) catch bun.outOfMemory();
+        list.ensureTotalCapacityPrecise(size + 16) catch bun.outOfMemory();
 
         var total: i64 = 0;
         while (true) {
@@ -2507,6 +2529,44 @@ pub const File = struct {
             .err => |err| .{ .err = err, .bytes = list },
             .result => .{ .err = null, .bytes = list },
         };
+    }
+
+    pub fn getPath(this: File, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
+        return getFdPath(this.handle, out_buffer);
+    }
+
+    /// 1. Open a file for reading
+    /// 2. Read the file to a buffer
+    /// 3. Return the File handle and the buffer
+    pub fn readFileFrom(dir_fd: anytype, path: [:0]const u8, allocator: std.mem.Allocator) Maybe(struct { File, []u8 }) {
+        const this = switch (bun.sys.openat(from(dir_fd).handle, path, O.RDONLY, 0)) {
+            .err => |err| return .{ .err = err },
+            .result => |fd| from(fd),
+        };
+
+        var result = this.readToEnd(allocator);
+
+        if (result.err) |err| {
+            this.close();
+            result.bytes.deinit();
+            return .{ .err = err };
+        }
+
+        return .{ .result = .{ this, result.bytes.items } };
+    }
+
+    /// 1. Open a file for reading relative to a directory
+    /// 2. Read the file to a buffer
+    /// 3. Close the file
+    /// 4. Return the buffer
+    pub fn readFrom(dir_fd: anytype, path: [:0]const u8, allocator: std.mem.Allocator) Maybe([]u8) {
+        const file, const bytes = switch (readFileFrom(dir_fd, path, allocator)) {
+            .err => |err| return .{ .err = err },
+            .result => |result| result,
+        };
+
+        file.close();
+        return .{ .result = bytes };
     }
 };
 

@@ -282,8 +282,8 @@ pub const Repository = extern struct {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved);
 
-        var package_dir = cache_dir.openDirZ(folder_name, .{}) catch |not_found| brk: {
-            if (not_found != error.FileNotFound) return not_found;
+        var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
+            if (not_found != error.ENOENT) return not_found;
 
             var cwd = if (comptime Environment.isWindows)
                 PackageManager.instance.cache_directory_path
@@ -308,7 +308,7 @@ pub const Repository = extern struct {
                 return err;
             };
 
-            var dir = try cache_dir.openDirZ(folder_name, .{});
+            var dir = try bun.openDir(cache_dir, folder_name);
 
             cwd = if (comptime Environment.isWindows)
                 Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .windows)
@@ -339,7 +339,7 @@ pub const Repository = extern struct {
         };
         defer package_dir.close();
 
-        const json_file = package_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
+        const json_file, const json_buf = bun.sys.File.readFileFrom(package_dir, "package.json", allocator).unwrap() catch |err| {
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -350,14 +350,10 @@ pub const Repository = extern struct {
             return error.InstallFailed;
         };
         defer json_file.close();
-        const size = try json_file.getEndPos();
-        const json_buf = try allocator.alloc(u8, size + 64);
-        const json_len = try json_file.preadAll(json_buf, 0);
 
-        const json_path = bun.getFdPath(
-            json_file.handle,
+        const json_path = json_file.getPath(
             &json_path_buf,
-        ) catch |err| {
+        ).unwrap() catch |err| {
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -374,7 +370,6 @@ pub const Repository = extern struct {
             .resolved = resolved,
             .json_path = ret_json_path,
             .json_buf = json_buf,
-            .json_len = json_len,
         };
     }
 };

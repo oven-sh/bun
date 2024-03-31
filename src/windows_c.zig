@@ -1280,7 +1280,7 @@ pub fn renameAtW(
         old_dir_fd,
         old_path_w,
         // access_mask
-        w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+        w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_WRITE_DATA | w.FILE_TRAVERSE,
         // create disposition
         w.FILE_OPEN,
         // create options
@@ -1378,7 +1378,7 @@ pub fn moveOpenedFileAtLoose(
 
     if (std.mem.lastIndexOfScalar(u16, new_path, '\\')) |last_slash| {
         const dirname = new_path[0..last_slash];
-        const fd = switch (bun.sys.openDirAtWindows(new_dir_fd, dirname, .{ .can_rename_or_delete = true })) {
+        const fd = switch (bun.sys.openDirAtWindows(new_dir_fd, dirname, .{ .can_rename_or_delete = true, .iterable = true })) {
             .err => |e| return .{ .err = e },
             .result => |fd| fd,
         };

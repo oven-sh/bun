@@ -23,7 +23,7 @@ declare var $overriddenName: string;
 /** ??? */
 declare var $linkTimeConstant: never;
 /** Assign to this directly above a function declaration (like a decorator) to set visibility */
-declare var $visibility: "Public" | "Private";
+declare var $visibility: "Public" | "Private" | "PrivateRecursive";
 /** ??? */
 declare var $nakedConstructor: never;
 /** Assign to this directly above a function declaration (like a decorator) to set intrinsic */
@@ -480,8 +480,7 @@ declare interface PromiseConstructor<T> extends ClassWithIntrinsics<PromiseConst
 
 declare interface UnderlyingSource {
   $lazy?: boolean;
-  $bunNativeType?: number;
-  $bunNativePtr?: number;
+  $bunNativePtr?: undefined | TODO;
   autoAllocateChunkSize?: number;
 }
 

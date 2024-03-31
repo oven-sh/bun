@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import fs from "fs";
 import { join } from "path";
 import { describe, test, expect, jest } from "bun:test";
@@ -285,6 +284,27 @@ for (const [name, copy] of impls) {
 
       assertContent(basename + "/hello/world/a.txt", "a");
       assertContent(basename + "/hello/world/b.txt", "b");
+    });
+
+    test("relative paths for directories", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+        "from/a.dir": { "c.txt": "c" },
+      });
+
+      const filter = jest.fn((src: string) => true);
+
+      let prev = process.cwd();
+      process.chdir(basename);
+
+      await copy("from", "result", {
+        recursive: true,
+      });
+
+      process.chdir(prev);
+
+      assertContent(basename + "/result/a.dir/c.txt", "c");
     });
   });
 }

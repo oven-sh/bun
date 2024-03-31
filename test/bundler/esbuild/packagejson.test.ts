@@ -1381,8 +1381,30 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg1/custom2.js": `console.log('SUCCESS')`,
     },
     outfile: "/Users/user/project/out.js",
-    bundleErrors: {
-      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1". Maybe you need to "bun install"?`],
+    conditions: ["custom2"],
+    run: {
+      stdout: "SUCCESS",
+    },
+  });
+  itBundled("packagejson/ExportsCustomConditionsAPI", {
+    files: {
+      "/Users/user/project/src/entry.js": `import 'pkg1'`,
+      "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
+        {
+          "exports": {
+            "custom1": "./custom1.js",
+            "custom2": "./custom2.js",
+            "default": "./default.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/pkg1/custom2.js": `console.log('SUCCESS')`,
+    },
+    outfile: "/Users/user/project/out.js",
+    conditions: ["custom2"],
+    backend: "api",
+    run: {
+      stdout: "SUCCESS",
     },
   });
   itBundled("packagejson/ExportsNotExactMissingExtension", {

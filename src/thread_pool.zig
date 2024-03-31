@@ -228,7 +228,7 @@ pub fn ConcurrentFunction(
 
             pub fn callback(task: *Task) void {
                 const routine = @fieldParentPtr(@This(), "task", task);
-                @call(.always_inline, Fn, routine.args);
+                @call(bun.callmod_inline, Fn, routine.args);
             }
         };
 

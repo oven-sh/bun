@@ -30,13 +30,19 @@ shebang: ?Shebang,
 /// These arbitrary numbers will probably not show up in the other fields.
 /// This will reveal off-by-one mistakes.
 pub const VersionFlag = enum(u13) {
-    pub const current = .v3;
+    pub const current = .v5;
 
     v1 = 5474,
-    // Fix bug where paths were not joined correctly
+    /// Fix bug where paths were not joined correctly
     v2 = 5475,
-    // Added an error message for when the process is not found
+    /// Added an error message for when the process is not found
     v3 = 5476,
+    /// Added a flag to tell if the shebang is exactly "node" This is used in an
+    /// automatic fallback path where if "node" is asked for, but not present,
+    /// it will retry the spawn with "bun".
+    v4 = 5477,
+    /// Fixed bugs where passing arguments did not always work.
+    v5 = 5478,
     _,
 };
 
@@ -44,7 +50,7 @@ pub const Flags = packed struct(u16) {
     // this is set if the shebang content is "node" or "bun"
     is_node_or_bun: bool,
     // this is for validation that the shim is not corrupt and to detect offset memory reads
-    is_valid: bool = true,
+    is_node: bool,
     // indicates if a shebang is present
     has_shebang: bool,
 
@@ -53,13 +59,14 @@ pub const Flags = packed struct(u16) {
     pub fn isValid(flags: Flags) bool {
         const mask: u16 = @bitCast(Flags{
             .is_node_or_bun = false,
-            .is_valid = true,
+            .is_node = false,
             .has_shebang = false,
             .version_tag = @enumFromInt(std.math.maxInt(u13)),
         });
 
         const compare_to: u16 = @bitCast(Flags{
             .is_node_or_bun = false,
+            .is_node = false,
             .has_shebang = false,
         });
 
@@ -77,14 +84,14 @@ fn wU8(comptime s: []const u8) []const u8 {
 pub const Shebang = struct {
     launcher: []const u8,
     utf16_len: u32,
-    is_bun: bool,
+    is_node_or_bun: bool,
 
-    pub fn init(launcher: []const u8, is_bun: bool) !Shebang {
+    pub fn init(launcher: []const u8, is_node_or_bun: bool) !Shebang {
         return .{
             .launcher = launcher,
             // TODO(@paperdave): what if this is invalid utf8?
             .utf16_len = @intCast(bun.simdutf.length.utf16.from.utf8(launcher)),
-            .is_bun = is_bun,
+            .is_node_or_bun = is_node_or_bun,
         };
     }
 
@@ -195,8 +202,8 @@ pub const Shebang = struct {
         if (eqlComptime(first, "/usr/bin/env") or eqlComptime(first, "/bin/env")) {
             const rest = tokenizer.rest();
             const program = tokenizer.next() orelse return parseFromBinPath(bin_path);
-            const is_bun = eqlComptime(program, "bun") or eqlComptime(program, "node");
-            return try Shebang.init(rest, is_bun);
+            const is_node_or_bun = eqlComptime(program, "bun") or eqlComptime(program, "node");
+            return try Shebang.init(rest, is_node_or_bun);
         }
 
         return try Shebang.init(line, false);
@@ -230,13 +237,18 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
     wbuf[1] = 0;
     wbuf = wbuf[2..];
 
-    const is_node_or_bun = if (options.shebang) |s| s.is_bun else false;
-    const flags = Flags{
+    const is_node_or_bun = if (options.shebang) |s| s.is_node_or_bun else false;
+    var flags = Flags{
         .has_shebang = options.shebang != null,
         .is_node_or_bun = is_node_or_bun,
+        .is_node = false,
     };
 
     if (options.shebang) |s| {
+        flags.is_node = bun.strings.hasPrefixComptime(s.launcher, "node") and
+            (s.launcher.len == 4 or s.launcher[4] == ' ');
+        if (flags.is_node) std.debug.assert(flags.is_node_or_bun);
+
         const encoded = bun.strings.convertUTF8toUTF16InBuffer(
             wbuf[0..s.utf16_len],
             s.launcher,

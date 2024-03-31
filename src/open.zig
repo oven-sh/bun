@@ -22,16 +22,32 @@ fn fallback(url: string) void {
     Output.flush();
 }
 
-pub fn openURL(url: string) void {
+pub fn openURL(url: stringZ) void {
     if (comptime Environment.isWasi) return fallback(url);
 
-    var args_buf = [_]string{ opener, url };
-    var child_process = std.ChildProcess.init(&args_buf, default_allocator);
-    child_process.stderr_behavior = .Pipe;
-    child_process.stdin_behavior = .Ignore;
-    child_process.stdout_behavior = .Pipe;
-    child_process.spawn() catch return fallback(url);
-    _ = child_process.wait() catch return fallback(url);
+    var args_buf = [_]stringZ{ opener, url };
+
+    maybe_fallback: {
+        switch (bun.spawnSync(&.{
+            .argv = &args_buf,
+
+            .envp = null,
+
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
+
+            .windows = if (Environment.isWindows) .{
+                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+            } else {},
+        }) catch break :maybe_fallback) {
+            // don't fallback:
+            .result => |*result| if (result.isOK()) return,
+            .err => {},
+        }
+    }
+
+    fallback(url);
 }
 
 pub const Editor = enum(u8) {
@@ -90,12 +106,12 @@ pub const Editor = enum(u8) {
     }
 
     const which = @import("./which.zig").which;
-    pub fn byPATH(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
+    pub fn byPATH(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, out: *[]const u8) ?Editor {
         const PATH = env.get("PATH") orelse return null;
 
         inline for (default_preference_list) |editor| {
             if (bin_name.get(editor)) |path| {
-                if (which(buf, PATH, cwd, path)) |bin| {
+                if (which(buf, PATH, path)) |bin| {
                     out.* = bun.asByteSlice(bin);
                     return editor;
                 }
@@ -105,12 +121,12 @@ pub const Editor = enum(u8) {
         return null;
     }
 
-    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) bool {
+    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *[bun.MAX_PATH_BYTES]u8, out: *[]const u8) bool {
         const PATH = env.get("PATH") orelse return false;
 
         if (bin_name.get(editor)) |path| {
             if (path.len > 0) {
-                if (which(buf, PATH, cwd, path)) |bin| {
+                if (which(buf, PATH, path)) |bin| {
                     out.* = bun.asByteSlice(bin);
                     return true;
                 }
@@ -136,9 +152,9 @@ pub const Editor = enum(u8) {
         return false;
     }
 
-    pub fn byFallback(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
+    pub fn byFallback(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, out: *[]const u8) ?Editor {
         inline for (default_preference_list) |editor| {
-            if (byPATHForEditor(env, editor, buf, cwd, out)) {
+            if (byPATHForEditor(env, editor, buf, out)) {
                 return editor;
             }
 
@@ -389,7 +405,7 @@ pub const EditorContext = struct {
 
             // "vscode"
             if (Editor.byName(std.fs.path.basename(this.name))) |editor_| {
-                if (Editor.byPATHForEditor(env, editor_, &buf, Fs.FileSystem.instance.top_level_dir, &out)) {
+                if (Editor.byPATHForEditor(env, editor_, &buf, &out)) {
                     this.editor = editor_;
                     this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
                     return;
@@ -406,7 +422,7 @@ pub const EditorContext = struct {
 
         // EDITOR=code
         if (Editor.detect(env)) |editor_| {
-            if (Editor.byPATHForEditor(env, editor_, &buf, Fs.FileSystem.instance.top_level_dir, &out)) {
+            if (Editor.byPATHForEditor(env, editor_, &buf, &out)) {
                 this.editor = editor_;
                 this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
                 return;
@@ -421,7 +437,7 @@ pub const EditorContext = struct {
         }
 
         // Don't know, so we will just guess based on what exists
-        if (Editor.byFallback(env, &buf, Fs.FileSystem.instance.top_level_dir, &out)) |editor_| {
+        if (Editor.byFallback(env, &buf, &out)) |editor_| {
             this.editor = editor_;
             this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
             return;

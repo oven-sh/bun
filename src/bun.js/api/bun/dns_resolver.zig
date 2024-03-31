@@ -125,7 +125,7 @@ const LibInfo = struct {
             request.backend.libinfo.file_poll.?.registerWithFd(
                 this.vm.event_loop_handle.?,
                 .machport,
-                true,
+                .one_shot,
                 bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
             ) == .result,
         );
@@ -1585,7 +1585,7 @@ pub const GlobalData = struct {
         global.* = .{
             .resolver = .{
                 .vm = vm,
-                .polls = std.AutoArrayHashMap(i32, ?*Async.FilePoll).init(allocator),
+                .polls = DNSResolver.PollsMap.init(allocator),
             },
         };
 
@@ -1598,7 +1598,7 @@ pub const DNSResolver = struct {
 
     channel: ?*c_ares.Channel = null,
     vm: *JSC.VirtualMachine,
-    polls: std.AutoArrayHashMap(i32, ?*Async.FilePoll) = undefined,
+    polls: PollsMap = undefined,
 
     pending_host_cache_cares: PendingCache = PendingCache.init(),
     pending_host_cache_native: PendingCache = PendingCache.init(),
@@ -1613,6 +1613,27 @@ pub const DNSResolver = struct {
     pending_cname_cache_cares: CnamePendingCache = CnamePendingCache.init(),
     pending_addr_cache_crares: AddrPendingCache = AddrPendingCache.init(),
     pending_nameinfo_cache_cares: NameInfoPendingCache = NameInfoPendingCache.init(),
+
+    const PollsMap = std.AutoArrayHashMap(c_ares.ares_socket_t, *PollType);
+
+    const PollType = if (Environment.isWindows)
+        UvDnsPoll
+    else
+        Async.FilePoll;
+
+    const UvDnsPoll = struct {
+        parent: *DNSResolver,
+        socket: c_ares.ares_socket_t,
+        poll: bun.windows.libuv.uv_poll_t,
+
+        pub fn fromPoll(poll: *bun.windows.libuv.uv_poll_t) *UvDnsPoll {
+            const poll_bytes: [*]u8 = @ptrCast(poll);
+            const result: [*]u8 = poll_bytes - @offsetOf(UvDnsPoll, "poll");
+            return @alignCast(@ptrCast(result));
+        }
+
+        pub usingnamespace bun.New(@This());
+    };
 
     const PendingCache = bun.HiveArray(GetAddrInfoRequest.PendingCacheKey, 32);
     const SrvPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_srv_reply, "srv").PendingCacheKey, 32);
@@ -1939,6 +1960,31 @@ pub const DNSResolver = struct {
         return .{ .result = this.channel.? };
     }
 
+    pub fn onDNSPollUv(watcher: [*c]bun.windows.libuv.uv_poll_t, status: c_int, events: c_int) callconv(.C) void {
+        const poll = UvDnsPoll.fromPoll(watcher);
+        const vm = poll.parent.vm;
+        vm.eventLoop().enter();
+        defer vm.eventLoop().exit();
+        // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
+        const channel = poll.parent.channel.?;
+        if (status < 0) {
+            // an error occurred. just pretend that the socket is both readable and writable.
+            // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+            channel.process(poll.socket, true, true);
+            return;
+        }
+        channel.process(
+            poll.socket,
+            events & bun.windows.libuv.UV_READABLE != 0,
+            events & bun.windows.libuv.UV_WRITABLE != 0,
+        );
+    }
+
+    pub fn onCloseUv(watcher: *anyopaque) callconv(.C) void {
+        const poll = UvDnsPoll.fromPoll(@alignCast(@ptrCast(watcher)));
+        poll.destroy();
+    }
+
     pub fn onDNSPoll(
         this: *DNSResolver,
         poll: *Async.FilePoll,
@@ -1961,42 +2007,70 @@ pub const DNSResolver = struct {
 
     pub fn onDNSSocketState(
         this: *DNSResolver,
-        fd: i32,
+        fd: c_ares.ares_socket_t,
         readable: bool,
         writable: bool,
     ) void {
         if (comptime Environment.isWindows) {
-            @panic("TODO on Windows");
-        }
-
-        const vm = this.vm;
-
-        if (!readable and !writable) {
-            // read == 0 and write == 0 this is c-ares's way of notifying us that
-            // the socket is now closed. We must free the data associated with
-            // socket.
-            if (this.polls.fetchOrderedRemove(fd)) |entry| {
-                if (entry.value) |val| {
-                    val.deinitWithVM(vm);
+            const uv = bun.windows.libuv;
+            if (!readable and !writable) {
+                // cleanup
+                if (this.polls.fetchOrderedRemove(fd)) |entry| {
+                    uv.uv_close(@ptrCast(&entry.value.poll), onCloseUv);
                 }
+                return;
             }
 
-            return;
+            const poll_entry = this.polls.getOrPut(fd) catch bun.outOfMemory();
+            if (!poll_entry.found_existing) {
+                const poll = UvDnsPoll.new(.{
+                    .parent = this,
+                    .socket = fd,
+                    .poll = undefined,
+                });
+                if (uv.uv_poll_init_socket(bun.uws.Loop.get().uv_loop, &poll.poll, @ptrCast(fd)) < 0) {
+                    poll.destroy();
+                    _ = this.polls.swapRemove(fd);
+                    return;
+                }
+                poll_entry.value_ptr.* = poll;
+            }
+
+            const poll: *UvDnsPoll = poll_entry.value_ptr.*;
+
+            const uv_events = if (readable) uv.UV_READABLE else 0 | if (writable) uv.UV_WRITABLE else 0;
+            if (uv.uv_poll_start(&poll.poll, uv_events, onDNSPollUv) < 0) {
+                _ = this.polls.swapRemove(fd);
+                uv.uv_close(@ptrCast(&poll.poll), onCloseUv);
+            }
+        } else {
+            const vm = this.vm;
+
+            if (!readable and !writable) {
+                // read == 0 and write == 0 this is c-ares's way of notifying us that
+                // the socket is now closed. We must free the data associated with
+                // socket.
+                if (this.polls.fetchOrderedRemove(fd)) |entry| {
+                    entry.value.deinitWithVM(vm);
+                }
+
+                return;
+            }
+
+            const poll_entry = this.polls.getOrPut(fd) catch unreachable;
+
+            if (!poll_entry.found_existing) {
+                poll_entry.value_ptr.* = Async.FilePoll.init(vm, bun.toFD(fd), .{}, DNSResolver, this);
+            }
+
+            var poll = poll_entry.value_ptr.*;
+
+            if (readable and !poll.flags.contains(.poll_readable))
+                _ = poll.register(vm.event_loop_handle.?, .readable, false);
+
+            if (writable and !poll.flags.contains(.poll_writable))
+                _ = poll.register(vm.event_loop_handle.?, .writable, false);
         }
-
-        const poll_entry = this.polls.getOrPut(fd) catch unreachable;
-
-        if (!poll_entry.found_existing) {
-            poll_entry.value_ptr.* = Async.FilePoll.init(vm, bun.toFD(fd), .{}, DNSResolver, this);
-        }
-
-        var poll = poll_entry.value_ptr.*.?;
-
-        if (readable and !poll.flags.contains(.poll_readable))
-            _ = poll.register(vm.event_loop_handle.?, .readable, false);
-
-        if (writable and !poll.flags.contains(.poll_writable))
-            _ = poll.register(vm.event_loop_handle.?, .writable, false);
     }
 
     const DNSQuery = struct {
@@ -2253,11 +2327,6 @@ pub const DNSResolver = struct {
             .port = port,
             .name = normalized,
         };
-
-        if (Environment.isWindows and opts.backend == .c_ares) {
-            globalThis.throwTODO("The c-ares dns lookup backend does not yet work on Windows.");
-            return .zero;
-        }
 
         return switch (opts.backend) {
             .c_ares => this.c_aresLookupWithNormalizedName(query, globalThis),

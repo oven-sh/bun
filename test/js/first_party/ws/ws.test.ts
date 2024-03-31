@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, nodeExe } from "harness";
-import { Server, WebSocket, WebSocketServer } from "ws";
 import path from "node:path";
+import { Server, WebSocket, WebSocketServer } from "ws";
 
 const strings = [
   {
@@ -254,8 +254,9 @@ describe("WebSocket", () => {
 });
 
 describe("WebSocketServer", () => {
-  it("sets websocket prototype properties correctly", done => {
+  it("sets websocket prototype properties correctly", async () => {
     const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers();
 
     wss.on("connection", ws => {
       try {
@@ -263,9 +264,9 @@ describe("WebSocketServer", () => {
         expect(ws.CLOSING).toBeDefined();
         expect(ws.CONNECTING).toBeDefined();
         expect(ws.OPEN).toBeDefined();
-        return done();
+        resolve();
       } catch (err) {
-        done(err);
+        reject(err);
       } finally {
         wss.close();
         ws.close();
@@ -273,12 +274,33 @@ describe("WebSocketServer", () => {
     });
 
     new WebSocket("ws://localhost:" + wss.address().port);
+    await promise;
+  });
+
+  it("sockets can be terminated", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers();
+
+    wss.on("connection", ws => {
+      ws.on("close", () => {
+        resolve();
+      });
+      try {
+        ws.terminate();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    new WebSocket("ws://localhost:" + wss.address().port);
+    await promise;
   });
 });
 
 describe("Server", () => {
-  it("sets websocket prototype properties correctly", done => {
+  it("sets websocket prototype properties correctly", async () => {
     const wss = new Server({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers();
 
     wss.on("connection", ws => {
       try {
@@ -286,9 +308,9 @@ describe("Server", () => {
         expect(ws.CLOSING).toBeDefined();
         expect(ws.CONNECTING).toBeDefined();
         expect(ws.OPEN).toBeDefined();
-        return done();
+        resolve();
       } catch (err) {
-        done(err);
+        reject(err);
       } finally {
         wss.close();
         ws.close();
@@ -296,24 +318,27 @@ describe("Server", () => {
     });
 
     new WebSocket("ws://localhost:" + wss.address().port);
+    await promise;
   });
 });
 
-it("isBinary", done => {
+it("isBinary", async () => {
   const wss = new WebSocketServer({ port: 0 });
   let isDone = false;
+  const { resolve, reject, promise } = Promise.withResolvers();
   wss.on("connection", ws => {
     ws.on("message", (data, isBinary) => {
       if (isDone) {
         expect(isBinary).toBeTrue();
         wss.close();
         ws.close();
-        done();
+        resolve();
         return;
       }
       expect(isBinary).toBeFalse();
       isDone = true;
     });
+    ws.on("error", reject);
   });
 
   const ws = new WebSocket("ws://localhost:" + wss.address().port);
@@ -321,6 +346,8 @@ it("isBinary", done => {
     ws.send("hello");
     ws.send(Buffer.from([1, 2, 3]));
   });
+
+  await promise;
 });
 
 it("onmessage", done => {
@@ -329,6 +356,7 @@ it("onmessage", done => {
     ws.onmessage = e => {
       expect(e.data).toEqual(Buffer.from("hello"));
       done();
+      wss.close();
     };
   });
 
@@ -336,6 +364,51 @@ it("onmessage", done => {
   ws.onopen = () => {
     ws.send("hello");
   };
+});
+
+// https://github.com/oven-sh/bun/issues/7896
+it("close event", async () => {
+  const via = [
+    function once(ws) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      ws.once("close", () => resolve());
+      return promise;
+    },
+    function on(ws) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      ws.on("close", () => resolve());
+      return promise;
+    },
+    function addEventListener(ws) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      ws.addEventListener("close", () => resolve());
+      return promise;
+    },
+    function onclose(ws) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      // @ts-expect-error
+      ws.onclose = () => resolve();
+      return promise;
+    },
+  ];
+  const wss = new WebSocketServer({ port: 0 });
+  wss.on("connection", ws => {
+    ws.onmessage = e => {
+      expect(e.data).toEqual(Buffer.from("hello"));
+      setTimeout(() => ws.close(), 10);
+    };
+  });
+  await Promise.all(
+    via.map(async version => {
+      const ws = new WebSocket("ws://localhost:" + wss.address().port);
+      ws.onopen = () => {
+        ws.send("hello");
+      };
+      return version(ws);
+    }),
+  );
+
+  wss.close();
 });
 
 function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {
@@ -364,10 +437,10 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
 async function listen(): Promise<URL> {
   const pathname = path.resolve(import.meta.dir, "../../web/websocket/websocket-server-echo.mjs");
   const server = spawn({
-    cmd: [nodeExe() ?? bunExe(), pathname],
+    cmd: [bunExe(), pathname],
     cwd: import.meta.dir,
     env: bunEnv,
-    stderr: "ignore",
+    stderr: "inherit",
     stdout: "pipe",
   });
   servers.push(server);

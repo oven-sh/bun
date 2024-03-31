@@ -63,12 +63,6 @@ pub const String = extern struct {
         }
     }
 
-    pub fn isUndefined(this: *const String) bool {
-        const num: u64 = undefined;
-        const bytes = @as(u64, @bitCast(this.bytes));
-        return @as(u63, @truncate(bytes)) == @as(u63, @truncate(num));
-    }
-
     pub const Formatter = struct {
         str: *const String,
         buf: string,
@@ -78,6 +72,16 @@ pub const String = extern struct {
             try writer.writeAll(str.slice(formatter.buf));
         }
     };
+
+    pub fn Sorter(comptime direction: enum { asc, desc }) type {
+        return struct {
+            lhs_buf: []const u8,
+            rhs_buf: []const u8,
+            pub fn lessThan(this: @This(), lhs: String, rhs: String) bool {
+                return lhs.order(&rhs, this.lhs_buf, this.rhs_buf) == if (comptime direction == .asc) .lt else .gt;
+            }
+        };
+    }
 
     pub inline fn order(
         lhs: *const String,
@@ -249,7 +253,9 @@ pub const String = extern struct {
             buf: string,
             in: string,
         ) Pointer {
-            std.debug.assert(bun.isSliceInBuffer(in, buf));
+            if (Environment.allow_assert) {
+                std.debug.assert(bun.isSliceInBuffer(in, buf));
+            }
 
             return Pointer{
                 .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
@@ -298,7 +304,7 @@ pub const String = extern struct {
         pub const StringPool = std.HashMap(u64, String, IdentityContext(u64), 80);
 
         pub inline fn stringHash(buf: []const u8) u64 {
-            return bun.Wyhash.hash(0, buf);
+            return bun.Wyhash11.hash(0, buf);
         }
 
         pub inline fn count(this: *Builder, slice_: string) void {
@@ -325,7 +331,7 @@ pub const String = extern struct {
         }
 
         pub fn append(this: *Builder, comptime Type: type, slice_: string) Type {
-            return @call(.always_inline, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
+            return @call(bun.callmod_inline, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
         }
 
         pub fn appendUTF8WithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
@@ -576,7 +582,7 @@ pub const SlicedString = struct {
             std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
         }
 
-        return ExternalString.init(this.buf, this.slice, bun.Wyhash.hash(0, this.slice));
+        return ExternalString.init(this.buf, this.slice, bun.Wyhash11.hash(0, this.slice));
     }
 
     pub inline fn value(this: SlicedString) String {
@@ -974,9 +980,6 @@ pub const Version = extern struct {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
                         if (state == .pre or state == .none and initial_pre_count > 0) {
                             result.tag.pre = sliced_string.sub(input[start..i]).external();
-                            if (comptime Environment.isDebug) {
-                                std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                            }
                         }
 
                         if (state != .build) {
@@ -1392,7 +1395,6 @@ pub const Range = struct {
             version: Version,
             comparator_buf: string,
             version_buf: string,
-            include_pre: bool,
         ) bool {
             const order = version.orderWithoutBuild(comparator.version, version_buf, comparator_buf);
 
@@ -1402,11 +1404,11 @@ pub const Range = struct {
                     else => false,
                 },
                 .gt => switch (comparator.op) {
-                    .gt, .gte => if (!include_pre) false else true,
+                    .gt, .gte => true,
                     else => false,
                 },
                 .lt => switch (comparator.op) {
-                    .lt, .lte => if (!include_pre) false else true,
+                    .lt, .lte => true,
                     else => false,
                 },
             };
@@ -1421,39 +1423,46 @@ pub const Range = struct {
             return true;
         }
 
-        // When the boundaries of a range do not include a pre-release tag on either side,
-        // we should not consider that '7.0.0-rc2' < "7.0.0"
-        // ```
-        // > semver.satisfies("7.0.0-rc2", "<=7.0.0")
-        // false
-        // > semver.satisfies("7.0.0-rc2", ">=7.0.0")
-        // false
-        // > semver.satisfies("7.0.0-rc2", "<=7.0.0-rc2")
-        // true
-        // > semver.satisfies("7.0.0-rc2", ">=7.0.0-rc2")
-        // true
-        // ```
-        //
-        // - https://github.com/npm/node-semver#prerelease-tags
-        // - https://github.com/npm/node-semver/blob/cce61804ba6f997225a1267135c06676fe0524d2/classes/range.js#L505-L539
-        var include_pre = true;
-        if (version.tag.hasPre()) {
-            if (!has_right) {
-                if (!range.left.version.tag.hasPre()) {
-                    include_pre = false;
-                }
-            } else {
-                if (!range.left.version.tag.hasPre() and !range.right.version.tag.hasPre()) {
-                    include_pre = false;
-                }
-            }
-        }
-
-        if (!range.left.satisfies(version, range_buf, version_buf, include_pre)) {
+        if (!range.left.satisfies(version, range_buf, version_buf)) {
             return false;
         }
 
-        if (has_right and !range.right.satisfies(version, range_buf, version_buf, include_pre)) {
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_buf: string, pre_matched: *bool) bool {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(version.tag.hasPre());
+        }
+        const has_left = range.hasLeft();
+        const has_right = range.hasRight();
+
+        if (!has_left) {
+            return true;
+        }
+
+        // If left has prerelease check if major,minor,patch matches with left. If
+        // not, check the same with right if right exists and has prerelease.
+        pre_matched.* = pre_matched.* or
+            (range.left.version.tag.hasPre() and
+            version.patch == range.left.version.patch and
+            version.minor == range.left.version.minor and
+            version.major == range.left.version.major) or
+            (has_right and
+            range.right.version.tag.hasPre() and
+            version.patch == range.right.version.patch and
+            version.minor == range.right.version.minor and
+            version.major == range.right.version.major);
+
+        if (!range.left.satisfies(version, range_buf, version_buf)) {
+            return false;
+        }
+
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf)) {
             return false;
         }
 
@@ -1494,6 +1503,29 @@ pub const Query = struct {
                 list_buf,
                 version_buf,
             ) or (list.next orelse return false).satisfies(
+                version,
+                list_buf,
+                version_buf,
+            );
+        }
+
+        pub fn satisfiesPre(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(version.tag.hasPre());
+            }
+
+            // `version` has a prerelease tag:
+            // - needs to satisfy each comparator in the query (<comparator> AND <comparator> AND ...) like normal comparison
+            // - if it does, also needs to match major, minor, patch with at least one of the other versions
+            //   with a prerelease
+            // https://github.com/npm/node-semver/blob/ac9b35769ab0ddfefd5a3af4a3ecaf3da2012352/classes/range.js#L505
+            var pre_matched = false;
+            return (list.head.satisfiesPre(
+                version,
+                list_buf,
+                version_buf,
+                &pre_matched,
+            ) and pre_matched) or (list.next orelse return false).satisfiesPre(
                 version,
                 list_buf,
                 version_buf,
@@ -1645,7 +1677,10 @@ pub const Query = struct {
             group_buf: string,
             version_buf: string,
         ) bool {
-            return group.head.satisfies(version, group_buf, version_buf);
+            return if (version.tag.hasPre())
+                group.head.satisfiesPre(version, group_buf, version_buf)
+            else
+                group.head.satisfies(version, group_buf, version_buf);
         }
     };
 
@@ -1667,6 +1702,23 @@ pub const Query = struct {
             version,
             query_buf,
             version_buf,
+        );
+    }
+
+    pub fn satisfiesPre(query: *const Query, version: Version, query_buf: string, version_buf: string, pre_matched: *bool) bool {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(version.tag.hasPre());
+        }
+        return query.range.satisfiesPre(
+            version,
+            query_buf,
+            version_buf,
+            pre_matched,
+        ) and (query.next orelse return true).satisfiesPre(
+            version,
+            query_buf,
+            version_buf,
+            pre_matched,
         );
     }
 

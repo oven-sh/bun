@@ -1,12 +1,9 @@
-// @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
 import tls from "tls";
 import type { Server, TLSSocket } from "node:tls";
 import type { AddressInfo } from "node:net";
 import { join } from "path";
 import { readFileSync } from "fs";
-import { c, s } from "js/bun/http/js-sink-sourmap-fixture/index.mjs";
-import { serve } from "bun";
 
 const client = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),

@@ -254,3 +254,20 @@ it("import.meta paths have the correct slash", () => {
   expect(import.meta.url).toStartWith("file:///");
   expect(import.meta.url).not.toInclude("\\");
 });
+
+it("import.meta is correct in a module that was imported with a query param", async () => {
+  const esm = (await import("./other.js?foo=bar")).default;
+
+  expect(esm.url).toBe(new URL("./other.js?foo=bar", import.meta.url).toString());
+  expect(esm.path).toBe(join(import.meta.dir, "./other.js"));
+  expect(esm.dir).toBe(import.meta.dir);
+  expect(esm.file).toBe("other.js");
+});
+
+it("import.meta is correct in a module that was required with a query param", async () => {
+  const cjs = require("./other-cjs.js?foo=bar").meta;
+  expect(cjs.url).toBe(new URL("./other-cjs.js?foo=bar", import.meta.url).toString());
+  expect(cjs.path).toBe(join(import.meta.dir, "./other-cjs.js"));
+  expect(cjs.dir).toBe(import.meta.dir);
+  expect(cjs.file).toBe("other-cjs.js");
+});

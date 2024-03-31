@@ -1,5 +1,5 @@
 {
-  "include": [".", "../packages/bun-types/index.d.ts"],
+  "include": [".", "../packages/bun-types/index.d.ts", "./testing-internals.d.ts"],
   "compilerOptions": {
     "lib": ["ESNext"],
     "module": "ESNext",
@@ -25,8 +25,10 @@
       "mkfifo": ["mkfifo.ts"],
       "node-harness": ["js/node/harness.ts"],
       "deno:harness": ["js/deno/harness.ts"],
+      "bun:internal-for-testing": ["../src/js/internal-for-testing.ts"],
       "foo/bar": ["js/bun/resolve/baz.js"],
-      "@faasjs/*": ["js/bun/resolve/*.js", "js/bun/resolve/*/src/index.js"]
+      "@faasjs/*": ["js/bun/resolve/*.js", "js/bun/resolve/*/src/index.js"],
+      "@faasjs/larger/*": ["js/bun/resolve/*/larger-index.js"]
     }
   },
 

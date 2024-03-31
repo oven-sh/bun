@@ -11,6 +11,7 @@ const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
 const kWatermarkData = SymbolFor("nodejs.watermarkData");
 const kRejection = SymbolFor("nodejs.rejection");
+const kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
 const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 const ArrayPrototypeSlice = Array.prototype.slice;
 
@@ -356,9 +357,8 @@ function once(emitter, type, options) {
   });
 }
 
-async function* on(emitter, event, options = {}) {
+function on(emitter, event, options = {}) {
   const signal = options.signal;
-  if (signal?.aborted) throw new AbortError(undefined, { cause: signal?.reason });
 
   const { FixedQueue } = require("internal/fixed_queue");
   const unconsumedPromises = new FixedQueue();
@@ -366,42 +366,61 @@ async function* on(emitter, event, options = {}) {
   const unconsumedErrors = new FixedQueue();
   let done = false;
 
-  emitter.on(event, ev => {
+  const eventHandlerBody = ev => {
+    // If there is a pending Promise -> resolve with current event value.
     if (!unconsumedPromises.isEmpty()) {
       const { resolve } = unconsumedPromises.shift();
-      return resolve([ev]);
+      return resolve(ev);
     }
-    unconsumedEvents.push([ev]);
-  });
-  emitter.on("error", ex => {
+    // Else: Add event value to queue so it can be consumed by a future Promise.
+    unconsumedEvents.push(ev);
+  };
+  const eventHandler = options[kFirstEventParam] ? eventHandlerBody : (...args) => eventHandlerBody(args);
+  emitter.on(event, eventHandler);
+
+  const errorHandler = ex => {
     if (!unconsumedPromises.isEmpty()) {
       const { reject } = unconsumedPromises.shift();
       return reject(ex);
     }
     unconsumedErrors.push(ex);
-  });
+  };
+  emitter.on("error", errorHandler);
+
   signal?.addEventListener("abort", () => {
     emitter.emit("error", new AbortError(undefined, { cause: signal?.reason }));
   });
 
+  // If any of the close events is emitted -> remove listeners
+  // and yield only the remaining queued-up values in iterator.
   for (const evName of options?.close || []) {
     emitter.on(evName, () => {
-      emitter.emit(event, undefined);
+      emitter.removeListener(event, eventHandler);
+      emitter.removeListener("error", errorHandler);
+      while (!unconsumedPromises.isEmpty()) {
+        unconsumedPromises.shift().resolve();
+      }
       done = true;
     });
   }
 
-  while (!done) {
-    if (!unconsumedEvents.isEmpty()) {
-      yield Promise.$resolve(unconsumedEvents.shift());
+  // Create AsyncGeneratorFunction which handles the Iterator logic
+  const iterator = async function* () {
+    while (!done || !unconsumedEvents.isEmpty() || !unconsumedErrors.isEmpty()) {
+      if (!unconsumedEvents.isEmpty()) {
+        yield Promise.$resolve(unconsumedEvents.shift());
+      } else if (!unconsumedErrors.isEmpty()) {
+        yield Promise.$reject(unconsumedErrors.shift());
+      } else {
+        const { promise, reject, resolve } = $newPromiseCapability(Promise);
+        unconsumedPromises.push({ reject, resolve });
+        yield promise;
+      }
     }
-    if (!unconsumedErrors.isEmpty()) {
-      yield Promise.$reject(unconsumedErrors.shift());
-    }
-    const { promise, reject, resolve } = $newPromiseCapability(Promise);
-    unconsumedPromises.push({ reject, resolve });
-    yield promise;
-  }
+  };
+
+  // Return AsyncGenerator
+  return iterator();
 }
 
 function getEventListeners(emitter, type) {

@@ -372,15 +372,64 @@ pub const Bundler = struct {
         this.resolver.allocator = allocator;
     }
 
-    pub inline fn resolveEntryPoint(bundler: *Bundler, entry_point: string) anyerror!_resolver.Result {
+    fn _resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
         return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
-            const has_dot_slash_form = !strings.hasPrefix(entry_point, "./") and brk: {
-                return bundler.resolver.resolve(bundler.fs.top_level_dir, try strings.append(bundler.allocator, "./", entry_point), .entry_point) catch break :brk false;
+            // Relative entry points that were not resolved to a node_modules package are
+            // interpreted as relative to the current working directory.
+            if (!std.fs.path.isAbsolute(entry_point) and
+                !(strings.hasPrefix(entry_point, "./") or strings.hasPrefix(entry_point, ".\\")))
+            {
+                brk: {
+                    return bundler.resolver.resolve(
+                        bundler.fs.top_level_dir,
+                        try strings.append(bundler.allocator, "./", entry_point),
+                        .entry_point,
+                    ) catch {
+                        // return the original error
+                        break :brk;
+                    };
+                }
+            }
+            return err;
+        };
+    }
+
+    pub fn resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
+        return _resolveEntryPoint(bundler, entry_point) catch |err| {
+            var cache_bust_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            // Bust directory cache and try again
+            const buster_name = name: {
+                if (std.fs.path.isAbsolute(entry_point)) {
+                    if (std.fs.path.dirname(entry_point)) |dir| {
+                        // Normalized with trailing slash
+                        break :name bun.strings.normalizeSlashesOnly(&cache_bust_buf, dir, std.fs.path.sep);
+                    }
+                }
+
+                var parts = [_]string{
+                    entry_point,
+                    bun.pathLiteral(".."),
+                };
+
+                break :name bun.path.joinAbsStringBufZ(
+                    bundler.fs.top_level_dir,
+                    &cache_bust_buf,
+                    &parts,
+                    .auto,
+                );
             };
-            _ = has_dot_slash_form;
 
-            bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
+            // Only re-query if we previously had something cached.
+            if (bundler.resolver.bustDirCache(buster_name)) {
+                if (_resolveEntryPoint(bundler, entry_point)) |result|
+                    return result
+                else |_| {
+                    // ignore this error, we will print the original error
+                }
+            }
 
+            bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch bun.outOfMemory();
             return err;
         };
     }
@@ -471,7 +520,7 @@ pub const Bundler = struct {
         bundler.configureLinkerWithAutoJSX(true);
     }
 
-    pub fn runEnvLoader(this: *Bundler) !void {
+    pub fn runEnvLoader(this: *Bundler, skip_default_env: bool) !void {
         switch (this.options.env.behavior) {
             .prefix, .load_all, .load_all_without_inlining => {
                 // Step 1. Load the project root.
@@ -491,12 +540,12 @@ pub const Bundler = struct {
                     this.options.setProduction(true);
                 }
 
-                if (!has_production_env and this.options.isTest()) {
-                    try this.env.load(dir, this.options.env.files, .@"test");
+                if (this.options.isTest() or this.env.isTest()) {
+                    try this.env.load(dir, this.options.env.files, .@"test", skip_default_env);
                 } else if (this.options.production) {
-                    try this.env.load(dir, this.options.env.files, .production);
+                    try this.env.load(dir, this.options.env.files, .production, skip_default_env);
                 } else {
-                    try this.env.load(dir, this.options.env.files, .development);
+                    try this.env.load(dir, this.options.env.files, .development, skip_default_env);
                 }
             },
             .disable => {
@@ -535,7 +584,7 @@ pub const Bundler = struct {
             this.options.env.prefix = "BUN_";
         }
 
-        try this.runEnvLoader();
+        try this.runEnvLoader(false);
 
         this.options.jsx.setProduction(this.env.isProduction());
 
@@ -979,7 +1028,7 @@ pub const Bundler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                var file: std.fs.File = undefined;
+                var file: bun.sys.File = undefined;
 
                 if (Outstream == std.fs.Dir) {
                     const output_dir = outstream;
@@ -987,9 +1036,9 @@ pub const Bundler = struct {
                     if (std.fs.path.dirname(file_path.pretty)) |dirname| {
                         try output_dir.makePath(dirname);
                     }
-                    file = try output_dir.createFile(file_path.pretty, .{});
+                    file = bun.sys.File.from(try output_dir.createFile(file_path.pretty, .{}));
                 } else {
-                    file = outstream;
+                    file = bun.sys.File.from(outstream);
                 }
 
                 const CSSBuildContext = struct {
@@ -997,7 +1046,7 @@ pub const Bundler = struct {
                 };
                 const build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
 
-                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, std.fs.File.Writer));
+                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, bun.sys.File.Writer));
                 const CSSWriter = Css.NewWriter(
                     BufferedWriter.Writer,
                     @TypeOf(&bundler.linker),
@@ -1229,6 +1278,7 @@ pub const Bundler = struct {
         inject_jest_globals: bool = false,
         set_breakpoint_on_first_line: bool = false,
         emit_decorator_metadata: bool = false,
+        remove_cjs_module_wrapper: bool = false,
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
@@ -1380,6 +1430,7 @@ pub const Bundler = struct {
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;
                 opts.features.dead_code_elimination = bundler.options.dead_code_elimination;
+                opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
@@ -1795,7 +1846,7 @@ pub const Bundler = struct {
         const did_start = false;
 
         if (bundler.options.output_dir_handle == null) {
-            const outstream = std.io.getStdOut();
+            const outstream = bun.sys.File.from(std.io.getStdOut());
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {

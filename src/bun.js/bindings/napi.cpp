@@ -186,8 +186,9 @@ extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 
-static uint32_t getPropertyAttributes(napi_property_attributes attributes)
+static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
 {
+    const uint32_t attributes = static_cast<uint32_t>(attributes_);
     uint32_t result = 0;
     if (!(attributes & napi_key_configurable)) {
         result |= JSC::PropertyAttribute::DontDelete;
@@ -869,7 +870,6 @@ extern "C" napi_status napi_wrap(napi_env env,
     }
 
     auto* globalObject = toJS(env);
-    auto& vm = globalObject->vm();
 
     NapiRef** refPtr = nullptr;
     if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
@@ -888,8 +888,6 @@ extern "C" napi_status napi_wrap(napi_env env,
         // napi_remove_wrap() first.
         return napi_invalid_arg;
     }
-
-    auto clientData = WebCore::clientData(vm);
 
     auto* ref = new NapiRef(globalObject, 0);
     ref->weakValueRef.setObject(value.getObject(), weakValueHandleOwner(), ref);
@@ -922,8 +920,6 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
         return napi_object_expected;
     }
 
-    auto* globalObject = toJS(env);
-    auto& vm = globalObject->vm();
     NapiRef** refPtr = nullptr;
     if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
         refPtr = &val->napiRef;
@@ -961,7 +957,6 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     if (!value.isObject()) {
         return NAPI_OBJECT_EXPECTED;
     }
-    auto* globalObject = toJS(env);
 
     NapiRef* ref = nullptr;
     if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
@@ -1014,7 +1009,6 @@ extern "C" napi_status napi_get_cb_info(
 {
     NAPI_PREMABLE
 
-    Zig::GlobalObject* globalObject = toJS(env);
     JSC::CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
 
     if (NAPICallFrame* frame = NAPICallFrame::get(callFrame).value_or(nullptr)) {
@@ -1149,20 +1143,6 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     }
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
-
-    JSObject* jsObject = val.getObject();
-    NapiPrototype* object = jsDynamicCast<NapiPrototype*>(jsObject);
-    if (object && object->napiRef) {
-        *result = toNapi(object->napiRef);
-        return napi_ok;
-    }
-
-    NapiClass* object2 = jsDynamicCast<NapiClass*>(jsObject);
-    if (object2 && object2->napiRef) {
-        *result = toNapi(object2->napiRef);
-        return napi_ok;
-    }
 
     auto* ref = new NapiRef(globalObject, initial_refcount);
     if (initial_refcount > 0) {
@@ -1175,12 +1155,6 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
         } else {
             ref->weakValueRef.setPrimitive(val);
         }
-    }
-
-    if (object) {
-        object->napiRef = ref;
-    } else if (object2) {
-        object2->napiRef = ref;
     }
 
     *result = toNapi(ref);
@@ -1284,8 +1258,6 @@ extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,
     bool* result)
 {
     NAPI_PREMABLE
-    Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
 
     JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(toJS(arraybuffer));
     if (UNLIKELY(!jsArrayBuffer)) {
@@ -1563,7 +1535,6 @@ extern "C" napi_status napi_get_global(napi_env env, napi_value* result)
     NAPI_PREMABLE
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
     *result = reinterpret_cast<napi_value>(globalObject->globalThis());
     return napi_ok;
 }
@@ -1574,7 +1545,6 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
 {
     NAPI_PREMABLE
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
 
     JSC::EncodedJSValue encodedCode = reinterpret_cast<JSC::EncodedJSValue>(code);
     JSC::JSValue codeValue = JSC::JSValue::decode(encodedCode);
@@ -1583,6 +1553,9 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
     JSC::JSValue messageValue = JSC::JSValue::decode(encodedMessage);
 
     auto error = JSC::createRangeError(globalObject, messageValue.toWTFString(globalObject));
+    if (codeValue) {
+        error->putDirect(globalObject->vm(), WebCore::builtinNames(globalObject->vm()).codePublicName(), codeValue, 0);
+    }
     *result = reinterpret_cast<napi_value>(error);
     return napi_ok;
 }
@@ -1592,8 +1565,6 @@ extern "C" napi_status napi_get_new_target(napi_env env,
     napi_value* result)
 {
     NAPI_PREMABLE
-    Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
     // handle:
     // - if they call this function when it was originally a getter/setter call
     // - if they call this function without a result
@@ -1680,14 +1651,14 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
 
     size_t count = callFrame->argumentCount();
     MarkedArgumentBufferWithSize<12> args;
-    size_t argc = callFrame->argumentCount() + 1;
+    size_t argc = count + 1;
     args.fill(vm, argc, [&](auto* slot) {
         memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callFrame), sizeof(JSC::JSValue) * argc);
     });
     NAPICallFrame frame(JSC::ArgList(args), nullptr);
     frame.newTarget = newTarget;
 
-    auto result = napi->constructor()(globalObject, reinterpret_cast<JSC::CallFrame*>(NAPICallFrame::toNapiCallbackInfo(frame)));
+    napi->constructor()(globalObject, reinterpret_cast<JSC::CallFrame*>(NAPICallFrame::toNapiCallbackInfo(frame)));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(frame.thisValue()));
 }
@@ -1717,20 +1688,7 @@ void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, unsigned le
     this->m_constructor = reinterpret_cast<FFIFunction>(constructor);
     auto globalObject = reinterpret_cast<Zig::GlobalObject*>(this->globalObject());
 
-    // toStringTag + "prototype"
-    // size_t staticPropertyCount = 2;
-    // prototype always has "constructor",
-    size_t prototypePropertyCount = 2;
-
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);
-
-    auto clientData = WebCore::clientData(vm);
-
-    for (size_t i = 0; i < property_count; i++) {
-        const napi_property_descriptor& property = properties[i];
-        // staticPropertyCount += property.attributes & napi_static ? 1 : 0;
-        prototypePropertyCount += property.attributes & napi_static ? 0 : 1;
-    }
 
     NapiPrototype* prototype = NapiPrototype::create(vm, globalObject->NapiPrototypeStructure());
 
@@ -1771,7 +1729,6 @@ extern "C" napi_status napi_get_all_property_names(
     }
 
     auto globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
 
     auto objectValue = toJS(objectNapi);
     auto* object = objectValue.getObject();
@@ -1915,7 +1872,6 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     }
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
 
     auto arrayBuffer = ArrayBuffer::createFromBytes(data, length, createSharedTask<void(void*)>([globalObject, finalize_hint, finalize_cb](void* p) {
 #if NAPI_VERBOSE
@@ -2009,7 +1965,6 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
     NAPI_PREMABLE
 
     JSGlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
 
     JSValue jsValue = toJS(napiValue);
     if (!jsValue || !jsValue.isString()) {
@@ -2154,9 +2109,6 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
     if (UNLIKELY(result == nullptr))
         return napi_invalid_arg;
 
-    Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
-
     JSC::JSValue value = toJS(val);
 
     if (value.isEmpty()) {
@@ -2247,8 +2199,6 @@ extern "C" napi_status napi_get_value_bigint_words(napi_env env,
     uint64_t* words)
 {
     NAPI_PREMABLE
-
-    Zig::GlobalObject* globalObject = toJS(env);
 
     JSC::JSValue jsValue = toJS(value);
     if (UNLIKELY(!jsValue.isBigInt()))

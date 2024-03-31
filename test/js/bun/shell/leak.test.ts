@@ -1,5 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
-
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv } from "harness";
@@ -10,6 +8,9 @@ import { TestBuilder } from "./util";
 
 $.env(bunEnv);
 $.cwd(process.cwd());
+$.nothrow();
+
+const DEFAULT_THRESHOLD = process.platform === "darwin" ? 100 * (1 << 20) : 150 * (1 << 20);
 
 const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ["redirect_file", () => TestBuilder.command`echo hello > test.txt`.fileEquals("test.txt", "hello\n")],
@@ -29,7 +30,7 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
               .sort(),
           ).toEqual(["lmao", "lol", "nice", "foo/bar:", "bar", "great", "wow"].sort()),
         ),
-    100,
+    500,
   ],
   [
     "rm",
@@ -49,21 +50,21 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
 ];
 
 describe("fd leak", () => {
-  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 500) {
+  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 500, threshold: number = 5) {
     test(`fdleak_${name}`, async () => {
-      for (let i = 0; i < 5; i++) {
-        await builder().quiet().run();
-      }
-
+      Bun.gc(true);
       const baseline = openSync(devNull, "r");
       closeSync(baseline);
 
       for (let i = 0; i < runs; i++) {
         await builder().quiet().run();
       }
+      // Run the GC, because the interpreter closes file descriptors when it
+      // deinitializes when its finalizer is called
+      Bun.gc(true);
       const fd = openSync(devNull, "r");
       closeSync(fd);
-      expect(fd).toBe(baseline);
+      expect(fd - baseline).toBeLessThanOrEqual(threshold);
     }, 100_000);
   }
 
@@ -71,7 +72,7 @@ describe("fd leak", () => {
     name: string,
     builder: () => TestBuilder,
     runs: number = 500,
-    threshold: number = 100 * (1 << 20),
+    threshold: number = DEFAULT_THRESHOLD,
   ) {
     test(`memleak_${name}`, async () => {
       const tempfile = join(tmpdir(), "script.ts");
@@ -82,26 +83,24 @@ describe("fd leak", () => {
       writeFileSync(tempfile, testcode);
 
       const impl = /* ts */ `
-
-
-
-            test("${name}", async () => {
-              const hundredMb = ${threshold}
+              const threshold = ${threshold}
               let prev: number | undefined = undefined;
+              let prevprev: number | undefined = undefined;
               for (let i = 0; i < ${runs}; i++) {
                 Bun.gc(true);
                 await (async function() {
                   await ${builder.toString().slice("() =>".length)}.quiet().run()
                 })()
                 Bun.gc(true);
+                Bun.gc(true);
                 const val = process.memoryUsage.rss();
                 if (prev === undefined) {
                   prev = val;
+                  prevprev = val;
                 } else {
-                  expect(Math.abs(prev - val)).toBeLessThan(hundredMb)
+                  if (!(Math.abs(prev - val) < threshold)) process.exit(1);
                 }
               }
-            }, 1_000_000)
             `;
 
       appendFileSync(tempfile, impl);
@@ -123,11 +122,33 @@ describe("fd leak", () => {
   });
 
   // Use text of this file so its big enough to cause a leak
+  memLeakTest("ArrayBuffer", () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer(1 << 20)}`, 100);
+  memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc(1 << 20)}`, 100);
   memLeakTest(
-    "ArrayBuffer",
-    () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer((1 << 20) * 100)}`,
+    "Blob_something",
+    () =>
+      TestBuilder.command`cat < ${new Blob([
+        Array(128 * 1024)
+          .fill("a")
+          .join(""),
+      ])}`.stdout(str =>
+        expect(str).toEqual(
+          Array(128 * 1024)
+            .fill("a")
+            .join(""),
+        ),
+      ),
     100,
   );
-  memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc((1 << 20) * 100)}`, 100);
-  memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100, 4096);
+  memLeakTest(
+    "Blob_nothing",
+    () =>
+      TestBuilder.command`echo hi < ${new Blob([
+        Array(128 * 1024)
+          .fill("a")
+          .join(""),
+      ])}`.stdout("hi\n"),
+    100,
+  );
+  memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100);
 });

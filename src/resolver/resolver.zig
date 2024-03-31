@@ -50,7 +50,7 @@ pub fn isPackagePath(path: string) bool {
     // Always check for posix absolute paths (starts with "/")
     // But don't check window's style on posix
     // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
-    return !std.fs.path.isAbsolute(path) and @call(.always_inline, isPackagePathNotAbsolute, .{path});
+    return !std.fs.path.isAbsolute(path) and @call(bun.callmod_inline, isPackagePathNotAbsolute, .{path});
 }
 
 pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
@@ -552,8 +552,9 @@ pub const Resolver = struct {
     // do a lot of testing with various benchmarks and there aren't any regressions.
     mutex: *Mutex,
 
-    // This cache maps a directory path to information about that directory and
-    // all parent directories
+    /// This cache maps a directory path to information about that directory and
+    /// all parent directories. When interacting with this structure, make sure
+    /// to validate your keys with `Resolver.assertValidCacheKey`
     dir_cache: *DirInfo.HashMap,
 
     /// This is set to false for the runtime. The runtime should choose "main"
@@ -580,9 +581,6 @@ pub const Resolver = struct {
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
-        // TODO: enable auto-install on Windows
-        if (Environment.isWindows) return false;
-
         // TODO(@paperdave): make this configurable. the rationale for disabling
         // auto-install in standalone mode is that such executable must either:
         //
@@ -876,14 +874,13 @@ pub const Resolver = struct {
             };
         }
 
-        // When using `bun build --compile`, module resolution is never relative
-        // to our special /$bunfs/ directory.
+        // When using `bun build --compile`, module resolution is never
+        // relative to our special /$bunfs/ directory.
         //
-        // It's always relative to the current working directory of the project
-        // root.
+        // It's always relative to the current working directory of the project root.
         const source_dir = brk: {
             if (r.standalone_module_graph) |graph| {
-                if (strings.isBunStandaloneFilePath(import_path)) {
+                if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(import_path)) {
                     if (graph.files.contains(import_path)) {
                         return .{
                             .success = Result{
@@ -898,7 +895,7 @@ pub const Resolver = struct {
                     }
 
                     return .{ .not_found = {} };
-                } else if (strings.isBunStandaloneFilePath(source_dir_)) {
+                } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir_)) {
                     break :brk Fs.FileSystem.instance.top_level_dir;
                 }
             }
@@ -1140,9 +1137,7 @@ pub const Resolver = struct {
         // experience unexpected build failures later on other operating systems.
         // Treating these paths as absolute paths on all platforms means Windows
         // users will not be able to accidentally make use of these paths.
-        if (std.fs.path.isAbsolutePosix(import_path) or
-            (if (Environment.isWindows) std.fs.path.isAbsoluteWindows(import_path) else false))
-        {
+        if (std.fs.path.isAbsolute(import_path)) {
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("The import \"{s}\" is being treated as an absolute path", .{import_path});
             }
@@ -1495,7 +1490,7 @@ pub const Resolver = struct {
         r: *ThisResolver,
         result: *const Result,
     ) ?*const PackageJSON {
-        return @call(.always_inline, packageJSONForResolvedNodeModuleWithIgnoreMissingName, .{ r, result, true });
+        return @call(bun.callmod_inline, packageJSONForResolvedNodeModuleWithIgnoreMissingName, .{ r, result, true });
     }
 
     // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.
@@ -1583,10 +1578,44 @@ pub const Resolver = struct {
 
     const dev = Output.scoped(.Resolver, false);
 
-    pub fn bustDirCache(r: *ThisResolver, path: string) void {
-        dev("Bust {s}", .{path});
-        r.fs.fs.bustEntriesCache(path);
-        r.dir_cache.remove(path);
+    /// Directory cache keys must follow the following rules. If the rules are broken,
+    /// then there will be conflicting cache entries, and trying to bust the cache may not work.
+    ///
+    /// When an incorrect cache key is used, this assertion will trip; ignoring it allows
+    /// very very subtle cache invalidation issues to happen, which will cause modules to
+    /// mysteriously fail to resolve.
+    ///
+    /// The rules for this changed in https://github.com/oven-sh/bun/pull/9144 after multiple
+    /// cache issues were found on Windows. These issues extended to other platforms because
+    /// we never checked if the cache key was following the rules.
+    ///
+    /// CACHE KEY RULES:
+    /// A cache key must use native slashes, and must NOT end with a trailing slash.
+    /// But drive roots MUST have a trailing slash ('/' and 'C:\')
+    /// UNC paths, even if the root, must not have the trailing slash.
+    ///
+    /// The helper function bun.strings.pathWithoutTrailingSlashOne can be used to remove
+    /// the trailing slash from a path, but also note it will only remove a SINGLE slash.
+    pub fn assertValidCacheKey(path: []const u8) void {
+        if (Environment.allow_assert) {
+            if (path.len > 1 and strings.charIsAnySlash(path[path.len - 1]) and !if (Environment.isWindows)
+                path.len == 3 and path[1] == ':'
+            else
+                path.len == 1)
+            {
+                std.debug.panic("Internal Assertion Failure: Invalid cache key \"{s}\"\nSee Resolver.assertValidCacheKey for details.", .{path});
+            }
+        }
+    }
+
+    /// Bust the directory cache for the given path.
+    /// See `assertValidCacheKey` for requirements on the input
+    pub fn bustDirCache(r: *ThisResolver, path: string) bool {
+        assertValidCacheKey(path);
+        const first_bust = r.fs.fs.bustEntriesCache(path);
+        const second_bust = r.dir_cache.remove(path);
+        dev("Bust {s} = {}, {}", .{ path, first_bust, second_bust });
+        return first_bust or second_bust;
     }
 
     pub fn loadNodeModules(
@@ -1772,7 +1801,6 @@ pub const Resolver = struct {
             if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
             const esm = esm_.?.withAutoVersion();
             load_module_from_cache: {
-
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
                 var manager = r.getPackageManager();
@@ -2043,18 +2071,21 @@ pub const Resolver = struct {
     }
     fn dirInfoForResolution(
         r: *ThisResolver,
-        dir_path: string,
+        dir_path_maybe_trail_slash: string,
         package_id: Install.PackageID,
     ) !?*DirInfo {
         std.debug.assert(r.package_manager != null);
 
-        var dir_cache_info_result = r.dir_cache.getOrPut(dir_path) catch unreachable;
+        const dir_path = strings.pathWithoutTrailingSlashOne(dir_path_maybe_trail_slash);
+
+        assertValidCacheKey(dir_path);
+        var dir_cache_info_result = r.dir_cache.getOrPut(dir_path) catch bun.outOfMemory();
         if (dir_cache_info_result.status == .exists) {
             // we've already looked up this package before
             return r.dir_cache.atIndex(dir_cache_info_result.index).?;
         }
         var rfs = &r.fs.fs;
-        var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch unreachable;
+        var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch bun.outOfMemory();
 
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter = true;
@@ -2107,11 +2138,10 @@ pub const Resolver = struct {
             dir_entries_ptr.* = new_entry;
 
             if (r.store_fd) {
-                Fs.FileSystem.setMaxFd(open_dir.fd);
                 dir_entries_ptr.fd = bun.toFD(open_dir.fd);
             }
 
-            bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2184,6 +2214,7 @@ pub const Resolver = struct {
                 ) catch |err| {
                     return .{ .failure = err };
                 };
+                package.meta.setHasInstallScript(package.scripts.hasAny());
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };
@@ -2198,6 +2229,7 @@ pub const Resolver = struct {
                         .value = .{ .root = {} },
                     },
                 };
+                package.meta.setHasInstallScript(package.scripts.hasAny());
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };
@@ -2503,13 +2535,6 @@ pub const Resolver = struct {
         return r.dirInfoCachedMaybeLog(path, false, true) catch null;
     }
 
-    pub inline fn readDirInfoCacheOnly(
-        r: *ThisResolver,
-        path: string,
-    ) ?*DirInfo {
-        return r.dir_cache.get(path);
-    }
-
     inline fn isDotSlash(path: string) bool {
         return switch (Environment.os) {
             else => strings.eqlComptime(path, "./"),
@@ -2530,7 +2555,9 @@ pub const Resolver = struct {
             _path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, _path);
         }
 
-        const top_result = try r.dir_cache.getOrPut(_path);
+        const path_without_trailing_slash = strings.pathWithoutTrailingSlashOne(_path);
+        assertValidCacheKey(path_without_trailing_slash);
+        const top_result = try r.dir_cache.getOrPut(path_without_trailing_slash);
         if (top_result.status != .unknown) {
             return r.dir_cache.atIndex(top_result.index);
         }
@@ -2541,7 +2568,7 @@ pub const Resolver = struct {
         bun.copy(u8, dir_info_uncached_path_buf, _path);
         var path = dir_info_uncached_path_buf[0.._path.len];
 
-        bufs(.dir_entry_paths_to_resolve)[0] = (DirEntryResolveQueueItem{ .result = top_result, .unsafe_path = path, .safe_path = "" });
+        bufs(.dir_entry_paths_to_resolve)[0] = DirEntryResolveQueueItem{ .result = top_result, .unsafe_path = path, .safe_path = "" };
         var top = Dirname.dirname(path);
 
         var top_parent: allocators.Result = allocators.Result{
@@ -2555,7 +2582,9 @@ pub const Resolver = struct {
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
             path[0..1];
-        var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        assertValidCacheKey(root_path);
+
+        const rfs = &r.fs.fs;
 
         rfs.entries_mutex.lock();
         defer rfs.entries_mutex.unlock();
@@ -2605,8 +2634,6 @@ pub const Resolver = struct {
 
         // When this function halts, any item not processed means it's not found.
         defer {
-
-            // Anything
             if (open_dir_count > 0 and (!r.store_fd or r.fs.fs.needToCloseFiles())) {
                 const open_dirs: []std.fs.Dir = bufs(.open_dirs)[0..open_dir_count];
                 for (open_dirs) |*open_dir| {
@@ -2772,7 +2799,7 @@ pub const Resolver = struct {
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -2877,8 +2904,8 @@ pub const Resolver = struct {
                 // because we want the output to always be deterministic
                 if (strings.startsWith(path, prefix) and
                     strings.endsWith(path, suffix) and
-                    (prefix.len >= longest_match_prefix_length and
-                    suffix.len > longest_match_suffix_length))
+                    (prefix.len > longest_match_prefix_length or
+                    (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))
                 {
                     longest_match_prefix_length = @as(i32, @intCast(prefix.len));
                     longest_match_suffix_length = @as(i32, @intCast(suffix.len));
@@ -3295,7 +3322,7 @@ pub const Resolver = struct {
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
 
-        if (r.readDirInfo(strings.withoutTrailingSlash(str)) catch null) |result| {
+        if (r.readDirInfo(str) catch null) |result| {
             var dir_info = result;
 
             while (true) {
@@ -3457,7 +3484,6 @@ pub const Resolver = struct {
 
         // Is this a file?
         if (r.loadAsFile(path, extension_order)) |file| {
-
             // Determine the package folder by looking at the last node_modules/ folder in the path
             if (strings.lastIndexOf(file.path, "node_modules" ++ std.fs.path.sep_str)) |last_node_modules_folder| {
                 const node_modules_folder_offset = last_node_modules_folder + ("node_modules" ++ std.fs.path.sep_str).len;
@@ -3494,12 +3520,9 @@ pub const Resolver = struct {
             debug.addNoteFmt("Attempting to load \"{s}\" as a directory", .{path});
             debug.increaseIndent();
         }
-
-        defer {
-            if (r.debug_logs) |*debug| {
-                debug.decreaseIndent();
-            }
-        }
+        defer if (r.debug_logs) |*debug| {
+            debug.decreaseIndent();
+        };
 
         const dir_info = (r.dirInfoCached(path) catch |err| {
             if (comptime Environment.isDebug) Output.prettyErrorln("err: {s} reading {s}", .{ @errorName(err), path });
@@ -3626,7 +3649,7 @@ pub const Resolver = struct {
             }
         }
 
-        const dir_path = Dirname.dirname(path);
+        const dir_path = bun.strings.pathWithoutTrailingSlashOne(Dirname.dirname(path));
 
         const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
             dir_path,
@@ -3763,7 +3786,7 @@ pub const Resolver = struct {
                                             query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
                                             // the trailing path CAN be missing here
                                         } else {
-                                            const parts = [_]string{ query.entry.dir, "/", buffer };
+                                            const parts = [_]string{ query.entry.dir, std.fs.path.sep_str, buffer };
                                             query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
                                         }
                                     }

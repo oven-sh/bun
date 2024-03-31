@@ -52,37 +52,37 @@
   },
 
   // JavaScript
-  "prettier.enable": false,
+  "prettier.enable": true,
   "eslint.workingDirectories": ["${workspaceFolder}/packages/bun-types"],
   "[javascript]": {
-    "editor.defaultFormatter": "biomejs.biome",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   "[javascriptreact]": {
-    "editor.defaultFormatter": "biomejs.biome"
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
 
   // TypeScript
   "typescript.tsdk": "${workspaceFolder}/node_modules/typescript/lib",
   "[typescript]": {
-    "editor.defaultFormatter": "biomejs.biome"
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[typescriptreact]": {
-    "editor.defaultFormatter": "biomejs.biome"
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
 
   // JSON
   "[json]": {
-    "editor.defaultFormatter": "biomejs.biome",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   "[jsonc]": {
-    "editor.defaultFormatter": "biomejs.biome",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   
   // Markdown
   "[markdown]": {
-    "editor.defaultFormatter": "biomejs.biome",
-    "editor.unicodeHighlight.ambiguousCharacters": false,
-    "editor.unicodeHighlight.invisibleCharacters": false,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.unicodeHighlight.ambiguousCharacters": true,
+    "editor.unicodeHighlight.invisibleCharacters": true,
     "diffEditor.ignoreTrimWhitespace": false,
     "editor.wordWrap": "on",
     "editor.quickSuggestions": {
@@ -94,12 +94,12 @@
 
   // TOML
   "[toml]": {
-    "editor.defaultFormatter": "biomejs.biome",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
 
   // YAML
   "[yaml]": {
-    "editor.defaultFormatter": "biomejs.biome",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
 
   // Files
@@ -112,7 +112,6 @@
     "**/Thumbs.db": true,
     "**/*.xcworkspacedata": true,
     "**/*.xcscheme": true,
-    "**/*.pem": true,
     "**/*.xcodeproj": true,
     "src/bun.js/WebKit": true,
     "src/deps/libarchive": true,
@@ -127,126 +126,10 @@
     "src/deps/tinycc": true,
     "src/deps/zstd": true,
     "**/*.i": true,
-    "packages/bun-uws/fuzzing/seed-corpus/**/*": true
+    "packages/bun-uws/fuzzing/seed-corpus": true
   },
   "files.associations": {
-    "*.lock": "yarnlock",
-    "*.idl": "cpp",
-    "memory": "cpp",
-    "iostream": "cpp",
-    "algorithm": "cpp",
-    "random": "cpp",
-    "ios": "cpp",
-    "filesystem": "cpp",
-    "__locale": "cpp",
-    "type_traits": "cpp",
-    "__mutex_base": "cpp",
-    "__string": "cpp",
-    "string": "cpp",
-    "string_view": "cpp",
-    "typeinfo": "cpp",
-    "__config": "cpp",
-    "__nullptr": "cpp",
-    "exception": "cpp",
-    "__bit_reference": "cpp",
-    "atomic": "cpp",
-    "utility": "cpp",
-    "sstream": "cpp",
-    "__functional_base": "cpp",
-    "new": "cpp",
-    "__debug": "cpp",
-    "__errc": "cpp",
-    "__hash_table": "cpp",
-    "__node_handle": "cpp",
-    "__split_buffer": "cpp",
-    "__threading_support": "cpp",
-    "__tuple": "cpp",
-    "array": "cpp",
-    "bit": "cpp",
-    "bitset": "cpp",
-    "cctype": "cpp",
-    "chrono": "cpp",
-    "clocale": "cpp",
-    "cmath": "cpp",
-    "complex": "cpp",
-    "condition_variable": "cpp",
-    "cstdarg": "cpp",
-    "cstddef": "cpp",
-    "cstdint": "cpp",
-    "cstdio": "cpp",
-    "cstdlib": "cpp",
-    "cstring": "cpp",
-    "ctime": "cpp",
-    "cwchar": "cpp",
-    "cwctype": "cpp",
-    "deque": "cpp",
-    "fstream": "cpp",
-    "functional": "cpp",
-    "initializer_list": "cpp",
-    "iomanip": "cpp",
-    "iosfwd": "cpp",
-    "istream": "cpp",
-    "iterator": "cpp",
-    "limits": "cpp",
-    "locale": "cpp",
-    "mutex": "cpp",
-    "optional": "cpp",
-    "ostream": "cpp",
-    "ratio": "cpp",
-    "stack": "cpp",
-    "stdexcept": "cpp",
-    "streambuf": "cpp",
-    "system_error": "cpp",
-    "thread": "cpp",
-    "tuple": "cpp",
-    "unordered_map": "cpp",
-    "unordered_set": "cpp",
-    "vector": "cpp",
-    "__bits": "cpp",
-    "__tree": "cpp",
-    "map": "cpp",
-    "numeric": "cpp",
-    "set": "cpp",
-    "__memory": "cpp",
-    "memory_resource": "cpp",
-    "*.tcc": "cpp",
-    "list": "cpp",
-    "shared_mutex": "cpp",
-    "cinttypes": "cpp",
-    "variant": "cpp",
-    "sysctl.h": "c",
-    "queue": "cpp",
-    "compare": "cpp",
-    "concepts": "cpp",
-    "typeindex": "cpp",
-    "__verbose_abort": "cpp",
-    "__std_stream": "cpp",
-    "any": "cpp",
-    "charconv": "cpp",
-    "csignal": "cpp",
-    "format": "cpp",
-    "forward_list": "cpp",
-    "future": "cpp",
-    "regex": "cpp",
-    "span": "cpp",
-    "valarray": "cpp",
-    "codecvt": "cpp",
-    "xtr1common": "cpp",
-    "stop_token": "cpp",
-    "xfacet": "cpp",
-    "xhash": "cpp",
-    "xiosbase": "cpp",
-    "xlocale": "cpp",
-    "xlocbuf": "cpp",
-    "xlocinfo": "cpp",
-    "xlocmes": "cpp",
-    "xlocmon": "cpp",
-    "xlocnum": "cpp",
-    "xloctime": "cpp",
-    "xmemory": "cpp",
-    "xstring": "cpp",
-    "xtree": "cpp",
-    "xutility": "cpp"
+    "*.idl": "cpp"
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

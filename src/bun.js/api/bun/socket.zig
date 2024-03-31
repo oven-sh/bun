@@ -266,7 +266,7 @@ const Handlers = struct {
             .{ "onHandshake", "handshake" },
         };
         inline for (pairs) |pair| {
-            if (opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
+            if (opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
                     exception.* = JSC.toInvalidArguments(comptime std.fmt.comptimePrint("Expected \"{s}\" callback to be a function", .{pair.@"1"}), .{}, globalObject).asObjectRef();
                     return null;
@@ -409,12 +409,22 @@ pub const SocketConfig = struct {
                     }
                 }
 
-                if (port_value.isEmptyOrUndefinedOrNull() or !port_value.isNumber() or port_value.toInt64() > std.math.maxInt(u16) or port_value.toInt64() < 0) {
+                if (port_value.isEmptyOrUndefinedOrNull()) {
                     exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
                     return null;
                 }
 
-                port = port_value.toU16();
+                const porti32 = port_value.coerceToInt32(globalObject);
+                if (globalObject.hasException()) {
+                    return null;
+                }
+
+                if (porti32 < 0 or porti32 > 65535) {
+                    exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
+                    return null;
+                }
+
+                port = @intCast(porti32);
 
                 if (hostname_or_unix.len == 0) {
                     exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
@@ -440,7 +450,7 @@ pub const SocketConfig = struct {
             return null;
         };
 
-        if (opts.getTruthy(globalObject, "data")) |default_data_value| {
+        if (opts.fastGet(globalObject, .data)) |default_data_value| {
             default_data = default_data_value;
         }
 
@@ -693,7 +703,7 @@ pub const Listener = struct {
                 .unix => |u| {
                     const host = bun.default_allocator.dupeZ(u8, u) catch unreachable;
                     defer bun.default_allocator.free(host);
-                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, socket_flags, 8);
+                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8);
                 },
                 .fd => {
                     // don't call listen() on an fd
@@ -1028,18 +1038,8 @@ pub const Listener = struct {
             TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
 
             tls.doConnect(connection, socket_context) catch {
-                handlers_ptr.unprotect();
-                socket_context.deinit(true);
-                handlers.vm.allocator.destroy(handlers_ptr);
-                handlers.promise.deinit();
-                bun.default_allocator.destroy(tls);
-                const err = JSC.SystemError{
-                    .message = bun.String.static("Failed to connect"),
-                    .syscall = bun.String.static("connect"),
-                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
-                };
-                exception.* = err.toErrorInstance(globalObject).asObjectRef();
-                return .zero;
+                tls.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
+                return promise_value;
             };
             tls.poll_ref.ref(handlers.vm);
 
@@ -1059,18 +1059,8 @@ pub const Listener = struct {
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
 
             tcp.doConnect(connection, socket_context) catch {
-                handlers_ptr.unprotect();
-                socket_context.deinit(false);
-                handlers.vm.allocator.destroy(handlers_ptr);
-                handlers.promise.deinit();
-                bun.default_allocator.destroy(tcp);
-                const err = JSC.SystemError{
-                    .message = bun.String.static("Failed to connect"),
-                    .syscall = bun.String.static("connect"),
-                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
-                };
-                exception.* = err.toErrorInstance(globalObject).asObjectRef();
-                return .zero;
+                tcp.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
+                return promise_value;
             };
             tcp.poll_ref.ref(handlers.vm);
 
@@ -1162,23 +1152,23 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
             switch (connection) {
                 .host => |c| {
-                    _ = This.Socket.connectPtr(
+                    _ = try This.Socket.connectPtr(
                         normalizeHost(c.host),
                         c.port,
                         socket_ctx,
                         This,
                         this,
                         "socket",
-                    ) orelse return error.ConnectionFailed;
+                    );
                 },
                 .unix => |u| {
-                    _ = This.Socket.connectUnixPtr(
+                    _ = try This.Socket.connectUnixPtr(
                         u,
                         socket_ctx,
                         This,
                         this,
                         "socket",
-                    ) orelse return error.ConnectionFailed;
+                    );
                 },
                 .fd => |f| {
                     const socket = This.Socket.fromFd(socket_ctx, f, This, this, "socket") orelse return error.ConnectionFailed;
@@ -1243,8 +1233,7 @@ fn NewSocket(comptime ssl: bool) type {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }
         }
-        pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
-            JSC.markBinding(@src());
+        fn handleConnectError(this: *This, errno: c_int) void {
             log("onConnectError({d})", .{errno});
             if (this.detached) return;
             this.detached = true;
@@ -1260,10 +1249,9 @@ fn NewSocket(comptime ssl: bool) type {
                 .errno = errno,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
-
                 // For some reason errno is 0 which causes this to be success.
-                // Unix socket case wont hit this callback because it instantly errors.
-                .code = bun.String.static("ECONNREFUSED"),
+                // Unix socket emits ENOENT
+                .code = if (errno == @intFromEnum(bun.C.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
                 // .code = bun.String.static(@tagName(bun.sys.getErrno(errno))),
                 // .code = bun.String.static(@tagName(@as(bun.C.E, @enumFromInt(errno)))),
             };
@@ -1300,6 +1288,10 @@ fn NewSocket(comptime ssl: bool) type {
                 promise.rejectOnNextTickAsHandled(globalObject, err_);
                 this.has_pending_activity.store(false, .Release);
             }
+        }
+        pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
+            JSC.markBinding(@src());
+            this.handleConnectError(errno);
         }
 
         pub fn markActive(this: *This) void {
@@ -2802,7 +2794,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var default_data = JSValue.zero;
-            if (opts.getTruthy(globalObject, "data")) |default_data_value| {
+            if (opts.fastGet(globalObject, .data)) |default_data_value| {
                 default_data = default_data_value;
                 default_data.ensureStillAlive();
             }

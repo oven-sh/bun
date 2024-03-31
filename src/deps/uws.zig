@@ -444,8 +444,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime Context: type,
             ctx: *Context,
             comptime socket_field_name: []const u8,
-        ) ?*Context {
-            const this_socket = connectAnon(host, port, socket_ctx, ctx) orelse return null;
+        ) !*Context {
+            const this_socket = try connectAnon(host, port, socket_ctx, ctx);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -478,8 +478,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime Context: type,
             ctx: *Context,
             comptime socket_field_name: []const u8,
-        ) ?*Context {
-            const this_socket = connectUnixAnon(path, socket_ctx, ctx) orelse return null;
+        ) !*Context {
+            const this_socket = try connectUnixAnon(path, socket_ctx, ctx);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -488,56 +488,78 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             path: []const u8,
             socket_ctx: *SocketContext,
             ctx: *anyopaque,
-        ) ?ThisSocket {
+        ) !ThisSocket {
             debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            const path_ = allocator.dupeZ(u8, path) catch return null;
+            const path_ = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             defer allocator.free(path_);
 
-            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, 0, 8) orelse return null;
+            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, path_.len, 0, 8) orelse
+                return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = socket };
             const holder = socket_.ext(*anyopaque) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
                 _ = us_socket_close_connecting(comptime ssl_int, socket);
-                return null;
+                return error.FailedToOpenSocket;
             };
             holder.* = ctx;
             return socket_;
         }
 
         pub fn connectAnon(
-            host: []const u8,
+            raw_host: []const u8,
             port: i32,
             socket_ctx: *SocketContext,
             ptr: *anyopaque,
-        ) ?ThisSocket {
-            debug("connect({s}, {d})", .{ host, port });
+        ) !ThisSocket {
+            debug("connect({s}, {d})", .{ raw_host, port });
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
 
-            const host_: ?[*:0]u8 = brk: {
+            const host: ?[*:0]u8 = brk: {
                 // getaddrinfo expects `node` to be null if localhost
-                if (host.len < 6 and (bun.strings.eqlComptime(host, "[::1]") or bun.strings.eqlComptime(host, "[::]"))) {
+                if (raw_host.len < 6 and (bun.strings.eqlComptime(raw_host, "[::1]") or bun.strings.eqlComptime(raw_host, "[::]"))) {
                     break :brk null;
                 }
 
-                break :brk allocator.dupeZ(u8, host) catch return null;
+                break :brk allocator.dupeZ(u8, raw_host) catch bun.outOfMemory();
             };
 
-            defer if (host_) |host__| allocator.free(host__[0..host.len]);
+            defer if (host) |allocated_host| allocator.free(allocated_host[0..raw_host.len]);
 
-            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(*anyopaque)) orelse return null;
-            const socket_ = ThisSocket{ .socket = socket };
+            const us_socket = us_socket_context_connect(
+                comptime ssl_int,
+                socket_ctx,
+                host,
+                port,
+                null,
+                0,
+                @sizeOf(*anyopaque),
+            ) orelse {
+                if (Environment.isWindows) {
+                    try bun.windows.WSAGetLastError();
+                } else {
+                    // TODO(@paperdave): On POSIX, this will call getaddrinfo + socket
+                    // the former of these does not set errno, and usockets does not have
+                    // a way to propogate the error.
+                    //
+                    // This is caught in the wild: https://github.com/oven-sh/bun/issues/6381
+                    // and we can definitely report a better here. It just is tricky.
+                }
+                return error.FailedToOpenSocket;
+            };
 
-            const holder = socket_.ext(*anyopaque) orelse {
+            const socket = ThisSocket{ .socket = us_socket };
+
+            const holder = socket.ext(*anyopaque) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
-                _ = us_socket_close_connecting(comptime ssl_int, socket);
-                return null;
+                _ = us_socket_close_connecting(comptime ssl_int, us_socket);
+                return error.FailedToOpenSocket;
             };
             holder.* = ptr;
-            return socket_;
+            return socket;
         }
 
         pub fn unsafeConfigure(
@@ -1156,9 +1178,9 @@ extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *
 extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
 pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
-pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, options: i32, socket_ext_size: i32) ?*ListenSocket;
+pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*ListenSocket;
 pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, source_host: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
-pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
+pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
 pub extern fn us_socket_close_connecting(ssl: i32, s: ?*Socket) ?*Socket;
 pub extern fn us_socket_context_loop(ssl: i32, context: ?*SocketContext) ?*Loop;
@@ -1325,7 +1347,7 @@ pub const AnyWebSocket = union(enum) {
         const ContextType = @TypeOf(ctx);
         const Wrapper = struct {
             pub fn wrap(user_data: ?*anyopaque) callconv(.C) void {
-                @call(.always_inline, callback, .{bun.cast(ContextType, user_data.?)});
+                @call(bun.callmod_inline, callback, .{bun.cast(ContextType, user_data.?)});
             }
         };
 
@@ -1429,7 +1451,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn _open(raw_ws: *RawWebSocket) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(.always_inline, Type.onOpen, .{ this, ws });
+                @call(bun.callmod_inline, Type.onOpen, .{ this, ws });
             }
             pub fn _message(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
@@ -1443,7 +1465,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn _drain(raw_ws: *RawWebSocket) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(.always_inline, Type.onDrain, .{
+                @call(bun.callmod_inline, Type.onDrain, .{
                     this,
                     ws,
                 });
@@ -1451,7 +1473,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn _ping(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(.always_inline, Type.onPing, .{
+                @call(bun.callmod_inline, Type.onPing, .{
                     this,
                     ws,
                     if (length > 0) message[0..length] else "",
@@ -1460,7 +1482,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn _pong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(.always_inline, Type.onPong, .{
+                @call(bun.callmod_inline, Type.onPong, .{
                     this,
                     ws,
                     if (length > 0) message[0..length] else "",
@@ -1795,9 +1817,9 @@ pub fn NewApp(comptime ssl: bool) type {
             const Wrapper = struct {
                 pub fn handle(socket: ?*uws.ListenSocket, conf: uws_app_listen_config_t, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
-                        @call(.always_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)), conf });
+                        @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)), conf });
                     } else {
-                        @call(.always_inline, handler, .{
+                        @call(bun.callmod_inline, handler, .{
                             @as(UserData, @ptrCast(@alignCast(data.?))),
                             @as(?*ThisApp.ListenSocket, @ptrCast(socket)),
                             conf,
@@ -1818,9 +1840,9 @@ pub fn NewApp(comptime ssl: bool) type {
             const Wrapper = struct {
                 pub fn handle(socket: ?*uws.ListenSocket, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
-                        @call(.always_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)) });
+                        @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)) });
                     } else {
-                        @call(.always_inline, handler, .{
+                        @call(bun.callmod_inline, handler, .{
                             @as(UserData, @ptrCast(@alignCast(data.?))),
                             @as(?*ThisApp.ListenSocket, @ptrCast(socket)),
                         });
@@ -1835,15 +1857,15 @@ pub fn NewApp(comptime ssl: bool) type {
             comptime UserData: type,
             user_data: UserData,
             comptime handler: fn (UserData, ?*ThisApp.ListenSocket) void,
-            domain: [*:0]const u8,
+            domain: [:0]const u8,
             flags: i32,
         ) void {
             const Wrapper = struct {
                 pub fn handle(socket: ?*uws.ListenSocket, _: [*:0]const u8, _: i32, data: *anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
-                        @call(.always_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)) });
+                        @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)) });
                     } else {
-                        @call(.always_inline, handler, .{
+                        @call(bun.callmod_inline, handler, .{
                             @as(UserData, @ptrCast(@alignCast(data))),
                             @as(?*ThisApp.ListenSocket, @ptrCast(socket)),
                         });
@@ -1853,7 +1875,8 @@ pub fn NewApp(comptime ssl: bool) type {
             return uws_app_listen_domain_with_options(
                 ssl_flag,
                 @as(*uws_app_t, @ptrCast(app)),
-                domain,
+                domain.ptr,
+                domain.len,
                 flags,
                 Wrapper.handle,
                 user_data,
@@ -2001,9 +2024,9 @@ pub fn NewApp(comptime ssl: bool) type {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, amount: uintmax_t, data: ?*anyopaque) callconv(.C) bool {
                         if (comptime UserDataType == void) {
-                            return @call(.always_inline, handler, .{ {}, amount, castRes(this) });
+                            return @call(bun.callmod_inline, handler, .{ {}, amount, castRes(this) });
                         } else {
-                            return @call(.always_inline, handler, .{
+                            return @call(bun.callmod_inline, handler, .{
                                 @as(UserDataType, @ptrCast(@alignCast(data.?))),
                                 amount,
                                 castRes(this),
@@ -2022,9 +2045,9 @@ pub fn NewApp(comptime ssl: bool) type {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
-                            @call(.always_inline, handler, .{ {}, castRes(this), {} });
+                            @call(bun.callmod_inline, handler, .{ {}, castRes(this), {} });
                         } else {
-                            @call(.always_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data.?))), castRes(this) });
+                            @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data.?))), castRes(this) });
                         }
                     }
                 };
@@ -2048,14 +2071,14 @@ pub fn NewApp(comptime ssl: bool) type {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, chunk_ptr: [*c]const u8, len: usize, last: bool, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
-                            @call(.always_inline, handler, .{
+                            @call(bun.callmod_inline, handler, .{
                                 {},
                                 castRes(this),
                                 if (len > 0) chunk_ptr[0..len] else "",
                                 last,
                             });
                         } else {
-                            @call(.always_inline, handler, .{
+                            @call(bun.callmod_inline, handler, .{
                                 @as(UserDataType, @ptrCast(@alignCast(user_data.?))),
                                 castRes(this),
                                 if (len > 0) chunk_ptr[0..len] else "",
@@ -2081,7 +2104,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     opts: @TypeOf(args),
                     result: @typeInfo(@TypeOf(Function)).Fn.return_type.? = undefined,
                     pub fn run(this: *@This()) void {
-                        this.result = @call(.auto, Function, this.opts);
+                        this.result = Function(this.opts);
                     }
                 };
                 var wrapped = Wrapper{
@@ -2101,11 +2124,11 @@ pub fn NewApp(comptime ssl: bool) type {
                 const Wrapper = struct {
                     pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
-                            @call(.always_inline, handler, .{
+                            @call(bun.callmod_inline, handler, .{
                                 {},
                             });
                         } else {
-                            @call(.always_inline, handler, .{
+                            @call(bun.callmod_inline, handler, .{
                                 @as(UserDataType, @ptrCast(@alignCast(user_data.?))),
                             });
                         }
@@ -2124,12 +2147,12 @@ pub fn NewApp(comptime ssl: bool) type {
             //     const Wrapper = struct {
             //         pub fn handle(user_data: ?*anyopaque, fd: i32) callconv(.C) void {
             //             if (comptime UserDataType == void) {
-            //                 @call(.always_inline, handler, .{
+            //                 @call(bun.callmod_inline, handler, .{
             //                     {},
             //                     fd,
             //                 });
             //             } else {
-            //                 @call(.always_inline, handler, .{
+            //                 @call(bun.callmod_inline, handler, .{
             //                     @ptrCast(
             //                         UserDataType,
             //                         @alignCast( user_data.?),
@@ -2143,12 +2166,12 @@ pub fn NewApp(comptime ssl: bool) type {
             //     const OnWritable = struct {
             //         pub fn handle(socket: *Socket) callconv(.C) ?*Socket {
             //             if (comptime UserDataType == void) {
-            //                 @call(.always_inline, handler, .{
+            //                 @call(bun.callmod_inline, handler, .{
             //                     {},
             //                     fd,
             //                 });
             //             } else {
-            //                 @call(.always_inline, handler, .{
+            //                 @call(bun.callmod_inline, handler, .{
             //                     @ptrCast(
             //                         UserDataType,
             //                         @alignCast( user_data.?),
@@ -2236,7 +2259,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 const ContextType = @TypeOf(ctx);
                 const Wrapper = struct {
                     pub fn wrap(user_data: ?*anyopaque) callconv(.C) void {
-                        @call(.always_inline, callback, .{bun.cast(ContextType, user_data.?)});
+                        @call(bun.callmod_inline, callback, .{bun.cast(ContextType, user_data.?)});
                     }
                 };
 
@@ -2473,12 +2496,14 @@ extern fn uws_app_listen_domain_with_options(
     ssl_flag: c_int,
     app: *uws_app_t,
     domain: [*:0]const u8,
+    pathlen: usize,
     i32,
     *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.C) void),
     ?*anyopaque,
 ) void;
 
-pub const UVLoop = extern struct {
+/// This extends off of uws::Loop on Windows
+pub const WindowsLoop = extern struct {
     const uv = bun.windows.libuv;
 
     internal_loop_data: InternalLoopData align(16),
@@ -2488,46 +2513,43 @@ pub const UVLoop = extern struct {
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
 
-    pub fn init() *UVLoop {
+    pub fn get() *WindowsLoop {
         return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
     }
 
-    extern fn uws_get_loop_with_native(*anyopaque) *UVLoop;
+    extern fn uws_get_loop_with_native(*anyopaque) *WindowsLoop;
 
-    pub fn iterationNumber(this: *const UVLoop) c_longlong {
+    pub fn iterationNumber(this: *const WindowsLoop) c_longlong {
         return this.internal_loop_data.iteration_nr;
     }
 
-    pub fn addActive(this: *const UVLoop, val: u32) void {
+    pub fn addActive(this: *const WindowsLoop, val: u32) void {
         this.uv_loop.addActive(val);
     }
 
-    pub fn subActive(this: *const UVLoop, val: u32) void {
+    pub fn subActive(this: *const WindowsLoop, val: u32) void {
         this.uv_loop.subActive(val);
     }
 
-    pub fn isActive(this: *const UVLoop) bool {
+    pub fn isActive(this: *const WindowsLoop) bool {
         return this.uv_loop.isActive();
     }
-    pub fn get() *UVLoop {
-        return @ptrCast(uws_get_loop());
-    }
 
-    pub fn wakeup(this: *UVLoop) void {
+    pub fn wakeup(this: *WindowsLoop) void {
         us_wakeup_loop(this);
     }
 
     pub const wake = wakeup;
 
-    pub fn tickWithTimeout(this: *UVLoop, _: i64) void {
+    pub fn tickWithTimeout(this: *WindowsLoop, _: i64) void {
         us_loop_run(this);
     }
 
-    pub fn tickWithoutIdle(this: *UVLoop) void {
+    pub fn tickWithoutIdle(this: *WindowsLoop) void {
         us_loop_pump(this);
     }
 
-    pub fn create(comptime Handler: anytype) *UVLoop {
+    pub fn create(comptime Handler: anytype) *WindowsLoop {
         return us_create_loop(
             null,
             Handler.wakeup,
@@ -2537,7 +2559,7 @@ pub const UVLoop = extern struct {
         ).?;
     }
 
-    pub fn run(this: *UVLoop) void {
+    pub fn run(this: *WindowsLoop) void {
         us_loop_run(this);
     }
 
@@ -2545,13 +2567,16 @@ pub const UVLoop = extern struct {
     pub const tick = run;
     pub const wait = run;
 
-    pub fn inc(this: *UVLoop) void {
+    pub fn inc(this: *WindowsLoop) void {
         this.uv_loop.inc();
     }
 
-    pub fn dec(this: *UVLoop) void {
+    pub fn dec(this: *WindowsLoop) void {
         this.uv_loop.dec();
     }
+
+    pub const ref = inc;
+    pub const unref = dec;
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
@@ -2578,7 +2603,7 @@ pub const UVLoop = extern struct {
     }
 };
 
-pub const Loop = if (bun.Environment.isWindows) UVLoop else PosixLoop;
+pub const Loop = if (bun.Environment.isWindows) WindowsLoop else PosixLoop;
 
 extern fn uws_get_loop() *Loop;
 extern fn us_create_loop(
@@ -2605,7 +2630,7 @@ extern fn us_socket_pair(
     fds: *[2]LIBUS_SOCKET_DESCRIPTOR,
 ) ?*Socket;
 
-extern fn us_socket_from_fd(
+pub extern fn us_socket_from_fd(
     ctx: *SocketContext,
     ext_size: c_int,
     fd: LIBUS_SOCKET_DESCRIPTOR,

@@ -163,6 +163,8 @@ pub const Bunfig = struct {
         }
 
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
+            Analytics.Features.bunfig += 1;
+
             const json = this.json;
             var allocator = this.allocator;
 
@@ -506,6 +508,38 @@ pub const Bunfig = struct {
                         }
                     }
                 }
+
+                if (json.get("run")) |run_expr| {
+                    if (run_expr.get("silent")) |silent| {
+                        if (silent.asBool()) |value| {
+                            this.ctx.debug.silent = value;
+                        } else {
+                            try this.addError(silent.loc, "Expected boolean");
+                        }
+                    }
+
+                    if (run_expr.get("shell")) |shell| {
+                        if (shell.asString(allocator)) |value| {
+                            if (strings.eqlComptime(value, "bun")) {
+                                this.ctx.debug.use_system_shell = false;
+                            } else if (strings.eqlComptime(value, "system")) {
+                                this.ctx.debug.use_system_shell = true;
+                            } else {
+                                try this.addError(shell.loc, "Invalid shell, only 'bun' and 'system' are supported");
+                            }
+                        } else {
+                            try this.addError(shell.loc, "Expected string");
+                        }
+                    }
+
+                    if (run_expr.get("bun")) |bun_flag| {
+                        if (bun_flag.asBool()) |value| {
+                            this.ctx.debug.run_in_bun = value;
+                        } else {
+                            try this.addError(bun_flag.loc, "Expected boolean");
+                        }
+                    }
+                }
             }
 
             if (json.get("bundle")) |_bun| {
@@ -535,7 +569,6 @@ pub const Bunfig = struct {
                     if (_bun.get("packages")) |expr| {
                         try this.expect(expr, .e_object);
                         var valid_count: usize = 0;
-                        Analytics.Features.always_bundle = true;
 
                         const object = expr.data.e_object;
                         const properties = object.properties.slice();
@@ -660,7 +693,7 @@ pub const Bunfig = struct {
                 } else {
                     this.ctx.debug.macros = .{ .map = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source) };
                 }
-                Analytics.Features.macros = true;
+                Analytics.Features.macros += 1;
             }
 
             if (json.get("external")) |expr| {
@@ -719,8 +752,6 @@ pub const Bunfig = struct {
                     .loaders = loader_values,
                 };
             }
-
-            Analytics.Features.bunfig = true;
         }
 
         pub fn expect(this: *Parser, expr: js_ast.Expr, token: js_ast.Expr.Tag) !void {

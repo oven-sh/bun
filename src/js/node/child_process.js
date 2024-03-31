@@ -150,17 +150,19 @@ function spawn(file, args, options) {
   $debug("spawn", options);
   child.spawn(options);
 
-  if (options.timeout > 0) {
+  const timeout = options.timeout;
+  if (timeout && timeout > 0) {
     let timeoutId = setTimeout(() => {
       if (timeoutId) {
+        timeoutId = null;
+
         try {
           child.kill(killSignal);
         } catch (err) {
           child.emit("error", err);
         }
-        timeoutId = null;
       }
-    });
+    }, timeout).unref();
 
     child.once("exit", () => {
       if (timeoutId) {
@@ -170,8 +172,8 @@ function spawn(file, args, options) {
     });
   }
 
-  if (options.signal) {
-    const signal = options.signal;
+  const signal = options.signal;
+  if (signal) {
     if (signal.aborted) {
       process.nextTick(onAbortListener);
     } else {
@@ -180,7 +182,7 @@ function spawn(file, args, options) {
     }
 
     function onAbortListener() {
-      abortChildProcess(child, killSignal, options.signal.reason);
+      abortChildProcess(child, killSignal, signal.reason);
     }
   }
   process.nextTick(() => {
@@ -255,13 +257,9 @@ function execFile(file, args, options, callback) {
   } else {
     encoding = null;
   }
-  let stdoutLen = 0;
-  let stderrLen = 0;
   let killed = false;
   let exited = false;
   let timeoutId;
-  let encodedStdoutLen;
-  let encodedStderrLen;
 
   let ex = null;
 
@@ -338,10 +336,59 @@ function execFile(file, args, options, callback) {
 
   if (options.timeout > 0) {
     timeoutId = setTimeout(function delayedKill() {
-      kill();
+      timeoutId && kill();
       timeoutId = null;
-    }, options.timeout);
+    }, options.timeout).unref();
   }
+
+  const onData = (array, kind) => {
+    let total = 0;
+    let encodedLength;
+    return encoding
+      ? function onDataEncoded(chunk) {
+          total += chunk.length;
+
+          if (total > maxBuffer) {
+            const out = child[kind];
+            const encoding = out.readableEncoding;
+            const actualLen = Buffer.byteLength(chunk, encoding);
+            if (encodedLength === undefined) {
+              encodedLength = 0;
+
+              for (let i = 0, length = array.length; i < length; i++) {
+                encodedLength += Buffer.byteLength(array[i], encoding);
+              }
+            }
+
+            encodedLength += actualLen;
+
+            if (encodedLength > maxBuffer) {
+              let combined = ArrayPrototypeJoin.$call(array, "") + chunk;
+              combined = StringPrototypeSlice.$call(combined, 0, maxBuffer);
+              array = [combined];
+              ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+              kill();
+            } else {
+              array = [ArrayPrototypeJoin.$call(array, "") + chunk];
+            }
+          } else {
+            $arrayPush(array, chunk);
+          }
+        }
+      : function onDataRaw(chunk) {
+          total += chunk.length;
+
+          if (total > maxBuffer) {
+            const truncatedLen = maxBuffer - (total - chunk.length);
+            $arrayPush(array, chunk.slice(0, truncatedLen));
+
+            ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+            kill();
+          } else {
+            $arrayPush(array, chunk);
+          }
+        };
+  };
 
   if (child.stdout) {
     if (encoding) child.stdout.setEncoding(encoding);
@@ -350,44 +397,9 @@ function execFile(file, args, options, callback) {
       "data",
       maxBuffer === Infinity
         ? function onUnlimitedSizeBufferedData(chunk) {
-            ArrayPrototypePush.$call(_stdout, chunk);
+            $arrayPush(_stdout, chunk);
           }
-        : encoding
-          ? function onChildStdoutEncoded(chunk) {
-              stdoutLen += chunk.length;
-
-              if (stdoutLen * 4 > maxBuffer) {
-                const encoding = child.stdout.readableEncoding;
-                const actualLen = Buffer.byteLength(chunk, encoding);
-                if (encodedStdoutLen === undefined) {
-                  for (let i = 0; i < _stdout.length; i++) {
-                    encodedStdoutLen += Buffer.byteLength(_stdout[i], encoding);
-                  }
-                } else {
-                  encodedStdoutLen += actualLen;
-                }
-                const truncatedLen = maxBuffer - (encodedStdoutLen - actualLen);
-                ArrayPrototypePush.$call(_stdout, StringPrototypeSlice.$apply(chunk, 0, truncatedLen));
-
-                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
-                kill();
-              } else {
-                ArrayPrototypePush.$call(_stdout, chunk);
-              }
-            }
-          : function onChildStdoutRaw(chunk) {
-              stdoutLen += chunk.length;
-
-              if (stdoutLen > maxBuffer) {
-                const truncatedLen = maxBuffer - (stdoutLen - chunk.length);
-                ArrayPrototypePush.$call(_stdout, chunk.slice(0, truncatedLen));
-
-                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
-                kill();
-              } else {
-                ArrayPrototypePush.$call(_stdout, chunk);
-              }
-            },
+        : onData(_stdout, "stdout"),
     );
   }
 
@@ -398,44 +410,9 @@ function execFile(file, args, options, callback) {
       "data",
       maxBuffer === Infinity
         ? function onUnlimitedSizeBufferedData(chunk) {
-            ArrayPrototypePush.$call(_stderr, chunk);
+            $arrayPush(_stderr, chunk);
           }
-        : encoding
-          ? function onChildStderrEncoded(chunk) {
-              stderrLen += chunk.length;
-
-              if (stderrLen * 4 > maxBuffer) {
-                const encoding = child.stderr.readableEncoding;
-                const actualLen = Buffer.byteLength(chunk, encoding);
-                if (encodedStderrLen === undefined) {
-                  for (let i = 0; i < _stderr.length; i++) {
-                    encodedStderrLen += Buffer.byteLength(_stderr[i], encoding);
-                  }
-                } else {
-                  encodedStderrLen += actualLen;
-                }
-                const truncatedLen = maxBuffer - (encodedStderrLen - actualLen);
-                ArrayPrototypePush.$call(_stderr, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
-
-                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
-                kill();
-              } else {
-                ArrayPrototypePush.$call(_stderr, chunk);
-              }
-            }
-          : function onChildStderrRaw(chunk) {
-              stderrLen += chunk.length;
-
-              if (stderrLen > maxBuffer) {
-                const truncatedLen = maxBuffer - (stderrLen - chunk.length);
-                ArrayPrototypePush.$call(_stderr, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
-
-                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
-                kill();
-              } else {
-                ArrayPrototypePush.$call(_stderr, chunk);
-              }
-            },
+        : onData(_stderr, "stderr"),
     );
   }
 
@@ -496,10 +473,9 @@ const customPromiseExecFunction = orig => {
   };
 };
 
-var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-ObjectDefineProperty(exec, kCustomPromisifiedSymbol, {
+Object.defineProperty(exec, Symbol.for("nodejs.util.promisify.custom"), {
   __proto__: null,
-  enumerable: false,
+  configurable: true,
   value: customPromiseExecFunction(exec),
 });
 
@@ -626,10 +602,10 @@ function spawnSync(file, args, options) {
 function execFileSync(file, args, options) {
   ({ file, args, options } = normalizeExecFileArgs(file, args, options));
 
-  // const inheritStderr = !options.stdio;
+  const inheritStderr = !options.stdio;
   const ret = spawnSync(file, args, options);
 
-  // if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr);
+  if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr);
 
   const errArgs = [options.argv0 || file];
   ArrayPrototypePush.$apply(errArgs, args);
@@ -661,11 +637,11 @@ function execFileSync(file, args, options) {
  */
 function execSync(command, options) {
   const opts = normalizeExecArgs(command, options, null);
-  // const inheritStderr = !opts.options.stdio;
+  const inheritStderr = !opts.options.stdio;
 
   const ret = spawnSync(opts.file, opts.options);
 
-  // if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr); // TODO: Uncomment when we have process.stderr
+  if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr);
 
   const err = checkExecSyncError(ret, undefined, command);
 
@@ -675,22 +651,22 @@ function execSync(command, options) {
 }
 
 function stdioStringToArray(stdio, channel) {
-  const options = [];
+  let options;
 
   switch (stdio) {
     case "ignore":
     case "overlapped":
     case "pipe":
-      ArrayPrototypePush.$call(options, stdio, stdio, stdio);
+      options = [stdio, stdio, stdio];
       break;
     case "inherit":
-      ArrayPrototypePush.$call(options, 0, 1, 2);
+      options = [0, 1, 2];
       break;
     default:
       throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 
-  if (channel) ArrayPrototypePush.$call(options, channel);
+  if (channel) $arrayPush(options, channel);
 
   return options;
 }
@@ -924,7 +900,7 @@ function normalizeSpawnArguments(file, args, options) {
       else file = process.env.comspec || "cmd.exe";
       // '/d /s /c' is used only for cmd.exe.
       if (/^(?:.*\\)?cmd(?:\.exe)?$/i.exec(file) !== null) {
-        args = ["/d", "/s", "/c", `"${command}"`];
+        args = ["/d", "/s", "/c", command];
         windowsVerbatimArguments = true;
       } else {
         args = ["-c", command];
@@ -932,7 +908,7 @@ function normalizeSpawnArguments(file, args, options) {
     } else {
       if (typeof options.shell === "string") file = options.shell;
       else if (process.platform === "android") file = "sh";
-      else file = "sh";
+      else file = "/bin/sh";
       args = ["-c", command];
     }
   }
@@ -975,7 +951,6 @@ function checkExecSyncError(ret, args, cmd) {
 //------------------------------------------------------------------------------
 class ChildProcess extends EventEmitter {
   #handle;
-  #exited = false;
   #closesNeeded = 1;
   #closesGot = 0;
 
@@ -993,26 +968,54 @@ class ChildProcess extends EventEmitter {
 
   // constructor(options) {
   //   super(options);
-  //   this.#handle[owner_symbol] = this;
   // }
 
   #handleOnExit(exitCode, signalCode, err) {
-    if (this.#exited) return;
     if (signalCode) {
       this.signalCode = signalCode;
     } else {
       this.exitCode = exitCode;
     }
 
-    if (this.#stdin) {
-      this.#stdin.destroy();
+    // Drain stdio streams
+    {
+      if (this.#stdin) {
+        this.#stdin.destroy();
+      } else {
+        this.#stdioOptions[0] = "destroyed";
+      }
+
+      // If there was an error while spawning the subprocess, then we will never have any IO to drain.
+      if (err) {
+        this.#stdioOptions[1] = this.#stdioOptions[2] = "destroyed";
+      }
+
+      const stdout = this.#stdout,
+        stderr = this.#stderr;
+
+      if (stdout === undefined) {
+        this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
+      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout?.destroyed) {
+        stdout.resume?.();
+      }
+
+      if (stderr === undefined) {
+        this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
+      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed) {
+        stderr.resume?.();
+      }
     }
 
     if (this.#handle) {
       this.#handle = null;
     }
 
-    if (exitCode < 0) {
+    if (err) {
+      if (this.spawnfile) err.path = this.spawnfile;
+      err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
+      err.pid = this.pid;
+      this.emit("error", err);
+    } else if (exitCode < 0) {
       const err = new SystemError(
         `Spawned process exited with error code: ${exitCode}`,
         undefined,
@@ -1020,29 +1023,20 @@ class ChildProcess extends EventEmitter {
         "EUNKNOWN",
         "ERR_CHILD_PROCESS_UNKNOWN_ERROR",
       );
+      err.pid = this.pid;
 
       if (this.spawnfile) err.path = this.spawnfile;
 
       err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
       this.emit("error", err);
-    } else {
-      this.emit("exit", this.exitCode, this.signalCode);
     }
 
-    // If any of the stdio streams have not been touched,
-    // then pull all the data through so that it can get the
-    // eof and emit a 'close' event.
-    // Do it on nextTick so that the user has one last chance
-    // to consume the output, if for example they only want to
-    // start reading the data once the process exits.
-    process.nextTick(flushStdio, this);
+    this.emit("exit", this.exitCode, this.signalCode);
 
     this.#maybeClose();
-    this.#exited = true;
-    this.#stdioOptions = ["destroyed", "destroyed", "destroyed"];
   }
 
-  #getBunSpawnIo(i, encoding) {
+  #getBunSpawnIo(i, encoding, autoResume = false) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1053,7 +1047,6 @@ class ChildProcess extends EventEmitter {
 
     NativeWritable ||= StreamModule.NativeWritable;
     ReadableFromWeb ||= StreamModule.Readable.fromWeb;
-    if (!NetModule) NetModule = require("node:net");
 
     const io = this.#stdioOptions[i];
     switch (i) {
@@ -1072,8 +1065,13 @@ class ChildProcess extends EventEmitter {
       case 2:
       case 1: {
         switch (io) {
-          case "pipe":
-            return ReadableFromWeb(this.#handle[fdToStdioName(i)], { encoding });
+          case "pipe": {
+            const pipe = ReadableFromWeb(this.#handle[fdToStdioName(i)], { encoding });
+            this.#closesNeeded++;
+            pipe.once("close", () => this.#maybeClose());
+            if (autoResume) pipe.resume();
+            return pipe;
+          }
           case "inherit":
             return process[fdToStdioName(i)] || null;
           case "destroyed":
@@ -1085,6 +1083,7 @@ class ChildProcess extends EventEmitter {
       default:
         switch (io) {
           case "pipe":
+            if (!NetModule) NetModule = require("node:net");
             const fd = this.#handle.stdio[i];
             if (!fd) return null;
             return new NetModule.connect({ fd });
@@ -1101,9 +1100,12 @@ class ChildProcess extends EventEmitter {
   #stdioOptions;
 
   #createStdioObject() {
-    let result = new Array(this.#stdioOptions.length);
-    for (let i = 0; i < this.#stdioOptions.length; i++) {
-      const element = this.#stdioOptions[i];
+    const opts = this.#stdioOptions;
+    const length = opts.length;
+    let result = new Array(length);
+    for (let i = 0; i < length; i++) {
+      const element = opts[i];
+
       if (element !== "pipe") {
         result[i] = null;
         continue;
@@ -1119,7 +1121,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, this.#encoding);
+          result[i] = this.#getBunSpawnIo(i, this.#encoding, false);
           continue;
       }
     }
@@ -1127,15 +1129,15 @@ class ChildProcess extends EventEmitter {
   }
 
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding));
+    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding));
+    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding));
+    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
   }
 
   get stdio() {
@@ -1166,16 +1168,18 @@ class ChildProcess extends EventEmitter {
 
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
+    const argv0 = file || options.argv0;
 
     // TODO: better ipc support
     const ipc = $isArray(stdio) && stdio[3] === "ipc";
-
     var env = options.envPairs || undefined;
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
+    this.#closesNeeded = 1;
+
     this.#handle = Bun.spawn({
       cmd: spawnargs,
       stdio: bunStdio,
@@ -1199,7 +1203,8 @@ class ChildProcess extends EventEmitter {
       },
       lazy: true,
       ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
-      ipcMode: serialization,
+      serialization,
+      argv0,
     });
     this.pid = this.#handle.pid;
 
@@ -1213,7 +1218,9 @@ class ChildProcess extends EventEmitter {
     }
 
     if (hasSocketsToEagerlyLoad) {
-      this.stdio;
+      for (let item of this.stdio) {
+        item?.ref?.();
+      }
     }
   }
 
@@ -1275,8 +1282,6 @@ class ChildProcess extends EventEmitter {
       this.#handle.kill(signal);
     }
 
-    this.#maybeClose();
-
     // TODO: Figure out how to make this conform to the Node spec...
     // The problem is that the handle does not report killed until the process exits
     // So we can't return whether or not the process was killed because Bun.spawn seems to handle this async instead of sync like Node does
@@ -1316,7 +1321,7 @@ function nodeToBun(item, index) {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
-    return index > 3 ? "ignore" : "pipe";
+    return index > 2 ? "ignore" : "pipe";
   }
   // If inherit and we are referencing stdin/stdout/stderr index,
   // we can get the fd from the ReadStream for the corresponding stdio
@@ -1399,22 +1404,6 @@ function normalizeStdio(stdio) {
   }
 }
 
-function flushStdio(subprocess) {
-  const stdio = subprocess.stdio;
-  if (stdio == null) return;
-
-  for (let i = 0; i < stdio.length; i++) {
-    const stream = stdio[i];
-    // TODO(addaleax): This doesn't necessarily account for all the ways in
-    // which data can be read from a stream, e.g. being consumed on the
-    // native layer directly as a StreamBase.
-    if (!stream || !stream.readable) {
-      continue;
-    }
-    stream.resume();
-  }
-}
-
 function onSpawnNT(self) {
   self.emit("spawn");
 }
@@ -1438,12 +1427,30 @@ class ShimmedStdin extends EventEmitter {
     return false;
   }
   destroy() {}
-  end() {}
-  pipe() {}
+  end() {
+    return this;
+  }
+  pipe() {
+    return this;
+  }
+  resume() {
+    return this;
+  }
 }
 
 class ShimmedStdioOutStream extends EventEmitter {
   pipe() {}
+  get destroyed() {
+    return true;
+  }
+
+  resume() {
+    return this;
+  }
+
+  destroy() {
+    return this;
+  }
 }
 
 //------------------------------------------------------------------------------
@@ -1543,7 +1550,7 @@ const validateObject = (value, name, options = null) => {
   const nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray.$call(value)) ||
+    (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "object", value);
@@ -1744,7 +1751,7 @@ function genericNodeError(message, options) {
 //       const pos = ArrayPrototypeIndexOf(types, "object");
 //       if (pos !== -1) {
 //         ArrayPrototypeSplice.$call(types, pos, 1);
-//         ArrayPrototypePush.$call(instances, "Object");
+//         $arrayPush(instances, "Object");
 //       }
 //     }
 

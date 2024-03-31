@@ -3,6 +3,11 @@
 #ifndef BUN__ROOT__H
 #define BUN__ROOT__H
 
+// pick an arbitrary #define to test
+#ifdef ENABLE_3D_TRANSFORMS
+#error "root.h must be included before any other WebCore or JavaScriptCore headers"
+#endif
+
 /*
  * Copyright (C) 2006-2021 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Samuel Weinig "sam.weinig@gmail.com"

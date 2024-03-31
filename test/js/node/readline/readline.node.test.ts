@@ -1304,7 +1304,7 @@ describe("readline.Interface", () => {
     assert.strictEqual(getStringWidth("你好"), 4);
     assert.strictEqual(getStringWidth("안녕하세요"), 10);
     assert.strictEqual(getStringWidth("A\ud83c\ude00BC"), 5);
-    assert.strictEqual(getStringWidth("👨‍👩‍👦‍👦"), 8);
+    assert.strictEqual(getStringWidth("👨‍👩‍👦‍👦"), 2);
     assert.strictEqual(getStringWidth("🐕𐐷あ💻😀"), 9);
     // TODO(BridgeAR): This should have a width of 4.
     assert.strictEqual(getStringWidth("⓬⓪"), 2);
@@ -1878,6 +1878,23 @@ describe("readline.createInterface()", () => {
     );
 
     input.write("abc\n");
+  });
+
+  it("should support reading-in lines via for await...of loop", async () => {
+    const sampleTextBuffer = new Buffer.from("Line1\nLine2\nLine3\nLine4");
+    const bufferStream = new PassThrough();
+
+    const rl = readline.createInterface({
+      input: bufferStream,
+    });
+
+    process.nextTick(() => {
+      bufferStream.end(sampleTextBuffer);
+    });
+
+    const result = [];
+    for await (const line of rl) result.push(line);
+    expect(result).toEqual(["Line1", "Line2", "Line3", "Line4"]);
   });
 
   it("should respond to home and end sequences for common pttys ", () => {

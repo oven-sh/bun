@@ -29,7 +29,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 #include "config.h"
 #include "HTTPParsers.h"
 
@@ -197,6 +196,17 @@ bool isValidHTTPToken(StringView value)
 {
     if (value.isEmpty())
         return false;
+
+    if (value.is8Bit()) {
+        const LChar* characters = value.characters8();
+        const LChar* end = characters + value.length();
+        while (characters < end) {
+            if (!RFC7230::isTokenCharacter(*characters++))
+                return false;
+        }
+        return true;
+    }
+
     for (UChar c : value.codeUnits()) {
         if (!RFC7230::isTokenCharacter(c))
             return false;

@@ -156,6 +156,8 @@ test.if(macOS)("runs on macOS", () => {
 });
 ```
 
+## `test.skipIf`
+
 To instead skip a test based on some condition, use `test.skipIf()` or `describe.skipIf()`.
 
 ```ts
@@ -166,16 +168,32 @@ test.skipIf(macOS)("runs on non-macOS", () => {
 });
 ```
 
+## `test.todoIf`
+
+If instead you want to mark the test as TODO, use `test.todoIf()` or `describe.todoIf()`. Carefully choosing `skipIf` or `todoIf` can show a difference between, for example, intent of "invalid for this target" and "planned but not implemented yet."
+
+```ts
+const macOS = process.arch === "darwin";
+
+// TODO: we've only implemented this for Linux so far.
+test.todoIf(macOS)("runs on posix", () => {
+  // runs if *not* macOS
+});
+```
+
 ## `test.each`
 
 To return a function for multiple cases in a table of tests, use `test.each`.
 
 ```ts
-const cases = [[1, 2, 3], [3, 4, 5]];
+const cases = [
+  [1, 2, 3],
+  [3, 4, 5],
+];
 
 test.each(cases)("%p + %p should be %p", (a, b, expected) => {
-    // runs once for each test case provided
-})
+  // runs once for each test case provided
+});
 ```
 
 There are a number of options available for formatting the case label depending on its type.
@@ -327,7 +345,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.assertions()`](https://jestjs.io/docs/expect#expectassertionsnumber)
 
 ---
@@ -337,7 +355,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.hasAssertions()`](https://jestjs.io/docs/expect#expecthasassertions)
 
 ---

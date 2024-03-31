@@ -6,7 +6,7 @@
 import { file, Server } from "bun";
 import { mkdtempSync, realpathSync } from "fs";
 
-let expect: typeof import("bun:test")["expect"];
+let expect: (typeof import("bun:test"))["expect"];
 
 import { readdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
@@ -121,7 +121,6 @@ registry = "http://localhost:${server.port}/"
 
 export async function dummyAfterEach() {
   resetHandler();
-  await rm(package_dir, { force: true, recursive: true });
 }
 
 if (Bun.main === import.meta.path) {

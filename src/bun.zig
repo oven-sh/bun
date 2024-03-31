@@ -27,6 +27,8 @@ else
 
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
+pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
+
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
@@ -38,7 +40,7 @@ pub const meta = @import("./meta.zig");
 pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
-pub const resolver = @import("./resolver//resolver.zig");
+pub const resolver = @import("./resolver/resolver.zig");
 pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
@@ -46,9 +48,9 @@ pub const allocators = @import("./allocators.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
+    pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
+    // pub const ShellSubprocessMini = @import("./shell/subproc.zig").ShellSubprocessMini;
 };
-
-pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");
@@ -64,15 +66,29 @@ else
     std.os.fd_t;
 
 pub const FileDescriptor = enum(FileDescriptorInt) {
-    zero,
+    /// Zero is used in old filesystem code to indicate "no file descriptor"
+    /// This is problematic because on POSIX, this is ambiguous with stdin being 0.
+    /// All code that uses this should migrate to invalid_fd to represent invalid states.
+    zero = 0,
+    // Represents an invalid file descriptor. This is used instead of null to
+    // avoid an extra bit.
+    // invalid = @intFromEnum(invalid_fd),
     _,
 
-    pub inline fn int(fd: FileDescriptor) FileDescriptorInt {
-        return @intFromEnum(fd);
+    /// Do not use this function in new code.
+    ///
+    /// Interpreting a FD as an integer is almost certainly a mistake.
+    /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
+    ///
+    /// TODO(@paperdave): remove this API.
+    pub inline fn int(self: FileDescriptor) std.os.fd_t {
+        if (Environment.isWindows)
+            @compileError("FileDescriptor.int() is not allowed on Windows.");
+        return @intFromEnum(self);
     }
 
     pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
-        try writer.writeInt(FileDescriptorInt, fd.int(), endian);
+        try writer.writeInt(FileDescriptorInt, @intFromEnum(fd), endian);
     }
 
     pub inline fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
@@ -114,6 +130,28 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
         std.debug.assert(FDImpl.decode(fd).kind == kind);
+    }
+
+    pub fn cwd() FileDescriptor {
+        return toFD(std.fs.cwd().fd);
+    }
+
+    pub fn isStdio(fd: FileDescriptor) bool {
+        // fd.assertValid();
+        const decoded = FDImpl.decode(fd);
+        return switch (Environment.os) {
+            else => decoded.value.as_system < 3,
+            .windows => switch (decoded.kind) {
+                .system => fd == win32.STDIN_FD or
+                    fd == win32.STDOUT_FD or
+                    fd == win32.STDERR_FD,
+                .uv => decoded.value.as_uv < 3,
+            },
+        };
+    }
+
+    pub fn toJS(value: FileDescriptor, global: *JSC.JSGlobalObject) JSC.JSValue {
+        return FDImpl.decode(value).toJS(global);
     }
 };
 
@@ -173,7 +211,7 @@ pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
-pub const WPathBuffer = [MAX_PATH_BYTES / 2]u16;
+pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
 pub const OSPathChar = if (Environment.isWindows) u16 else u8;
 pub const OSPathSliceZ = [:0]const OSPathChar;
 pub const OSPathSlice = []const OSPathChar;
@@ -448,53 +486,82 @@ pub fn ensureNonBlocking(fd: anytype) void {
     _ = std.os.fcntl(fd, std.os.F.SETFL, current | std.os.O.NONBLOCK) catch 0;
 }
 
-const global_scope_log = Output.scoped(.bun, false);
+const global_scope_log = sys.syslog;
 pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
         @panic("TODO on Windows");
     }
-
+    std.debug.assert(fd != invalid_fd);
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.IN | std.os.POLL.ERR,
+            .events = std.os.POLL.IN | std.os.POLL.ERR | std.os.POLL.HUP,
             .revents = 0,
         },
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    global_scope_log("poll({d}) readable: {any} ({d})", .{ fd, result, polls[0].revents });
-    return if (result and polls[0].revents & std.os.POLL.HUP != 0)
+    const rc = if (result and polls[0].revents & (std.os.POLL.HUP | std.os.POLL.ERR) != 0)
         PollFlag.hup
     else if (result)
         PollFlag.ready
     else
         PollFlag.not_ready;
+    global_scope_log("poll({}, .readable): {any} ({s}{s})", .{
+        fd,
+        result,
+        @tagName(rc),
+        if (polls[0].revents & std.os.POLL.ERR != 0) " ERR " else "",
+    });
+    return rc;
 }
 
 pub const PollFlag = enum { ready, not_ready, hup };
 pub fn isWritable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
-        @panic("TODO on Windows");
+        var polls = [_]std.os.windows.ws2_32.WSAPOLLFD{
+            .{
+                .fd = socketcast(fd),
+                .events = std.os.POLL.WRNORM,
+                .revents = 0,
+            },
+        };
+        const rc = std.os.windows.ws2_32.WSAPoll(&polls, 1, 0);
+        const result = (if (rc != std.os.windows.ws2_32.SOCKET_ERROR) @as(usize, @intCast(rc)) else 0) != 0;
+        global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
+        if (result and polls[0].revents & std.os.POLL.WRNORM != 0) {
+            return .hup;
+        } else if (result) {
+            return .ready;
+        } else {
+            return .not_ready;
+        }
+        return;
     }
+    std.debug.assert(fd != invalid_fd);
 
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.OUT,
+            .events = std.os.POLL.OUT | std.os.POLL.ERR | std.os.POLL.HUP,
             .revents = 0,
         },
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    global_scope_log("poll({d}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
-    if (result and polls[0].revents & std.os.POLL.HUP != 0) {
-        return PollFlag.hup;
-    } else if (result) {
-        return PollFlag.ready;
-    } else {
-        return PollFlag.not_ready;
-    }
+    const rc = if (result and polls[0].revents & (std.os.POLL.HUP | std.os.POLL.ERR) != 0)
+        PollFlag.hup
+    else if (result)
+        PollFlag.ready
+    else
+        PollFlag.not_ready;
+    global_scope_log("poll({}, .writable): {any} ({s}{s})", .{
+        fd,
+        result,
+        @tagName(rc),
+        if (polls[0].revents & std.os.POLL.ERR != 0) " ERR " else "",
+    });
+    return rc;
 }
 
 /// Do not use this function, call std.debug.panic directly.
@@ -549,9 +616,8 @@ pub fn isHeapMemory(memory: anytype) bool {
 
 pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
-pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
-    return slice.len > 0 and @intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and ((@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
-}
+pub const isSliceInBuffer = allocators.isSliceInBuffer;
+pub const isSliceInBufferT = allocators.isSliceInBufferT;
 
 pub inline fn sliceInBuffer(stable: string, value: string) string {
     if (allocators.sliceRange(stable, value)) |_| {
@@ -592,7 +658,6 @@ pub const BoringSSL = @import("./boringssl.zig");
 pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
 pub const analytics = @import("./analytics.zig");
-pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 
 pub var start_time: i128 = 0;
 
@@ -668,7 +733,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
             const key = line[0..key_end];
-            if (strings.eqlLong(key, path_, true)) {
+            if (strings.eqlInsensitive(key, path_)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }
@@ -903,6 +968,8 @@ pub const disableCopyFileRangeSyscall = CopyFile.disableCopyFileRangeSyscall;
 pub const can_use_ioctl_ficlone = CopyFile.can_use_ioctl_ficlone;
 pub const disable_ioctl_ficlone = CopyFile.disable_ioctl_ficlone;
 pub const copyFile = CopyFile.copyFile;
+pub const copyFileWithState = CopyFile.copyFileWithState;
+pub const CopyFileState = CopyFile.CopyFileState;
 
 pub fn parseDouble(input: []const u8) !f64 {
     if (comptime Environment.isWasm) {
@@ -945,12 +1012,29 @@ pub const SignalCode = enum(u8) {
     SIGSYS = 31,
     _,
 
+    // The `subprocess.kill()` method sends a signal to the child process. If no
+    // argument is given, the process will be sent the 'SIGTERM' signal.
+    pub const default = @intFromEnum(SignalCode.SIGTERM);
+    pub const Map = ComptimeEnumMap(SignalCode);
     pub fn name(value: SignalCode) ?[]const u8 {
         if (@intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS)) {
             return asByteSlice(@tagName(value));
         }
 
         return null;
+    }
+
+    pub fn valid(value: SignalCode) bool {
+        return @intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS) and @intFromEnum(value) >= @intFromEnum(SignalCode.SIGHUP);
+    }
+
+    /// Shell scripts use exit codes 128 + signal number
+    /// https://tldp.org/LDP/abs/html/exitcodes.html
+    pub fn toExitCode(value: SignalCode) ?u8 {
+        return switch (@intFromEnum(value)) {
+            1...31 => 128 +% @intFromEnum(value),
+            else => null,
+        };
     }
 
     pub fn description(signal: SignalCode) ?[]const u8 {
@@ -1397,6 +1481,36 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
     .free = FailingAllocator.free,
 } };
 
+var __reload_in_progress__ = std.atomic.Value(bool).init(false);
+threadlocal var __reload_in_progress__on_current_thread = false;
+fn isProcessReloadInProgressOnAnotherThread() bool {
+    @fence(.Acquire);
+    return __reload_in_progress__.load(.Monotonic) and !__reload_in_progress__on_current_thread;
+}
+
+pub noinline fn maybeHandlePanicDuringProcessReload() void {
+    if (isProcessReloadInProgressOnAnotherThread()) {
+        Output.flush();
+        if (comptime Environment.isDebug) {
+            Output.debugWarn("panic() called during process reload, ignoring\n", .{});
+        }
+
+        exitThread();
+    }
+
+    // This shouldn't be reachable, but it can technically be because
+    // pthread_exit is a request and not guranteed.
+    if (isProcessReloadInProgressOnAnotherThread()) {
+        while (true) {
+            std.atomic.spinLoopHint();
+
+            if (comptime Environment.isPosix) {
+                std.os.nanosleep(1, 0);
+            }
+        }
+    }
+}
+
 /// Reload Bun's process
 ///
 /// This clones envp, argv, and gets the current executable path
@@ -1409,22 +1523,21 @@ pub fn reloadProcess(
     allocator: std.mem.Allocator,
     clear_terminal: bool,
 ) noreturn {
+    __reload_in_progress__.store(true, .Monotonic);
+    __reload_in_progress__on_current_thread = true;
+
     if (clear_terminal) {
         Output.flush();
         Output.disableBuffering();
         Output.resetTerminalAll();
     }
+    Output.Source.Stdio.restore();
     const bun = @This();
 
     if (comptime Environment.isWindows) {
-        // this assumes that our parent process assigned us to a job object (see runWatcherManager)
-        var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
-        win32.spawnProcessCopy(allocator, &procinfo, false, false) catch |err| {
-            Output.panic("Error while reloading process: {s}", .{@errorName(err)});
-        };
-
-        // terminate the current process
-        const rc = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), 0);
+        // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
+        // see becomeWatcherManager
+        const rc = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), win32.watcher_reload_exit);
         if (rc == 0) {
             const err = bun.windows.GetLastError();
             Output.panic("Error while reloading process: {s}", .{@tagName(err)});
@@ -1449,7 +1562,7 @@ pub fn reloadProcess(
     }
 
     // we must clone selfExePath incase the argv[0] was not an absolute path (what appears in the terminal)
-    const exec_path = (allocator.dupeZ(u8, std.fs.selfExePathAlloc(allocator) catch unreachable) catch unreachable).ptr;
+    const exec_path = (bun.selfExePath() catch unreachable).ptr;
 
     // we clone argv so that the memory address isn't the same as the libc one
     const newargv = @as([*:null]?[*:0]const u8, @ptrCast(dupe_argv.ptr));
@@ -1728,7 +1841,7 @@ pub const WTF = struct {
 
 pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 
-pub const Wyhash = @import("./wyhash.zig").Wyhash;
+pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 pub inline fn assertComptime() void {
@@ -1778,13 +1891,13 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
 ///
 /// On windows, this file descriptor will always be backed by libuv, so calling .close() is safe.
-pub inline fn toLibUVOwnedFD(fd: anytype) FileDescriptor {
+pub inline fn toLibUVOwnedFD(fd: anytype) !FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
-            FDImpl.System => FDImpl.fromSystem(fd).makeLibUVOwned(),
+            FDImpl.System => try FDImpl.fromSystem(fd).makeLibUVOwned(),
             FDImpl.UV => FDImpl.fromUV(fd),
-            FileDescriptor => FDImpl.decode(fd).makeLibUVOwned(),
+            FileDescriptor => try FDImpl.decode(fd).makeLibUVOwned(),
             FDImpl => fd.makeLibUVOwned(),
             else => @compileError("toLibUVOwnedFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
@@ -1813,6 +1926,20 @@ pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
             FileDescriptor => FDImpl.decode(fd),
             else => @compileError("uvfdcast() does not support type \"" ++ @typeName(T) ++ "\""),
         });
+
+        // Specifically allow these anywhere:
+        if (fd == win32.STDIN_FD) {
+            return 0;
+        }
+
+        if (fd == win32.STDOUT_FD) {
+            return 1;
+        }
+
+        if (fd == win32.STDERR_FD) {
+            return 2;
+        }
+
         if (Environment.allow_assert) {
             if (decoded.kind != .uv) {
                 std.debug.panic("uvfdcast({}) called on an windows handle", .{decoded});
@@ -1877,9 +2004,9 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
-var _argv: [][:0]u8 = &[_][:0]u8{};
+var _argv: [][:0]const u8 = &[_][:0]const u8{};
 
-pub inline fn argv() [][:0]u8 {
+pub inline fn argv() [][:0]const u8 {
     return _argv;
 }
 
@@ -1911,6 +2038,9 @@ pub const win32 = struct {
     pub var STDIN_FD: FileDescriptor = undefined;
 
     const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
+    // magic exit code to indicate to the watcher manager that the child process should be re-spawned
+    // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
+    const watcher_reload_exit: w.DWORD = 3224497970;
 
     pub fn stdio(i: anytype) FileDescriptor {
         return switch (i) {
@@ -1921,6 +2051,8 @@ pub const win32 = struct {
         };
     }
 
+    pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+
     pub fn isWatcherChild() bool {
         var buf: [1]u16 = undefined;
         return windows.GetEnvironmentVariableW(@constCast(watcherChildEnv.ptr), &buf, 1) > 0;
@@ -1928,113 +2060,73 @@ pub const win32 = struct {
 
     pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
         // this process will be the parent of the child process that actually runs the script
-        // based on https://devblogs.microsoft.com/oldnewthing/20130405-00/?p=4743
-        const job = windows.CreateJobObjectA(null, null);
-        const iocp = windows.CreateIoCompletionPort(windows.INVALID_HANDLE_VALUE, null, 0, 1) orelse {
-            Output.panic("Failed to create IOCP\n", .{});
-        };
-        var assoc = windows.JOBOBJECT_ASSOCIATE_COMPLETION_PORT{
-            .CompletionKey = job,
-            .CompletionPort = iocp,
-        };
-        if (windows.SetInformationJobObject(job, windows.JobObjectAssociateCompletionPortInformation, &assoc, @sizeOf(windows.JOBOBJECT_ASSOCIATE_COMPLETION_PORT)) == 0) {
-            const err = windows.GetLastError();
-            Output.panic("Failed to associate completion port: {s}\n", .{@tagName(err)});
-        }
-
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
-        spawnProcessCopy(allocator, &procinfo, true, true) catch |err| {
-            Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
-        };
-        if (windows.AssignProcessToJobObject(job, procinfo.hProcess) == 0) {
-            const err = windows.GetLastError();
-            Output.panic("Failed to assign process to job object: {s}\n", .{@tagName(err)});
-        }
-        if (windows.ResumeThread(procinfo.hThread) == 0) {
-            const err = windows.GetLastError();
-            Output.panic("Failed to resume child process: {s}\n", .{@tagName(err)});
-        }
-
-        var completion_code: w.DWORD = 0;
-        var completion_key: w.ULONG_PTR = 0;
-        var overlapped: ?*w.OVERLAPPED = null;
-        var last_pid: w.DWORD = 0;
+        C.windows_enable_stdio_inheritance();
         while (true) {
-            if (w.kernel32.GetQueuedCompletionStatus(iocp, &completion_code, &completion_key, &overlapped, w.INFINITE) == 0) {
+            spawnWatcherChild(allocator, &procinfo) catch |err| {
+                Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
+            };
+            w.WaitForSingleObject(procinfo.hProcess, w.INFINITE) catch |err| {
+                Output.panic("Failed to wait for child process: {s}\n", .{@errorName(err)});
+            };
+            var exit_code: w.DWORD = 0;
+            if (w.kernel32.GetExitCodeProcess(procinfo.hProcess, &exit_code) == 0) {
                 const err = windows.GetLastError();
-                Output.panic("Failed to query completion status: {s}\n", .{@tagName(err)});
+                _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
+                Output.panic("Failed to get exit code of child process: {s}\n", .{@tagName(err)});
             }
-            // only care about events concerning our job object (theoretically unnecessary)
-            if (completion_key != @intFromPtr(job)) {
+            _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
+
+            // magic exit code to indicate that the child process should be re-spawned
+            if (exit_code == watcher_reload_exit) {
                 continue;
-            }
-            if (completion_code == windows.JOB_OBJECT_MSG_EXIT_PROCESS) {
-                last_pid = @truncate(@intFromPtr(overlapped));
-            } else if (completion_code == windows.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO) {
-                break;
+            } else {
+                Global.exitWide(exit_code);
             }
         }
-        // NOTE: for now we always exit with a zero exit code.
-        // This is because there's no straightforward way to communicate the exit code
-        // of subsequently spawned child processes to the original parent process.
-        Global.exit(0);
     }
 
-    pub fn spawnProcessCopy(
+    pub fn spawnWatcherChild(
         allocator: std.mem.Allocator,
         procinfo: *std.os.windows.PROCESS_INFORMATION,
-        suspended: bool,
-        setChild: bool,
     ) !void {
-        var flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
-        if (suspended) {
-            // see CREATE_SUSPENDED at
-            // https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
-            flags |= 0x00000004;
-        }
+        const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
 
-        const image_path = &w.peb().ProcessParameters.ImagePathName;
+        const image_path = windows.exePathW();
         var wbuf: WPathBuffer = undefined;
-        @memcpy(wbuf[0..image_path.Length], image_path.Buffer);
-        wbuf[image_path.Length] = 0;
+        @memcpy(wbuf[0..image_path.len], image_path);
+        wbuf[image_path.len] = 0;
 
-        const image_pathZ = wbuf[0..image_path.Length :0];
+        const image_pathZ = wbuf[0..image_path.len :0];
 
         const kernelenv = w.kernel32.GetEnvironmentStringsW();
-        var newenv: ?[]u16 = null;
         defer {
             if (kernelenv) |envptr| {
                 _ = w.kernel32.FreeEnvironmentStringsW(envptr);
             }
-            if (newenv) |ptr| {
-                allocator.free(ptr);
-            }
         }
 
-        if (setChild) {
-            var size: usize = 0;
-            if (kernelenv) |ptr| {
-                // check that env is non-empty
-                if (ptr[0] != 0 or ptr[1] != 0) {
-                    // array is terminated by two nulls
-                    while (ptr[size] != 0 or ptr[size + 1] != 0) size += 1;
-                    size += 1;
-                }
+        var size: usize = 0;
+        if (kernelenv) |ptr| {
+            // check that env is non-empty
+            if (ptr[0] != 0 or ptr[1] != 0) {
+                // array is terminated by two nulls
+                while (ptr[size] != 0 or ptr[size + 1] != 0) size += 1;
+                size += 1;
             }
-            // now ptr[size] is the first null
-            const buf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
-            if (kernelenv) |ptr| {
-                @memcpy(buf[0..size], ptr);
-            }
-            @memcpy(buf[size .. size + watcherChildEnv.len], watcherChildEnv);
-            buf[size + watcherChildEnv.len] = '=';
-            buf[size + watcherChildEnv.len + 1] = '1';
-            buf[size + watcherChildEnv.len + 2] = 0;
-            buf[size + watcherChildEnv.len + 3] = 0;
-            newenv = buf;
         }
+        // now ptr[size] is the first null
 
-        const env: ?[*]u16 = if (newenv) |e| e.ptr else kernelenv;
+        const envbuf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
+        defer allocator.free(envbuf);
+        if (kernelenv) |ptr| {
+            @memcpy(envbuf[0..size], ptr);
+        }
+        @memcpy(envbuf[size .. size + watcherChildEnv.len], watcherChildEnv);
+        envbuf[size + watcherChildEnv.len] = '=';
+        envbuf[size + watcherChildEnv.len + 1] = '1';
+        envbuf[size + watcherChildEnv.len + 2] = 0;
+        envbuf[size + watcherChildEnv.len + 3] = 0;
 
         var startupinfo = w.STARTUPINFOW{
             .cb = @sizeOf(w.STARTUPINFOW),
@@ -2056,14 +2148,15 @@ pub const win32 = struct {
             .hStdOutput = std.io.getStdOut().handle,
             .hStdError = std.io.getStdErr().handle,
         };
+        @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(
-            image_pathZ,
+            image_pathZ.ptr,
             w.kernel32.GetCommandLineW(),
             null,
             null,
             1,
             flags,
-            env,
+            envbuf.ptr,
             null,
             &startupinfo,
             procinfo,
@@ -2071,6 +2164,7 @@ pub const win32 = struct {
         if (rc == 0) {
             Output.panic("Unexpected error while reloading process\n", .{});
         }
+        _ = std.os.windows.ntdll.NtClose(procinfo.hThread);
     }
 };
 
@@ -2093,7 +2187,17 @@ pub const FDTag = enum {
     stdout,
     pub fn get(fd_: anytype) FDTag {
         const fd = toFD(fd_);
+        const T = @TypeOf(fd_);
         if (comptime Environment.isWindows) {
+            if (@typeInfo(T) == .Int or @typeInfo(T) == .ComptimeInt) {
+                switch (fd_) {
+                    0 => return .stdin,
+                    1 => return .stdout,
+                    2 => return .stderr,
+                    else => {},
+                }
+            }
+
             if (fd == win32.STDOUT_FD) {
                 return .stdout;
             } else if (fd == win32.STDERR_FD) {
@@ -2408,10 +2512,10 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 
 /// Globally-allocate a value on the heap.
 ///
-/// When used, yuo must call `bun.destroy` to free the memory.
+/// When used, you must call `bun.destroy` to free the memory.
 /// default_allocator.destroy should not be used.
 ///
-/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn new(comptime T: type, t: T) *T {
     if (comptime is_heap_breakdown_enabled) {
@@ -2427,7 +2531,7 @@ pub inline fn new(comptime T: type, t: T) *T {
 
 /// Free a globally-allocated a value
 ///
-/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
     if (comptime is_heap_breakdown_enabled) {
@@ -2493,6 +2597,10 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
     }
 
+    const output_name: []const u8 = if (@hasDecl(T, "DEBUG_REFCOUNT_NAME")) T.DEBUG_REFCOUNT_NAME else meta.typeBaseName(@typeName(T));
+
+    const log = Output.scoped(output_name, true);
+
     return struct {
         const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
 
@@ -2510,10 +2618,12 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
 
         pub fn ref(self: *T) void {
+            if (comptime Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
+            if (comptime Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
             self.ref_count -= 1;
 
             if (self.ref_count == 0) {
@@ -2531,7 +2641,9 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
                 ptr.* = t;
 
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(ptr.ref_count == 1);
+                    if (ptr.ref_count != 1) {
+                        std.debug.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
+                    }
                     allocation_logger("new() = {*}", .{ptr});
                 }
 
@@ -2555,7 +2667,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
 ///
 /// Must have used `new` to allocate the value.
 ///
-/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn destroy(t: anytype) void {
     if (comptime is_heap_breakdown_enabled) {
@@ -2675,10 +2787,66 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     return output_buffer[0..size];
 }
 
-/// This struct is a workaround a Windows terminal bug.
-/// TODO: when https://github.com/microsoft/terminal/issues/16606 is resolved, revert this commit.
-pub var buffered_stdin = std.io.BufferedReader(4096, std.fs.File.Reader){
-    .unbuffered_reader = std.fs.File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else 0 } },
-};
+pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {
+    if (Environment.isWindows) {
+        return;
+    }
 
-pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");
+    if (@inComptime()) {
+        @compileError("This function is only available on Windows");
+    }
+
+    @panic("Assertion failure: this function should only be accessible on Windows.");
+}
+
+pub inline fn markPosixOnly() if (Environment.isPosix) void else noreturn {
+    if (Environment.isPosix) {
+        return;
+    }
+
+    if (@inComptime()) {
+        @compileError("This function is only available on POSIX");
+    }
+
+    @panic("Assertion failure: this function should only be accessible on POSIX.");
+}
+
+pub fn linuxKernelVersion() Semver.Version {
+    if (comptime !Environment.isLinux) @compileError("linuxKernelVersion() is only available on Linux");
+    return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+}
+
+pub fn selfExePath() ![:0]u8 {
+    const memo = struct {
+        var set = false;
+        // TODO open zig issue to make 'std.fs.selfExePath' return [:0]u8 directly
+        // note: this doesn't use MAX_PATH_BYTES because on windows that's 32767*3+1 yet normal paths are 255.
+        // should this fail it will still do so gracefully. 4096 is MAX_PATH_BYTES on posix.
+        var value: [
+            4096 + 1 // + 1 for the null terminator
+        ]u8 = undefined;
+        var len: usize = 0;
+        var lock = Lock.init();
+
+        pub fn load() ![:0]u8 {
+            const init = try std.fs.selfExePath(&value);
+            @This().len = init.len;
+            value[@This().len] = 0;
+            set = true;
+            return value[0..@This().len :0];
+        }
+    };
+
+    // try without a lock
+    if (memo.set) return memo.value[0..memo.len :0];
+
+    // make it thread-safe
+    memo.lock.lock();
+    defer memo.lock.unlock();
+    // two calls could happen concurrently, so we must check again
+    if (memo.set) return memo.value[0..memo.len :0];
+    return memo.load();
+}
+pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
+
+pub const spawnSync = @This().spawn.sync.spawn;

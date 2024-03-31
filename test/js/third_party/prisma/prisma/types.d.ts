@@ -439,17 +439,18 @@ export namespace Prisma {
   /**
    * Is T a Record?
    */
-  type IsObject<T extends any> = T extends Array<any>
-    ? False
-    : T extends Date
+  type IsObject<T extends any> =
+    T extends Array<any>
       ? False
-      : T extends Uint8Array
+      : T extends Date
         ? False
-        : T extends BigInt
+        : T extends Uint8Array
           ? False
-          : T extends object
-            ? True
-            : False;
+          : T extends BigInt
+            ? False
+            : T extends object
+              ? True
+              : False;
 
   /**
    * If it's T[], return T
@@ -728,9 +729,10 @@ export namespace Prisma {
       ? T["level"]
       : never
     : never;
-  export type GetEvents<T extends any> = T extends Array<LogLevel | LogDefinition>
-    ? GetLogType<T[0]> | GetLogType<T[1]> | GetLogType<T[2]> | GetLogType<T[3]>
-    : never;
+  export type GetEvents<T extends any> =
+    T extends Array<LogLevel | LogDefinition>
+      ? GetLogType<T[0]> | GetLogType<T[1]> | GetLogType<T[2]> | GetLogType<T[3]>
+      : never;
 
   export type QueryEvent = {
     timestamp: Date;

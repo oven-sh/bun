@@ -22,7 +22,7 @@ threadlocal var source_set: bool = false;
 var stderr_stream: Source.StreamType = undefined;
 var stdout_stream: Source.StreamType = undefined;
 var stdout_stream_set = false;
-
+const File = bun.sys.File;
 pub var terminal_size: std.os.winsize = .{
     .ws_row = 0,
     .ws_col = 0,
@@ -35,7 +35,7 @@ pub const Source = struct {
         if (Environment.isWasm) {
             break :brk std.io.FixedBufferStream([]u8);
         } else {
-            break :brk std.fs.File;
+            break :brk File;
             // var stdout = std.io.getStdOut();
             // return @TypeOf(std.io.bufferedWriter(stdout.writer()));
         }
@@ -45,7 +45,7 @@ pub const Source = struct {
             if (comptime Environment.isWasm)
                 return StreamType;
 
-            return std.io.BufferedWriter(4096, @TypeOf(StreamType.writer(undefined)));
+            return std.io.BufferedWriter(4096, @TypeOf(StreamType.quietWriter(undefined)));
         }
     }.getBufferedStream();
 
@@ -75,11 +75,11 @@ pub const Source = struct {
             .stream = stream,
             .error_stream = err_stream,
             .buffered_stream = if (Environment.isNative)
-                BufferedStream{ .unbuffered_writer = stream.writer() }
+                BufferedStream{ .unbuffered_writer = stream.quietWriter() }
             else
                 stream,
             .buffered_error_stream = if (Environment.isNative)
-                BufferedStream{ .unbuffered_writer = err_stream.writer() }
+                BufferedStream{ .unbuffered_writer = err_stream.quietWriter() }
             else
                 err_stream,
         };
@@ -133,8 +133,117 @@ pub const Source = struct {
         return false;
     }
 
-    pub fn set(_source: *Source) void {
-        source = _source.*;
+    export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
+
+    const WindowsStdio = struct {
+        const w = std.os.windows;
+
+        // TODO: when https://github.com/ziglang/zig/pull/18692 merges, use std.os.windows for this
+        extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
+        extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
+        extern fn GetConsoleOutputCP() u32;
+        pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+
+        pub var console_mode = [3]?u32{ null, null, null };
+        pub var console_codepage = @as(u32, 0);
+        pub var console_output_codepage = @as(u32, 0);
+
+        pub fn restore() void {
+            const peb = std.os.windows.peb();
+            const stdout = peb.ProcessParameters.hStdOutput;
+            const stderr = peb.ProcessParameters.hStdError;
+            const stdin = peb.ProcessParameters.hStdInput;
+
+            const handles = &.{ &stdin, &stdout, &stderr };
+            inline for (console_mode, handles) |mode, handle| {
+                if (mode) |m| {
+                    _ = SetConsoleMode(handle.*, m);
+                }
+            }
+
+            if (console_output_codepage != 0)
+                _ = w.kernel32.SetConsoleOutputCP(console_output_codepage);
+
+            if (console_codepage != 0)
+                _ = SetConsoleCP(console_codepage);
+        }
+
+        pub fn init() void {
+            bun.windows.libuv.uv_disable_stdio_inheritance();
+
+            const stdin = w.GetStdHandle(w.STD_INPUT_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
+            const stdout = w.GetStdHandle(w.STD_OUTPUT_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
+            const stderr = w.GetStdHandle(w.STD_ERROR_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
+
+            bun.win32.STDERR_FD = if (stderr != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stderr) else bun.invalid_fd;
+            bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
+            bun.win32.STDIN_FD = if (stdin != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdin) else bun.invalid_fd;
+
+            buffered_stdin.unbuffered_reader.context.handle = bun.win32.STDIN_FD;
+
+            // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
+            const CP_UTF8 = 65001;
+            console_output_codepage = w.kernel32.GetConsoleOutputCP();
+            _ = w.kernel32.SetConsoleOutputCP(CP_UTF8);
+
+            console_codepage = w.kernel32.GetConsoleOutputCP();
+            _ = SetConsoleCP(CP_UTF8);
+
+            const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
+            const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
+            const ENABLE_PROCESSED_OUTPUT = 0x0001;
+
+            var mode: w.DWORD = undefined;
+            if (w.kernel32.GetConsoleMode(stdin, &mode) != 0) {
+                console_mode[0] = mode;
+                bun_stdio_tty[0] = 1;
+                _ = SetConsoleMode(stdin, mode | ENABLE_VIRTUAL_TERMINAL_INPUT);
+            }
+
+            if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
+                console_mode[1] = mode;
+                bun_stdio_tty[1] = 1;
+                _ = SetConsoleMode(stdout, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_WRAP_AT_EOL_OUTPUT | mode);
+            }
+
+            if (w.kernel32.GetConsoleMode(stderr, &mode) != 0) {
+                console_mode[2] = mode;
+                bun_stdio_tty[2] = 1;
+                _ = SetConsoleMode(stderr, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_WRAP_AT_EOL_OUTPUT | mode);
+            }
+        }
+    };
+
+    pub const Stdio = struct {
+        pub fn init() void {
+            bun.C.bun_initialize_process();
+
+            if (Environment.isWindows) {
+                WindowsStdio.init();
+            }
+
+            const stdout = bun.sys.File.from(std.io.getStdOut());
+            const stderr = bun.sys.File.from(std.io.getStdErr());
+
+            Output.Source.init(stdout, stderr)
+                .set();
+
+            if (comptime Environment.isDebug) {
+                initScopedDebugWriterAtStartup();
+            }
+        }
+
+        pub fn restore() void {
+            if (Environment.isWindows) {
+                WindowsStdio.restore();
+            } else {
+                bun.C.bun_restore_stdio();
+            }
+        }
+    };
+
+    pub fn set(new_source: *const Source) void {
+        source = new_source.*;
 
         source_set = true;
         if (!stdout_stream_set) {
@@ -147,12 +256,12 @@ pub const Source = struct {
                     enable_color = false;
                 }
 
-                const is_stdout_tty = _source.stream.isTty();
+                const is_stdout_tty = bun_stdio_tty[1] != 0;
                 if (is_stdout_tty) {
                     stdout_descriptor_type = OutputStreamDescriptor.terminal;
                 }
 
-                const is_stderr_tty = _source.error_stream.isTty();
+                const is_stderr_tty = bun_stdio_tty[2] != 0;
                 if (is_stderr_tty) {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
                 }
@@ -162,8 +271,8 @@ pub const Source = struct {
                 enable_ansi_colors = enable_ansi_colors_stdout or enable_ansi_colors_stderr;
             }
 
-            stdout_stream = _source.stream;
-            stderr_stream = _source.error_stream;
+            stdout_stream = new_source.stream;
+            stderr_stream = new_source.error_stream;
         }
     }
 };
@@ -213,7 +322,7 @@ pub fn initTest() void {
     _source_for_test_set = true;
     const in = std.io.getStdErr();
     const out = std.io.getStdOut();
-    _source_for_test = Output.Source.init(out, in);
+    _source_for_test = Output.Source.init(File.from(out), File.from(in));
     Output.Source.set(&_source_for_test);
 }
 pub fn enableBuffering() void {
@@ -225,7 +334,9 @@ pub fn disableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = false;
 }
 
-pub fn panic(comptime fmt: string, args: anytype) noreturn {
+pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
+    @setCold(true);
+
     if (Output.isEmojiEnabled()) {
         std.debug.panic(comptime Output.prettyFmt(fmt, true), args);
     } else {
@@ -233,11 +344,11 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
     }
 }
 
-pub const WriterType: type = @TypeOf(Source.StreamType.writer(undefined));
+pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
 pub fn errorWriter() WriterType {
     std.debug.assert(source_set);
-    return source.error_stream.writer();
+    return source.error_stream.quietWriter();
 }
 
 pub fn errorStream() Source.StreamType {
@@ -247,7 +358,7 @@ pub fn errorStream() Source.StreamType {
 
 pub fn writer() WriterType {
     std.debug.assert(source_set);
-    return source.stream.writer();
+    return source.stream.quietWriter();
 }
 
 pub fn resetTerminal() void {
@@ -256,17 +367,17 @@ pub fn resetTerminal() void {
     }
 
     if (enable_ansi_colors_stderr) {
-        _ = source.error_stream.write("\x1b[H\x1b[2J") catch 0;
+        _ = source.error_stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
     } else {
-        _ = source.stream.write("\x1b[H\x1b[2J") catch 0;
+        _ = source.stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
     }
 }
 
 pub fn resetTerminalAll() void {
     if (enable_ansi_colors_stderr)
-        _ = source.error_stream.write("\x1b[H\x1b[2J") catch 0;
+        _ = source.error_stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
     if (enable_ansi_colors_stdout)
-        _ = source.stream.write("\x1b[H\x1b[2J") catch 0;
+        _ = source.stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
 }
 
 /// Write buffered stdout & stderr to the terminal.
@@ -402,9 +513,9 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
-pub inline fn debug(comptime fmt: string, args: anytype) void {
+pub fn debug(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isRelease) return;
-    prettyErrorln("\n<d>DEBUG:<r> " ++ fmt, args);
+    prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
 
@@ -440,7 +551,12 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
 const _log_fn = fn (comptime fmt: string, args: anytype) void;
-pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_fn {
+pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
+    const tagname = switch (@TypeOf(tag)) {
+        @Type(.EnumLiteral) => @tagName(tag),
+        []const u8 => tag,
+        else => @compileError("Output.scoped expected @Type(.EnumLiteral) or []const u8, you gave: " ++ @typeName(@Type(tag))),
+    };
     if (comptime !Environment.isDebug or !Environment.isNative) {
         return struct {
             pub fn log(comptime _: string, _: anytype) void {}
@@ -448,7 +564,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
     }
 
     return struct {
-        const BufferedWriter = Source.BufferedStream;
+        const BufferedWriter = std.io.BufferedWriter(4096, bun.sys.File.QuietWriter);
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
@@ -468,14 +584,18 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                 return log(fmt ++ "\n", args);
             }
 
+            if (ScopedDebugWriter.disable_inside_log > 0) {
+                return;
+            }
+
             if (!evaluated_disable) {
                 evaluated_disable = true;
                 if (bun.getenvZ("BUN_DEBUG_ALL") != null or
-                    bun.getenvZ("BUN_DEBUG_" ++ @tagName(tag)) != null)
+                    bun.getenvZ("BUN_DEBUG_" ++ tagname) != null)
                 {
                     really_disable = false;
-                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS") != null) {
-                    really_disable = true;
+                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
+                    really_disable = really_disable or !strings.eqlComptime(val, "0");
                 }
             }
 
@@ -484,17 +604,16 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
 
             if (!out_set) {
                 buffered_writer = .{
-                    .unbuffered_writer = writer(),
+                    .unbuffered_writer = scopedWriter(),
                 };
                 out = buffered_writer.writer();
                 out_set = true;
             }
-
             lock.lock();
             defer lock.unlock();
 
-            if (Output.enable_ansi_colors_stderr) {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch {
+            if (Output.enable_ansi_colors_stdout and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
+                out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
                     really_disable = true;
                     return;
                 };
@@ -503,7 +622,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                     return;
                 };
             } else {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch {
+                out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, false), args) catch {
                     really_disable = true;
                     return;
                 };
@@ -770,7 +889,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
                 }
 
                 // TODO: convert zig errors to errno for better searchability?
-                if (errors.len == 1) break :display_name .{ comptime @errorName(errors[0]), true };
+                if (errors.len == 1) break :display_name .{ errors[0].name, true };
             }
 
             break :display_name .{ @errorName(error_name), false };
@@ -802,7 +921,58 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     }
 }
 
+const ScopedDebugWriter = struct {
+    pub var scoped_file_writer: File.QuietWriter = undefined;
+    pub threadlocal var disable_inside_log: isize = 0;
+};
+pub fn disableScopedDebugWriter() void {
+    ScopedDebugWriter.disable_inside_log += 1;
+}
+pub fn enableScopedDebugWriter() void {
+    ScopedDebugWriter.disable_inside_log -= 1;
+}
+pub fn initScopedDebugWriterAtStartup() void {
+    std.debug.assert(source_set);
+
+    if (bun.getenvZ("BUN_DEBUG")) |path| {
+        if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {
+            if (std.fs.path.dirname(path)) |dir| {
+                std.fs.cwd().makePath(dir) catch {};
+            }
+
+            // do not use libuv through this code path, since it might not be initialized yet.
+            const fd = std.os.openat(
+                std.fs.cwd().fd,
+                path,
+                std.os.O.CREAT | std.os.O.WRONLY,
+                // on windows this is u0
+                if (Environment.isWindows) 0 else 0o644,
+            ) catch |err_| {
+                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(err_), path });
+            };
+            _ = bun.sys.ftruncate(bun.toFD(fd), 0); // windows
+            ScopedDebugWriter.scoped_file_writer = File.from(fd).quietWriter();
+            return;
+        }
+    }
+
+    ScopedDebugWriter.scoped_file_writer = source.stream.quietWriter();
+}
+fn scopedWriter() File.QuietWriter {
+    if (comptime !Environment.isDebug) {
+        @compileError("scopedWriter() should only be called in debug mode");
+    }
+
+    return ScopedDebugWriter.scoped_file_writer;
+}
+
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
 pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<red>error<r><d>:<r> " ++ fmt, args);
 }
+
+/// This struct is a workaround a Windows terminal bug.
+/// TODO: when https://github.com/microsoft/terminal/issues/16606 is resolved, revert this commit.
+pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
+    .unbuffered_reader = File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else bun.toFD(0) } },
+};

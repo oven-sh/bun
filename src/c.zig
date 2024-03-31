@@ -411,7 +411,7 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
     };
 
     if (Wrapper.loaded == .pending) {
-        const result = _dlsym(@call(.always_inline, handle_getter, .{}), name);
+        const result = _dlsym(@call(bun.callmod_inline, handle_getter, .{}), name);
 
         if (result) |ptr| {
             Wrapper.function = bun.cast(Type, ptr);
@@ -462,3 +462,9 @@ pub fn dlopen(filename: [:0]const u8, flags: i32) ?*anyopaque {
 
     return std.c.dlopen(filename, flags);
 }
+
+pub extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+
+pub extern "C" fn bun_initialize_process() void;
+pub extern "C" fn bun_restore_stdio() void;
+pub extern "C" fn open_as_nonblocking_tty(i32, i32) i32;

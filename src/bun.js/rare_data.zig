@@ -45,6 +45,17 @@ node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
 listening_sockets_for_watch_mode_lock: bun.Lock = bun.Lock.init(),
 
+temp_pipe_read_buffer: ?*PipeReadBuffer = null,
+
+const PipeReadBuffer = [256 * 1024]u8;
+
+pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
+    return this.temp_pipe_read_buffer orelse {
+        this.temp_pipe_read_buffer = default_allocator.create(PipeReadBuffer) catch bun.outOfMemory();
+        return this.temp_pipe_read_buffer.?;
+    };
+}
+
 pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
@@ -258,6 +269,7 @@ pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
 }
 
 pub fn stderr(rare: *RareData) *Blob.Store {
+    bun.Analytics.Features.@"Bun.stderr" += 1;
     return rare.stderr_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
@@ -290,6 +302,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdout(rare: *RareData) *Blob.Store {
+    bun.Analytics.Features.@"Bun.stdout" += 1;
     return rare.stdout_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
@@ -320,6 +333,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdin(rare: *RareData) *Blob.Store {
+    bun.Analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
@@ -339,7 +353,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
                     .pathlike = .{
                         .fd = fd,
                     },
-                    .is_atty = std.os.isatty(bun.STDIN_FD.cast()),
+                    .is_atty = if (bun.STDIN_FD.isValid()) std.os.isatty(bun.STDIN_FD.cast()) else false,
                     .mode = mode,
                 },
             },

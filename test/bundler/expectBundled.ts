@@ -3,14 +3,45 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
-import dedent from "dedent";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
 import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
-import type { Expect } from "bun:test";
+import type { Matchers } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
+
+/** Dedent module does a bit too much with their stuff. we will be much simpler */
+function dedent(str: string | TemplateStringsArray, ...args: any[]) {
+  // https://github.com/tc39/proposal-string-cooked#motivation
+  let single_string = String.raw({ raw: str }, ...args);
+  single_string = single_string.trim();
+
+  let lines = single_string.split("\n");
+  let first_line = lines[0];
+  let smallest_indent = Infinity;
+  for (let line of lines.slice(1)) {
+    let match = line.match(/^\s+/);
+    if (match) {
+      smallest_indent = Math.min(smallest_indent, match[0].length);
+    } else {
+      return single_string;
+    }
+  }
+
+  if (smallest_indent === Infinity) {
+    return single_string;
+  }
+
+  return (
+    first_line +
+    "\n" +
+    lines
+      .slice(1)
+      .map(x => x.slice(smallest_indent))
+      .join("\n")
+  );
+}
 
 let currentFile: string | undefined;
 
@@ -73,9 +104,10 @@ const HIDE_SKIP = process.env.BUN_BUNDLER_TEST_HIDE_SKIP;
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? bunExe();
 export const RUN_UNCHECKED_TESTS = false;
 
-const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
-if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
-const outBase = mkdtempSync(outBaseTemplate);
+const tempDirectoryTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
+if (!existsSync(path.dirname(tempDirectoryTemplate)))
+  mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
+const tempDirectory = mkdtempSync(tempDirectoryTemplate);
 const testsRan = new Set();
 
 if (ESBUILD) {
@@ -115,6 +147,10 @@ export interface BundlerTestInput {
   assetNaming?: string;
   banner?: string;
   define?: Record<string, string | number>;
+
+  /** Use for resolve custom conditions */
+  conditions?: string[];
+
   /** Default is "[name].[ext]" */
   entryNaming?: string;
   /** Default is "[name]-[hash].[ext]" */
@@ -237,7 +273,7 @@ export interface BundlerTestBundleAPI {
   writeFile(file: string, contents: string): void;
   prependFile(file: string, contents: string): void;
   appendFile(file: string, contents: string): void;
-  expectFile(file: string): Expect;
+  expectFile(file: string): Matchers<string>;
   assertFileExists(file: string): void;
   /**
    * Finds all `capture(...)` calls and returns the strings within each function call.
@@ -365,6 +401,7 @@ function expectBundled(
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
     useDefineForClassFields,
+    conditions,
     // @ts-expect-error
     _referenceFn,
     ...unknownProps
@@ -445,7 +482,7 @@ function expectBundled(
       backend = plugins !== undefined ? "api" : "cli";
     }
 
-    const root = path.join(outBase, id);
+    const root = path.join(tempDirectory, id);
     if (DEBUG) console.log("root:", root);
 
     const entryPaths = entryPoints.map(file => path.join(root, file));
@@ -460,7 +497,7 @@ function expectBundled(
     outputPaths = (
       outputPaths
         ? outputPaths.map(file => path.join(root, file))
-        : entryPaths.map(file => path.join(outdir!, path.basename(file)))
+        : entryPaths.map(file => path.join(outdir || "", path.basename(file)))
     ).map(x => x.replace(/\.ts$/, ".js"));
 
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
@@ -548,6 +585,7 @@ function expectBundled(
               `--target=${target}`,
               // `--format=${format}`,
               external && external.map(x => ["--external", x]),
+              conditions && conditions.map(x => ["--conditions", x]),
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
@@ -584,6 +622,7 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
               external && external.map(x => `--external:${x}`),
+              conditions && `--conditions=${conditions.join(",")}`,
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
               `--jsx=${jsx.runtime === "classic" ? "transform" : "automatic"}`,
@@ -621,11 +660,18 @@ function expectBundled(
         .map(x => String(x)) as [string, ...string[]];
 
       if (DEBUG) {
-        writeFileSync(
-          path.join(root, "run.sh"),
-          "#!/bin/sh\n" +
+        if (process.platform !== "win32") {
+          writeFileSync(
+            path.join(root, "run.sh"),
+            "#!/bin/sh\n" +
+              cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
+          );
+        } else {
+          writeFileSync(
+            path.join(root, "run.ps1"),
             cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
-        );
+          );
+        }
         try {
           mkdirSync(path.join(root, ".vscode"), { recursive: true });
         } catch (e) {}
@@ -639,30 +685,22 @@ function expectBundled(
                 ...(compile
                   ? [
                       {
-                        "type": "lldb",
+                        "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                         "request": "launch",
                         "name": "run compiled exe",
                         "program": outfile,
                         "args": [],
                         "cwd": root,
-                        "env": {
-                          "FORCE_COLOR": "1",
-                        },
-                        "console": "internalConsole",
                       },
                     ]
                   : []),
                 {
-                  "type": "lldb",
+                  "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                   "request": "launch",
                   "name": "bun test",
                   "program": cmd[0],
                   "args": cmd.slice(1),
                   "cwd": root,
-                  "env": {
-                    "FORCE_COLOR": "1",
-                  },
-                  "console": "internalConsole",
                 },
               ],
             },
@@ -709,7 +747,7 @@ function expectBundled(
                   const [_str2, fullFilename, line, col] =
                     source?.match?.(/bun-build-tests[\/\\](.*):(\d+):(\d+)/) ?? [];
                   const file = fullFilename
-                    ?.slice?.(id.length + path.basename(outBase).length + 1)
+                    ?.slice?.(id.length + path.basename(tempDirectory).length + 1)
                     .replaceAll("\\", "/");
 
                   return { error, file, line, col };
@@ -789,7 +827,7 @@ function expectBundled(
         const warningText = stderr!.toUnixString();
         const allWarnings = warnParser(warningText).map(([error, source]) => {
           const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
-          const file = fullFilename.slice(id.length + path.basename(outBase).length + 1).replaceAll("\\", "/");
+          const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
           return { error, file, line, col };
         });
         const expectedWarnings = bundleWarnings
@@ -868,6 +906,10 @@ function expectBundled(
           target,
           publicPath,
         } as BuildConfig;
+
+        if (conditions?.length) {
+          buildConfig.conditions = conditions;
+        }
 
         if (DEBUG) {
           if (_referenceFn) {
@@ -1176,7 +1218,7 @@ for (const [key, blob] of build.outputs) {
     // check reference
     if (matchesReference) {
       const { ref } = matchesReference;
-      const theirRoot = path.join(outBase, ref.id);
+      const theirRoot = path.join(tempDirectory, ref.id);
       if (!existsSync(theirRoot)) {
         expectBundled(ref.id, ref.options, false, true);
         if (!existsSync(theirRoot)) {
@@ -1291,6 +1333,9 @@ for (const [key, blob] of build.outputs) {
               console.log(`reference stdout:`);
               console.log(result);
               console.log(`---`);
+              console.log(`expected stdout:`);
+              console.log(expected);
+              console.log(`---`);
             }
             expect(result).toBe(expected);
           } else {
@@ -1330,7 +1375,7 @@ export function itBundled(
 ): BundlerTestRef {
   if (typeof opts === "function") {
     const fn = opts;
-    opts = opts({ root: path.join(outBase, id), getConfigRef });
+    opts = opts({ root: path.join(tempDirectory, id), getConfigRef });
     // @ts-expect-error
     opts._referenceFn = fn;
   }

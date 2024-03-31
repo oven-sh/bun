@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawn, file } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
@@ -29,7 +28,6 @@ beforeEach(async () => {
   await dummyBeforeEach();
 });
 afterEach(async () => {
-  await rm(link_dir, { force: true, recursive: true });
   await dummyAfterEach();
 });
 
@@ -61,7 +59,7 @@ it("should link and unlink workspace package", async () => {
   var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -73,8 +71,8 @@ it("should link and unlink workspace package", async () => {
   var out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + boba@workspace:packages${sep}boba`,
-    ` + moo@workspace:packages${sep}moo`,
+    ` + boba@workspace:packages/boba`,
+    ` + moo@workspace:packages/moo`,
     "",
     " 2 packages installed",
   ]);
@@ -83,7 +81,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link"],
     cwd: join(link_dir, "packages", "moo"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -99,7 +97,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link", "moo"],
     cwd: join(link_dir, "packages", "boba"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -124,7 +122,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: join(link_dir, "packages", "moo"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -141,7 +139,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -157,7 +155,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link", "foo"],
     cwd: join(link_dir, "packages", "boba"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -183,7 +181,7 @@ it("should link and unlink workspace package", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -221,7 +219,7 @@ it("should link package", async () => {
   } = spawn({
     cmd: [bunExe(), "link"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -240,7 +238,7 @@ it("should link package", async () => {
   } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -265,7 +263,7 @@ it("should link package", async () => {
   } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -284,7 +282,7 @@ it("should link package", async () => {
   } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -321,7 +319,7 @@ it("should link scoped package", async () => {
   } = spawn({
     cmd: [bunExe(), "link"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -340,7 +338,7 @@ it("should link scoped package", async () => {
   } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -365,7 +363,7 @@ it("should link scoped package", async () => {
   } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -384,7 +382,7 @@ it("should link scoped package", async () => {
   } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -428,7 +426,7 @@ it("should link dependency without crashing", async () => {
   } = spawn({
     cmd: [bunExe(), "link"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -447,7 +445,7 @@ it("should link dependency without crashing", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -479,7 +477,7 @@ it("should link dependency without crashing", async () => {
   } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: link_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -498,7 +496,7 @@ it("should link dependency without crashing", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,

@@ -78,9 +78,6 @@ pub const TestRunner = struct {
     has_pending_tests: bool = false,
     pending_test: ?*TestRunnerTask = null,
 
-    /// This silences TestNotRunningError when expect() is used to halt a running test.
-    did_pending_test_fail: bool = false,
-
     snapshots: Snapshots,
 
     default_timeout_ms: u32 = 0,
@@ -154,7 +151,6 @@ pub const TestRunner = struct {
         if (this.queue.readItem()) |task| {
             this.pending_test = task;
             this.has_pending_tests = true;
-            this.did_pending_test_fail = false;
             if (!task.run()) {
                 this.has_pending_tests = false;
                 this.pending_test = null;
@@ -354,6 +350,11 @@ pub const Jest = struct {
         );
         test_fn.put(
             globalObject,
+            ZigString.static("todoIf"),
+            JSC.NewFunction(globalObject, ZigString.static("todoIf"), 2, ThisTestScope.todoIf, false),
+        );
+        test_fn.put(
+            globalObject,
             ZigString.static("each"),
             JSC.NewFunction(globalObject, ZigString.static("each"), 2, ThisTestScope.each, false),
         );
@@ -388,6 +389,11 @@ pub const Jest = struct {
             globalObject,
             ZigString.static("skipIf"),
             JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, ThisDescribeScope.skipIf, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("todoIf"),
+            JSC.NewFunction(globalObject, ZigString.static("todoIf"), 2, ThisDescribeScope.todoIf, false),
         );
         describe.put(
             globalObject,
@@ -441,6 +447,7 @@ pub const Jest = struct {
         const mockFn = JSC.NewFunction(globalObject, ZigString.static("fn"), 1, JSMock__jsMockFn, false);
         const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__jsSpyOn, false);
         const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, JSMock__jsRestoreAllMocks, false);
+        const clearAllMocks = JSC.NewFunction(globalObject, ZigString.static("clearAllMocks"), 2, JSMock__jsClearAllMocks, false);
         const mockModuleFn = JSC.NewFunction(globalObject, ZigString.static("module"), 2, JSMock__jsModuleMock, false);
         module.put(globalObject, ZigString.static("mock"), mockFn);
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
@@ -450,6 +457,7 @@ pub const Jest = struct {
         jest.put(globalObject, ZigString.static("fn"), mockFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
+        jest.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
         jest.put(
             globalObject,
             ZigString.static("setSystemTime"),
@@ -480,6 +488,7 @@ pub const Jest = struct {
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
         vi.put(globalObject, ZigString.static("module"), mockModuleFn);
         vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
+        vi.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
         module.put(globalObject, ZigString.static("vi"), vi);
     }
 
@@ -490,6 +499,7 @@ pub const Jest = struct {
     extern fn JSMock__jsNow(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsSetSystemTime(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsRestoreAllMocks(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
+    extern fn JSMock__jsClearAllMocks(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsSpyOn(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsUseFakeTimers(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsUseRealTimers(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
@@ -577,18 +587,22 @@ pub const TestScope = struct {
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, false);
+        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, .pass);
     }
 
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, true);
+        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, .skip);
+    }
+
+    pub fn todoIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "test.todoIf()", "todoIf", TestScope, .todo);
     }
 
     pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         debug("onReject", .{});
         const arguments = callframe.arguments(2);
         const err = arguments.ptr[0];
-        globalThis.bunVM().runErrorHandler(err, null);
+        globalThis.bunVM().onUnhandledError(globalThis, err);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
@@ -623,7 +637,7 @@ pub const TestScope = struct {
                     task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .callback);
                 } else {
                     debug("done(err)", .{});
-                    globalThis.bunVM().runErrorHandlerWithDedupe(err, null);
+                    globalThis.bunVM().onUnhandledError(globalThis, err);
                     task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .callback);
                 }
             } else {
@@ -643,7 +657,6 @@ pub const TestScope = struct {
 
         var vm = VirtualMachine.get();
         const func = this.func;
-        Jest.runner.?.did_pending_test_fail = false;
         defer {
             for (this.func_arg) |arg| {
                 arg.unprotect();
@@ -683,11 +696,7 @@ pub const TestScope = struct {
         initial_value = callJSFunctionForTestRunner(vm, vm.global, this.func, this.func_arg);
 
         if (initial_value.isAnyError()) {
-            if (!Jest.runner.?.did_pending_test_fail) {
-                // test failed unless it's a todo
-                Jest.runner.?.did_pending_test_fail = this.tag != .todo;
-                vm.runErrorHandler(initial_value, null);
-            }
+            vm.onUnhandledError(vm.global, initial_value);
 
             if (this.tag == .todo) {
                 return .{ .todo = {} };
@@ -710,11 +719,7 @@ pub const TestScope = struct {
             }
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    if (!Jest.runner.?.did_pending_test_fail) {
-                        // test failed unless it's a todo
-                        Jest.runner.?.did_pending_test_fail = this.tag != .todo;
-                        vm.runErrorHandler(promise.result(vm.global.vm()), null);
-                    }
+                    vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
 
                     if (this.tag == .todo) {
                         return .{ .todo = {} };
@@ -888,7 +893,7 @@ pub const DescribeScope = struct {
             if (args.len > 0) {
                 const err = args.ptr[0];
                 if (!err.isEmptyOrUndefinedOrNull()) {
-                    ctx.bunVM().runErrorHandlerWithDedupe(err, null);
+                    ctx.bunVM().onUnhandledError(ctx.bunVM().global, err);
                 }
             }
             scope.done = true;
@@ -921,13 +926,6 @@ pub const DescribeScope = struct {
                 }
             }
 
-            const pending_test = Jest.runner.?.pending_test;
-            // forbid `expect()` within hooks
-            Jest.runner.?.pending_test = null;
-            const orig_did_pending_test_fail = Jest.runner.?.did_pending_test_fail;
-
-            Jest.runner.?.did_pending_test_fail = false;
-
             const vm = VirtualMachine.get();
             var result: JSC.JSValue = switch (cb.getLength(globalObject)) {
                 0 => callJSFunctionForTestRunner(vm, globalObject, cb, &.{}),
@@ -943,8 +941,6 @@ pub const DescribeScope = struct {
                     );
                     const result = callJSFunctionForTestRunner(vm, globalObject, cb, &.{done_func});
                     if (result.toError()) |err| {
-                        Jest.runner.?.pending_test = pending_test;
-                        Jest.runner.?.did_pending_test_fail = orig_did_pending_test_fail;
                         return err;
                     }
                     vm.waitFor(&this.done);
@@ -961,8 +957,6 @@ pub const DescribeScope = struct {
                 result = promise.result(globalObject.vm());
             }
 
-            Jest.runner.?.pending_test = pending_test;
-            Jest.runner.?.did_pending_test_fail = orig_did_pending_test_fail;
             if (result.isAnyError()) return result;
         }
 
@@ -989,13 +983,6 @@ pub const DescribeScope = struct {
                 }
             }
 
-            const pending_test = Jest.runner.?.pending_test;
-            // forbid `expect()` within hooks
-            Jest.runner.?.pending_test = null;
-            const orig_did_pending_test_fail = Jest.runner.?.did_pending_test_fail;
-
-            Jest.runner.?.did_pending_test_fail = false;
-
             const vm = VirtualMachine.get();
             // note: we do not support "done" callback in global hooks in the first release.
             var result: JSC.JSValue = callJSFunctionForTestRunner(vm, globalThis, cb, &.{});
@@ -1010,8 +997,6 @@ pub const DescribeScope = struct {
                 result = promise.result(globalThis.vm());
             }
 
-            Jest.runner.?.pending_test = pending_test;
-            Jest.runner.?.did_pending_test_fail = orig_did_pending_test_fail;
             if (result.isAnyError()) return result;
         }
 
@@ -1072,11 +1057,15 @@ pub const DescribeScope = struct {
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, false);
+        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, .pass);
     }
 
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, true);
+        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, .skip);
+    }
+
+    pub fn todoIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "describe.todoIf()", "todoIf", DescribeScope, .todo);
     }
 
     pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
@@ -1101,12 +1090,12 @@ pub const DescribeScope = struct {
                 switch (prom.status(globalObject.ptr().vm())) {
                     JSPromise.Status.Fulfilled => {},
                     else => {
-                        globalObject.bunVM().runErrorHandlerWithDedupe(prom.result(globalObject.ptr().vm()), null);
+                        globalObject.bunVM().onUnhandledError(globalObject, prom.result(globalObject.ptr().vm()));
                         return .undefined;
                     },
                 }
             } else if (result.toError()) |err| {
-                globalObject.bunVM().runErrorHandlerWithDedupe(err, null);
+                globalObject.bunVM().onUnhandledError(globalObject, err);
                 return .undefined;
             }
         }
@@ -1133,7 +1122,8 @@ pub const DescribeScope = struct {
         var i: TestRunner.Test.ID = 0;
 
         if (this.shouldEvaluateScope()) {
-            if (this.runCallback(globalObject, .beforeAll)) |_| {
+            if (this.runCallback(globalObject, .beforeAll)) |err| {
+                globalObject.bunVM().onUnhandledError(globalObject, err);
                 while (i < end) {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
@@ -1178,7 +1168,7 @@ pub const DescribeScope = struct {
 
         if (!skipped) {
             if (this.runCallback(globalThis, .afterEach)) |err| {
-                globalThis.bunVM().runErrorHandler(err, null);
+                globalThis.bunVM().onUnhandledError(globalThis, err);
             }
         }
 
@@ -1190,7 +1180,7 @@ pub const DescribeScope = struct {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
             if (this.execCallback(globalThis, .afterAll)) |err| {
-                globalThis.bunVM().runErrorHandler(err, null);
+                globalThis.bunVM().onUnhandledError(globalThis, err);
             }
         }
 
@@ -1228,7 +1218,7 @@ pub fn wrapTestFunction(comptime name: []const u8, comptime func: DescribeScope.
                 globalThis.throw("Cannot use " ++ name ++ "() outside of a test file.", .{});
                 return .zero;
             }
-            return @call(.always_inline, func, .{ globalThis, callframe });
+            return @call(bun.callmod_inline, func, .{ globalThis, callframe });
         }
     }.wrapped;
 }
@@ -1242,6 +1232,7 @@ pub const WrappedTestScope = struct {
     pub const todo = wrapTestFunction("test", TestScope.todo);
     pub const callIf = wrapTestFunction("test", TestScope.callIf);
     pub const skipIf = wrapTestFunction("test", TestScope.skipIf);
+    pub const todoIf = wrapTestFunction("test", TestScope.todoIf);
     pub const each = wrapTestFunction("test", TestScope.each);
 };
 
@@ -1252,6 +1243,7 @@ pub const WrappedDescribeScope = struct {
     pub const todo = wrapTestFunction("describe", DescribeScope.todo);
     pub const callIf = wrapTestFunction("describe", DescribeScope.callIf);
     pub const skipIf = wrapTestFunction("describe", DescribeScope.skipIf);
+    pub const todoIf = wrapTestFunction("describe", DescribeScope.todoIf);
     pub const each = wrapTestFunction("describe", DescribeScope.each);
 };
 
@@ -1275,19 +1267,7 @@ pub const TestRunnerTask = struct {
         fulfilled,
     };
 
-    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, global: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
-        if (Jest.runner) |runner| {
-            if (runner.did_pending_test_fail and rejection.isException(global.vm())) {
-                if (rejection.toError()) |err| {
-                    if (err.get(global, "name")) |name| {
-                        if (name.isString() and name.getZigString(global).eqlComptime("TestNotRunningError")) {
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
+    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, _: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
         if (jsc_vm.last_reported_error_for_dedupe == rejection and rejection != .zero) {
             jsc_vm.last_reported_error_for_dedupe = .zero;
         } else {
@@ -1309,6 +1289,8 @@ pub const TestRunnerTask = struct {
         // reset the global state for each test
         // prior to the run
         expect.active_test_expectation_counter = .{};
+        expect.is_expecting_assertions = false;
+        expect.is_expecting_assertions_count = false;
         jsc_vm.last_reported_error_for_dedupe = .zero;
 
         const test_id = this.test_id;
@@ -1339,24 +1321,21 @@ pub const TestRunnerTask = struct {
         }
 
         jsc_vm.onUnhandledRejectionCtx = this;
-        if (Output.is_github_action) {
-            jsc_vm.setOnException(printGithubAnnotation);
-        }
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
             const label = test_.label;
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
+                jsc_vm.onUnhandledError(globalThis, err);
                 Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
-                jsc_vm.runErrorHandler(err, null);
                 return false;
             }
         }
 
         this.sync_state = .pending;
 
-        const result = TestScope.run(&test_, this);
+        var result = TestScope.run(&test_, this);
 
         // rejected promises should fail the test
         if (result != .fail)
@@ -1365,6 +1344,29 @@ pub const TestRunnerTask = struct {
         if (result == .pending and this.sync_state == .pending and (this.done_callback_state == .pending or this.promise_state == .pending)) {
             this.sync_state = .fulfilled;
             return true;
+        }
+
+        if (expect.is_expecting_assertions and expect.active_test_expectation_counter.actual == 0) {
+            const fmt = comptime "<d>expect.hasAssertions()<r>\n\nExpected <green>at least one assertion<r> to be called but <red>received none<r>.\n";
+            const error_value = if (Output.enable_ansi_colors)
+                globalThis.createErrorInstance(Output.prettyFmt(fmt, true), .{})
+            else
+                globalThis.createErrorInstance(Output.prettyFmt(fmt, false), .{});
+
+            globalThis.*.bunVM().runErrorHandler(error_value, null);
+            result = .{ .fail = 0 };
+        }
+
+        if (expect.is_expecting_assertions_count and expect.active_test_expectation_counter.actual != expect.expected_assertions_number) {
+            const fmt = comptime "<d>expect.assertions({})<r>\n\nExpected <green>{} assertion<r> to be called but <red>found {} assertions<r> instead.\n";
+            const fmt_args = .{ expect.expected_assertions_number, expect.expected_assertions_number, expect.active_test_expectation_counter.actual };
+            const error_value = if (Output.enable_ansi_colors)
+                globalThis.createErrorInstance(Output.prettyFmt(fmt, true), fmt_args)
+            else
+                globalThis.createErrorInstance(Output.prettyFmt(fmt, false), fmt_args);
+
+            globalThis.*.bunVM().runErrorHandler(error_value, null);
+            result = .{ .fail = expect.active_test_expectation_counter.actual };
         }
 
         this.handleResult(result, .sync);
@@ -1385,9 +1387,6 @@ pub const TestRunnerTask = struct {
     }
 
     pub fn handleResult(this: *TestRunnerTask, result: Result, comptime from: @Type(.EnumLiteral)) void {
-        if (result == .fail)
-            Jest.runner.?.did_pending_test_fail = true;
-
         switch (comptime from) {
             .promise => {
                 if (comptime Environment.allow_assert) std.debug.assert(this.promise_state == .pending);
@@ -1427,10 +1426,12 @@ pub const TestRunnerTask = struct {
         const test_ = this.describe.tests.items[test_id];
         var describe = this.describe;
         describe.tests.items[test_id] = test_;
+
         if (comptime from == .timeout) {
-            Output.prettyErrorln("<r><red>Timeout<r><d>:<r> test <b>{}<r> timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
-            Output.flush();
+            const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
+            this.globalThis.bunVM().onUnhandledError(this.globalThis, err);
         }
+
         processTestResult(this, this.globalThis, result, test_, test_id, describe);
     }
 
@@ -1481,13 +1482,12 @@ pub const TestRunnerTask = struct {
     }
 
     fn deinit(this: *TestRunnerTask) void {
-        var vm = JSC.VirtualMachine.get();
+        const vm = JSC.VirtualMachine.get();
         if (vm.onUnhandledRejectionCtx) |ctx| {
             if (ctx == @as(*anyopaque, @ptrCast(this))) {
                 vm.onUnhandledRejectionCtx = null;
             }
         }
-        vm.clearOnException();
 
         this.ref.unref(vm);
 
@@ -1602,8 +1602,11 @@ inline fn createScope(
     else
         (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
 
-    if (tag == .only) {
+    var tag_to_use = tag;
+
+    if (tag_to_use == .only or parent.tag == .only) {
         Jest.runner.?.setOnly();
+        tag_to_use = .only;
     } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
         return .zero;
     }
@@ -1612,7 +1615,6 @@ inline fn createScope(
         (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
-    var tag_to_use = tag;
     if (is_test) {
         if (!is_skip) {
             if (Jest.runner.?.filter_regex) |regex| {
@@ -1665,7 +1667,7 @@ inline fn createScope(
             .label = label,
             .parent = parent,
             .file_id = parent.file_id,
-            .tag = tag,
+            .tag = tag_to_use,
         };
 
         return scope.run(globalThis, function, &.{});
@@ -1680,7 +1682,7 @@ inline fn createIfScope(
     comptime property: string,
     comptime signature: string,
     comptime Scope: type,
-    comptime is_skip: bool,
+    comptime tag: Tag,
 ) JSValue {
     const arguments = callframe.arguments(1);
     const args = arguments.slice();
@@ -1692,135 +1694,17 @@ inline fn createIfScope(
 
     const name = ZigString.static(property);
     const value = args[0].toBooleanSlow(globalThis);
-    const skip = if (is_skip) Scope.skip else Scope.call;
-    const call = if (is_skip) Scope.call else Scope.skip;
 
-    if (value) {
-        return JSC.NewFunction(globalThis, name, 2, skip, false);
-    }
+    const truthy_falsey: [2]JSC.JSHostFunctionPtr = switch (tag) {
+        .pass => .{ Scope.call, Scope.skip },
+        .fail => @compileError("unreachable"),
+        .only => @compileError("unreachable"),
+        .skip => .{ Scope.skip, Scope.call },
+        .todo => .{ Scope.todo, Scope.call },
+    };
 
+    const call = truthy_falsey[if (value) 0 else 1];
     return JSC.NewFunction(globalThis, name, 2, call, false);
-}
-
-// In Github Actions, emit an annotation that renders the error and location.
-// https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
-pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
-    const name = exception.name;
-    const message = exception.message;
-    const frames = exception.stack.frames();
-    const top_frame = if (frames.len > 0) frames[0] else null;
-    const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
-    const allocator = bun.default_allocator;
-
-    var has_location = false;
-
-    if (top_frame) |frame| {
-        if (!frame.position.isInvalid()) {
-            const source_url = frame.source_url.toUTF8(allocator);
-            defer source_url.deinit();
-            const file = bun.path.relative(dir, source_url.slice());
-            Output.printError("\n::error file={s},line={d},col={d},title=", .{
-                file,
-                frame.position.line_start + 1,
-                frame.position.column_start,
-            });
-            has_location = true;
-        }
-    }
-
-    if (!has_location) {
-        Output.printError("\n::error title=", .{});
-    }
-
-    if (name.isEmpty() or name.eqlComptime("Error")) {
-        Output.printError("error", .{});
-    } else {
-        Output.printError("{s}", .{name.githubAction()});
-    }
-
-    if (!message.isEmpty()) {
-        const message_slice = message.toUTF8(allocator);
-        defer message_slice.deinit();
-        const msg = message_slice.slice();
-
-        var cursor: u32 = 0;
-        while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
-            cursor = i + 1;
-            if (msg[i] == '\n') {
-                const first_line = bun.String.fromUTF8(msg[0..i]);
-                Output.printError(": {s}::", .{first_line.githubAction()});
-                break;
-            }
-        } else {
-            Output.printError(": {s}::", .{message.githubAction()});
-        }
-
-        while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
-            cursor = i + 1;
-            if (msg[i] == '\n') {
-                break;
-            }
-        }
-
-        if (cursor > 0) {
-            const body = ZigString.init(msg[cursor..]);
-            Output.printError("{s}", .{body.githubAction()});
-        }
-    } else {
-        Output.printError("::", .{});
-    }
-
-    // TODO: cleanup and refactor to use printStackTrace()
-    if (top_frame) |_| {
-        const vm = VirtualMachine.get();
-        const origin = if (vm.is_from_devserver) &vm.origin else null;
-
-        var i: i16 = 0;
-        while (i < frames.len) : (i += 1) {
-            const frame = frames[@as(usize, @intCast(i))];
-            const source_url = frame.source_url.toUTF8(allocator);
-            defer source_url.deinit();
-            const file = bun.path.relative(dir, source_url.slice());
-            const func = frame.function_name.toUTF8(allocator);
-
-            if (file.len == 0 and func.len == 0) continue;
-
-            const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
-                false,
-            )}) > 0;
-
-            // %0A = escaped newline
-            if (has_name) {
-                Output.printError(
-                    "%0A      at {any} ({any})",
-                    .{
-                        frame.nameFormatter(false),
-                        frame.sourceURLFormatter(
-                            file,
-                            origin,
-                            false,
-                            false,
-                        ),
-                    },
-                );
-            } else {
-                Output.printError(
-                    "%0A      at {any}",
-                    .{
-                        frame.sourceURLFormatter(
-                            file,
-                            origin,
-                            false,
-                            false,
-                        ),
-                    },
-                );
-            }
-        }
-    }
-
-    Output.printError("\n", .{});
-    Output.flush();
 }
 
 fn consumeArg(
@@ -2027,22 +1911,48 @@ fn eachBind(
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
             const formattedLabel = formatLabel(globalThis, label, function_args, test_idx) catch return .zero;
 
-            if (each_data.is_test) {
-                function.protect();
-                parent.tests.append(allocator, TestScope{
-                    .label = formattedLabel,
-                    .parent = parent,
-                    .tag = parent.tag,
-                    .func = function,
-                    .func_arg = function_args,
-                    .func_has_callback = has_callback_function,
-                    .timeout_millis = timeout_ms,
-                }) catch unreachable;
+            const tag = parent.tag;
 
-                if (test_elapsed_timer == null) create_timer: {
-                    const timer = allocator.create(std.time.Timer) catch unreachable;
-                    timer.* = std.time.Timer.start() catch break :create_timer;
-                    test_elapsed_timer = timer;
+            if (tag == .only) {
+                Jest.runner.?.setOnly();
+            }
+
+            var is_skip = tag == .skip or
+                (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
+                (tag != .only and Jest.runner.?.only and parent.tag != .only);
+
+            if (Jest.runner.?.filter_regex) |regex| {
+                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                buffer.reset();
+                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                buffer.append(formattedLabel) catch unreachable;
+                const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
+                is_skip = !regex.matches(str);
+            }
+
+            if (is_skip) {
+                parent.skip_count += 1;
+                function.unprotect();
+            } else if (each_data.is_test) {
+                if (Jest.runner.?.only and tag != .only) {
+                    return .zero;
+                } else {
+                    function.protect();
+                    parent.tests.append(allocator, TestScope{
+                        .label = formattedLabel,
+                        .parent = parent,
+                        .tag = tag,
+                        .func = function,
+                        .func_arg = function_args,
+                        .func_has_callback = has_callback_function,
+                        .timeout_millis = timeout_ms,
+                    }) catch unreachable;
+
+                    if (test_elapsed_timer == null) create_timer: {
+                        const timer = allocator.create(std.time.Timer) catch unreachable;
+                        timer.* = std.time.Timer.start() catch break :create_timer;
+                        test_elapsed_timer = timer;
+                    }
                 }
             } else {
                 var scope = allocator.create(DescribeScope) catch unreachable;
@@ -2050,7 +1960,7 @@ fn eachBind(
                     .label = formattedLabel,
                     .parent = parent,
                     .file_id = parent.file_id,
-                    .tag = .pass,
+                    .tag = tag,
                 };
 
                 const ret = scope.run(globalThis, function, function_args);

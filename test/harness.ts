@@ -1,13 +1,14 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile } from "fs/promises";
-import { isAbsolute } from "path";
+import { readlink, readFile, writeFile } from "fs/promises";
+import { isAbsolute, sep, join } from "path";
 import { openSync, closeSync } from "node:fs";
 
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
 export const isWindows = process.platform === "win32";
+export const isIntelMacOS = isMacOS && process.arch === "x64";
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -20,7 +21,22 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
 };
 
+if (isWindows) {
+  bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
+}
+
+for (let key in bunEnv) {
+  if (bunEnv[key] === undefined) {
+    delete bunEnv[key];
+  }
+
+  if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
+    delete bunEnv[key];
+  }
+}
+
 export function bunExe() {
+  if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
 }
 
@@ -153,8 +169,13 @@ export function bunTest(file: string, env?: Record<string, string>) {
   };
 }
 
-export function bunRunAsScript(dir: string, script: string, env?: Record<string, string>) {
-  const result = Bun.spawnSync([bunExe(), `run`, `${script}`], {
+export function bunRunAsScript(
+  dir: string,
+  script: string,
+  env?: Record<string, string | undefined>,
+  execArgv?: string[],
+) {
+  const result = Bun.spawnSync([bunExe(), ...(execArgv ?? []), `run`, `${script}`], {
     cwd: dir,
     env: {
       ...bunEnv,
@@ -306,9 +327,6 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
 }
 
 export function getMaxFD(): number {
-  if (isWindows) {
-    return 0;
-  }
   const maxFD = openSync("/dev/null", "r");
   closeSync(maxFD);
   return maxFD;
@@ -433,4 +451,196 @@ export async function describeWithContainer(
     });
     fn(port);
   });
+}
+
+export function osSlashes(path: string) {
+  return isWindows ? path.replace(/\//g, "\\") : path;
+}
+
+import * as child_process from "node:child_process";
+
+class WriteBlockedError extends Error {
+  constructor(time) {
+    super("Write blocked for " + (time | 0) + "ms");
+    this.name = "WriteBlockedError";
+  }
+}
+function failTestsOnBlockingWriteCall() {
+  const prop = Object.getOwnPropertyDescriptor(child_process.ChildProcess.prototype, "stdin");
+  const didAttachSymbol = Symbol("kDidAttach");
+  if (prop) {
+    Object.defineProperty(child_process.ChildProcess.prototype, "stdin", {
+      ...prop,
+      get() {
+        const actual = prop.get.call(this);
+        if (actual?.write && !actual.__proto__[didAttachSymbol]) {
+          actual.__proto__[didAttachSymbol] = true;
+          attachWriteMeasurement(actual);
+        }
+        return actual;
+      },
+    });
+  }
+
+  function attachWriteMeasurement(stream) {
+    const prop = Object.getOwnPropertyDescriptor(stream.__proto__, "write");
+    if (prop) {
+      Object.defineProperty(stream.__proto__, "write", {
+        ...prop,
+        value(chunk, encoding, cb) {
+          const start = performance.now();
+          const rc = prop.value.apply(this, arguments);
+          const end = performance.now();
+          if (end - start > 8) {
+            const err = new WriteBlockedError(end - start);
+            throw err;
+          }
+          return rc;
+        },
+      });
+    }
+  }
+}
+
+failTestsOnBlockingWriteCall();
+
+import { heapStats } from "bun:jsc";
+export function dumpStats() {
+  const stats = heapStats();
+  const { objectTypeCounts, protectedObjectTypeCounts } = stats;
+  console.log({
+    objects: Object.fromEntries(Object.entries(objectTypeCounts).sort()),
+    protected: Object.fromEntries(Object.entries(protectedObjectTypeCounts).sort()),
+  });
+}
+
+export function fillRepeating(dstBuffer: NodeJS.TypedArray, start: number, end: number) {
+  let len = dstBuffer.length, // important: use indices length, not byte-length
+    sLen = end - start,
+    p = sLen; // set initial position = source sequence length
+
+  // step 2: copy existing data doubling segment length per iteration
+  while (p < len) {
+    if (p + sLen > len) sLen = len - p; // if not power of 2, truncate last segment
+    dstBuffer.copyWithin(p, start, sLen); // internal copy
+    p += sLen; // add current length to offset
+    sLen <<= 1; // double length for next segment
+  }
+}
+
+function makeFlatPropertyMap(opts: object) {
+  // return all properties of opts as paths for nested objects with dot notation
+  // like { a: { b: 1 } } => { "a.b": 1 }
+  // combining names of nested objects with dot notation
+  // infinitely deep
+  const ret: any = {};
+  function recurse(obj: object, path = "") {
+    for (const [key, value] of Object.entries(obj)) {
+      if (value === undefined) continue;
+
+      if (value && typeof value === "object") {
+        recurse(value, path ? `${path}.${key}` : key);
+      } else {
+        ret[path ? `${path}.${key}` : key] = value;
+      }
+    }
+  }
+
+  recurse(opts);
+  return ret;
+}
+
+export function toTOMLString(opts: object) {
+  // return a TOML string of the given options
+  const props = makeFlatPropertyMap(opts);
+  let ret = "";
+  for (const [key, value] of Object.entries(props)) {
+    if (value === undefined) continue;
+    ret += `${key} = ${JSON.stringify(value)}` + "\n";
+  }
+  return ret;
+}
+
+const shebang_posix = (program: string) => `#!/usr/bin/env ${program}
+ `;
+
+const shebang_windows = (program: string) => `0</* :{
+   @echo off
+   ${program} %~f0 %*
+   exit /b %errorlevel%
+ :} */0;
+ `;
+
+export function writeShebangScript(path: string, program: string, data: string) {
+  if (!isWindows) {
+    return writeFile(path, shebang_posix(program) + "\n" + data, { mode: 0o777 });
+  } else {
+    return writeFile(path + ".cmd", shebang_windows(program) + "\n" + data);
+  }
+}
+
+export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
+  var decoder = new (require("string_decoder").StringDecoder)("utf8");
+  var str = "";
+  for await (const chunk of iter) {
+    str += decoder.write(chunk);
+    let i = str.indexOf("\n");
+    while (i >= 0) {
+      yield str.slice(0, i);
+      str = str.slice(i + 1);
+      i = str.indexOf("\n");
+    }
+  }
+
+  str += decoder.end();
+  {
+    let i = str.indexOf("\n");
+    while (i >= 0) {
+      yield str.slice(0, i);
+      str = str.slice(i + 1);
+      i = str.indexOf("\n");
+    }
+  }
+
+  if (str.length > 0) {
+    yield str;
+  }
+}
+
+export function joinP(...paths: string[]) {
+  return join(...paths).replaceAll("\\", "/");
+}
+
+/**
+ * TODO: see if this is the default behavior of node child_process APIs if so,
+ * we need to do case-insensitive stuff within our Bun.spawn implementation
+ *
+ * Windows has case-insensitive environment variables, so sometimes an
+ * object like { Path: "...", PATH: "..." } will be passed. Bun lets
+ * the first one win, but we really want the LAST one to win.
+ *
+ * This is mostly needed if you want to override env vars, such like:
+ *   env: {
+ *     ...bunEnv,
+ *     PATH: "my path override here",
+ *   }
+ * becomes
+ *   env: mergeWindowEnvs([
+ *     bunEnv,
+ *     {
+ *       PATH: "my path override here",
+ *     },
+ *   ])
+ */
+export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
+  const keys: Record<string, string | undefined> = {};
+  const flat: Record<string, string | undefined> = {};
+  for (const env of envs) {
+    for (const key in env) {
+      if (!env[key]) continue;
+      const normalized = keys[key.toUpperCase()] ?? key;
+      flat[normalized] = env[key];
+    }
+  }
+  return flat;
 }

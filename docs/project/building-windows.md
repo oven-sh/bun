@@ -1,6 +1,6 @@
 This document describes the build process for Windows. If you run into problems, please join the [#windows channel on our Discord](http://bun.sh/discord) for help.
 
-It is strongly recommended to use [PowerShell 7 (pwsh.exe)](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows?view=powershell-7.4) instead of the default `powershell.exe`.
+It is strongly recommended to use [PowerShell 7 (`pwsh.exe`)](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows?view=powershell-7.4) instead of the default `powershell.exe`.
 
 ## Prerequisites
 
@@ -44,6 +44,12 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
 
 ### System Dependencies
 
+- Bun 1.1 or later. We use Bun to run it's own code generators.
+
+```ps1
+irm bun.sh/install.ps1 | iex
+```
+
 - [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload.
   - Install Git and CMake from this installer, if not already installed.
 
@@ -57,16 +63,20 @@ After Visual Studio, you need the following:
 - Ruby
 - Node.js
 
-[Scoop](https://scoop.sh) can be used to install these easily:
+{% callout %}
+The Zig compiler is automatically downloaded, installed, and updated by the building process.
+{% /callout %}
+
+[Scoop](https://scoop.sh) can be used to install these remaining tools easily:
 
 ```ps1
-Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+irm https://get.scoop.sh | iex
 
 scoop install nodejs-lts go rust nasm ruby perl
 scoop llvm@16.0.4 # scoop bug if you install llvm and the rest at the same time
 ```
 
-If you intend on building WebKit locally (optional), you should install some more packages:
+If you intend on building WebKit locally (optional), you should install these packages:
 
 ```ps1
 scoop install make cygwin python
@@ -88,65 +98,51 @@ Get-Command mt
 It is not recommended to install `ninja` / `cmake` into your global path, because you may run into a situation where you try to build bun without .\scripts\env.ps1 sourced.
 {% /callout %}
 
-### Codegen
-
-On Unix platforms, we depend on an existing build of Bun to generate code for itself. Since the Windows build is not stable enough for this to run the code generators, you currently need to use another computer or WSL to generate this:
-
-```bash
-$ wsl --install # run twice if it doesnt install
-# in the linux environment
-$ sudo apt install unzip
-$ curl -fsSL https://bun.sh/install | bash
-```
-
-Whenever codegen-related things are updated, please re-run
-
-```ps1
-$ .\scripts\codegen.ps1
-```
-
-(TODO: it probably is stable enough to use `bun.exe` for codegen, but the CMake configuration still has these disabled by default)
-
 ## Building
 
 ```ps1
-bun install # or npm install
+bun install
 
 .\scripts\env.ps1
 .\scripts\update-submodules.ps1 # this syncs git submodule state
-.\scripts\make-old-js.ps1 # runs some old code generators
 .\scripts\all-dependencies.ps1 # this builds all dependencies
+.\scripts\make-old-js.ps1 # runs some old code generators
 
-cd build # this was created by the codegen.ps1 script earlier
+# Configure build environment
+cmake -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Debug
 
-cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Debug
-ninja
+# Build bun
+ninja -Cbuild
 ```
 
 If this was successful, you should have a `bun-debug.exe` in the `build` folder.
 
 ```ps1
-.\build\bun-debug.exe --version
+.\build\bun-debug.exe --revision
 ```
 
-You should add this to `$Env:PATH`. The simplest way to do so is to open the start menu, type "Path", and then navigate the environment variables menu to add `C:\.....\bun\build` to your path.
+You should add this to `$Env:PATH`. The simplest way to do so is to open the start menu, type "Path", and then navigate the environment variables menu to add `C:\.....\bun\build` to the user environment variable `PATH`. You should then restart your editor (if it does not update still, log out and log back in).
+
+## Extra paths
+
+- WebKit is extracted to `build/bun-webkit`
+- Zig is extracted to `.cache/zig/zig.exe`
 
 ## Tests
 
-You can run the test suite by using `packages\bun-internal-test`
+You can run the test suite either using `bun test`, or by using the wrapper script `packages\bun-internal-test`. The internal test package is a wrapper cli to run every test file in a separate instance of bun.exe, to prevent a crash in the test runner from stopping the entire suite.
 
 ```ps1
 # Setup
-cd packages\bun-internal-test
-bun i
-cd ..\..
+bun i --cwd packages\bun-internal-test
 
 # Run the entire test suite with reporter
+# the package.json script "test" uses "build/bun-debug.exe" by default
 bun run test
 
 # Run an individual test file:
-bun test node\fs
-bun test "C:\bun\test\js\bun\resolve\import-meta.test.js"
+bun-debug test node\fs
+bun-debug test "C:\bun\test\js\bun\resolve\import-meta.test.js"
 ```
 
 ## Troubleshooting

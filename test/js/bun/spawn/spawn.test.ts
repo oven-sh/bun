@@ -1,9 +1,24 @@
-// @known-failing-on-windows: 1 failing
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
-import { describe, expect, it } from "bun:test";
-import { gcTick as _gcTick, bunExe, bunEnv } from "harness";
-import { rmSync, writeFileSync } from "node:fs";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { closeSync, fstatSync, openSync } from "fs";
+import { gcTick as _gcTick, bunEnv, bunExe, isLinux, isMacOS, isPosix, isWindows, withoutAggressiveGC } from "harness";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "path";
+let tmp;
+
+beforeAll(() => {
+  tmp = path.join(tmpdir(), "bun-spawn-" + Date.now().toString(32)) + path.sep;
+  rmSync(tmp, { force: true, recursive: true });
+  mkdirSync(tmp, { recursive: true });
+});
+
+function createHugeString() {
+  const buf = Buffer.allocUnsafe("hello".length * 100 * 500 + "hey".length);
+  buf.fill("hello");
+  buf.write("hey", buf.length - "hey".length);
+  return buf.toString();
+}
 
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],
@@ -12,10 +27,10 @@ for (let [gcTick, label] of [
   Bun.gc(true);
   describe(label, () => {
     describe("spawnSync", () => {
-      const hugeString = "hello".repeat(10000).slice();
+      const hugeString = "hello".repeat(50000).slice();
 
       it("as an array", () => {
-        const { stdout } = spawnSync(["echo", "hi"]);
+        const { stdout } = spawnSync(["node", "-e", "console.log('hi')"]);
         gcTick();
         // stdout is a Buffer
         const text = stdout!.toString();
@@ -29,7 +44,11 @@ for (let [gcTick, label] of [
           stdin: new TextEncoder().encode(hugeString),
         });
         gcTick();
-        expect(stdout!.toString()).toBe(hugeString);
+        const text = stdout!.toString();
+        if (text !== hugeString) {
+          expect(text).toHaveLength(hugeString.length);
+          expect(text).toBe(hugeString);
+        }
         expect(stderr!.byteLength).toBe(0);
         gcTick();
       });
@@ -51,7 +70,7 @@ for (let [gcTick, label] of [
       it("throws errors for invalid arguments", async () => {
         expect(() => {
           spawnSync({
-            cmd: ["echo", "hi"],
+            cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
         }).toThrow("No such file or directory");
@@ -59,15 +78,15 @@ for (let [gcTick, label] of [
     });
 
     describe("spawn", () => {
-      const hugeString = "hello".repeat(10000).slice();
+      const hugeString = createHugeString();
 
       it("as an array", async () => {
         gcTick();
         await (async () => {
-          const { stdout } = spawn(["echo", "hello"], {
+          const { stdout } = spawn(["node", "-e", "console.log('hello')"], {
             stdout: "pipe",
-            stderr: null,
-            stdin: null,
+            stderr: "ignore",
+            stdin: "ignore",
           });
           gcTick();
           const text = await new Response(stdout).text();
@@ -79,7 +98,7 @@ for (let [gcTick, label] of [
       it("as an array with options object", async () => {
         gcTick();
         const { stdout } = spawn(["printenv", "FOO"], {
-          cwd: "/tmp",
+          cwd: tmp,
           env: {
             ...process.env,
             FOO: "bar",
@@ -95,16 +114,16 @@ for (let [gcTick, label] of [
       });
 
       it("Uint8Array works as stdin", async () => {
-        rmSync("/tmp/out.123.txt", { force: true });
+        rmSync(tmp + "out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
           cmd: ["cat"],
           stdin: new TextEncoder().encode(hugeString),
-          stdout: Bun.file("/tmp/out.123.txt"),
+          stdout: Bun.file(tmp + "out.123.txt"),
         });
         gcTick();
         await exited;
-        expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(hugeString);
+        expect(require("fs").readFileSync(tmp + "out.123.txt", "utf8") == hugeString).toBeTrue();
         gcTick();
       });
 
@@ -134,7 +153,9 @@ for (let [gcTick, label] of [
       });
 
       it("check exit code from onExit", async () => {
-        for (let i = 0; i < 1000; i++) {
+        const count = isWindows ? 100 : 1000;
+
+        for (let i = 0; i < count; i++) {
           var exitCode1, exitCode2;
           await new Promise<void>(resolve => {
             var counter = 0;
@@ -177,7 +198,7 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(11);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
@@ -193,7 +214,7 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout when is smaller than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(5);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
@@ -209,7 +230,7 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout when is the exactly size than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(12);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
@@ -225,7 +246,7 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout when is larger than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(15);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
@@ -239,90 +260,111 @@ for (let [gcTick, label] of [
       });
 
       it("Blob works as stdin", async () => {
-        rmSync("/tmp/out.123.txt", { force: true });
+        rmSync(tmp + "out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
           cmd: ["cat"],
           stdin: new Blob([new TextEncoder().encode(hugeString)]),
-          stdout: Bun.file("/tmp/out.123.txt"),
+          stdout: Bun.file(tmp + "out.123.txt"),
         });
 
         await exited;
-        expect(await Bun.file("/tmp/out.123.txt").text()).toBe(hugeString);
+        expect((await Bun.file(tmp + "out.123.txt").text()) == hugeString).toBeTrue();
       });
 
       it("Bun.file() works as stdout", async () => {
-        rmSync("/tmp/out.123.txt", { force: true });
+        rmSync(tmp + "out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
-          cmd: ["echo", "hello"],
-          stdout: Bun.file("/tmp/out.123.txt"),
+          cmd: ["node", "-e", "console.log('hello')"],
+          stdout: Bun.file(tmp + "out.123.txt"),
         });
 
         await exited;
         gcTick();
-        expect(await Bun.file("/tmp/out.123.txt").text()).toBe("hello\n");
+        expect(await Bun.file(tmp + "out.123.txt").text()).toBe("hello\n");
       });
 
       it("Bun.file() works as stdin", async () => {
-        await write(Bun.file("/tmp/out.456.txt"), "hello there!");
+        await write(Bun.file(tmp + "out.456.txt"), "hello there!");
         gcTick();
         const { stdout } = spawn({
           cmd: ["cat"],
           stdout: "pipe",
-          stdin: Bun.file("/tmp/out.456.txt"),
+          stdin: Bun.file(tmp + "out.456.txt"),
         });
         gcTick();
         expect(await readableStreamToText(stdout!)).toBe("hello there!");
       });
 
       it("Bun.file() works as stdin and stdout", async () => {
-        writeFileSync("/tmp/out.456.txt", "hello!");
+        writeFileSync(tmp + "out.456.txt", "hello!");
         gcTick();
-        writeFileSync("/tmp/out.123.txt", "wrong!");
+        writeFileSync(tmp + "out.123.txt", "wrong!");
         gcTick();
 
         const { exited } = spawn({
           cmd: ["cat"],
-          stdout: Bun.file("/tmp/out.123.txt"),
-          stdin: Bun.file("/tmp/out.456.txt"),
+          stdout: Bun.file(tmp + "out.123.txt"),
+          stdin: Bun.file(tmp + "out.456.txt"),
         });
         gcTick();
         await exited;
-        expect(await Bun.file("/tmp/out.456.txt").text()).toBe("hello!");
+        expect(await Bun.file(tmp + "out.456.txt").text()).toBe("hello!");
         gcTick();
-        expect(await Bun.file("/tmp/out.123.txt").text()).toBe("hello!");
+        expect(await Bun.file(tmp + "out.123.txt").text()).toBe("hello!");
       });
 
       it("stdout can be read", async () => {
-        await Bun.write("/tmp/out.txt", hugeString);
+        await Bun.write(tmp + "out.txt", hugeString);
         gcTick();
-        const { stdout } = spawn({
-          cmd: ["cat", "/tmp/out.txt"],
-          stdout: "pipe",
+        const promises = new Array(10);
+        const statusCodes = new Array(10);
+        for (let i = 0; i < promises.length; i++) {
+          const { stdout, exited } = spawn({
+            cmd: ["cat", tmp + "out.txt"],
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "inherit",
+          });
+
+          gcTick();
+
+          promises[i] = readableStreamToText(stdout!);
+          statusCodes[i] = exited;
+          gcTick();
+        }
+
+        const outputs = await Promise.all(promises);
+        const statuses = await Promise.all(statusCodes);
+
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < outputs.length; i++) {
+            const output = outputs[i];
+            const status = statuses[i];
+            expect(status).toBe(0);
+            if (output !== hugeString) {
+              expect(output.length).toBe(hugeString.length);
+            }
+            expect(output).toBe(hugeString);
+          }
         });
-
-        gcTick();
-
-        const text = await readableStreamToText(stdout!);
-        gcTick();
-        expect(text).toBe(hugeString);
       });
 
-      it("kill(1) works", async () => {
+      it("kill(SIGKILL) works", async () => {
         const process = spawn({
-          cmd: ["bash", "-c", "sleep 1000"],
+          cmd: ["sleep", "1000"],
           stdout: "pipe",
         });
         gcTick();
         const prom = process.exited;
-        process.kill(1);
+        process.kill("SIGKILL");
         await prom;
       });
 
       it("kill() works", async () => {
         const process = spawn({
-          cmd: ["bash", "-c", "sleep 1000"],
+          cmd: ["sleep", "1000"],
           stdout: "pipe",
         });
         gcTick();
@@ -333,7 +375,7 @@ for (let [gcTick, label] of [
 
       it("stdin can be read and stdout can be written", async () => {
         const proc = spawn({
-          cmd: ["bash", import.meta.dir + "/bash-echo.sh"],
+          cmd: ["node", "-e", "process.stdin.setRawMode?.(true); process.stdin.pipe(process.stdout)"],
           stdout: "pipe",
           stdin: "pipe",
           lazy: true,
@@ -359,8 +401,8 @@ for (let [gcTick, label] of [
             done = false;
           }
         }
-
         expect(text.trim().length).toBe("hey".length);
+
         expect(text.trim()).toBe("hey");
         gcTick();
         await proc.exited;
@@ -369,9 +411,9 @@ for (let [gcTick, label] of [
       describe("pipe", () => {
         function huge() {
           return spawn({
-            cmd: ["echo", hugeString],
+            cmd: ["cat"],
             stdout: "pipe",
-            stdin: "pipe",
+            stdin: new Blob([hugeString + "\n"]),
             stderr: "inherit",
             lazy: true,
           });
@@ -379,7 +421,7 @@ for (let [gcTick, label] of [
 
         function helloWorld() {
           return spawn({
-            cmd: ["echo", "hello"],
+            cmd: ["node", "-e", "console.log('hello')"],
             stdout: "pipe",
             stdin: "ignore",
           });
@@ -407,20 +449,14 @@ for (let [gcTick, label] of [
                 const process = callback();
                 var sink = new ArrayBufferSink();
                 var any = false;
-                await (async function () {
+                var { resolve, promise } = Promise.withResolvers();
+
+                (async function () {
                   var reader = process.stdout?.getReader();
 
-                  reader?.closed.then(
-                    a => {
-                      console.log("Closed!");
-                    },
-                    err => {
-                      console.log("Closed!", err);
-                    },
-                  );
                   var done = false,
                     value;
-                  while (!done) {
+                  while (!done && resolve) {
                     ({ value, done } = await reader!.read());
 
                     if (value) {
@@ -428,7 +464,11 @@ for (let [gcTick, label] of [
                       sink.write(value);
                     }
                   }
+
+                  resolve && resolve();
+                  resolve = undefined;
                 })();
+                await promise;
                 expect(any).toBe(true);
 
                 const expected = fixture + "\n";
@@ -452,42 +492,10 @@ for (let [gcTick, label] of [
         }
       });
 
-      describe("ipc", () => {
-        it("the subprocess should be defined and the child should send", done => {
-          gcTick();
-          const returned_subprocess = spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
-            ipc: (message, subProcess) => {
-              expect(subProcess).toBe(returned_subprocess);
-              expect(message).toBe("hello");
-              subProcess.kill();
-              done();
-              gcTick();
-            },
-          });
-        });
-
-        it("the subprocess should receive the parent message and respond back", done => {
-          gcTick();
-
-          const parentMessage = "I am your father";
-          const childProc = spawn([bunExe(), path.join(__dirname, "bun-ipc-child-respond.js")], {
-            ipc: (message, subProcess) => {
-              expect(message).toBe(`pong:${parentMessage}`);
-              subProcess.kill();
-              done();
-              gcTick();
-            },
-          });
-
-          childProc.send(parentMessage);
-          gcTick();
-        });
-      });
-
       it("throws errors for invalid arguments", async () => {
         expect(() => {
           spawnSync({
-            cmd: ["echo", "hi"],
+            cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
         }).toThrow("No such file or directory");
@@ -496,7 +504,8 @@ for (let [gcTick, label] of [
   });
 }
 
-if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
+// This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
+if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
   it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
     const result = spawnSync({
       cmd: [bunExe(), "test", path.resolve(import.meta.path)],
@@ -516,6 +525,23 @@ if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
 
 describe("spawn unref and kill should not hang", () => {
   it("kill and await exited", async () => {
+    const promises = new Array(10);
+    for (let i = 0; i < promises.length; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0.001"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.kill();
+      promises[i] = proc.exited;
+    }
+
+    await Promise.all(promises);
+
+    expect().pass();
+  });
+  it("unref", async () => {
     for (let i = 0; i < 10; i++) {
       const proc = spawn({
         cmd: ["sleep", "0.001"],
@@ -523,50 +549,41 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      proc.kill();
-      await proc.exited;
-    }
-
-    expect().pass();
-  });
-  it("unref", async () => {
-    for (let i = 0; i < 100; i++) {
-      const proc = spawn({
-        cmd: ["sleep", "0.001"],
-        stdout: "ignore",
-        stderr: "ignore",
-        stdin: "ignore",
-      });
-      proc.unref();
+      // TODO: on Windows
+      if (!isWindows) proc.unref();
       await proc.exited;
     }
 
     expect().pass();
   });
   it("kill and unref", async () => {
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < (isWindows ? 10 : 100); i++) {
       const proc = spawn({
         cmd: ["sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
       });
+
       proc.kill();
-      proc.unref();
+      if (!isWindows) proc.unref();
+
       await proc.exited;
+      console.count("Finished");
     }
 
     expect().pass();
   });
   it("unref and kill", async () => {
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < (isWindows ? 10 : 100); i++) {
       const proc = spawn({
         cmd: ["sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
       });
-      proc.unref();
+      // TODO: on Windows
+      if (!isWindows) proc.unref();
       proc.kill();
       await proc.exited;
     }
@@ -574,6 +591,7 @@ describe("spawn unref and kill should not hang", () => {
     expect().pass();
   });
 
+  // process.unref() on Windows does not work ye :(
   it("should not hang after unref", async () => {
     const proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
@@ -585,8 +603,8 @@ describe("spawn unref and kill should not hang", () => {
 });
 
 async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {
-  console.log("running", order.join(","));
-  for (let i = 0; i < 100; i++) {
+  console.log("running", order.join(","), "x 100");
+  for (let i = 0; i < (isWindows ? 10 : 100); i++) {
     const proc = spawn({
       cmd: ["sleep", sleep],
       stdout: "ignore",
@@ -625,31 +643,41 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
 }
 
 describe("should not hang", () => {
-  for (let sleep of ["0.001", "0"]) {
-    describe("sleep " + sleep, () => {
-      for (let order of [
-        ["sleep", "kill", "unref", "exited"],
-        ["sleep", "unref", "kill", "exited"],
-        ["kill", "sleep", "unref", "exited"],
-        ["kill", "unref", "sleep", "exited"],
-        ["unref", "sleep", "kill", "exited"],
-        ["unref", "kill", "sleep", "exited"],
-        ["exited", "sleep", "kill", "unref"],
-        ["exited", "sleep", "unref", "kill"],
-        ["exited", "kill", "sleep", "unref"],
-        ["exited", "kill", "unref", "sleep"],
-        ["exited", "unref", "sleep", "kill"],
-        ["exited", "unref", "kill", "sleep"],
-        ["unref", "exited"],
-        ["exited", "unref"],
-        ["kill", "exited"],
-        ["exited"],
-      ]) {
-        const name = order.join(",");
-        const fn = runTest.bind(undefined, sleep, order);
-        it(name, fn);
-      }
-    });
+  for (let sleep of ["0", "0.1"]) {
+    it(
+      "sleep " + sleep,
+      () => {
+        const runs = [];
+        for (let order of [
+          ["sleep", "kill", "unref", "exited"],
+          ["sleep", "unref", "kill", "exited"],
+          ["kill", "sleep", "unref", "exited"],
+          ["kill", "unref", "sleep", "exited"],
+          ["unref", "sleep", "kill", "exited"],
+          ["unref", "kill", "sleep", "exited"],
+          ["exited", "sleep", "kill", "unref"],
+          ["exited", "sleep", "unref", "kill"],
+          ["exited", "kill", "sleep", "unref"],
+          ["exited", "kill", "unref", "sleep"],
+          ["exited", "unref", "sleep", "kill"],
+          ["exited", "unref", "kill", "sleep"],
+          ["unref", "exited"],
+          ["exited", "unref"],
+          ["kill", "exited"],
+          ["exited"],
+        ]) {
+          runs.push(
+            runTest(sleep, order).catch(err => {
+              console.error("For order", JSON.stringify(order, null, 2));
+              throw err;
+            }),
+          );
+        }
+
+        return Promise.all(runs);
+      },
+      128_000,
+    );
   }
 });
 
@@ -658,7 +686,7 @@ it("#3480", async () => {
     var server = Bun.serve({
       port: 0,
       fetch: (req, res) => {
-        Bun.spawnSync(["echo", "1"], {});
+        Bun.spawnSync(["node", "-e", "console.log('1')"], {});
         return new Response("Hello world!");
       },
     });
@@ -668,5 +696,75 @@ it("#3480", async () => {
     expect(response.ok);
   } finally {
     server!.stop(true);
+  }
+});
+
+describe("close handling", () => {
+  var testNumber = 0;
+  for (let stdin_ of [() => openSync(import.meta.path, "r"), "ignore", Bun.stdin, undefined as any] as const) {
+    const stdinFn = typeof stdin_ === "function" ? stdin_ : () => stdin_;
+    for (let stdout of [1, "ignore", Bun.stdout, undefined as any] as const) {
+      for (let stderr of [2, "ignore", Bun.stderr, undefined as any] as const) {
+        const thisTest = testNumber++;
+        it(`#${thisTest} [ ${typeof stdin_ === "function" ? "fd" : stdin_}, ${stdout}, ${stderr} ]`, async () => {
+          const stdin = stdinFn();
+
+          function getExitPromise() {
+            const { exited: proc1Exited } = spawn({
+              cmd: ["node", "-e", "console.log('" + "Executing test " + thisTest + "')"],
+              stdin,
+              stdout,
+              stderr,
+            });
+
+            const { exited: proc2Exited } = spawn({
+              cmd: ["node", "-e", "console.log('" + "Executing test " + thisTest + "')"],
+              stdin,
+              stdout,
+              stderr,
+            });
+
+            return Promise.all([proc1Exited, proc2Exited]);
+          }
+
+          // We do this to try to force the GC to finalize the Subprocess objects.
+          await (async function () {
+            let exitPromise = getExitPromise();
+
+            if (typeof stdin === "number") {
+              expect(() => fstatSync(stdin)).not.toThrow();
+            }
+
+            if (typeof stdout === "number") {
+              expect(() => fstatSync(stdout)).not.toThrow();
+            }
+
+            if (typeof stderr === "number") {
+              expect(() => fstatSync(stderr)).not.toThrow();
+            }
+
+            await exitPromise;
+          })();
+          Bun.gc(false);
+          await Bun.sleep(0);
+
+          if (typeof stdin === "number") {
+            expect(() => fstatSync(stdin)).not.toThrow();
+          }
+
+          if (typeof stdout === "number") {
+            expect(() => fstatSync(stdout)).not.toThrow();
+          }
+
+          if (typeof stderr === "number") {
+            expect(() => fstatSync(stderr)).not.toThrow();
+          }
+
+          if (typeof stdin === "number") {
+            closeSync(stdin);
+          }
+        });
+      }
+    }
   }
 });

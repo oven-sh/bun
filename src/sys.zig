@@ -26,7 +26,7 @@ const SystemError = JSC.SystemError;
 
 pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Syscall;
 
-const log = bun.Output.scoped(.SYS, true);
+const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
 
 // On Linux AARCh64, zig is missing stat & lstat syscalls

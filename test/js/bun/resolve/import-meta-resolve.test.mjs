@@ -1,5 +1,6 @@
 // You can run this test in Node.js/Deno
 import assert from "node:assert";
+import process from "node:process";
 
 const { test } = process?.versions?.bun ? Bun.jest(import.meta.path) : {};
 
@@ -77,7 +78,11 @@ fileUrlRelTo(() => import.meta.resolve("/haha"), "/haha");
 fileUrlRelTo(() => import.meta.resolve("/~"), "/~");
 fileUrlRelTo(() => import.meta.resolve("./🅱️un"), "./🅱️un");
 
-exact(() => import.meta.resolve("file:///oh/haha"), "file:///oh/haha");
+if (process.platform !== "win32") {
+  exact(() => import.meta.resolve("file:///oh/haha"), "file:///oh/haha");
+} else {
+  exact(() => import.meta.resolve("file:///C:/oh/haha"), "file:///C:/oh/haha");
+}
 
 // will fail on deno because it is `npm:*` specifier not a file path
 fileUrlRelTo(() => import.meta.resolve("lodash"), "../../../node_modules/lodash/lodash.js");

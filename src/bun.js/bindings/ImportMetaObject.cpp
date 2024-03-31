@@ -400,7 +400,11 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
 
     // Try to resolve it to a relative file path. This path is not meant to throw module resolution errors.
-    if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier.startsWith("/"_s) || specifier.startsWith("file://"_s)) {
+    if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier.startsWith("/"_s) || specifier.startsWith("file://"_s)
+#if OS(WINDOWS)
+        || specifier.startsWith(".\\"_s) || specifier.startsWith("..\\"_s) || specifier.startsWith("\\"_s)
+#endif
+    ) {
         auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
         if (!fromURL.isValid()) {
             JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
@@ -426,7 +430,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     }
 
     auto resultString = result.toWTFString(globalObject);
-    if (resultString.startsWith("/"_s)) {
+    if (isAbsolutePath(resultString)) {
         // file path -> url
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::URL::fileURLWithFileSystemPath(resultString).string())));
     }

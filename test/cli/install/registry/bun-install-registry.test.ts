@@ -28,7 +28,7 @@ var packageDir: string;
 
 beforeAll(async () => {
   verdaccioServer = fork(
-    await import.meta.resolve("verdaccio/bin/verdaccio"),
+    require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
     { silent: true, execPath: "bun" },
   );

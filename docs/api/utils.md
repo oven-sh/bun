@@ -635,7 +635,7 @@ Bun.resolveSync("zod", "/path/to/project");
 // => "/path/to/project/node_modules/zod/index.ts"
 ```
 
-To resolve relative to the current working directory, pass `process.cwd` or `"."` as the root.
+To resolve relative to the current working directory, pass `process.cwd()` or `"."` as the root.
 
 ```ts
 Bun.resolveSync("./foo.ts", process.cwd());

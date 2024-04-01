@@ -167,19 +167,24 @@ pub const FolderResolution = union(Tag) {
         comptime ResolverType: type,
         resolver: ResolverType,
     ) !Lockfile.Package {
-        var package_json: std.fs.File = try std.fs.cwd().openFileZ(abs, .{ .mode = .read_only });
-        defer package_json.close();
-        var package = Lockfile.Package{};
         var body = Npm.Registry.BodyPool.get(manager.allocator);
         defer Npm.Registry.BodyPool.release(body);
-        const len = try package_json.getEndPos();
 
-        body.data.reset();
-        body.data.inflate(@max(len, 2048)) catch unreachable;
-        body.data.list.expandToCapacity();
-        const source_buf = try package_json.readAll(body.data.list.items);
+        const source = brk: {
+            var file = bun.sys.File.from(try bun.sys.openatA(bun.toFD(std.fs.cwd().fd), abs, std.os.O.RDONLY, 0).unwrap());
+            defer file.close();
 
-        const source = logger.Source.initPathString(abs, body.data.list.items[0..source_buf]);
+            {
+                body.data.reset();
+                var man = body.data.list.toManaged(manager.allocator);
+                defer body.data.list = man.moveToUnmanaged();
+                _ = try file.readToEndWithArrayList(&man).unwrap();
+            }
+
+            break :brk logger.Source.initPathString(abs, body.data.list.items);
+        };
+
+        var package = Lockfile.Package{};
 
         try package.parse(
             manager.lockfile,

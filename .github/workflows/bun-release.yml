@@ -31,6 +31,10 @@ on:
         description: Should binaries be released to Homebrew?
         type: boolean
         default: false
+      use-winget:
+        description: Should binaries be published to Winget?
+        type: boolean
+        default: false
       use-s3:
         description: Should binaries be uploaded to S3?
         type: boolean
@@ -240,6 +244,28 @@ jobs:
           commit_user_name: robobun
           commit_user_email: robobun@oven.sh
           commit_author: robobun <robobun@oven.sh>
+  winget:
+    name: Publish to Winget
+    runs-on: ubuntu-latest
+    needs: sign
+    permissions:
+      contents: read
+    if: ${{ github.event_name == 'release' || github.event.inputs.use-winget == 'true' }}
+    steps:
+      - name: Publish main build
+        uses: vedantmgoyal2009/winget-releaser@v2
+        with:
+          identifier: oven-sh.bun
+          release-tag: ${{ env.BUN_VERSION }}
+          installers-regex: '-windows-\w+\.zip$'
+          token: ${{ secrets.ROBOBUN_TOKEN }}
+      - name: Publish baseline build
+        uses: vedantmgoyal2009/winget-releaser@v2
+        with:
+          identifier: oven-sh.bun.baseline
+          release-tag: ${{ env.BUN_VERSON }}
+          installers-regex: '-windows-\w+-baseline\.zip$'
+          token: ${{ secrets.ROBOBUN_TOKEN }}
   s3:
     name: Upload to S3
     runs-on: ubuntu-latest

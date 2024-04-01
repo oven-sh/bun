@@ -125,16 +125,16 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
-  test("conditional execution", () => {
+  test("binary expressions", () => {
     const expected = {
       stmts: [
         {
           exprs: [
             {
-              cond: {
+              binary: {
                 op: "Or",
                 left: {
-                  cond: {
+                  binary: {
                     op: "And",
                     left: {
                       cmd: {
@@ -179,10 +179,10 @@ describe("parse shell", () => {
         {
           exprs: [
             {
-              cond: {
+              binary: {
                 op: "And",
                 left: {
-                  cond: {
+                  binary: {
                     op: "And",
                     left: {
                       assign: [{ label: "FOO", value: { simple: { Text: "bar" } } }],
@@ -280,7 +280,7 @@ describe("parse shell", () => {
         {
           exprs: [
             {
-              cond: {
+              binary: {
                 op: "And",
                 left: {
                   cmd: {
@@ -399,7 +399,7 @@ describe("parse shell", () => {
         {
           exprs: [
             {
-              cond: {
+              binary: {
                 op: "And",
                 left: {
                   cmd: {
@@ -473,6 +473,446 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  describe("if_clause", () => {
+    test("basic", () => {
+      const expected = {
+        "stmts": [
+          {
+            "exprs": [
+              {
+                "if": {
+                  "cond": [
+                    {
+                      "exprs": [
+                        {
+                          "cmd": {
+                            "assigns": [],
+                            "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "hi" } }],
+                            "redirect": {
+                              "stdin": false,
+                              "stdout": false,
+                              "stderr": false,
+                              "append": false,
+                              "duplicate_out": false,
+                              "__unused": 0,
+                            },
+                            "redirect_file": null,
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                  "then": [
+                    {
+                      "exprs": [
+                        {
+                          "cmd": {
+                            "assigns": [],
+                            "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "lmao" } }],
+                            "redirect": {
+                              "stdin": false,
+                              "stdout": false,
+                              "stderr": false,
+                              "append": false,
+                              "duplicate_out": false,
+                              "__unused": 0,
+                            },
+                            "redirect_file": null,
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                  "else_parts": [
+                    [
+                      {
+                        "exprs": [
+                          {
+                            "cmd": {
+                              "assigns": [],
+                              "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "lol" } }],
+                              "redirect": {
+                                "stdin": false,
+                                "stdout": false,
+                                "stderr": false,
+                                "append": false,
+                                "duplicate_out": false,
+                                "__unused": 0,
+                              },
+                              "redirect_file": null,
+                            },
+                          },
+                        ],
+                      },
+                    ],
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      let result = JSON.parse(parse`if echo hi; then echo lmao; else echo lol; fi`);
+      expect(result).toEqual(expected);
+      result = JSON.parse(parse`if echo hi
+      then echo lmao
+      else echo lol
+      fi`);
+      expect(result).toEqual(expected);
+    });
+
+    test("elif", () => {
+      const expected = {
+        "stmts": [
+          {
+            "exprs": [
+              {
+                "if": {
+                  "cond": [
+                    {
+                      "exprs": [
+                        {
+                          "cmd": {
+                            "assigns": [],
+                            "name_and_args": [{ "simple": { "Text": "a" } }],
+                            "redirect": {
+                              "stdin": false,
+                              "stdout": false,
+                              "stderr": false,
+                              "append": false,
+                              "duplicate_out": false,
+                              "__unused": 0,
+                            },
+                            "redirect_file": null,
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                  "then": [
+                    {
+                      "exprs": [
+                        {
+                          "cmd": {
+                            "assigns": [],
+                            "name_and_args": [{ "simple": { "Text": "b" } }],
+                            "redirect": {
+                              "stdin": false,
+                              "stdout": false,
+                              "stderr": false,
+                              "append": false,
+                              "duplicate_out": false,
+                              "__unused": 0,
+                            },
+                            "redirect_file": null,
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                  "else_parts": [
+                    [
+                      {
+                        "exprs": [
+                          {
+                            "cmd": {
+                              "assigns": [],
+                              "name_and_args": [{ "simple": { "Text": "c" } }],
+                              "redirect": {
+                                "stdin": false,
+                                "stdout": false,
+                                "stderr": false,
+                                "append": false,
+                                "duplicate_out": false,
+                                "__unused": 0,
+                              },
+                              "redirect_file": null,
+                            },
+                          },
+                        ],
+                      },
+                    ],
+                    [
+                      {
+                        "exprs": [
+                          {
+                            "cmd": {
+                              "assigns": [],
+                              "name_and_args": [{ "simple": { "Text": "d" } }],
+                              "redirect": {
+                                "stdin": false,
+                                "stdout": false,
+                                "stderr": false,
+                                "append": false,
+                                "duplicate_out": false,
+                                "__unused": 0,
+                              },
+                              "redirect_file": null,
+                            },
+                          },
+                        ],
+                      },
+                    ],
+                    [
+                      {
+                        "exprs": [
+                          {
+                            "cmd": {
+                              "assigns": [],
+                              "name_and_args": [{ "simple": { "Text": "e" } }],
+                              "redirect": {
+                                "stdin": false,
+                                "stdout": false,
+                                "stderr": false,
+                                "append": false,
+                                "duplicate_out": false,
+                                "__unused": 0,
+                              },
+                              "redirect_file": null,
+                            },
+                          },
+                        ],
+                      },
+                    ],
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      let result = JSON.parse(parse`if a; then b; elif c; then d; else e; fi`);
+      expect(result).toEqual(expected);
+    });
+
+    describe("precedence", () => {
+      test("in pipeline", () => {
+        const expected = {
+          "stmts": [
+            {
+              "exprs": [
+                {
+                  "pipeline": {
+                    "items": [
+                      {
+                        "if": {
+                          "cond": [
+                            {
+                              "exprs": [
+                                {
+                                  "cmd": {
+                                    "assigns": [],
+                                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "hi" } }],
+                                    "redirect": {
+                                      "stdin": false,
+                                      "stdout": false,
+                                      "stderr": false,
+                                      "append": false,
+                                      "duplicate_out": false,
+                                      "__unused": 0,
+                                    },
+                                    "redirect_file": null,
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                          "then": [
+                            {
+                              "exprs": [
+                                {
+                                  "cmd": {
+                                    "assigns": [],
+                                    "name_and_args": [
+                                      { "simple": { "Text": "echo" } },
+                                      { "simple": { "Text": "lmao" } },
+                                    ],
+                                    "redirect": {
+                                      "stdin": false,
+                                      "stdout": false,
+                                      "stderr": false,
+                                      "append": false,
+                                      "duplicate_out": false,
+                                      "__unused": 0,
+                                    },
+                                    "redirect_file": null,
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                          "else_parts": [
+                            [
+                              {
+                                "exprs": [
+                                  {
+                                    "cmd": {
+                                      "assigns": [],
+                                      "name_and_args": [
+                                        { "simple": { "Text": "echo" } },
+                                        { "simple": { "Text": "lol" } },
+                                      ],
+                                      "redirect": {
+                                        "stdin": false,
+                                        "stdout": false,
+                                        "stderr": false,
+                                        "append": false,
+                                        "duplicate_out": false,
+                                        "__unused": 0,
+                                      },
+                                      "redirect_file": null,
+                                    },
+                                  },
+                                ],
+                              },
+                            ],
+                          ],
+                        },
+                      },
+                      {
+                        "cmd": {
+                          "assigns": [],
+                          "name_and_args": [{ "simple": { "Text": "cat" } }],
+                          "redirect": {
+                            "stdin": false,
+                            "stdout": false,
+                            "stderr": false,
+                            "append": false,
+                            "duplicate_out": false,
+                            "__unused": 0,
+                          },
+                          "redirect_file": null,
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const result = JSON.parse(parse`if echo hi; then echo lmao; else echo lol; fi | cat`);
+        expect(result).toEqual(expected);
+      });
+    });
+  });
+
+  describe.todo("async", () => {
+    TestBuilder.command`echo foo & && echo hi`
+      .error('"&" is not allowed on the left-hand side of "&&"')
+      .runAsTest("left side of binary not allowed");
+
+    TestBuilder.command`echo hi && echo foo & && echo hi`
+      .error('"&" is not allowed on the left-hand side of "&&"')
+      .runAsTest("left side of binary not allowed 2");
+
+    test("right side of binary works", () => {
+      const expected = {
+        "stmts": [
+          {
+            "exprs": [
+              {
+                "binary": {
+                  "op": "And",
+                  "left": {
+                    "cmd": {
+                      "assigns": [],
+                      "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "hi" } }],
+                      "redirect": {
+                        "stdin": false,
+                        "stdout": false,
+                        "stderr": false,
+                        "append": false,
+                        "duplicate_out": false,
+                        "__unused": 0,
+                      },
+                      "redirect_file": null,
+                    },
+                  },
+                  "right": {
+                    "async": {
+                      "cmd": {
+                        "assigns": [],
+                        "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
+                        "redirect": {
+                          "stdin": false,
+                          "stdout": false,
+                          "stderr": false,
+                          "append": false,
+                          "duplicate_out": false,
+                          "__unused": 0,
+                        },
+                        "redirect_file": null,
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = JSON.parse(parse`echo hi && echo foo &`);
+      expect(result).toEqual(expected);
+    });
+
+    test("pipeline", () => {
+      const expected = {
+        "stmts": [
+          {
+            "exprs": [
+              {
+                "async": {
+                  "pipeline": {
+                    "items": [
+                      {
+                        "cmd": {
+                          "assigns": [],
+                          "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "hi" } }],
+                          "redirect": {
+                            "stdin": false,
+                            "stdout": false,
+                            "stderr": false,
+                            "append": false,
+                            "duplicate_out": false,
+                            "__unused": 0,
+                          },
+                          "redirect_file": null,
+                        },
+                      },
+                      {
+                        "cmd": {
+                          "assigns": [],
+                          "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
+                          "redirect": {
+                            "stdin": false,
+                            "stdout": false,
+                            "stderr": false,
+                            "append": false,
+                            "duplicate_out": false,
+                            "__unused": 0,
+                          },
+                          "redirect_file": null,
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = JSON.parse(parse`echo hi | echo foo &`);
+      expect(result).toEqual(expected);
+    });
+  });
+
   describe("bad syntax", () => {
     test("cmd subst edgecase", () => {
       const expected = {
@@ -541,33 +981,32 @@ describe("parse shell", () => {
 
     test("cmd edgecase", () => {
       const expected = {
-        stmts: [
+        "stmts": [
           {
-            exprs: [
+            "exprs": [
               {
-                assign: [
-                  { label: "FOO", value: { simple: { Text: "bar" } } },
-                  { label: "BAR", value: { simple: { Text: "baz" } } },
+                "assign": [
+                  { "label": "FOO", "value": { "simple": { "Text": "bar" } } },
+                  { "label": "BAR", "value": { "simple": { "Text": "baz" } } },
                 ],
               },
+            ],
+          },
+          {
+            "exprs": [
               {
-                cmd: {
-                  assigns: [
-                    {
-                      label: "BUN_DEBUG_QUIET_LOGS",
-                      value: { simple: { Text: "1" } },
-                    },
-                  ],
-                  name_and_args: [{ simple: { Text: "echo" } }],
-                  redirect: {
-                    stdin: false,
-                    stdout: false,
-                    stderr: false,
-                    append: false,
-                    duplicate_out: false,
-                    __unused: 0,
+                "cmd": {
+                  "assigns": [{ "label": "BUN_DEBUG_QUIET_LOGS", "value": { "simple": { "Text": "1" } } }],
+                  "name_and_args": [{ "simple": { "Text": "echo" } }],
+                  "redirect": {
+                    "stdin": false,
+                    "stdout": false,
+                    "stderr": false,
+                    "append": false,
+                    "duplicate_out": false,
+                    "__unused": 0,
                   },
-                  redirect_file: null,
+                  "redirect_file": null,
                 },
               },
             ],

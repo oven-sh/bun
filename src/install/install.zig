@@ -2636,18 +2636,18 @@ pub const PackageManager = struct {
         const content = switch (Environment.os) {
             .windows =>
             \\if not defined npm_config_node_gyp (
-            \\  bun x node-gyp %*
+            \\  bun x --silent node-gyp %*
             \\) else (
             \\  node "%npm_config_node_gyp%" %*
             \\)
             \\
             ,
             else =>
-            \\#!/usr/bin/env sh
+            \\#!/bin/sh
             \\if [ "x$npm_config_node_gyp" = "x" ]; then
-            \\  bun x node-gyp $@
+            \\  bun x --silent node-gyp $@
             \\else
-            \\  "$npm_config_node_gyp" "$@"
+            \\  "$npm_config_node_gyp" $@
             \\fi
             \\
             ,

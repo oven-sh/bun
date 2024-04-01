@@ -50,6 +50,10 @@ To install, paste this into a terminal:
 powershell -c "irm bun.sh/install.ps1|iex"
 ```
 
+```powershell#winget
+winget install --id Oven-sh.Bun
+```
+
 {% /codetabs %}
 
 For support and discussion, please join the [#windows channel on our Discord](http://bun.sh/discord).

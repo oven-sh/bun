@@ -21,6 +21,8 @@ const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 
+const debug = Output.scoped(.CLI, true);
+
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
@@ -1388,6 +1390,8 @@ pub const Command = struct {
             );
             return;
         }
+
+        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv(), ", ")});
 
         const tag = which();
 

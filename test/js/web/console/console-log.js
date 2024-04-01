@@ -206,3 +206,6 @@ console.log({ "": "" });
   );
   console.log(proxy);
 }
+
+console.log("| %i | %i | %i | %i | %i | %i |", 0, 0.2, 132.51, -42.52, 41278885384321884328431, -0.0000000000085);
+console.log("| %i | %i | %i | %i | %i | %i |", NaN, Infinity, -Infinity, -0, {}, Symbol.for("magic"));

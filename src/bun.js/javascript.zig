@@ -3276,15 +3276,17 @@ pub const VirtualMachine = struct {
 
     const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
     pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType, mode: IPC.Mode) void {
+        IPC.log("initIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{info});
         if (Environment.isWindows) {
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
                 .context = 0,
                 .ipc = .{},
             });
+
             instance.ipc.configureClient(IPCInstance, instance, info) catch {
                 instance.destroy();
-                Output.printErrorln("Unable to start IPC pipe", .{});
+                Output.warn("Unable to start IPC pipe '{s}'", .{info});
                 return;
             };
 
@@ -3293,17 +3295,14 @@ pub const VirtualMachine = struct {
             return;
         }
         this.ipc = .{
-            .waiting = .{ .fd = fd, .mode = mode },
+            .waiting = .{ .fd = info, .mode = mode },
         };
     }
 
     pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
-        if (Environment.isWindows) {
-            @panic("IPC is not supported on Windows");
-        }
-
         if (this.ipc == null) return null;
         if (this.ipc.? != .waiting) return this.ipc.?.initialized;
+        IPC.log("getIPCInstance configure", .{});
         const opts = this.ipc.?.waiting;
 
         this.event_loop.ensureWaker();
@@ -3315,18 +3314,22 @@ pub const VirtualMachine = struct {
             .context = context,
             .ipc = undefined,
         });
-        const socket = IPC.Socket.fromFd(context, info, IPCInstance, instance, null) orelse {
+
+        const socket = IPC.Socket.fromFd(context, opts.fd, IPCInstance, instance, null) orelse {
             instance.destroy();
+            this.ipc = null;
             Output.warn("Unable to start IPC socket", .{});
-            return;
+            return null;
         };
         socket.setTimeout(0);
+
         instance.ipc = .{ .socket = socket, .mode = opts.mode };
+        instance.ipc.writeVersionPacket();
 
         const ptr = socket.ext(*IPCInstance);
         ptr.?.* = instance;
+
         this.ipc = .{ .initialized = instance };
-        instance.ipc.writeVersionPacket();
 
         return instance;
     }

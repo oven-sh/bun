@@ -206,10 +206,10 @@ pub const SocketIPCData = struct {
 
                 const payload_length: usize = @sizeOf(IPCMessageType) + @sizeOf(u32) + size;
 
-                ipc_data.outgoing.list.ensureUnusedCapacity(bun.default_allocator, payload_length) catch bun.outOfMemory();
+                ipc_data.outgoing.list.ensureUnusedCapacity(payload_length) catch bun.outOfMemory();
 
-                ipc_data.outgoing.list.writeTypeAsBytesAssumeCapacity(u8, @intFromEnum(IPCMessageType.SerializedMessage));
-                ipc_data.outgoing.list.writeTypeAsBytesAssumeCapacity(u32, size);
+                ipc_data.outgoing.list.appendAssumeCapacity(@intFromEnum(IPCMessageType.SerializedMessage));
+                ipc_data.outgoing.list.appendSliceAssumeCapacity(std.mem.asBytes(&size));
                 ipc_data.outgoing.list.appendSliceAssumeCapacity(serialized.data);
 
                 break :len payload_length;
@@ -227,7 +227,7 @@ pub const SocketIPCData = struct {
 
                 const slice = str.slice();
 
-                ipc_data.outgoing.list.ensureUnusedCapacity(bun.default_allocator, slice.len + 1) catch bun.outOfMemory();
+                ipc_data.outgoing.list.ensureUnusedCapacity(slice.len + 1) catch bun.outOfMemory();
                 ipc_data.outgoing.list.appendSliceAssumeCapacity(slice);
                 ipc_data.outgoing.list.appendAssumeCapacity('\n');
 

@@ -1700,9 +1700,25 @@ pub const Subprocess = struct {
                 // This must run before the stdio parsing happens
                 if (args.getTruthy(globalThis, "ipc")) |val| {
                     if (val.isCell() and val.isCallable(globalThis.vm())) {
-                        // In the future, we should add a way to use a different IPC serialization format, specifically `json`.
-                        // but the only use case this has is doing interop with node.js IPC and other programs.
-                        ipc_mode = .bun;
+                        ipc_mode = ipc_mode: {
+                            if (args.get(globalThis, "serialization")) |mode_val| {
+                                if (mode_val.isString()) {
+                                    const mode_str = mode_val.toBunString(globalThis);
+                                    defer mode_str.deref();
+                                    const slice = mode_str.toUTF8(bun.default_allocator);
+                                    defer slice.deinit();
+                                    break :ipc_mode IPC.Mode.fromString(slice.slice()) orelse {
+                                        globalThis.throwInvalidArguments("serialization must be \"json\" or \"advanced\"", .{});
+                                        return .zero;
+                                    };
+                                } else {
+                                    globalThis.throwInvalidArguments("serialization must be a 'string'", .{});
+                                    return .zero;
+                                }
+                            }
+                            break :ipc_mode .advanced;
+                        };
+
                         ipc_callback = val.withAsyncContextIfNeeded(globalThis);
 
                         if (Environment.isPosix) {
@@ -1842,38 +1858,6 @@ pub const Subprocess = struct {
                 if (args.get(globalThis, "detached")) |detached_val| {
                     if (detached_val.isBoolean()) {
                         detached = detached_val.toBoolean();
-                    }
-                }
-
-                if (!is_sync) {
-                    if (args.getTruthy(globalThis, "ipc")) |val| {
-                        if (val.isCell() and val.isCallable(globalThis.vm())) {
-                            if (Environment.isWindows) {
-                                globalThis.throwTODO("IPC is not supported on Windows");
-                                return .zero;
-                            }
-
-                            ipc_mode = ipc_mode: {
-                                if (args.get(globalThis, "serialization")) |mode_val| {
-                                    if (mode_val.isString()) {
-                                        const mode_str = mode_val.toBunString(globalThis);
-                                        defer mode_str.deref();
-                                        const slice = mode_str.toUTF8(bun.default_allocator);
-                                        defer slice.deinit();
-                                        break :ipc_mode IPC.Mode.fromString(slice.slice()) orelse {
-                                            globalThis.throwInvalidArguments("serialization must be \"json\" or \"advanced\"", .{});
-                                            return .zero;
-                                        };
-                                    } else {
-                                        globalThis.throwInvalidArguments("serialization must be a 'string'", .{});
-                                        return .zero;
-                                    }
-                                }
-                                break :ipc_mode .advanced;
-                            };
-
-                            ipc_callback = val.withAsyncContextIfNeeded(globalThis);
-                        }
                     }
                 }
 
@@ -2063,7 +2047,7 @@ pub const Subprocess = struct {
             .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .ipc_mode = ipc_mode,
-            .ipc = if (Environment.isWindows) .{} else .{ .socket = posix_ipc_info },
+            .ipc = if (Environment.isWindows) .{} else .{ .socket = posix_ipc_info, .mode = ipc_mode },
             .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else undefined,
             .flags = .{
                 .is_sync = is_sync,
@@ -2079,7 +2063,7 @@ pub const Subprocess = struct {
                 if (subprocess.ipc.configureServer(
                     Subprocess,
                     subprocess,
-                    windows_ipc_env_buf["BUN_INTERNAL_IPC_FD=".len..],
+                    windows_ipc_env_buf["NODE_CHANNEL_FD=".len..],
                 ).asErr()) |err| {
                     process_allocator.destroy(subprocess);
                     globalThis.throwValue(err.toJSC(globalThis));

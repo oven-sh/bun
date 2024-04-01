@@ -1216,13 +1216,23 @@ pub const Formatter = struct {
     const CellType = JSC.C.CellType;
     threadlocal var name_buf: [512]u8 = undefined;
 
+    /// https://console.spec.whatwg.org/#formatter
+    const PercentTag = enum {
+        s, // s
+        i, // i or d
+        f, // f
+        o, // o
+        O, // O
+        c, // c
+    };
+
     fn writeWithFormatting(
         this: *ConsoleObject.Formatter,
         comptime Writer: type,
         writer_: Writer,
         comptime Slice: type,
         slice_: Slice,
-        globalThis: *JSGlobalObject,
+        global: *JSGlobalObject,
         comptime enable_ansi_colors: bool,
     ) void {
         var writer = WrappedWriter(Writer){
@@ -1246,12 +1256,13 @@ pub const Formatter = struct {
                     if (i >= len)
                         break;
 
-                    const token = switch (slice[i]) {
-                        's' => Tag.String,
-                        'f' => Tag.Double,
-                        'o' => Tag.Undefined,
-                        'O' => Tag.Object,
-                        'd', 'i' => Tag.Integer,
+                    const token: PercentTag = switch (slice[i]) {
+                        's' => .s,
+                        'f' => .f,
+                        'o' => .o,
+                        'O' => .O,
+                        'd', 'i' => .i,
+                        'c' => .c,
                         else => continue,
                     };
 
@@ -1268,16 +1279,96 @@ pub const Formatter = struct {
                     len = @as(u32, @truncate(slice.len));
                     const next_value = this.remaining_values[0];
                     this.remaining_values = this.remaining_values[1..];
+                    // https://console.spec.whatwg.org/#formatter
                     switch (token) {
-                        Tag.String => this.printAs(Tag.String, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
-                        Tag.Double => this.printAs(Tag.Double, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
-                        Tag.Object => this.printAs(Tag.Object, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
-                        Tag.Integer => this.printAs(Tag.Integer, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
+                        .s => this.printAs(Tag.String, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
+                        .i => {
+                            // 1. If Type(current) is Symbol, let converted be NaN
+                            // 2. Otherwise, let converted be the result of Call(%parseInt%, undefined, current, 10)
+                            const int: i64 = brk: {
+                                // This logic is convoluted because %parseInt% will coerce the argument to a string
+                                // first. As an optimization, we can check if the argument is a number and
+                                // skip such coercion.
+                                if (next_value.isInt32()) {
+                                    // Already an int, parseInt will parse to itself.
+                                    break :brk next_value.asInt32();
+                                }
 
-                        // undefined is overloaded to mean the '%o" field
-                        Tag.Undefined => this.format(Tag.get(next_value, globalThis), Writer, writer_, next_value, globalThis, enable_ansi_colors),
+                                if (next_value.isNumber() or !next_value.isSymbol()) double_convert: {
+                                    var value = next_value.coerceToDouble(global);
 
-                        else => unreachable,
+                                    if (!std.math.isFinite(value)) {
+                                        // for NaN and the string Infinity and -Infinity, parseInt returns NaN
+                                        break :double_convert;
+                                    }
+
+                                    // simulate parseInt, which converts the argument to a string and
+                                    // then back to a number, without converting it to a string
+                                    const max_before_e_notation = 1000000000000000000000;
+                                    const min_before_e_notation = 0.000001;
+                                    if (value == 0) {
+                                        break :brk 0;
+                                    }
+
+                                    const sign: i64 = if (value < 0) -1 else 1;
+                                    value = @abs(value);
+                                    if (value >= max_before_e_notation) {
+                                        // toString prints 1.000+e0, which parseInt will stop at
+                                        // the '.' or the '+', this gives us a single digit value.
+                                        while (value >= 10) value /= 10;
+                                        break :brk @as(i64, @intFromFloat(@floor(value))) * sign;
+                                    } else if (value < min_before_e_notation) {
+                                        // toString prints 1.000-e0, which parseInt will stop at
+                                        // the '.' or the '-', this gives us a single digit value.
+                                        while (value < 1) value *= 10;
+                                        break :brk @as(i64, @intFromFloat(@floor(value))) * sign;
+                                    }
+
+                                    // parsing stops at '.', so this is equal to @floor
+                                    break :brk @as(i64, @intFromFloat(@floor(value))) * sign;
+                                }
+
+                                // for NaN and the string Infinity and -Infinity, parseInt returns NaN
+                                this.addForNewLine("NaN".len);
+                                writer.print("NaN", .{});
+                                continue;
+                            };
+
+                            if (int < std.math.maxInt(u32)) {
+                                const is_negative = int < 0;
+                                const digits = if (i != 0)
+                                    bun.fmt.fastDigitCount(@as(u64, @intCast(@abs(int)))) + @as(u64, @intFromBool(is_negative))
+                                else
+                                    1;
+                                this.addForNewLine(digits);
+                            } else {
+                                this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                            }
+                            writer.print("{d}", .{int});
+                        },
+
+                        // TODO: verify this behaves per spec
+                        .f => this.printAs(Tag.Double, Writer, writer_, next_value, next_value.jsType(), false),
+
+                        inline .o, .O => |t| {
+                            if (t == .o) {
+                                // TODO: Node.js applies the following extra formatter options.
+                                //
+                                // this.max_depth = 4;
+                                // this.show_proxy = true;
+                                // this.show_hidden = true;
+                                //
+                                // Spec defines %o as:
+                                // > An object with optimally useful formatting is an
+                                // > implementation-specific, potentially-interactive representation
+                                // > of an object judged to be maximally useful and informative.
+                            }
+                            this.format(Tag.get(next_value, global), Writer, writer_, next_value, global, enable_ansi_colors);
+                        },
+
+                        .c => {
+                            // TODO: Implement %c
+                        },
                     }
                     if (this.remaining_values.len == 0) break;
                 },
@@ -1523,7 +1614,7 @@ pub const Formatter = struct {
             parent: JSValue,
             const enable_ansi_colors = enable_ansi_colors_;
             pub fn handleFirstProperty(this: *@This(), globalThis: *JSC.JSGlobalObject, value: JSValue) void {
-                if (!value.jsType().isFunction()) {
+                if (value.isCell() and !value.jsType().isFunction()) {
                     var writer = WrappedWriter(Writer){
                         .ctx = this.writer,
                         .failed = false,
@@ -1735,6 +1826,7 @@ pub const Formatter = struct {
                 this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
             },
             .String => {
+                // This is called from the '%s' formatter, so it can actually be any value
                 const str: bun.String = bun.String.tryFromJS(value, this.globalThis) orelse {
                     writer.failed = true;
                     return;
@@ -2735,6 +2827,7 @@ pub const Formatter = struct {
                 writer.writeAll(" />");
             },
             .Object => {
+                std.debug.assert(value.isCell());
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;

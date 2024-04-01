@@ -679,7 +679,6 @@ fn openDirAtWindowsNtPath(
     const open_reparse_point: w.DWORD = if (no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
     var fd: w.HANDLE = w.INVALID_HANDLE_VALUE;
     var io: w.IO_STATUS_BLOCK = undefined;
-    const delete_share: u32 = if (can_rename_or_delete) w.FILE_SHARE_DELETE else 0;
 
     const rc = w.ntdll.NtCreateFile(
         &fd,
@@ -688,7 +687,7 @@ fn openDirAtWindowsNtPath(
         &io,
         null,
         0,
-        w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | delete_share,
+        FILE_SHARE,
         if (options.create) w.FILE_OPEN_IF else w.FILE_OPEN,
         w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
         null,
@@ -848,7 +847,7 @@ pub fn openFileAtWindowsNtPath(
             &io,
             null,
             attributes,
-            w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
+            FILE_SHARE,
             disposition,
             options,
             null,
@@ -1688,6 +1687,55 @@ pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
         }
         return Maybe(void).success;
     }
+}
+
+pub const WindowsSymlinkOptions = packed struct {
+    directory: bool = false,
+
+    var symlink_flags: u32 = w.SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+    pub fn flags(this: WindowsSymlinkOptions) u32 {
+        if (this.directory) {
+            symlink_flags |= w.SYMBOLIC_LINK_FLAG_DIRECTORY;
+        }
+
+        return symlink_flags;
+    }
+
+    pub fn denied() void {
+        symlink_flags = 0;
+    }
+};
+
+pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
+    while (true) {
+        const flags = options.flags();
+
+        if (windows.kernel32.CreateSymbolicLinkW(sym, target, flags) == 0) {
+            const errno = bun.windows.Win32Error.get();
+            switch (errno) {
+                .INVALID_PARAMETER => {
+                    if ((flags & w.SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0) {
+                        WindowsSymlinkOptions.denied();
+                        continue;
+                    }
+                },
+                else => {},
+            }
+
+            if (errno.toSystemErrno()) |err| {
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(err),
+                        .syscall = .symlink,
+                    },
+                };
+            }
+        }
+
+        return Maybe(void).success;
+    }
+
+    unreachable;
 }
 
 pub fn clonefile(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
@@ -2568,6 +2616,22 @@ pub const File = struct {
         file.close();
         return .{ .result = bytes };
     }
+
+    pub fn toSource(path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
+        if (std.meta.sentinel(@TypeOf(path)) == null) {
+            return toSource(
+                &(std.os.toPosixPath(path) catch return .{
+                    .err = Error.oom,
+                }),
+                allocator,
+            );
+        }
+
+        return switch (readFrom(std.fs.cwd(), path, allocator)) {
+            .err => |err| .{ .err = err },
+            .result => |bytes| .{ .result = bun.logger.Source.initPathString(path, bytes) },
+        };
+    }
 };
 
 pub inline fn toLibUVOwnedFD(
@@ -2597,3 +2661,4 @@ pub inline fn toLibUVOwnedFD(
 }
 
 pub const Dir = @import("./dir.zig");
+const FILE_SHARE = w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE;

@@ -226,8 +226,8 @@ pub const FolderResolution = union(Tag) {
 
         // replace before getting hash. rel may or may not be contained in abs
         if (comptime bun.Environment.isWindows) {
-            bun.path.pathToPosixInPlace(u8, @constCast(abs));
-            bun.path.pathToPosixInPlace(u8, @constCast(rel));
+            bun.path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(abs));
+            bun.path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(rel));
         }
         const abs_hash = hash(abs);
 

@@ -2225,7 +2225,7 @@ pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
     }
 }
 
-pub fn pathToPosixInPlace(comptime T: type, path: []T) void {
+pub fn dangerouslyConvertPathToPosixInPlace(comptime T: type, path: []T) void {
     var idx: usize = 0;
     while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_windows)) |index| : (idx = index + 1) {
         path[index] = '/';

@@ -3311,8 +3311,10 @@ pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
         .WSA_QOS_ESHAPERATEOBJ => error.WSA_QOS_ESHAPERATEOBJ,
         .WSA_QOS_RESERVED_PETYPE => error.WSA_QOS_RESERVED_PETYPE,
         _ => |t| {
-            if (Environment.isDebug) {
-                bun.Output.debugWarn("Unknown WinSockError: {d}", .{@intFromEnum(t)});
+            if (@intFromEnum(t) != 0) {
+                if (Environment.isDebug) {
+                    bun.Output.debugWarn("Unknown WinSockError: {d}", .{@intFromEnum(t)});
+                }
             }
         },
     };
@@ -3321,3 +3323,14 @@ pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
 pub fn WSAGetLastError() !void {
     return winSockErrorToZigError(std.os.windows.ws2_32.WSAGetLastError());
 }
+
+// BOOL CreateDirectoryExW(
+//   [in]           LPCWSTR               lpTemplateDirectory,
+//   [in]           LPCWSTR               lpNewDirectory,
+//   [in, optional] LPSECURITY_ATTRIBUTES lpSecurityAttributes
+// );
+pub extern "kernel32" fn CreateDirectoryExW(
+    lpTemplateDirectory: [*:0]const u16,
+    lpNewDirectory: [*:0]const u16,
+    lpSecurityAttributes: ?*win32.SECURITY_ATTRIBUTES,
+) callconv(windows.WINAPI) BOOL;

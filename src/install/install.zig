@@ -57,6 +57,7 @@ threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
+const Walker = @import("../walker_skippable.zig");
 
 // these bytes are skipped
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
@@ -1142,8 +1143,6 @@ pub const PackageInstall = struct {
         Method.hardlink;
 
     fn installWithClonefileEachDir(this: *PackageInstall) !Result {
-        const Walker = @import("../walker_skippable.zig");
-
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1258,8 +1257,6 @@ pub const PackageInstall = struct {
         };
     }
     fn installWithCopyfile(this: *PackageInstall) Result {
-        const Walker = @import("../walker_skippable.zig");
-
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1274,62 +1271,137 @@ pub const PackageInstall = struct {
         };
         defer walker_.deinit();
 
+        var subdir = bun.MakePath.makeOpenPath(this.destination_dir, bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_cache_dir);
+        defer subdir.close();
+
+        var buf: bun.windows.WPathBuffer = undefined;
+        var buf2: bun.windows.WPathBuffer = undefined;
+        var to_copy_buf: []u16 = undefined;
+        var to_copy_buf2: []u16 = undefined;
+        if (comptime Environment.isWindows) {
+            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(subdir.fd, &buf, buf.len, 0);
+            if (dest_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                    // If this code path is reached, it should have a toSystemErrno mapping
+                    Output.warn("Failed to get destination path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
+                    break :brk error.Unexpected;
+                };
+                return Result.fail(err, .copying_files);
+            }
+            const dest_path = buf[0..dest_path_length];
+            if (buf[dest_path.len - 1] != '\\') {
+                buf[dest_path.len] = '\\';
+                to_copy_buf = buf[dest_path.len + 1 ..];
+            } else {
+                to_copy_buf = buf[dest_path.len..];
+            }
+
+            const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(cached_package_dir.fd, &buf2, buf2.len, 0);
+            if (cache_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                    // If this code path is reached, it should have a toSystemErrno mapping
+                    Output.warn("Failed to get cache path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
+                    break :brk error.Unexpected;
+                };
+                return Result.fail(err, .copying_files);
+            }
+            const cache_path = buf2[0..cache_path_length];
+            if (buf2[cache_path.len - 1] != '\\') {
+                buf2[cache_path.len] = '\\';
+                to_copy_buf2 = buf2[cache_path.len + 1 ..];
+            } else {
+                to_copy_buf2 = buf2[cache_path.len..];
+            }
+        }
+
         const FileCopier = struct {
             pub fn copy(
                 destination_dir_: std.fs.Dir,
                 walker: *Walker,
                 progress_: *Progress,
+                to_copy_into1: if (Environment.isWindows) []u16 else void,
+                head1: if (Environment.isWindows) []u16 else void,
+                to_copy_into2: if (Environment.isWindows) []u16 else void,
+                head2: if (Environment.isWindows) []u16 else void,
             ) !u32 {
                 var real_file_count: u32 = 0;
 
-                var in_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
-                var out_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
                 var copy_file_state: bun.CopyFileState = .{};
 
                 while (try walker.next()) |entry| {
-                    if (entry.kind != .file) continue;
-                    real_file_count += 1;
-
-                    const createFile = if (comptime Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFile;
-
-                    var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
-                        if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
-                            bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
-                        }
-                        break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
-                            progress_.root.end();
-
-                            progress_.refresh();
-
-                            Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                            Global.crash();
-                        };
-                    };
-                    defer outfile.close();
-
-                    const openFile = if (comptime Environment.isWindows) std.fs.Dir.openFileW else std.fs.Dir.openFile;
-
-                    var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
-                    defer in_file.close();
-
                     if (comptime Environment.isWindows) {
-                        const in_path = bun.getFdPathW(in_file.handle, &in_buf) catch @panic("Failed to copyfile");
-                        in_buf[in_path.len] = 0;
-                        const in = in_buf[0..in_path.len :0];
+                        switch (entry.kind) {
+                            .directory, .file => {},
+                            else => continue,
+                        }
 
-                        const out_path = bun.getFdPathW(outfile.handle, &out_buf) catch @panic("Failed to copyfile");
-                        out_buf[out_path.len] = 0;
-                        const out = out_buf[0..out_path.len :0];
+                        if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
+                            return error.NameTooLong;
+                        }
 
-                        bun.copyFile(in, out) catch |err| {
-                            progress_.root.end();
+                        @memcpy(to_copy_into1[0..entry.path.len], entry.path);
+                        head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
+                        const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
 
-                            progress_.refresh();
+                        @memcpy(to_copy_into2[0..entry.path.len], entry.path);
+                        head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
+                        const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
 
-                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                            Global.crash();
-                        };
+                        switch (entry.kind) {
+                            .directory => {
+                                if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
+                                    bun.MakePath.makePath(u16, destination_dir_, entry.path) catch {};
+                                }
+                            },
+                            .file => {
+                                if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) == 0) {
+                                    if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
+                                        bun.MakePath.makePath(u16, destination_dir_, entry_dirname) catch {};
+                                        if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
+                                            continue;
+                                        }
+                                    }
+
+                                    progress_.root.end();
+                                    progress_.refresh();
+
+                                    if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
+                                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @tagName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                    } else {
+                                        Output.prettyError("<r><red>error<r> copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                    }
+
+                                    Global.crash();
+                                }
+                            },
+                            else => unreachable, // handled above
+                        }
                     } else {
+                        if (entry.kind != .file) continue;
+                        real_file_count += 1;
+                        const openFile = std.fs.Dir.openFileZ;
+                        const createFile = std.fs.Dir.createFileZ;
+
+                        var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+                        defer in_file.close();
+
+                        var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+                            if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                                bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
+                            }
+                            break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
+                                progress_.root.end();
+
+                                progress_.refresh();
+
+                                Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                Global.crash();
+                            };
+                        };
+                        defer outfile.close();
+
                         if (comptime Environment.isPosix) {
                             const stat = in_file.stat() catch continue;
                             _ = C.fchmod(outfile.handle, @intCast(stat.mode));
@@ -1350,10 +1422,15 @@ pub const PackageInstall = struct {
             }
         };
 
-        var subdir = bun.MakePath.makeOpenPath(this.destination_dir, bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_cache_dir);
-        defer subdir.close();
-
-        this.file_count = FileCopier.copy(subdir, &walker_, this.progress) catch |err| return Result{
+        this.file_count = FileCopier.copy(
+            subdir,
+            &walker_,
+            this.progress,
+            if (Environment.isWindows) to_copy_buf else void{},
+            if (Environment.isWindows) &buf else void{},
+            if (Environment.isWindows) to_copy_buf2 else void{},
+            if (Environment.isWindows) &buf2 else void{},
+        ) catch |err| return Result{
             .fail = .{ .err = err, .step = .copying_files },
         };
 
@@ -1363,8 +1440,6 @@ pub const PackageInstall = struct {
     }
 
     fn installWithHardlink(this: *PackageInstall) !Result {
-        const Walker = @import("../walker_skippable.zig");
-
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir);
         defer cached_package_dir.close();
         var walker_ = Walker.walk(
@@ -1432,37 +1507,12 @@ pub const PackageInstall = struct {
             ) !u32 {
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
-                    switch (entry.kind) {
-                        .directory => {
-                            _ = bun.sys.mkdirat(bun.toFD(destination_dir.fd), entry.path, 0o755);
-                        },
-                        .file => {
-                            if (comptime Environment.isWindows) {
-                                if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
-                                    return error.NameTooLong;
-                                }
-
-                                @memcpy(to_copy_into1[0..entry.path.len], entry.path);
-                                head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
-                                const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
-
-                                @memcpy(to_copy_into2[0..entry.path.len], entry.path);
-                                head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
-                                const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
-
-                                // Windows limits hardlinks to 1023 per file
-                                if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
-                                    if (bun.windows.CopyFileW(src, dest, 0) == 0) {
-                                        const e = bun.windows.Win32Error.get();
-                                        if (e.toSystemErrno()) |err| {
-                                            return bun.errnoToZigErr(err);
-                                        }
-                                        // If this code path is reached, it should have a toSystemErrno mapping
-                                        Output.warn("Failed to copy file during installation: {s}", .{@tagName(e)});
-                                        return error.FailedToCopyFile;
-                                    }
-                                }
-                            } else {
+                    if (comptime Environment.isPosix) {
+                        switch (entry.kind) {
+                            .directory => {
+                                bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
+                            },
+                            .file => {
                                 std.os.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
                                     if (err != error.PathAlreadyExists) {
                                         return err;
@@ -1471,11 +1521,72 @@ pub const PackageInstall = struct {
                                     std.os.unlinkat(destination_dir.fd, entry.path, 0) catch {};
                                     try std.os.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0);
                                 };
-                            }
 
-                            real_file_count += 1;
-                        },
-                        else => {},
+                                real_file_count += 1;
+                            },
+                            else => {},
+                        }
+                    } else {
+                        switch (entry.kind) {
+                            .directory, .file => {},
+                            else => continue,
+                        }
+
+                        if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
+                            return error.NameTooLong;
+                        }
+
+                        @memcpy(to_copy_into1[0..entry.path.len], entry.path);
+                        head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
+                        const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
+
+                        @memcpy(to_copy_into2[0..entry.path.len], entry.path);
+                        head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
+                        const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
+
+                        switch (entry.kind) {
+                            .directory => {
+                                if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
+                                    bun.MakePath.makePath(u16, destination_dir, entry.path) catch {};
+                                }
+                            },
+                            .file => {
+                                if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) == 0) {
+                                    if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
+                                        bun.MakePath.makePath(u16, destination_dir, entry_dirname) catch {};
+                                        if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                                            continue;
+                                        }
+                                    }
+
+                                    if (PackageManager.verbose_install) {
+                                        const once_log = struct {
+                                            var once = false;
+
+                                            pub fn get() bool {
+                                                const prev = once;
+                                                once = true;
+                                                return !prev;
+                                            }
+                                        }.get();
+
+                                        if (once_log) {
+                                            Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
+                                                bun.fmt.fmtOSPath(src, .{}),
+                                                bun.fmt.fmtOSPath(dest, .{}),
+                                            });
+                                        }
+                                    }
+
+                                    if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
+                                        continue;
+                                    }
+
+                                    return bun.errnoToZigErr(bun.windows.getLastErrno());
+                                }
+                            },
+                            else => unreachable, // handled above
+                        }
                     }
                 }
 
@@ -1507,8 +1618,6 @@ pub const PackageInstall = struct {
     }
 
     fn installWithSymlink(this: *PackageInstall) !Result {
-        const Walker = @import("../walker_skippable.zig");
-
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1526,54 +1635,142 @@ pub const PackageInstall = struct {
         };
         defer walker_.deinit();
 
+        var subdir = bun.MakePath.makeOpenPath(this.destination_dir, bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_cache_dir);
+
+        defer subdir.close();
+
+        var buf: bun.windows.WPathBuffer = undefined;
+        var buf2: bun.windows.WPathBuffer = undefined;
+        var to_copy_buf: []u16 = undefined;
+        var to_copy_buf2: []u16 = undefined;
+        if (comptime Environment.isWindows) {
+            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(subdir.fd, &buf, buf.len, 0);
+            if (dest_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                    // If this code path is reached, it should have a toSystemErrno mapping
+                    Output.warn("Failed to get destination path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
+                    break :brk error.Unexpected;
+                };
+                return Result.fail(err, .copying_files);
+            }
+            const dest_path = buf[0..dest_path_length];
+            if (buf[dest_path.len - 1] != '\\') {
+                buf[dest_path.len] = '\\';
+                to_copy_buf = buf[dest_path.len + 1 ..];
+            } else {
+                to_copy_buf = buf[dest_path.len..];
+            }
+
+            const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(cached_package_dir.fd, &buf2, buf2.len, 0);
+            if (cache_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                    // If this code path is reached, it should have a toSystemErrno mapping
+                    Output.warn("Failed to get cache path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
+                    break :brk error.Unexpected;
+                };
+                return Result.fail(err, .copying_files);
+            }
+            const cache_path = buf2[0..cache_path_length];
+            if (buf2[cache_path.len - 1] != '\\') {
+                buf2[cache_path.len] = '\\';
+                to_copy_buf2 = buf2[cache_path.len + 1 ..];
+            } else {
+                to_copy_buf2 = buf2[cache_path.len..];
+            }
+        }
+
         const FileCopier = struct {
             pub fn copy(
-                dest_dir_fd: bun.FileDescriptor,
-                cache_dir_fd: bun.FileDescriptor,
+                destination_dir: std.fs.Dir,
                 walker: *Walker,
+                to_copy_into1: if (Environment.isWindows) []u16 else void,
+                head1: if (Environment.isWindows) []u16 else void,
+                to_copy_into2: if (Environment.isWindows) []u16 else void,
+                head2: if (Environment.isWindows) []u16 else void,
             ) !u32 {
                 var real_file_count: u32 = 0;
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cache_dir_path = try bun.getFdPath(cache_dir_fd, &buf);
-
-                var remain = buf[cache_dir_path.len..];
-                var cache_dir_offset = cache_dir_path.len;
-                if (cache_dir_path.len > 0 and cache_dir_path[cache_dir_path.len - 1] != std.fs.path.sep) {
-                    remain[0] = std.fs.path.sep;
-                    cache_dir_offset += 1;
-                    remain = remain[1..];
-                }
-                var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const dest_base = try bun.getFdPath(dest_dir_fd, &dest_buf);
-                var dest_remaining = dest_buf[dest_base.len..];
-                var dest_dir_offset = dest_base.len;
-                if (dest_base.len > 0 and dest_buf[dest_base.len - 1] != std.fs.path.sep) {
-                    dest_remaining[0] = std.fs.path.sep;
-                    dest_remaining = dest_remaining[1..];
-                    dest_dir_offset += 1;
-                }
-
                 while (try walker.next()) |entry| {
-                    switch (entry.kind) {
-                        // directories are created
-                        .directory => {
-                            _ = bun.sys.mkdirat(dest_dir_fd, entry.path, 0o755);
-                        },
-                        // but each file in the directory is a symlink
-                        .file => {
-                            @memcpy(remain[0..entry.path.len], entry.path);
-                            remain[entry.path.len] = 0;
-                            const from_path = buf[0 .. cache_dir_offset + entry.path.len :0];
+                    if (comptime Environment.isPosix) {
+                        switch (entry.kind) {
+                            .directory => {
+                                bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
+                            },
+                            .file => {
+                                std.os.symlinkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path) catch |err| {
+                                    if (err != error.PathAlreadyExists) {
+                                        return err;
+                                    }
 
-                            @memcpy(dest_remaining[0..entry.path.len], entry.path);
-                            dest_remaining[entry.path.len] = 0;
-                            const to_path = dest_buf[0 .. dest_dir_offset + entry.path.len :0];
+                                    std.os.unlinkat(destination_dir.fd, entry.path, 0) catch {};
+                                    try std.os.symlinkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path);
+                                };
 
-                            try std.os.symlinkZ(from_path, to_path);
+                                real_file_count += 1;
+                            },
+                            else => {},
+                        }
+                    } else {
+                        switch (entry.kind) {
+                            .directory, .file => {},
+                            else => continue,
+                        }
 
-                            real_file_count += 1;
-                        },
-                        else => {},
+                        if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
+                            return error.NameTooLong;
+                        }
+
+                        @memcpy(to_copy_into1[0..entry.path.len], entry.path);
+                        head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
+                        const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
+
+                        @memcpy(to_copy_into2[0..entry.path.len], entry.path);
+                        head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
+                        const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
+
+                        switch (entry.kind) {
+                            .directory => {
+                                if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
+                                    bun.MakePath.makePath(u16, destination_dir, entry.path) catch {};
+                                }
+                            },
+                            .file => {
+                                switch (bun.sys.symlinkW(dest, src, .{})) {
+                                    .err => |err| {
+                                        if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
+                                            bun.MakePath.makePath(u16, destination_dir, entry_dirname) catch {};
+                                            if (bun.sys.symlinkW(dest, src, .{}) == .result) {
+                                                continue;
+                                            }
+                                        }
+
+                                        if (PackageManager.verbose_install) {
+                                            const once_log = struct {
+                                                var once = false;
+
+                                                pub fn get() bool {
+                                                    const prev = once;
+                                                    once = true;
+                                                    return !prev;
+                                                }
+                                            }.get();
+
+                                            if (once_log) {
+                                                Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
+                                                    bun.fmt.fmtOSPath(src, .{}),
+                                                    bun.fmt.fmtOSPath(dest, .{}),
+                                                });
+                                            }
+                                        }
+
+                                        return bun.errnoToZigErr(err.errno);
+                                    },
+                                    .result => {},
+                                }
+                            },
+                            else => unreachable, // handled above
+                        }
                     }
                 }
 
@@ -1581,22 +1778,22 @@ pub const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-
-        defer subdir.close();
-
         this.file_count = FileCopier.copy(
-            bun.toFD(subdir.fd),
-            bun.toFD(cached_package_dir.fd),
+            subdir,
             &walker_,
-        ) catch |err|
-            return Result{
-            .fail = .{
-                .err = err,
-                .step = .copying_files,
-            },
+            if (Environment.isWindows) to_copy_buf else void{},
+            if (Environment.isWindows) &buf else void{},
+            if (Environment.isWindows) to_copy_buf2 else void{},
+            if (Environment.isWindows) &buf2 else void{},
+        ) catch |err| {
+            if (comptime Environment.isWindows) {
+                if (err == error.FailedToCopyFile) {
+                    return Result.fail(err, .copying_files);
+                }
+            } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
+                return err;
+            }
+            return Result.fail(err, .copying_files);
         };
 
         return Result{
@@ -2527,7 +2724,7 @@ pub const PackageManager = struct {
             };
         };
         var tmpbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, 999) catch unreachable;
+        const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, bun.hashWithRandomSeed("test file")) catch unreachable;
         var timer: std.time.Timer = if (this.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
         brk: while (true) {
             var file = tempdir.createFileZ(tmpname, .{ .truncate = true }) catch |err2| {
@@ -8862,26 +9059,28 @@ pub const PackageManager = struct {
                                     var node_modules_is_ok = false;
                                 };
                                 if (!Singleton.node_modules_is_ok) {
-                                    const stat = bun.sys.fstat(bun.toFD(this.node_modules_folder.fd)).unwrap() catch |err| {
-                                        Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
-                                            this.names[package_id].slice(buf),
-                                        });
-                                        if (Environment.isDebug) {
-                                            Output.err(err, "Failed to stat node_modules", .{});
+                                    if (!Environment.isWindows) {
+                                        const stat = bun.sys.fstat(bun.toFD(this.node_modules_folder.fd)).unwrap() catch |err| {
+                                            Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                                                this.names[package_id].slice(buf),
+                                            });
+                                            if (Environment.isDebug) {
+                                                Output.err(err, "Failed to stat node_modules", .{});
+                                            }
+                                            Global.exit(1);
+                                        };
+
+                                        const is_writable = if (stat.uid == bun.C.getuid())
+                                            stat.mode & bun.S.IWUSR > 0
+                                        else if (stat.gid == bun.C.getgid())
+                                            stat.mode & bun.S.IWGRP > 0
+                                        else
+                                            stat.mode & bun.S.IWOTH > 0;
+
+                                        if (!is_writable) {
+                                            Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});
+                                            Global.exit(1);
                                         }
-                                        Global.exit(1);
-                                    };
-
-                                    const is_writable = if (Environment.isWindows or stat.uid == bun.C.getuid())
-                                        stat.mode & bun.S.IWUSR > 0
-                                    else if (stat.gid == bun.C.getgid())
-                                        stat.mode & bun.S.IWGRP > 0
-                                    else
-                                        stat.mode & bun.S.IWOTH > 0;
-
-                                    if (!is_writable) {
-                                        Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});
-                                        Global.exit(1);
                                     }
                                     Singleton.node_modules_is_ok = true;
                                 }

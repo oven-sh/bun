@@ -3401,12 +3401,7 @@ pub const Package = extern struct {
                                     &[_]string{ path, "package.json" },
                                     .auto,
                                 );
-                                var file = try bun.openFileZ(package_json_path, .{ .mode = .read_only });
-
-                                defer file.close();
-                                const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
-                                defer allocator.free(bytes);
-                                const source = logger.Source.initPathString(path, bytes);
+                                const source = try bun.sys.File.toSource(package_json_path, allocator).unwrap();
 
                                 var workspace = Package{};
                                 try workspace.parseMain(to_lockfile, allocator, log, source, Features.workspace);
@@ -3537,23 +3532,30 @@ pub const Package = extern struct {
         key_loc: logger.Loc,
         value_loc: logger.Loc,
     ) !?Dependency {
-        var external_version = string_builder.append(String, version);
+        const external_version = brk: {
+            if (comptime Environment.isWindows) {
+                switch (tag orelse Dependency.Version.Tag.infer(version)) {
+                    .workspace, .folder, .symlink, .tarball => {
+                        if (String.canInline(version)) {
+                            var copy = string_builder.append(String, version);
+                            bun.path.dangerouslyConvertPathToPosixInPlace(u8, &copy.bytes);
+                            break :brk copy;
+                        } else {
+                            const str_ = string_builder.append(String, version);
+                            const ptr = str_.ptr();
+                            bun.path.dangerouslyConvertPathToPosixInPlace(u8, lockfile.buffers.string_bytes.items[ptr.off..][0..ptr.len]);
+                            break :brk str_;
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            break :brk string_builder.append(String, version);
+        };
+
         const buf = lockfile.buffers.string_bytes.items;
         const sliced = external_version.sliced(buf);
-
-        if (comptime Environment.isWindows) {
-            switch (Dependency.Version.Tag.infer(sliced.slice)) {
-                .workspace, .folder, .symlink, .tarball => {
-                    if (external_version.isInline()) {
-                        bun.path.pathToPosixInPlace(u8, &external_version.bytes);
-                    } else {
-                        const ptr = external_version.ptr();
-                        bun.path.pathToPosixInPlace(u8, buf[ptr.off..][0..ptr.len]);
-                    }
-                },
-                else => {},
-            }
-        }
 
         var dependency_version = Dependency.parseWithOptionalTag(
             allocator,
@@ -3789,6 +3791,13 @@ pub const Package = extern struct {
             if (comptime Environment.allow_assert) {
                 std.debug.assert(!strings.containsChar(key, std.fs.path.sep_windows));
             }
+
+            if (comptime Environment.isDebug) {
+                if (!bun.sys.exists(key)) {
+                    Output.debugWarn("WorkspaceMap.insert: key {s} does not exist", .{key});
+                }
+            }
+
             const entry = try self.map.getOrPut(key);
             if (!entry.found_existing) {
                 entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
@@ -4123,7 +4132,7 @@ pub const Package = extern struct {
                         // entry_path is contained in filepath_buf so it is safe to constCast and
                         // replace path separators
                         const entry_slice = bun.span(entry_path);
-                        Path.pathToPosixInPlace(u8, @constCast(entry_slice));
+                        Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(entry_slice));
                         break :brk entry_slice;
                     };
 
@@ -4589,17 +4598,7 @@ pub const Package = extern struct {
                                 if (strings.eqlLong(value.name, entry.name, true)) {
                                     const note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
 
-                                    const note_src = src: {
-                                        var workspace_file = std.fs.openFileAbsoluteZ(note_abs_path, .{ .mode = .read_only }) catch {
-                                            break :src logger.Source.initEmptyFile(note_abs_path);
-                                        };
-                                        defer workspace_file.close();
-
-                                        // TODO: when are these bytes supposed to be freed?
-                                        const workspace_bytes = try workspace_file.readToEndAlloc(allocator, std.math.maxInt(usize));
-                                        // defer allocator.free(workspace_bytes);
-                                        break :src logger.Source.initPathString(note_abs_path, workspace_bytes);
-                                    };
+                                    const note_src = bun.sys.File.toSource(note_abs_path, allocator).unwrap() catch logger.Source.initEmptyFile(note_abs_path);
 
                                     notes[i] = .{
                                         .text = "Package name is also declared here",
@@ -4613,17 +4612,7 @@ pub const Package = extern struct {
 
                         const abs_path = Path.joinAbsStringZ(cwd, &.{ path, "package.json" }, .auto);
 
-                        const src = src: {
-                            var workspace_file = std.fs.openFileAbsoluteZ(abs_path, .{ .mode = .read_only }) catch {
-                                break :src logger.Source.initEmptyFile(abs_path);
-                            };
-                            defer workspace_file.close();
-
-                            // TODO: when are these bytes supposed to be freed?
-                            const workspace_bytes = try workspace_file.readToEndAlloc(allocator, std.math.maxInt(usize));
-                            // defer allocator.free(workspace_bytes);
-                            break :src logger.Source.initPathString(abs_path, workspace_bytes);
-                        };
+                        const src = bun.sys.File.toSource(abs_path, allocator).unwrap() catch logger.Source.initEmptyFile(abs_path);
 
                         log.addRangeErrorFmtWithNotes(
                             &src,

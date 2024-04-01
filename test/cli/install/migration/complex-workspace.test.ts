@@ -6,7 +6,6 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 let cwd = join(tmpdir(), "complex-workspace-test" + Math.random().toString(36).slice(2, 8));
-let did_init = false;
 
 function validate(packageName: string, version: string, realPackageName?: string) {
   test(`${packageName} is ${realPackageName ? `${realPackageName}@${version}` : version}`, () => {
@@ -45,7 +44,7 @@ test("the install succeeds", async () => {
   var subprocess = Bun.spawn([bunExe(), "reset.ts"], {
     env: bunEnv,
     cwd,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "inherit", "inherit"],
   });
   await subprocess.exited;
   if (subprocess.exitCode != 0) {
@@ -59,7 +58,7 @@ test("the install succeeds", async () => {
   subprocess = Bun.spawn([bunExe(), "install"], {
     env: bunEnv,
     cwd,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "inherit", "inherit"],
   });
 
   await subprocess.exited;
@@ -70,10 +69,7 @@ test("the install succeeds", async () => {
     console.log({ err, out });
     throw new Error("Failed to install");
   }
-  did_init = true;
 }, 10000);
-
-if (!did_init) throw new Error("Failed to install");
 
 // bun-types
 validate("node_modules/bun-types", "1.0.0");

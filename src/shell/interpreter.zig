@@ -6792,7 +6792,7 @@ pub const Interpreter = struct {
             pub fn start(this: *Pwd) Maybe(void) {
                 const args = this.bltn.argsSlice();
                 if (args.len > 0) {
-                    const msg = "pwd: too many arguments";
+                    const msg = "pwd: too many arguments\n";
                     if (this.bltn.stderr.needsIO()) {
                         this.state = .{ .waiting_io = .{ .kind = .stderr } };
                         this.bltn.stderr.enqueue(this, msg);

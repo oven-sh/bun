@@ -255,14 +255,14 @@ jobs:
       - name: Publish main build
         uses: vedantmgoyal2009/winget-releaser@v2
         with:
-          identifier: oven-sh.bun
+          identifier: Oven-sh.Bun
           release-tag: ${{ env.BUN_VERSION }}
           installers-regex: '-windows-\w+\.zip$'
           token: ${{ secrets.ROBOBUN_TOKEN }}
       - name: Publish baseline build
         uses: vedantmgoyal2009/winget-releaser@v2
         with:
-          identifier: oven-sh.bun.baseline
+          identifier: Oven-sh.Bun.Baseline
           release-tag: ${{ env.BUN_VERSON }}
           installers-regex: '-windows-\w+-baseline\.zip$'
           token: ${{ secrets.ROBOBUN_TOKEN }}

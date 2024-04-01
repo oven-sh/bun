@@ -4052,12 +4052,13 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 .inlined => {
                     if (starting_idx >= this.inlined.len) return;
                     const slice_to_move = this.inlined.items[starting_idx..this.inlined.len];
-                    std.mem.copyForwards(T, this.inlined.items[0..starting_idx], slice_to_move);
+                    bun.copy(T, this.inlined.items[0..starting_idx], slice_to_move);
+                    this.inlined.len = @intCast(slice_to_move.len);
                 },
                 .heap => {
-                    const new_len = this.heap.len - starting_idx;
-                    this.heap.replaceRange(0, starting_idx, this.heap.ptr[starting_idx..this.heap.len]) catch bun.outOfMemory();
-                    this.heap.len = @intCast(new_len);
+                    const slc = this.heap.ptr[starting_idx..this.heap.len];
+                    bun.copy(T, this.heap.ptr[0..slc.len], slc);
+                    this.heap.len = @intCast(slc.len);
                 },
             }
         }

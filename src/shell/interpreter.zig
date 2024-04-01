@@ -9979,7 +9979,7 @@ pub const Interpreter = struct {
 
             const wrote_everything: bool = this.total_bytes_written >= this.buf.items.len;
 
-            log("IOWriter(0x{x}, fd={}) wrote_everything={}, idx={d} writers={d}", .{ @intFromPtr(this), this.fd, wrote_everything, this.__idx, this.writers.len() });
+            log("IOWriter(0x{x}, fd={}) wrote_everything={}, idx={d} writers={d} next_len={d}", .{ @intFromPtr(this), this.fd, wrote_everything, this.__idx, this.writers.len(), if (this.writers.len() >= 1) this.writers.get(0).len else 0 });
             if (!wrote_everything and this.__idx < this.writers.len()) {
                 print("IOWriter(0x{x}, fd={}) poll again", .{ @intFromPtr(this), this.fd });
                 if (comptime bun.Environment.isWindows) {
@@ -10036,6 +10036,7 @@ pub const Interpreter = struct {
                     log("IOWriter(0x{x}, fd={}) getBufferImpl all writes done", .{ @intFromPtr(this), this.fd });
                     return "";
                 }
+                log("IOWriter(0x{x}, fd={}) getBufferImpl idx={d} writer_len={d}", .{ @intFromPtr(this), this.fd, this.__idx, this.writers.len() });
                 var writer = this.writers.get(this.__idx);
                 if (!writer.isDead()) break :brk writer;
                 log("IOWriter(0x{x}, fd={}) skipping dead", .{ @intFromPtr(this), this.fd });
@@ -10057,6 +10058,7 @@ pub const Interpreter = struct {
 
         pub fn bump(this: *This, current_writer: *Writer) void {
             log("IOWriter(0x{x}, fd={}) bump(0x{x} {s})", .{ @intFromPtr(this), this.fd, @intFromPtr(current_writer), @tagName(current_writer.ptr.ptr.tag()) });
+
             const is_dead = current_writer.isDead();
             const written = current_writer.written;
             const child_ptr = current_writer.ptr;
@@ -10084,9 +10086,9 @@ pub const Interpreter = struct {
             }
 
             if (this.total_bytes_written >= SHRINK_THRESHOLD) {
-                log("IOWriter(0x{x}, fd={}) exceeded shrink threshold: truncating", .{ @intFromPtr(this), this.fd });
                 const slice = this.buf.items[this.total_bytes_written..];
                 const remaining_len = slice.len;
+                log("IOWriter(0x{x}, fd={}) exceeded shrink threshold: truncating (new_len={d}, writer_starting_idx={d})", .{ @intFromPtr(this), this.fd, remaining_len, this.__idx });
                 if (slice.len == 0) {
                     this.buf.clearRetainingCapacity();
                     this.total_bytes_written = 0;
@@ -10097,6 +10099,12 @@ pub const Interpreter = struct {
                 }
                 this.writers.truncate(this.__idx);
                 this.__idx = 0;
+                if (bun.Environment.allow_assert) {
+                    if (this.writers.len() > 0) {
+                        const first = this.writers.getConst(this.__idx);
+                        std.debug.assert(this.buf.items.len >= first.len);
+                    }
+                }
             }
         }
 
@@ -10112,7 +10120,7 @@ pub const Interpreter = struct {
                 .len = buf.len,
                 .bytelist = bytelist,
             };
-            log("IOWriter(0x{x}, fd={}) enqueue(0x{x} {s}, buf={s}, writer_len={d})", .{ @intFromPtr(this), this.fd, @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf, this.writers.len() + 1 });
+            log("IOWriter(0x{x}, fd={}) enqueue(0x{x} {s}, buf_len={d}, buf={s}, writer_len={d})", .{ @intFromPtr(this), this.fd, @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf.len, buf[0..@min(128, buf.len)], this.writers.len() + 1 });
             this.buf.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
             this.writers.append(writer);
             this.write();

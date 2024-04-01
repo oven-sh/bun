@@ -280,7 +280,7 @@ pub const FolderResolution = union(Tag) {
                 CacheFolderResolver{ .version = version.value.npm.version.toVersion() },
             ),
         } catch |err| {
-            if (err == error.FileNotFound) {
+            if (err == error.FileNotFound or err == error.ENOENT) {
                 entry.value_ptr.* = .{ .err = error.MissingPackageJSON };
             } else {
                 entry.value_ptr.* = .{ .err = err };

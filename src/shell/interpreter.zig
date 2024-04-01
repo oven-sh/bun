@@ -41,6 +41,7 @@ pub const WorkPool = @import("../work_pool.zig").WorkPool;
 const windows = bun.windows;
 const uv = windows.libuv;
 const Maybe = JSC.Maybe;
+const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
 
 const Pipe = [2]bun.FileDescriptor;
 const shell = @import("./shell.zig");
@@ -629,6 +630,8 @@ pub const Interpreter = struct {
     has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
+    vm_args_utf8: std.ArrayList(JSC.ZigString.Slice),
+
     flags: packed struct(u8) {
         done: bool = false,
         quiet: bool = false,
@@ -1139,6 +1142,8 @@ pub const Interpreter = struct {
                 .stdout = .pipe,
                 .stderr = .pipe,
             },
+
+            .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.default_allocator),
         };
 
         return .{ .result = interpreter };
@@ -1429,6 +1434,10 @@ pub const Interpreter = struct {
         this.resolve.deinit();
         this.reject.deinit();
         this.root_shell.deinitImpl(false, true);
+        for (this.vm_args_utf8.items[0..]) |str| {
+            str.deinit();
+        }
+        this.vm_args_utf8.deinit();
         this.allocator.destroy(this);
     }
 
@@ -1583,6 +1592,16 @@ pub const Interpreter = struct {
 
     pub fn rootIO(this: *const Interpreter) *const IO {
         return &this.root_io;
+    }
+
+    fn getVmArgsUtf8(this: *Interpreter, argv: []const *WTFStringImplStruct, idx: u8) []const u8 {
+        if (this.vm_args_utf8.items.len != argv.len) {
+            this.vm_args_utf8.ensureTotalCapacity(argv.len) catch bun.outOfMemory();
+            for (argv) |arg| {
+                this.vm_args_utf8.append(arg.toUTF8(bun.default_allocator)) catch bun.outOfMemory();
+            }
+        }
+        return this.vm_args_utf8.items[idx].slice();
     }
 
     const AssignCtx = enum {
@@ -2176,7 +2195,7 @@ pub const Interpreter = struct {
                     if (vm.worker) |worker| {
                         if (worker.argv) |argv| {
                             if (int >= argv.len) return "";
-                            return argv[int].utf8Slice();
+                            return this.base.interpreter.getVmArgsUtf8(argv, int);
                         }
                     }
                     const argv = vm.argv;

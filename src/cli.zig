@@ -1224,11 +1224,11 @@ pub const Command = struct {
     };
 
     pub fn isBunX(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "bunx") or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug"));
+        return strings.endsWithComptime(argv0, "bunx" ++ bun.exe_suffix);
     }
 
     pub fn isNode(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "node");
+        return strings.endsWithComptime(argv0, "node" ++ bun.exe_suffix);
     }
 
     pub fn which() Tag {
@@ -1236,13 +1236,7 @@ pub const Command = struct {
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
-        const without_exe = if (Environment.isWindows)
-            strings.withoutSuffixComptime(argv0, ".exe")
-        else
-            argv0;
-
-        // symlink is argv[0]
-        if (isBunX(without_exe)) {
+        if (isBunX(argv0)) {
             // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
             // want to recursively run bunx. so this check lets us peek back into bun install.
             if (args_iter.next()) |next| {
@@ -1257,7 +1251,7 @@ pub const Command = struct {
             return .BunxCommand;
         }
 
-        if (isNode(without_exe)) {
+        if (isNode(argv0)) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;

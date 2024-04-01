@@ -204,6 +204,7 @@ pub fn GlobWalker_(
 
             pub fn init(this: *Iterator) !Maybe(void) {
                 log("Iterator init pattern={s}", .{this.walker.pattern});
+                var was_absolute = false;
                 const root_work_item = brk: {
                     var use_posix = bun.Environment.isPosix;
                     const is_absolute = if (bun.Environment.isPosix) std.fs.path.isAbsolute(this.walker.pattern) else std.fs.path.isAbsolute(this.walker.pattern) or is_absolute: {
@@ -213,14 +214,14 @@ pub fn GlobWalker_(
 
                     if (!is_absolute) break :brk WorkItem.new(this.walker.cwd, 0, .directory);
 
+                    was_absolute = true;
+
                     const component_idx = this.walker.basename_excluding_special_syntax_component_idx;
                     var path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
                     if (this.walker.pattern.len == this.walker.end_byte_of_basename_excluding_special_syntax) {
                         path_without_special_syntax = (if (use_posix) std.fs.path.dirnamePosix(path_without_special_syntax) else std.fs.path.dirnameWindows(path_without_special_syntax)) orelse p: {
                             break :p path_without_special_syntax;
                         };
-                        // component_idx -= 1;
-                        // component_idx -= 1;
                     }
 
                     break :brk WorkItem.new(
@@ -246,7 +247,13 @@ pub fn GlobWalker_(
 
                 this.cwd_fd = cwd_fd;
 
-                switch (try this.transitionToDirIterState(root_work_item, true)) {
+                switch (if (was_absolute) try this.transitionToDirIterState(
+                    root_work_item,
+                    false,
+                ) else try this.transitionToDirIterState(
+                    root_work_item,
+                    true,
+                )) {
                     .err => |err| return .{ .err = err },
                     else => {},
                 }

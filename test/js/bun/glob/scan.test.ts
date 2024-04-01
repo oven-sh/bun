@@ -26,6 +26,7 @@ import fg from "fast-glob";
 import * as path from "path";
 import { tempFixturesDir, createTempDirectoryWithBrokenSymlinks, prepareEntries } from "./util";
 import { tempDirWithFiles } from "harness";
+import { TestBuilder } from "../shell/test_builder";
 
 let origAggressiveGC = Bun.unsafe.gcAggressionLevel();
 let tempBrokenSymlinksDir: string;
@@ -443,6 +444,15 @@ test("glob.scan('.')", async () => {
   const entries = await Array.fromAsync(glob.scan("."));
   // bun root dir
   expect(entries).toContain("README.md");
+});
+
+test("absolute path pattern should ignore cwd and start at the proper path", async () => {
+  const tmpdir = TestBuilder.tmpdir();
+  const expected = [`${tmpdir}/bunx-foo`, `${tmpdir}/bunx-bar`, `${tmpdir}/bunx-baz`];
+  await Bun.$`touch ${expected[0]}; touch ${expected[1]}; touch ${expected[2]}`;
+  const glob = new Glob(`${path.join(tmpdir, "bunx-*")}`);
+  const entries = await Array.fromAsync(glob.scan());
+  expect(entries.sort()).toEqual(expected.sort());
 });
 
 describe("glob.scan wildcard fast path", async () => {

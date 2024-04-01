@@ -910,6 +910,7 @@ pub const Resolver = struct {
         // relative to our special /$bunfs/ directory.
         //
         // It's always relative to the current working directory of the project root.
+        var source_dir_resolver: bun.path.PosixToWinNormalizer = .{};
         const source_dir_normalized = brk: {
             if (r.standalone_module_graph) |graph| {
                 if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(import_path)) {
@@ -962,7 +963,7 @@ pub const Resolver = struct {
                 break :brk Fs.FileSystem.instance.top_level_dir;
             }
 
-            break :brk source_dir;
+            break :brk source_dir_resolver.resolveCWD(source_dir) catch @panic("Failed to query CWD");
         };
 
         // r.mutex.lock();

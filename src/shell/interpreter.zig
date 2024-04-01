@@ -9362,8 +9362,8 @@ pub const Interpreter = struct {
                     1 => {
                         const first_arg = args[0][0..std.mem.len(args[0]) :0];
                         const exit_code: ExitCode = std.fmt.parseInt(u8, first_arg, 10) catch |err| switch (err) {
-                            error.Overflow => @intCast((std.fmt.parseInt(usize, first_arg, 10) catch return this.fail("exit: numeric argument required")) % 256),
-                            error.InvalidCharacter => return this.fail("exit: numeric argument required"),
+                            error.Overflow => @intCast((std.fmt.parseInt(usize, first_arg, 10) catch return this.fail("exit: numeric argument required\n")) % 256),
+                            error.InvalidCharacter => return this.fail("exit: numeric argument required\n"),
                         };
                         this.bltn.done(exit_code);
                         return Maybe(void).success;

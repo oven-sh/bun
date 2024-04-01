@@ -107,22 +107,19 @@ pub const Repository = extern struct {
     fn exec(
         allocator: std.mem.Allocator,
         env: *DotEnv.Loader,
-        cwd: if (Environment.isWindows) string else std.fs.Dir,
         argv: []const string,
     ) !string {
-        _ = cwd;
-
         var std_map = try env.map.stdEnvMap(allocator);
         defer std_map.deinit();
 
         const result = if (comptime Environment.isWindows)
-            try std.ChildProcess.run(.{
+            try std.process.Child.run(.{
                 .allocator = allocator,
                 .argv = argv,
                 .env_map = std_map.get(),
             })
         else
-            try std.ChildProcess.run(.{
+            try std.process.Child.run(.{
                 .allocator = allocator,
                 .argv = argv,
                 .env_map = std_map.get(),
@@ -187,7 +184,6 @@ pub const Repository = extern struct {
             _ = exec(
                 allocator,
                 env,
-                "",
                 &[_]string{ "git", "-C", path, "fetch", "--quiet" },
             ) catch |err| {
                 log.addErrorFmt(
@@ -205,7 +201,7 @@ pub const Repository = extern struct {
 
             const target = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(allocator, env, "", &[_]string{
+            _ = exec(allocator, env, &[_]string{
                 "git",
                 "clone",
                 "--quiet",
@@ -244,7 +240,6 @@ pub const Repository = extern struct {
         return std.mem.trim(u8, exec(
             allocator,
             env,
-            "",
             if (committish.len > 0)
                 &[_]string{ "git", "-C", path, "log", "--format=%H", "-1", committish }
             else
@@ -279,7 +274,7 @@ pub const Repository = extern struct {
 
             const target = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(allocator, env, "", &[_]string{
+            _ = exec(allocator, env, &[_]string{
                 "git",
                 "clone",
                 "--quiet",
@@ -299,7 +294,7 @@ pub const Repository = extern struct {
 
             const folder = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(allocator, env, "", &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
+            _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,

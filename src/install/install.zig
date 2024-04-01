@@ -2635,9 +2635,7 @@ pub const PackageManager = struct {
 
         const content = switch (Environment.os) {
             .windows =>
-            // \\@node -e "require('child_process').spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'})"
             \\if not defined npm_config_node_gyp (
-            // \\  node "%~dp0\..\..\node_modules\node-gyp\bin\node-gyp.js" %*
             \\  bun x node-gyp %*
             \\) else (
             \\  node "%npm_config_node_gyp%" %*
@@ -2647,7 +2645,6 @@ pub const PackageManager = struct {
             else =>
             \\#!/usr/bin/env sh
             \\if [ "x$npm_config_node_gyp" = "x" ]; then
-            // \\  node "`dirname "$0"`/../../node_modules/node-gyp/bin/node-gyp.js" "$@"
             \\  bun x node-gyp $@
             \\else
             \\  "$npm_config_node_gyp" "$@"

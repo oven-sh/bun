@@ -532,7 +532,10 @@ pub fn WindowsPipeReader(
                 },
                 .drained => {
                     // we call drained so we know if we should stop here
-                    _ = onReadChunk(this, slice, hasMore);
+                    const keep_reading = onReadChunk(this, slice, hasMore);
+                    if (!keep_reading) {
+                        this.pause();
+                    }
                 },
                 else => {
                     var buffer = getBuffer(this);
@@ -543,7 +546,10 @@ pub fn WindowsPipeReader(
                     }
                     // move cursor foward
                     buffer.items.len += amount.result;
-                    _ = onReadChunk(this, slice, hasMore);
+                    const keep_reading = onReadChunk(this, slice, hasMore);
+                    if (!keep_reading) {
+                        this.pause();
+                    }
                 },
             }
         }

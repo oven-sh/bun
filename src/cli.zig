@@ -97,6 +97,7 @@ pub const ShellCompletions = @import("./cli/shell_completions.zig");
 pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -966,6 +967,7 @@ pub const HelpCommand = struct {
         \\  <b><magenta>test<r>                           Run unit tests with Bun
         \\  <b><magenta>x<r>         <d>{s:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
         \\  <b><magenta>repl<r>                           Start a REPL session with Bun
+        \\  <b><magenta>exec<r>                           Run a shell script directly with Bun
         \\
         \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
@@ -1308,6 +1310,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("run") => .RunCommand,
             RootCommandMatcher.case("help") => .HelpCommand,
+
+            RootCommandMatcher.case("exec") => .ExecCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1848,6 +1852,13 @@ pub const Command = struct {
                 Output.flush();
                 try HelpCommand.exec(allocator);
             },
+            .ExecCommand => {
+                const ctx = try Command.Context.create(allocator, log, .RunCommand);
+
+                if (ctx.positionals.len > 1) {
+                    try ExecCommand.exec(ctx);
+                } else Tag.printHelp(.ExecCommand, true);
+            },
         }
     }
 
@@ -1972,6 +1983,7 @@ pub const Command = struct {
         UpgradeCommand,
         ReplCommand,
         ReservedCommand,
+        ExecCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return comptime &switch (cmd) {
@@ -2170,6 +2182,21 @@ pub const Command = struct {
                 },
                 Command.Tag.InstallCompletionsCommand => {
                     Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
+                    Output.flush();
+                },
+                Command.Tag.ExecCommand => {
+                    Output.pretty(
+                        \\<b>Usage: bun exec <r><cyan>\<script\><r>
+                        \\
+                        \\Execute a shell script directly from Bun.
+                        \\
+                        \\<b><red>Note<r>: If executing this from a shell, make sure to escape the string!
+                        \\
+                        \\<b>Examples<d>:<r>
+                        \\  <b>bunx exec "echo hi"<r>
+                        \\  <b>bunx exec "echo \"hey friends\"!"<r>
+                        \\
+                    , .{});
                     Output.flush();
                 },
                 else => {

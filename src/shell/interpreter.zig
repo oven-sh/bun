@@ -641,7 +641,7 @@ pub const Interpreter = struct {
         quiet: bool = false,
         __unused: u6 = 0,
     } = .{},
-    exit_code: ?ExitCode = null,
+    exit_code: ?ExitCode = 0,
 
     const InterpreterChildPtr = StatePtrUnion(.{
         Script,
@@ -1224,7 +1224,9 @@ pub const Interpreter = struct {
             else => {},
         }
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
-        return exit_code;
+        const code = interp.exit_code.?;
+        interp.deinitEverything();
+        return code;
     }
 
     pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
@@ -1283,8 +1285,9 @@ pub const Interpreter = struct {
             else => {},
         }
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
+        const code = interp.exit_code.?;
         interp.deinitEverything();
-        return exit_code;
+        return code;
     }
 
     fn setupIOBeforeRun(this: *ThisInterpreter) Maybe(void) {
@@ -1399,11 +1402,12 @@ pub const Interpreter = struct {
     }
 
     fn finish(this: *ThisInterpreter, exit_code: ExitCode) void {
-        log("finish", .{});
+        log("finish {d}", .{exit_code});
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
             defer this.deinitAfterJSRun();
+            this.exit_code = exit_code;
             _ = this.resolve.call(&.{JSValue.jsNumberFromU16(exit_code)});
         } else {
             this.flags.done = true;

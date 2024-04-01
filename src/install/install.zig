@@ -2633,29 +2633,30 @@ pub const PackageManager = struct {
         };
         defer node_gyp_file.close();
 
-        const shebang = switch (Environment.os) {
+        const content = switch (Environment.os) {
             .windows =>
-            \\0</* :{
-            \\  @echo off
-            \\  node %~f0 %*
-            \\  exit /b %errorlevel%
-            \\:} */0;
-            \\
+            // \\@node -e "require('child_process').spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'})"
+            \\if not defined npm_config_node_gyp (
+            // \\  node "%~dp0\..\..\node_modules\node-gyp\bin\node-gyp.js" %*
+            \\  bun x node-gyp %*
+            \\) else (
+            \\  node "%npm_config_node_gyp%" %*
+            \\)
             \\
             ,
             else =>
-            \\#!/usr/bin/env node
-            \\
+            \\#!/usr/bin/env sh
+            \\if [ "x$npm_config_node_gyp" = "x" ]; then
+            // \\  node "`dirname "$0"`/../../node_modules/node-gyp/bin/node-gyp.js" "$@"
+            \\  bun x node-gyp $@
+            \\else
+            \\  "$npm_config_node_gyp" "$@"
+            \\fi
             \\
             ,
         };
-        const content =
-            \\const child_process = require("child_process");
-            \\child_process.spawnSync("bun", ["x", "--silent", "node-gyp", ...process.argv.slice(2)], { stdio: "inherit" });
-            \\
-        ;
 
-        node_gyp_file.writeAll(shebang ++ content) catch |err| {
+        node_gyp_file.writeAll(content) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@errorName(err)});
             Global.crash();
         };
@@ -2681,7 +2682,6 @@ pub const PackageManager = struct {
 
         const node_gyp_abs_dir = std.fs.path.dirname(npm_config_node_gyp).?;
         try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
-        try this.env.map.putAllocKeyAndValue(this.allocator, "npm_config_node_gyp", npm_config_node_gyp);
     }
 
     pub var instance: PackageManager = undefined;

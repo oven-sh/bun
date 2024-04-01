@@ -3761,69 +3761,6 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test("npm_config_node_gyp should be set in lifecycle scripts", async () => {
-      await writeFile(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "foo",
-          scripts: {
-            install: "echo $npm_config_node_gyp > npm_config_node_gyp.txt",
-          },
-        }),
-      );
-
-      const { stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env: testEnv,
-      });
-
-      const err = await new Response(stderr).text();
-      expect(err).not.toContain("Saved lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
-      expect(err).toContain("v");
-
-      expect(await exited).toBe(0);
-
-      expect(await exists(join(packageDir, "npm_config_node_gyp.txt"))).toBeTrue();
-      const ext = isWindows ? ".cmd" : "";
-      expect(await file(join(packageDir, "npm_config_node_gyp.txt")).text()).toEndWith(`${sep}node-gyp${ext}\n`);
-    });
-
-    test("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
-      await writeFile(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "foo",
-          scripts: {
-            install: "node $npm_config_node_gyp --version",
-          },
-        }),
-      );
-
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env: testEnv,
-      });
-
-      const err = await new Response(stderr).text();
-      expect(err).not.toContain("Saved lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
-      expect(err).toContain("v");
-      expect(await exited).toBe(0);
-    });
-
     // if this test fails, `electron` might be removed from the default list
     test("default trusted dependencies should work", async () => {
       await writeFile(

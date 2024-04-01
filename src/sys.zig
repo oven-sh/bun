@@ -78,6 +78,7 @@ pub const Tag = enum(u8) {
     fcntl,
     fdatasync,
     fstat,
+    fstatat,
     fsync,
     ftruncate,
     futimens,
@@ -504,6 +505,13 @@ pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Mayb
 
     _ = close(dir_to_make.result);
     return .{ .result = {} };
+}
+
+pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
+    if (Environment.isWindows) @compileError("TODO");
+    var stat_ = mem.zeroes(bun.Stat);
+    if (Maybe(bun.Stat).errnoSys(sys.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| return err;
+    return Maybe(bun.Stat){ .result = stat_ };
 }
 
 pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {

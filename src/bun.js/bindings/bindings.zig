@@ -5116,6 +5116,14 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn asInt32(this: JSValue) i32 {
+        // TODO: add this assertion. currently, there is a mistake in
+        // argumentCount that mistakenly uses a JSValue instead of a c_int. This
+        // mistake performs the correct conversion instructions for it's use
+        // case but is bad code practice to misuse JSValue casts.
+        //
+        // if (bun.Environment.allow_assert) {
+        //     std.debug.assert(this.isInt32());
+        // }
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
     }
 

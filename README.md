@@ -48,12 +48,13 @@ bunx cowsay 'Hello, world!'   # execute a package
 Bun supports Linux (x64 & arm64) and macOS (x64 & Apple Silicon).
 
 > **Linux users** — Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
->
-> **Windows users** — Bun does not currently provide a native Windows build. We're working on this; progress can be tracked at [this issue](https://github.com/oven-sh/bun/issues/43). In the meantime, use one of the installation methods below for Windows Subsystem for Linux.
 
 ```sh
 # with install script (recommended)
 curl -fsSL https://bun.sh/install | bash
+
+# on windows
+powershell -c "irm bun.sh/install.ps1 | iex"
 
 # with npm
 npm install -g bun

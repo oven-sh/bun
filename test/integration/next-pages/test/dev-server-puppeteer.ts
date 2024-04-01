@@ -13,7 +13,7 @@ if (process.argv.length > 2) {
 }
 
 const b = await launch({
-  headless: true,
+  headless: (process.env.BUN_TEST_HEADLESS ?? "1") === "0",
   dumpio: true,
 });
 
@@ -34,8 +34,9 @@ async function main() {
     return promise;
   }
 
-  await p.goto(url);
-  await waitForConsoleMessage(p, /counter a/);
+  const console_promise = waitForConsoleMessage(p, /counter a/);
+  p.goto(url);
+  await console_promise;
 
   console.error("Loaded page");
   assert.strictEqual(await p.$eval("code.font-bold", x => x.innerText), Bun.version);

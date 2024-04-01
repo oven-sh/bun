@@ -1211,6 +1211,19 @@ export fn Bun__resolveSync(
     };
 }
 
+export fn Bun__resolveSyncWithStrings(
+    global: *JSGlobalObject,
+    specifier: *bun.String,
+    source: *bun.String,
+    is_esm: bool,
+) JSC.JSValue {
+    Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
+    var exception = [1]JSC.JSValueRef{null};
+    return doResolveWithArgs(global, specifier.*, source.*, &exception, is_esm, true) orelse {
+        return JSC.JSValue.fromRef(exception[0]);
+    };
+}
+
 export fn Bun__resolveSyncWithSource(
     global: *JSGlobalObject,
     specifier: JSValue,
@@ -1225,14 +1238,6 @@ export fn Bun__resolveSyncWithSource(
     return doResolveWithArgs(global, specifier_str, source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
-}
-
-comptime {
-    if (!is_bindgen) {
-        _ = Bun__resolve;
-        _ = Bun__resolveSync;
-        _ = Bun__resolveSyncWithSource;
-    }
 }
 
 pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {

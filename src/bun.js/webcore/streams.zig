@@ -3893,7 +3893,7 @@ pub const FileReader = struct {
             return .{};
         }
 
-        const out = this.reader.buffer();
+        const out = this.reader.buffer().*;
         this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         return bun.ByteList.fromList(out);
     }

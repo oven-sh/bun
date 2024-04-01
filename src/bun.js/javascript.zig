@@ -1774,7 +1774,9 @@ pub const VirtualMachine = struct {
             // TODO: We only want to retry on not found only when the directories we searched for were cached.
             // This fixes an issue where new files created in cached directories were not picked up.
             // See https://github.com/oven-sh/bun/issues/3216
-            var retry_on_not_found = true;
+            //
+            // This cache-bust is disabled when the filesystem is not being used to resolve.
+            var retry_on_not_found = std.fs.path.isAbsolute(source_to_use);
             while (true) {
                 break :brk switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
                     source_to_use,

@@ -3749,6 +3749,9 @@ pub const FileReader = struct {
 
             if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
                 if (this.reader.isDone()) {
+                    if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
+                        this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
+                    }
                     this.pending.result = .{
                         .temporary_and_done = bun.ByteList.init(buf),
                     };
@@ -3756,6 +3759,10 @@ pub const FileReader = struct {
                     this.pending.result = .{
                         .temporary = bun.ByteList.init(buf),
                     };
+
+                    if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
+                        this.reader.buffer().clearRetainingCapacity();
+                    }
                 }
 
                 this.pending_value.clear();

@@ -1,9 +1,5 @@
 Bun Shell makes shell scripting with JavaScript & TypeScript fun. It's a cross-platform bash-like shell with seamless JavaScript interop.
 
-{% callout type="note" %}
-**Alpha-quality software**: Bun Shell is an unstable API still under development. If you have feature requests or run into bugs, please open an issue. There may be breaking changes in the future.
-{% /callout %}
-
 Quickstart:
 
 ```js
@@ -23,6 +19,8 @@ await $`cat < ${response} | wc -c`; // 1256
 - **Template literals**: Template literals are used to execute shell commands. This allows for easy interpolation of variables and expressions.
 - **Safety**: Bun Shell escapes all strings by default, preventing shell injection attacks.
 - **JavaScript interop**: Use `Response`, `ArrayBuffer`, `Blob`, `Bun.file(path)` and other JavaScript objects as stdin, stdout, and stderr.
+- **Shell scripting**: Bun Shell can be used to run shell scripts (`.bun.sh` files).
+- **Custom interpreter**: Bun Shell is written in Zig, along with it's lexer, parser, and interpreter. Bun Shell is a small programming language.
 
 ## Getting started
 
@@ -53,16 +51,63 @@ const welcome = await $`echo "Hello World!"`.text();
 console.log(welcome); // Hello World!\n
 ```
 
-To get stdout, stderr, and the exit code, use await or `.run`:
+By default, `await`ing will return stdout and stderr as `Buffer`s.
 
 ```js
 import { $ } from "bun";
 
-const { stdout, stderr, exitCode } = await $`echo "Hello World!"`.quiet();
+const { stdout, stderr } = await $`echo "Hello World!"`.quiet();
 
 console.log(stdout); // Buffer(6) [ 72, 101, 108, 108, 111, 32 ]
 console.log(stderr); // Buffer(0) []
-console.log(exitCode); // 0
+```
+
+## Error handling
+
+By default, non-zero exit codes will throw an error. This `ShellError` contains information about the command run.
+
+```js
+import { $ } from "bun";
+
+try {
+  const output = await $`something-that-may-fail`.text();
+  console.log(output);
+} catch (err) {
+  console.log(`Failed with code ${err.exitCode}`);
+  console.log(output.stdout.toString());
+  console.log(output.stderr.toString());
+}
+```
+
+Throwing can be disabled with `.nothrow()`. The result's `exitCode` will need to be checked manually.
+
+```js
+import { $ } from "bun";
+
+const { stdout, stderr, exitCode } = await $`something-that-may-fail`
+  .nothrow()
+  .quiet();
+
+if (exitCode !== 0) {
+  console.log(`Non-zero exit code ${exitCode}`);
+}
+
+console.log(stdout);
+console.log(stderr);
+```
+
+The default handling of non-zero exit codes can be configured by calling `.nothrow()` or `.throws(boolean)` on the `$` function itself.
+
+```js
+// shell promises will not throw, meaning you will have to
+// check for `exitCode` manually on every shell command.
+$.nothrow(); // equivilent to $.throws(false)
+
+// default behavior, non-zero exit codes will throw an error
+$.throws(true);
+
+// alias for $.nothrow()
+$.throws(false);
 ```
 
 ## Redirection
@@ -89,9 +134,8 @@ To redirect stdout to a JavaScript object, use the `>` operator:
 import { $ } from "bun";
 
 const buffer = Buffer.alloc(100);
-const result = await $`echo "Hello World!" > ${buffer}`;
+await $`echo "Hello World!" > ${buffer}`;
 
-console.log(result.exitCode); // 0
 console.log(buffer.toString()); // Hello World!\n
 ```
 
@@ -404,23 +448,27 @@ await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`;
 
 For simple shell scripts, instead of `/bin/sh`, you can use Bun Shell to run shell scripts.
 
-To do so, just run the script with `bun` on a file with the `.bun.sh` extension.
+To do so, just run the script with `bun` on a file with the `.sh` extension.
 
-```sh#script.bun.sh
+```sh#script.sh
 echo "Hello World! pwd=$(pwd)"
 ```
 
 ```sh
-$ bun ./script.bun.sh
+$ bun ./script.sh
 Hello World! pwd=/home/demo
 ```
 
 Scripts with Bun Shell are cross platform, which means they work on Windows:
 
 ```
-PS C:\Users\Demo> bun .\script.bun.sh
+PS C:\Users\Demo> bun .\script.sh
 Hello World! pwd=C:\Users\Demo
 ```
+
+## Implementation notes
+
+Bun Shell is a small programming language in Bun that is implemented in Zig. It includes a handwritten lexer, parser, and interpreter. Unlike bash, zsh, and other shells, Bun Shell runs operations concurrently.
 
 ## Credits
 

@@ -205,6 +205,7 @@ pub const BunxCommand = struct {
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
         var maybe_package_name: ?string = null;
         var verbose_install = false;
+        var silent_install = false;
         {
             var found_subcommand_name = false;
 
@@ -217,6 +218,8 @@ pub const BunxCommand = struct {
                 if (positional.len > 0 and positional[0] == '-') {
                     if (strings.eqlComptime(positional, "--verbose")) {
                         verbose_install = true;
+                    } else if (strings.eqlComptime(positional, "--silent")) {
+                        silent_install = true;
                     } else if (strings.eqlComptime(positional, "--bun") or strings.eqlComptime(positional, "-b")) {
                         ctx.debug.run_in_bun = true;
                     }
@@ -449,6 +452,7 @@ pub const BunxCommand = struct {
                 destination_ = bun.which(
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     initial_bin_name,
                 );
             }
@@ -459,6 +463,7 @@ pub const BunxCommand = struct {
             if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
+                if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                 absolute_in_cache_dir,
             )) |destination| {
                 const out = bun.asByteSlice(destination);
@@ -529,6 +534,7 @@ pub const BunxCommand = struct {
                         destination_ = bun.which(
                             &path_buf,
                             bunx_cache_dir,
+                            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                             package_name_for_bin,
                         );
                     }
@@ -536,6 +542,7 @@ pub const BunxCommand = struct {
                     if (destination_ orelse bun.which(
                         &path_buf,
                         bunx_cache_dir,
+                        if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                         absolute_in_cache_dir,
                     )) |destination| {
                         const out = bun.asByteSlice(destination);
@@ -569,7 +576,7 @@ pub const BunxCommand = struct {
             package_json.writeAll("{}\n") catch {};
         }
 
-        var args = std.BoundedArray([]const u8, 7).fromSlice(&.{
+        var args = std.BoundedArray([]const u8, 8).fromSlice(&.{
             try bun.selfExePath(),
             "add",
             install_param,
@@ -590,6 +597,11 @@ pub const BunxCommand = struct {
 
         if (verbose_install) {
             args.append("--verbose") catch
+                unreachable; // upper bound is known
+        }
+
+        if (silent_install) {
+            args.append("--silent") catch
                 unreachable; // upper bound is known
         }
 
@@ -651,6 +663,7 @@ pub const BunxCommand = struct {
         if (bun.which(
             &path_buf,
             bunx_cache_dir,
+            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
@@ -675,6 +688,7 @@ pub const BunxCommand = struct {
                 if (bun.which(
                     &path_buf,
                     bunx_cache_dir,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);

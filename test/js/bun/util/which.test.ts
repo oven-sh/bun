@@ -6,6 +6,9 @@ import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { rmdirSync } from "js/node/fs/export-star-from";
 import { isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
+import { w } from "vitest/dist/types-2b1c412e.js";
+
+$.nothrow();
 
 {
   const delim = isWindows ? ";" : ":";
@@ -108,7 +111,7 @@ if (isWindows) {
   });
 }
 
-test("Bun.which does not look in the current directory", async () => {
+test("Bun.which does not look in the current directory for bins", async () => {
   const cwd = process.cwd();
   const dir = tempDirWithFiles("which", {
     "some_program_name": "#!/usr/bin/env sh\necho FAIL\nexit 0\n",
@@ -122,6 +125,34 @@ test("Bun.which does not look in the current directory", async () => {
 
     expect(which("some_program_name")).toBe(null);
     expect((await $`some_program_name`).exitCode).not.toBe(0);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test("Bun.which does look in the current directory when given a path with a slash", async () => {
+  const cwd = process.cwd();
+  const dir = tempDirWithFiles("which", {
+    "some_program_name": "#!/usr/bin/env sh\necho posix\nexit 0\n",
+    "some_program_name.cmd": "@echo win32\n@exit 0\n",
+    "folder/other_app": "#!/usr/bin/env sh\necho posix\nexit 0\n",
+    "folder/other_app.cmd": "@echo win32\n@exit 0\n",
+  });
+  process.chdir(dir);
+  try {
+    if (!isWindows) {
+      await $`chmod +x ./some_program_name`;
+      await $`chmod +x ./folder/other_app`;
+    }
+
+    const suffix = isWindows ? ".cmd" : "";
+
+    expect(which("./some_program_name")).toBe(join(dir, "some_program_name" + suffix));
+    expect((await $`./some_program_name`.text()).trim()).toBe(isWindows ? "win32" : "posix");
+    expect(which("./folder/other_app")).toBe(join(dir, "folder/other_app" + suffix));
+    expect((await $`./folder/other_app`.text()).trim()).toBe(isWindows ? "win32" : "posix");
+    expect(which("folder/other_app")).toBe(join(dir, "folder/other_app" + suffix));
+    expect((await $`folder/other_app`.text()).trim()).toBe(isWindows ? "win32" : "posix");
   } finally {
     process.chdir(cwd);
   }

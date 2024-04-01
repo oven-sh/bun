@@ -1,10 +1,10 @@
-import * as t from "bun:test";
+import { describe } from "bun:test";
 import { TestBuilder } from "./test_builder";
 import { bunEnv } from "harness";
 
 const BUN = process.argv0;
 
-t.describe("bun exec", () => {
+describe("bun exec", () => {
   TestBuilder.command`${BUN} exec ${"echo hi!"}`.env(bunEnv).stdout("hi!\n").runAsTest("it works");
   TestBuilder.command`${BUN} exec sldkfjslkdjflksdjflj`
     .env(bunEnv)
@@ -22,4 +22,15 @@ t.describe("bun exec", () => {
   TestBuilder.command`${BUN} exec ${{ raw: Bun.$.escape(`echo 'hi "there bud"'`) }}`
     .stdout('hi "there bud"\n')
     .runAsTest("it works2");
+
+  TestBuilder.command`${BUN} exec ${`echo ${Array(128 * 1024)
+    .fill("a")
+    .join("")}`}`
+    .env(bunEnv)
+    .stdout(
+      `${Array(128 * 1024)
+        .fill("a")
+        .join("")}\n`,
+    )
+    .runAsTest("write a lot of data");
 });

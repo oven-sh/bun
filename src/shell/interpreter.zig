@@ -9726,6 +9726,9 @@ pub const Interpreter = struct {
         fd: bun.FileDescriptor,
         writers: Writers = .{ .inlined = .{} },
         buf: std.ArrayListUnmanaged(u8) = .{},
+        /// quick hack to get windows working
+        /// ideally this should be removed
+        winbuf: if (bun.Environment.isWindows) std.ArrayListUnmanaged(u8) else u0 = if (bun.Environment.isWindows) .{} else 0,
         __idx: usize = 0,
         total_bytes_written: usize = 0,
         ref_count: u32 = 1,
@@ -10026,6 +10029,11 @@ pub const Interpreter = struct {
 
         pub fn getBuffer(this: *This) []const u8 {
             const result = this.getBufferImpl();
+            if (comptime bun.Environment.isWindows) {
+                this.winbuf.clearRetainingCapacity();
+                this.winbuf.appendSlice(bun.default_allocator, result) catch bun.outOfMemory();
+                return this.winbuf.items;
+            }
             log("IOWriter(0x{x}, fd={}) getBuffer = {d} bytes", .{ @intFromPtr(this), this.fd, result.len });
             return result;
         }
@@ -10173,7 +10181,7 @@ pub const Interpreter = struct {
                 if (this.writer.handle == .poll and this.writer.handle.poll.isRegistered()) {
                     this.writer.handle.closeImpl(null, {}, false);
                 }
-            }
+            } else this.winbuf.deinit(bun.default_allocator);
             if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
             this.writer.disableKeepingProcessAlive(this.evtloop);
             this.destroy();

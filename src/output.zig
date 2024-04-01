@@ -590,10 +590,10 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
 
             if (!evaluated_disable) {
                 evaluated_disable = true;
-                if (bun.getenvZ("BUN_DEBUG_ALL") != null or
-                    bun.getenvZ("BUN_DEBUG_" ++ tagname) != null)
-                {
-                    really_disable = false;
+                if (bun.getenvZ("BUN_DEBUG_" ++ tagname)) |val| {
+                    really_disable = strings.eqlComptime(val, "0");
+                } else if (bun.getenvZ("BUN_DEBUG_ALL")) |val| {
+                    really_disable = strings.eqlComptime(val, "0");
                 } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
                     really_disable = really_disable or !strings.eqlComptime(val, "0");
                 }
@@ -612,7 +612,7 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
             lock.lock();
             defer lock.unlock();
 
-            if (Output.enable_ansi_colors_stdout and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
+            if (Output.enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
                 out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
                     really_disable = true;
                     return;
@@ -931,6 +931,9 @@ pub fn disableScopedDebugWriter() void {
 pub fn enableScopedDebugWriter() void {
     ScopedDebugWriter.disable_inside_log -= 1;
 }
+
+extern "c" fn getpid() c_int;
+
 pub fn initScopedDebugWriterAtStartup() void {
     std.debug.assert(source_set);
 
@@ -941,9 +944,15 @@ pub fn initScopedDebugWriterAtStartup() void {
             }
 
             // do not use libuv through this code path, since it might not be initialized yet.
+            const pid = std.fmt.allocPrint(bun.default_allocator, "{d}", .{getpid()}) catch @panic("failed to allocate path");
+            defer bun.default_allocator.free(pid);
+
+            const path_fmt = std.mem.replaceOwned(u8, bun.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
+            defer bun.default_allocator.free(path_fmt);
+
             const fd = std.os.openat(
                 std.fs.cwd().fd,
-                path,
+                path_fmt,
                 std.os.O.CREAT | std.os.O.WRONLY,
                 // on windows this is u0
                 if (Environment.isWindows) 0 else 0o644,

@@ -6885,6 +6885,7 @@ pub const Interpreter = struct {
 
             pub fn writeFailingError(this: *Ls, buf: []const u8, exit_code: ExitCode) Maybe(void) {
                 if (this.bltn.stderr.needsIO()) {
+                    this.state = .waiting_write_err;
                     this.bltn.stderr.enqueue(this, buf);
                     return Maybe(void).success;
                 }

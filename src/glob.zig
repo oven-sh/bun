@@ -1266,7 +1266,7 @@ pub fn GlobWalker_(
                             if (!saw_special and component.syntax_hint.isSpecialSyntax()) {
                                 saw_special = true;
                                 basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
-                                end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                                end_byte_of_basename_excluding_special_syntax.* = cursor.i;
                             }
                             try patternComponents.append(arena.allocator(), component);
                         }
@@ -1299,7 +1299,7 @@ pub fn GlobWalker_(
                 if (!saw_special and component.syntax_hint.isSpecialSyntax()) {
                     saw_special = true;
                     basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
-                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                    end_byte_of_basename_excluding_special_syntax.* = cursor.i;
                 }
                 try patternComponents.append(arena.allocator(), component);
             }

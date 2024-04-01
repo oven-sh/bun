@@ -781,6 +781,7 @@ pub const VirtualMachine = struct {
                 IPC.Mode.fromString(mode_kv.value.value) orelse .json
             else
                 .json;
+            IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ kv.value.value, @tagName(mode) });
             if (Environment.isWindows) {
                 this.initIPCInstance(kv.value.value, mode);
             } else {

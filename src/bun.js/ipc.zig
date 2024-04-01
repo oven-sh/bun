@@ -74,6 +74,7 @@ const advanced = struct {
 
     pub fn decodeIPCMessage(data: []const u8, global: *JSC.JSGlobalObject) IPCDecodeError!DecodeIPCMessageResult {
         if (data.len < header_length) {
+            log("Not enough bytes to decode IPC message header, have {d} bytes", .{data.len});
             return IPCDecodeError.NotEnoughBytes;
         }
 
@@ -95,6 +96,7 @@ const advanced = struct {
             },
             .SerializedMessage => {
                 if (data.len < (header_length + message_len)) {
+                    log("Not enough bytes to decode IPC message body of len {d}, have {d} bytes", .{ message_len, data.len });
                     return IPCDecodeError.NotEnoughBytes;
                 }
 
@@ -167,9 +169,7 @@ const json = struct {
                 bun.String.fromUTF8(json_data);
             defer {
                 str.deref();
-
-                // release assert
-                if (!(!is_ascii or was_ascii_string_freed)) {
+                if (is_ascii and !was_ascii_string_freed) {
                     @panic("Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun.");
                 }
             }

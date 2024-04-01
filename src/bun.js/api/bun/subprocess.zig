@@ -1927,7 +1927,7 @@ pub const Subprocess = struct {
             }
 
             env_array.appendAssumeCapacity(switch (ipc_mode) {
-                inline else => |t| "NODE_CHANNEL_SERIALIZATION=" ++ @tagName(t),
+                inline else => |t| "NODE_CHANNEL_SERIALIZATION_MODE=" ++ @tagName(t),
             });
         };
 

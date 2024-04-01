@@ -1381,8 +1381,8 @@ pub const PackageInstall = struct {
                     } else {
                         if (entry.kind != .file) continue;
                         real_file_count += 1;
-                        const openFile = std.fs.Dir.openFileZ;
-                        const createFile = std.fs.Dir.createFileZ;
+                        const openFile = std.fs.Dir.openFile;
+                        const createFile = std.fs.Dir.createFile;
 
                         var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
                         defer in_file.close();
@@ -1698,13 +1698,13 @@ pub const PackageInstall = struct {
                                 bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
                             },
                             .file => {
-                                std.os.symlinkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
+                                std.os.symlinkat(entry.basename, destination_dir.fd, entry.path) catch |err| {
                                     if (err != error.PathAlreadyExists) {
                                         return err;
                                     }
 
                                     std.os.unlinkat(destination_dir.fd, entry.path, 0) catch {};
-                                    try std.os.symlinkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path);
+                                    try std.os.symlinkat(entry.basename, destination_dir.fd, entry.path);
                                 };
 
                                 real_file_count += 1;

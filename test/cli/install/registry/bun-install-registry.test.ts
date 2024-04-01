@@ -1,15 +1,7 @@
 import { file, spawn } from "bun";
-import {
-  bunExe,
-  bunEnv as env,
-  isWindows,
-  mergeWindowEnvs,
-  toBeValidBin,
-  toHaveBins,
-  writeShebangScript,
-} from "harness";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
 import { join, sep } from "path";
-import { mkdtempSync, realpathSync, copyFileSync, mkdirSync } from "fs";
+import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { tmpdir } from "os";

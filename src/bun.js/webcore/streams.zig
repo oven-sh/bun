@@ -3780,6 +3780,9 @@ pub const FileReader = struct {
             return !was_done;
         } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
             this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+            if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
+                this.reader.buffer().clearRetainingCapacity();
+            }
         }
 
         // For pipes, we have to keep pulling or the other process will block.
@@ -3886,6 +3889,9 @@ pub const FileReader = struct {
         if (this.buffered.items.len > 0) {
             const out = bun.ByteList.init(this.buffered.items);
             this.buffered = .{};
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(this.reader.buffer().items.ptr != out.ptr);
+            }
             return out;
         }
 

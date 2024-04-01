@@ -267,3 +267,42 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
           AWS_ENDPOINT: ${{ secrets.AWS_ENDPOINT }}
           AWS_BUCKET: bun
+          
+  winget:
+    name: Publish to winget-pkgs
+    runs-on: windows-latest
+    needs: sign
+    if: ${{ github.event_name == 'release' || github.event.inputs.use-winget == 'true' }}
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: packages/bun-release
+    steps:
+      - name: Sync fork
+        run: gh repo sync cdrci/winget-pkgs -b master
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install wingetcreate
+        run: |
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+
+      - name: Submit updated manifest to winget-pkgs
+        run: |
+          $release_assets = gh release view --repo coder/coder "bun-${version}" --json assets | `
+            ConvertFrom-Json
+          $amd64_zip_url = $release_assets.assets | `
+            Where-Object name -Match ".*_windows_amd64.zip$" | `
+            Select -ExpandProperty url
+
+          .\wingetcreate.exe update Oven-sh.Bun `
+            --submit `
+            --version "${version}" `
+            --urls "${amd64_zip_url}" `
+            --token "$env:WINGET_GH_TOKEN"

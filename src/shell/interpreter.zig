@@ -6800,7 +6800,6 @@ pub const Interpreter = struct {
                     }
 
                     _ = this.bltn.writeNoIO(.stderr, msg);
-
                     this.bltn.done(1);
                     return Maybe(void).success;
                 }
@@ -6851,7 +6850,10 @@ pub const Interpreter = struct {
                     return;
                 }
 
-                this.state = .done;
+                this.state = switch (this.state.waiting_io.kind) {
+                    .stdout => .done,
+                    .stderr => .err,
+                };
 
                 this.next();
             }

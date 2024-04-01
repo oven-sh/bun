@@ -301,7 +301,7 @@ pub export fn Bun__Process__send(
     }
     const vm = globalObject.bunVM();
     if (vm.getIPCInstance()) |ipc_instance| {
-        const success = ipc_instance.ipc.serializeAndSend(globalObject, callFrame.argument(0));
+        const success = ipc_instance.data.serializeAndSend(globalObject, callFrame.argument(0));
         return if (success) .undefined else .zero;
     } else {
         globalObject.throw("IPC Socket is no longer open.", .{});
@@ -3226,7 +3226,7 @@ pub const VirtualMachine = struct {
         /// IPC is put in this "enabled but not started" state when IPC is detected
         /// but the client JavaScript has not yet done `.on("message")`
         waiting: struct {
-            fd: bun.FileDescriptor,
+            info: IPCInfoType,
             mode: IPC.Mode,
         },
         initialized: *IPCInstance,
@@ -3235,9 +3235,13 @@ pub const VirtualMachine = struct {
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
         context: if (Environment.isPosix) *uws.SocketContext else u0,
-        ipc: IPC.IPCData,
+        data: IPC.IPCData,
 
         pub usingnamespace bun.New(@This());
+
+        pub fn ipc(this: *IPCInstance) *IPC.IPCData {
+            return &this.data;
+        }
 
         pub fn handleIPCMessage(
             this: *IPCInstance,
@@ -3277,59 +3281,64 @@ pub const VirtualMachine = struct {
     const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
     pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType, mode: IPC.Mode) void {
         IPC.log("initIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{info});
-        if (Environment.isWindows) {
-            var instance = IPCInstance.new(.{
-                .globalThis = this.global,
-                .context = 0,
-                .ipc = .{},
-            });
-
-            instance.ipc.configureClient(IPCInstance, instance, info) catch {
-                instance.destroy();
-                Output.warn("Unable to start IPC pipe '{s}'", .{info});
-                return;
-            };
-
-            this.ipc = instance;
-            instance.ipc.writeVersionPacket();
-            return;
-        }
         this.ipc = .{
-            .waiting = .{ .fd = info, .mode = mode },
+            .waiting = .{ .info = info, .mode = mode },
         };
     }
 
     pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
         if (this.ipc == null) return null;
         if (this.ipc.? != .waiting) return this.ipc.?.initialized;
-        IPC.log("getIPCInstance configure", .{});
         const opts = this.ipc.?.waiting;
 
+        IPC.log("getIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{opts.info});
+
         this.event_loop.ensureWaker();
-        const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
-        IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
 
-        var instance = IPCInstance.new(.{
-            .globalThis = this.global,
-            .context = context,
-            .ipc = undefined,
-        });
+        const instance = switch (Environment.os) {
+            else => instance: {
+                const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
+                IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
 
-        const socket = IPC.Socket.fromFd(context, opts.fd, IPCInstance, instance, null) orelse {
-            instance.destroy();
-            this.ipc = null;
-            Output.warn("Unable to start IPC socket", .{});
-            return null;
+                var instance = IPCInstance.new(.{
+                    .globalThis = this.global,
+                    .context = context,
+                    .data = undefined,
+                });
+
+                const socket = IPC.Socket.fromFd(context, opts.info, IPCInstance, instance, null) orelse {
+                    instance.destroy();
+                    this.ipc = null;
+                    Output.warn("Unable to start IPC socket", .{});
+                    return null;
+                };
+                socket.setTimeout(0);
+
+                instance.data = .{ .socket = socket, .mode = opts.mode };
+
+                break :instance instance;
+            },
+            .windows => instance: {
+                var instance = IPCInstance.new(.{
+                    .globalThis = this.global,
+                    .context = 0,
+                    .data = .{ .mode = opts.mode },
+                });
+
+                instance.data.configureClient(IPCInstance, instance, opts.info) catch {
+                    instance.destroy();
+                    this.ipc = null;
+                    Output.warn("Unable to start IPC pipe '{s}'", .{opts.info});
+                    return null;
+                };
+
+                break :instance instance;
+            },
         };
-        socket.setTimeout(0);
-
-        instance.ipc = .{ .socket = socket, .mode = opts.mode };
-        instance.ipc.writeVersionPacket();
-
-        const ptr = socket.ext(*IPCInstance);
-        ptr.?.* = instance;
 
         this.ipc = .{ .initialized = instance };
+
+        instance.data.writeVersionPacket();
 
         return instance;
     }

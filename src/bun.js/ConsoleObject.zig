@@ -1279,7 +1279,10 @@ pub const Formatter = struct {
                     len = @as(u32, @truncate(slice.len));
                     const next_value = this.remaining_values[0];
                     this.remaining_values = this.remaining_values[1..];
+
                     // https://console.spec.whatwg.org/#formatter
+                    const max_before_e_notation = 1000000000000000000000;
+                    const min_before_e_notation = 0.000001;
                     switch (token) {
                         .s => this.printAs(Tag.String, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
                         .i => {
@@ -1304,8 +1307,6 @@ pub const Formatter = struct {
 
                                     // simulate parseInt, which converts the argument to a string and
                                     // then back to a number, without converting it to a string
-                                    const max_before_e_notation = 1000000000000000000000;
-                                    const min_before_e_notation = 0.000001;
                                     if (value == 0) {
                                         break :brk 0;
                                     }
@@ -1347,8 +1348,63 @@ pub const Formatter = struct {
                             writer.print("{d}", .{int});
                         },
 
-                        // TODO: verify this behaves per spec
-                        .f => this.printAs(Tag.Double, Writer, writer_, next_value, next_value.jsType(), false),
+                        .f => {
+                            // 1. If Type(current) is Symbol, let converted be NaN
+                            // 2. Otherwise, let converted be the result of Call(%parseFloat%, undefined, [current]).
+                            const converted: f64 = brk: {
+                                if (next_value.isInt32()) {
+                                    const int = next_value.asInt32();
+                                    const is_negative = int < 0;
+                                    const digits = if (i != 0)
+                                        bun.fmt.fastDigitCount(@as(u64, @intCast(@abs(int)))) + @as(u64, @intFromBool(is_negative))
+                                    else
+                                        1;
+                                    this.addForNewLine(digits);
+                                    writer.print("{d}", .{int});
+                                    continue;
+                                }
+                                if (next_value.isNumber()) {
+                                    break :brk next_value.asNumber();
+                                }
+                                if (next_value.isSymbol()) {
+                                    break :brk std.math.nan(f64);
+                                }
+                                // TODO: this is not perfectly emulating parseFloat,
+                                // because spec says to convert the value to a string
+                                // and then parse as a number, but we are just coercing
+                                // a number.
+                                break :brk next_value.coerceToDouble(global);
+                            };
+
+                            const abs = @abs(converted);
+                            if (abs < max_before_e_notation and abs >= min_before_e_notation) {
+                                this.addForNewLine(bun.fmt.count("{d}", .{converted}));
+                                writer.print("{d}", .{converted});
+                            } else if (std.math.isNan(converted)) {
+                                this.addForNewLine("NaN".len);
+                                writer.writeAll("NaN");
+                            } else if (std.math.isInf(converted)) {
+                                this.addForNewLine("Infinity".len + @as(usize, @intFromBool(converted < 0)));
+                                if (converted < 0) {
+                                    writer.writeAll("-");
+                                }
+                                writer.writeAll("Infinity");
+                            } else if (converted == 0) {
+                                this.addForNewLine("0".len);
+                                writer.writeAll("0");
+                            } else {
+                                const exponent = @floor(@log10(abs));
+                                const coeff = abs / std.math.pow(f64, 10, exponent);
+                                const args = .{
+                                    if (converted < 0) "-" else "",
+                                    coeff,
+                                    @as(u8, if (exponent < 0) '-' else '+'),
+                                    @as(u16, @intFromFloat(@abs(exponent))),
+                                };
+                                this.addForNewLine(std.fmt.count("{s}{d}e{c}{d}", args));
+                                writer.print("{s}{d}e{c}{d}", args);
+                            }
+                        },
 
                         inline .o, .O => |t| {
                             if (t == .o) {

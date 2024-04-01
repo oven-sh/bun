@@ -252,3 +252,9 @@ myCustomName {
 custom inspect
 | 0 | 0 | 132 | -42 | 4 | -8 |
 | NaN | NaN | NaN | 0 | NaN | NaN |
+| 0 | 0 | 132 | -42 | 4 | -8 |
+| NaN | NaN | NaN | 0 | NaN | NaN |
+NaN
+| 0 | 0.2 | 132.51 | -42.52 | 4.127888538432189e+22 | -8.5e-12 |
+| NaN | Infinity | -Infinity | 0 | NaN | NaN |
+0.5 | 0.005

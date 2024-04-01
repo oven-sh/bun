@@ -5116,6 +5116,9 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn asInt32(this: JSValue) i32 {
+        if (bun.Environment.allow_assert) {
+            std.debug.assert(this.isInt32());
+        }
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
     }
 

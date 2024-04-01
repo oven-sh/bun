@@ -209,3 +209,24 @@ console.log({ "": "" });
 
 console.log("| %i | %i | %i | %i | %i | %i |", 0, 0.2, 132.51, -42.52, 41278885384321884328431, -0.0000000000085);
 console.log("| %i | %i | %i | %i | %i | %i |", NaN, Infinity, -Infinity, -0, {}, Symbol.for("magic"));
+
+console.log("| %d | %d | %d | %d | %d | %d |", 0, 0.2, 132.51, -42.52, 41278885384321884328431, -0.0000000000085);
+console.log("| %d | %d | %d | %d | %d | %d |", NaN, Infinity, -Infinity, -0, {}, Symbol.for("magic"));
+
+console.log("%d", { [Symbol.toPrimitive]: 0.000000000005 });
+
+class Frac {
+  constructor(num, den) {
+    this.num = num;
+    this.den = den;
+  }
+
+  [Symbol.toPrimitive]() {
+    return this.num / this.den;
+  }
+}
+
+console.log("| %f | %f | %f | %f | %f | %f |", 0, 0.2, 132.51, -42.52, 41278885384321884328431, -0.0000000000085);
+console.log("| %f | %f | %f | %f | %f | %f |", NaN, Infinity, -Infinity, -0, {}, Symbol.for("magic"));
+
+console.log("%f | %f", new Frac(1, 2), 0.005);

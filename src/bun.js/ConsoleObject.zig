@@ -1389,20 +1389,11 @@ pub const Formatter = struct {
                                     writer.writeAll("-");
                                 }
                                 writer.writeAll("Infinity");
-                            } else if (converted == 0) {
-                                this.addForNewLine("0".len);
-                                writer.writeAll("0");
                             } else {
-                                const exponent = @floor(@log10(abs));
-                                const coeff = abs / std.math.pow(f64, 10, exponent);
-                                const args = .{
-                                    if (converted < 0) "-" else "",
-                                    coeff,
-                                    @as(u8, if (exponent < 0) '-' else '+'),
-                                    @as(u16, @intFromFloat(@abs(exponent))),
-                                };
-                                this.addForNewLine(std.fmt.count("{s}{d}e{c}{d}", args));
-                                writer.print("{s}{d}e{c}{d}", args);
+                                var buf: [124]u8 = undefined;
+                                const formatted = bun.fmt.FormatDouble.dtoa(&buf, converted);
+                                this.addForNewLine(formatted.len);
+                                writer.print("{s}", .{formatted});
                             }
                         },
 
@@ -1997,8 +1988,10 @@ pub const Formatter = struct {
                     this.addForNewLine("NaN".len);
                     writer.print(comptime Output.prettyFmt("<r><yellow>NaN<r>", enable_ansi_colors), .{});
                 } else {
-                    this.addForNewLine(std.fmt.count("{d}", .{num}));
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{num});
+                    var buf: [124]u8 = undefined;
+                    const formatted = bun.fmt.FormatDouble.dtoaWithNegativeZero(&buf, num);
+                    this.addForNewLine(formatted.len);
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{s}<r>", enable_ansi_colors), .{formatted});
                 }
             },
             .Undefined => {

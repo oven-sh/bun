@@ -17,6 +17,11 @@ console.log(new Date(Math.pow(2, 34) * 56));
 console.log([123, 456, 789]);
 console.log({ name: "foo" });
 console.log({ a: 123, b: 456, c: 789 });
+console.log(Number.MAX_VALUE);
+console.log(Number.MIN_VALUE);
+console.log(899999999999999918767229449717619953810131273674690656206848);
+console.log(0.299999999999999988896);
+console.log(0.29999999999999993);
 console.log({
   a: {
     b: {
@@ -210,10 +215,10 @@ console.log({ "": "" });
 console.log("| %i | %i | %i | %i | %i | %i |", 0, 0.2, 132.51, -42.52, 41278885384321884328431, -0.0000000000085);
 console.log("| %i | %i | %i | %i | %i | %i |", NaN, Infinity, -Infinity, -0, {}, Symbol.for("magic"));
 
-console.log("| %d | %d | %d | %d | %d | %d |", 0, 0.2, 132.51, -42.52, 41278885384321884328431, -0.0000000000085);
+console.log("| %d | %d | %d | %d | %d | %d |", 0, 0.2, 132.51, -42.52, -41278885384321884328431, 0.0000000000085);
 console.log("| %d | %d | %d | %d | %d | %d |", NaN, Infinity, -Infinity, -0, {}, Symbol.for("magic"));
 
-console.log("%d", { [Symbol.toPrimitive]: 0.000000000005 });
+console.log("%d", { [Symbol.toPrimitive]: () => 0.000000000005 });
 
 class Frac {
   constructor(num, den) {
@@ -230,3 +235,23 @@ console.log("| %f | %f | %f | %f | %f | %f |", 0, 0.2, 132.51, -42.52, 412788853
 console.log("| %f | %f | %f | %f | %f | %f |", NaN, Infinity, -Infinity, -0, {}, Symbol.for("magic"));
 
 console.log("%f | %f", new Frac(1, 2), 0.005);
+
+console.log("%d", { [Symbol.toPrimitive]: () => 0 });
+console.log("%f", 504252);
+console.log("%f", -491952);
+console.log("%f", 8589934592);
+console.log("%f", -8589934592);
+console.log("%f", 0.0005);
+console.log("%f", -0.0005);
+console.log("%f %d", Number.MAX_VALUE, Number.MAX_VALUE);
+console.log("%f %d", -Number.MAX_VALUE, Number.MAX_VALUE);
+console.log("%f %d", Number.MIN_VALUE, Number.MIN_VALUE);
+console.log("%f %d", -Number.MIN_VALUE, Number.MIN_VALUE);
+
+console.log("%f %d", Number.MIN_VALUE * 1.2, Number.MIN_VALUE * 1.5);
+console.log("%f %d", -Number.MIN_VALUE * 1.2, Number.MIN_VALUE * 1.2);
+
+console.log("%f", 0.30000000000000004);
+
+console.log("Hello %cWorld", "color: red", 123);
+console.log("Hello %vWorld", 123);

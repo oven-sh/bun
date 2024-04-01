@@ -6573,8 +6573,8 @@ pub const Interpreter = struct {
                             _ = this.bltn.writeNoIO(.stdout, buf);
                             continue;
                         };
-
                         _ = this.bltn.writeNoIO(.stdout, resolved);
+                        break;
                     }
                     this.bltn.done(@intFromBool(had_not_found));
                     return Maybe(void).success;

@@ -9371,7 +9371,7 @@ pub const Interpreter = struct {
                         return Maybe(void).success;
                     },
                     else => {
-                        return this.fail("exit: too many arguments");
+                        return this.fail("exit: too many arguments\n");
                     },
                 }
             }

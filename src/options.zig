@@ -822,6 +822,7 @@ pub const Loader = enum(u8) {
 
     pub fn fromAPI(loader: Api.Loader) Loader {
         return switch (loader) {
+            ._none => .file,
             .jsx => .jsx,
             .js => .js,
             .ts => .ts,
@@ -836,7 +837,7 @@ pub const Loader = enum(u8) {
             .dataurl => .dataurl,
             .text => .text,
             .sqlite => .sqlite,
-            else => .file,
+            _ => .file,
         };
     }
 

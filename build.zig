@@ -629,3 +629,5 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, obj_step: *
         obj.link_function_sections = true;
     }
 }
+
+// !

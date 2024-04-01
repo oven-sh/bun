@@ -49,9 +49,6 @@ test("the install succeeds", async () => {
   await subprocess.exited;
   if (subprocess.exitCode != 0) {
     cwd = false as any;
-    const err = await new Response(subprocess.stderr).text();
-    const out = await new Response(subprocess.stdout).text();
-    console.log({ err, out });
     throw new Error("Failed to install");
   }
 
@@ -64,9 +61,6 @@ test("the install succeeds", async () => {
   await subprocess.exited;
   if (subprocess.exitCode != 0) {
     cwd = false as any;
-    const err = await new Response(subprocess.stderr).text();
-    const out = await new Response(subprocess.stdout).text();
-    console.log({ err, out });
     throw new Error("Failed to install");
   }
 }, 10000);

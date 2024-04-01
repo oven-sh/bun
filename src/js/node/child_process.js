@@ -69,9 +69,6 @@ var ReadableFromWeb;
 // gid <number> Sets the group identity of the process (see setgid(2)).
 // detached <boolean> Prepare child to run independently of its parent process. Specific behavior depends on the platform, see options.detached).
 
-// TODO: After IPC channels can be opened
-// serialization <string> Specify the kind of serialization used for sending messages between processes. Possible values are 'json' and 'advanced'. See Advanced serialization for more details. Default: 'json'.
-
 // TODO: Add support for ipc option, verify only one IPC channel in array
 // stdio <Array> | <string> Child's stdio configuration (see options.stdio).
 // Support wrapped ipc types (e.g. net.Socket, dgram.Socket, TTY, etc.)
@@ -1150,24 +1147,8 @@ class ChildProcess extends EventEmitter {
   spawn(options) {
     validateObject(options, "options");
 
-    // validateOneOf(options.serialization, "options.serialization", [
-    //   undefined,
-    //   "json",
-    //   // "advanced", // TODO
-    // ]);
-    // const serialization = options.serialization || "json";
-
-    // if (ipc !== undefined) {
-    //   // Let child process know about opened IPC channel
-    //   if (options.envPairs === undefined) options.envPairs = [];
-    //   else validateArray(options.envPairs, "options.envPairs");
-
-    //   $arrayPush(options.envPairs, `NODE_CHANNEL_FD=${ipcFd}`);
-    //   $arrayPush(
-    //     options.envPairs,
-    //     `NODE_CHANNEL_SERIALIZATION_MODE=${serialization}`
-    //   );
-    // }
+    validateOneOf(options.serialization, "options.serialization", [undefined, "json", "advanced"]);
+    const serialization = options.serialization || "json";
 
     validateString(options.file, "options.file");
     // NOTE: This is confusing... So node allows you to pass a file name
@@ -1222,6 +1203,7 @@ class ChildProcess extends EventEmitter {
       },
       lazy: true,
       ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      serialization,
       argv0,
     });
     this.pid = this.#handle.pid;

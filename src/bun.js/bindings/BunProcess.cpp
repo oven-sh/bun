@@ -103,6 +103,7 @@ extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" void* Bun__getVM();
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
+extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__send);
 extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
@@ -733,8 +734,10 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         // IPC handlers
         if (eventName.string() == "message"_s) {
             if (isAdded) {
-                if (Bun__GlobalObject__hasIPC(eventEmitter.scriptExecutionContext()->jsGlobalObject())
+                auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
+                if (Bun__GlobalObject__hasIPC(global)
                     && eventEmitter.listenerCount(eventName) == 1) {
+                    Bun__ensureProcessIPCInitialized(global);
                     eventEmitter.scriptExecutionContext()->refEventLoop();
                     eventEmitter.m_hasIPCRef = true;
                 }
@@ -1675,13 +1678,13 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
 
 #if OS(WINDOWS)
-        Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject);
-        // Node.js docs - https://nodejs.org/api/process.html#a-note-on-process-io
-        // > Files: synchronous on Windows and POSIX
-        // > TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
-        // > Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
-        // > Synchronous writes avoid problems such as output written with console.log() or console.error() being unexpectedly interleaved, or not written at all if process.exit() is called before an asynchronous write completes. See process.exit() for more information.
-        Bun__ForceFileSinkToBeSynchronousOnWindows(globalThis, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+    Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject);
+    // Node.js docs - https://nodejs.org/api/process.html#a-note-on-process-io
+    // > Files: synchronous on Windows and POSIX
+    // > TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
+    // > Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
+    // > Synchronous writes avoid problems such as output written with console.log() or console.error() being unexpectedly interleaved, or not written at all if process.exit() is called before an asynchronous write completes. See process.exit() for more information.
+    Bun__ForceFileSinkToBeSynchronousOnWindows(globalThis, JSValue::encode(resultObject->getIndex(globalObject, 1)));
 #endif
 
     return resultObject->getIndex(globalObject, 0);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "../../../../harness";
+import { bunEnv, bunExe } from "../../../harness";
 import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, promises as fs } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -56,20 +56,12 @@ async function hashAllFiles(dir: string) {
 }
 
 function normalizeOutput(stdout: string) {
-  return (
-    stdout
-      // remove timestamps from output
-      .replace(/\(\d+(?:\.\d+)? m?s\)/gi, "")
-      // TODO: this should not be necessary. it indicates a subtle bug in bun.
-      // normalize displayed bytes (round down to 0)
-      .replace(/\d(?:\.\d+)?(?= k?B)/g, "0")
-      // TODO: this should not be necessary. it indicates a subtle bug in bun.
-      // normalize multiple spaces to single spaces (must perform last)
-      .replace(/\s{2,}/g, " ")
-  );
+  // remove timestamps from output
+  return stdout.replace(/\(\d+(?:\.\d+)? m?s\)/gi, data => " ".repeat(data.length));
 }
 
 test("next build works", async () => {
+  rmSync(join(root, ".next"), { recursive: true, force: true });
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
   const install = Bun.spawn([bunExe(), "i"], {
@@ -121,6 +113,9 @@ test("next build works", async () => {
   const bunCliOutput = normalizeOutput(await new Response(bunBuild.stdout).text());
   const nodeCliOutput = normalizeOutput(await new Response(nodeBuild.stdout).text());
 
+  console.log("bun", bunCliOutput);
+  console.log("node", nodeCliOutput);
+
   expect(bunCliOutput).toBe(nodeCliOutput);
 
   const bunBuildDir = join(bunDir, ".next");
@@ -171,6 +166,6 @@ test("next build works", async () => {
   }
 
   build_passed = true;
-}, 600000);
+}, 60_0000);
 
 const version_string = "[production needs a constant string]";

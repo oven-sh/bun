@@ -541,7 +541,12 @@ pub const String = extern struct {
         callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void,
     ) String;
 
-    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void) String {
+    /// ctx is the pointer passed into `createExternal`
+    /// buffer is the pointer to the buffer, either [*]u8 or [*]u16
+    /// len is the number of characters in that buffer.
+    pub const ExternalStringImplFreeFunction = fn (ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void;
+
+    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
         JSC.markBinding(@src());
         std.debug.assert(bytes.len > 0);
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
@@ -924,8 +929,6 @@ pub const String = extern struct {
             else => {},
         }
     }
-
-    pub const unref = deref;
 
     pub fn eqlComptime(this: String, comptime value: []const u8) bool {
         return this.toZigString().eqlComptime(value);

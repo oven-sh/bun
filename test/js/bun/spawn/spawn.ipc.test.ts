@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { gcTick, bunExe } from "harness";
 import path from "path";
 
-describe("ipc", () => {
+describe.each(["advanced", "json"])("ipc mode %s", mode => {
   it("the subprocess should be defined and the child should send", done => {
     gcTick();
     const returned_subprocess = spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
@@ -14,6 +14,8 @@ describe("ipc", () => {
         done();
         gcTick();
       },
+      stdio: ["inherit", "inherit", "inherit"],
+      serialization: mode,
     });
   });
 
@@ -28,6 +30,8 @@ describe("ipc", () => {
         done();
         gcTick();
       },
+      stdio: ["inherit", "inherit", "inherit"],
+      serialization: mode,
     });
 
     childProc.send(parentMessage);

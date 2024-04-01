@@ -1275,3 +1275,34 @@ fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
         }
     };
 }
+
+/// Uses WebKit's double formatter
+pub fn fmtDouble(number: f64) FormatDouble {
+    return .{ .number = number };
+}
+
+pub const FormatDouble = struct {
+    number: f64,
+
+    extern "C" fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) void;
+
+    pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
+        WTF__dtoa(buf, number);
+        return bun.sliceTo(buf, 0);
+    }
+
+    pub fn dtoaWithNegativeZero(buf: *[124]u8, number: f64) []const u8 {
+        if (std.math.isNegativeZero(number)) {
+            return "-0";
+        }
+
+        WTF__dtoa(buf, number);
+        return bun.sliceTo(buf, 0);
+    }
+
+    pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        var buf: [124]u8 = undefined;
+        const slice = dtoa(&buf, self.number);
+        try writer.writeAll(slice);
+    }
+};

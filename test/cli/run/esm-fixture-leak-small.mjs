@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const dest = await import.meta.resolve("./leak-fixture-small-ast.js");
+const dest = require.resolve("./leak-fixture-small-ast.js");
 
 if (typeof Bun !== "undefined") Bun.gc(true);
 for (let i = 0; i < 5; i++) {

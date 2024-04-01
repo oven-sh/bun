@@ -78,6 +78,7 @@ pub const Tag = enum(u8) {
     fcntl,
     fdatasync,
     fstat,
+    fstatat,
     fsync,
     ftruncate,
     futimens,
@@ -467,6 +468,13 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
         log("fstat({}) = {d}", .{ fd, rc });
 
     if (Maybe(bun.Stat).errnoSys(rc, .fstat)) |err| return err;
+    return Maybe(bun.Stat){ .result = stat_ };
+}
+
+pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
+    if (Environment.isWindows) @compileError("TODO");
+    var stat_ = mem.zeroes(bun.Stat);
+    if (Maybe(bun.Stat).errnoSys(sys.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| return err;
     return Maybe(bun.Stat){ .result = stat_ };
 }
 
@@ -1548,6 +1556,51 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
+        return Maybe(void).success;
+    }
+}
+
+pub const RenameAt2Flags = packed struct {
+    exchange: bool = false,
+    exclude: bool = false,
+    nofollow: bool = false,
+
+    pub fn int(self: RenameAt2Flags) u32 {
+        var flags: u32 = 0;
+
+        if (comptime Environment.isMac) {
+            if (self.exchange) flags |= bun.C.RENAME_SWAP;
+            if (self.exclude) flags |= bun.C.RENAME_EXCL;
+            if (self.nofollow) flags |= bun.C.RENAME_NOFOLLOW_ANY;
+        } else {
+            if (self.exchange) flags |= bun.C.RENAME_EXCHANGE;
+            if (self.exclude) flags |= bun.C.RENAME_NOREPLACE;
+        }
+
+        return flags;
+    }
+};
+
+pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8, flags: RenameAt2Flags) Maybe(void) {
+    if (Environment.isWindows) {
+        return renameat(from_dir, from, to_dir, to);
+    }
+
+    while (true) {
+        const rc = switch (comptime Environment.os) {
+            .linux => linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
+            .mac => bun.C.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
+            else => @compileError("renameat2() is not implemented on this platform"),
+        };
+
+        if (Maybe(void).errnoSys(rc, .rename)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            if (comptime Environment.allow_assert)
+                log("renameat2({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
+            return err;
+        }
+        if (comptime Environment.allow_assert)
+            log("renameat2({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
         return Maybe(void).success;
     }
 }

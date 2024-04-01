@@ -42,8 +42,10 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
+        pub usingnamespace bun.New(@This());
+
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
-            var this = bun.new(This, .{
+            var this = This.new(.{
                 .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
                 .allocator = allocator,
@@ -80,7 +82,8 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            bun.destroy(this);
+            this.promise.strong.deinit();
+            this.destroy();
         }
     };
 }
@@ -357,6 +360,8 @@ const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTarg
 const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
 const ShellMkdirTask = bun.shell.Interpreter.Builtin.Mkdir.ShellMkdirTask;
 const ShellTouchTask = bun.shell.Interpreter.Builtin.Touch.ShellTouchTask;
+const ShellCondExprStatTask = bun.shell.Interpreter.CondExpr.ShellCondExprStatTask;
+const ShellAsync = bun.shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinit;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
@@ -433,6 +438,8 @@ pub const Task = TaggedPointerUnion(.{
     ShellLsTask,
     ShellMkdirTask,
     ShellTouchTask,
+    ShellCondExprStatTask,
+    ShellAsync,
     ShellAsyncSubprocessDone,
     TimerReference,
 
@@ -885,6 +892,10 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
+                @field(Task.Tag, typeBaseName(@typeName(ShellAsync))) => {
+                    var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
+                    shell_ls_task.runFromMainThread();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(ShellAsyncSubprocessDone))) => {
                     var shell_ls_task: *ShellAsyncSubprocessDone = task.get(ShellAsyncSubprocessDone).?;
                     shell_ls_task.runFromMainThread();
@@ -892,27 +903,26 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellIOWriterAsyncDeinit))) => {
                     var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellIOReaderAsyncDeinit))) => {
                     var shell_ls_task: *ShellIOReaderAsyncDeinit = task.get(ShellIOReaderAsyncDeinit).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellCondExprStatTask))) => {
+                    var shell_ls_task: *ShellCondExprStatTask = task.get(ShellCondExprStatTask).?;
+                    shell_ls_task.task.runFromMainThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellTouchTask))) => {
                     var shell_ls_task: *ShellTouchTask = task.get(ShellTouchTask).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellMkdirTask))) => {
                     var shell_ls_task: *ShellMkdirTask = task.get(ShellMkdirTask).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellLsTask))) => {
                     var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellMvBatchedTask))) => {
                     var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;
@@ -925,12 +935,10 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellRmTask))) => {
                     var shell_rm_task: *ShellRmTask = task.get(ShellRmTask).?;
                     shell_rm_task.runFromMainThread();
-                    // shell_rm_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTask))) => {
                     var shell_rm_task: *ShellRmDirTask = task.get(ShellRmDirTask).?;
                     shell_rm_task.runFromMainThread();
-                    // shell_rm_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellGlobTask))) => {
                     var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;

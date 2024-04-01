@@ -490,6 +490,20 @@ for (let [gcTick, label] of [
             });
           });
         }
+
+        it("should allow reading stdout after a few milliseconds", async () => {
+          for (let i = 0; i < 50; i++) {
+            const proc = Bun.spawn({
+              cmd: ["git", "--version"],
+              stdout: "pipe",
+              stderr: "ignore",
+              stdin: "ignore",
+            });
+            await Bun.sleep(1);
+            const out = await Bun.readableStreamToText(proc.stdout);
+            expect(out).not.toBe("");
+          }
+        });
       });
 
       it("throws errors for invalid arguments", async () => {

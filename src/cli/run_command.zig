@@ -64,13 +64,13 @@ pub const RunCommand = struct {
         "zsh",
     };
 
-    fn findShellImpl(PATH: string) ?stringZ {
+    fn findShellImpl(PATH: string, cwd: string) ?stringZ {
         if (comptime Environment.isWindows) {
             return "C:\\Windows\\System32\\cmd.exe";
         }
 
         inline for (shells_to_search) |shell| {
-            if (which(&path_buf, PATH, shell)) |shell_| {
+            if (which(&path_buf, PATH, cwd, shell)) |shell_| {
                 return shell_;
             }
         }
@@ -101,7 +101,7 @@ pub const RunCommand = struct {
 
     /// Find the "best" shell to use
     /// Cached to only run once
-    pub fn findShell(PATH: string) ?stringZ {
+    pub fn findShell(PATH: string, cwd: string) ?stringZ {
         const bufs = struct {
             pub var shell_buf_once: [bun.MAX_PATH_BYTES]u8 = undefined;
             pub var found_shell: [:0]const u8 = "";
@@ -110,7 +110,7 @@ pub const RunCommand = struct {
             return bufs.found_shell;
         }
 
-        if (findShellImpl(PATH)) |found| {
+        if (findShellImpl(PATH, cwd)) |found| {
             if (found.len < bufs.shell_buf_once.len) {
                 @memcpy(bufs.shell_buf_once[0..found.len], found);
                 bufs.shell_buf_once[found.len] = 0;
@@ -275,7 +275,7 @@ pub const RunCommand = struct {
         silent: bool,
         use_system_shell: bool,
     ) !bool {
-        const shell_bin = findShell(env.get("PATH") orelse "") orelse return error.MissingShell;
+        const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         const script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
@@ -678,7 +678,7 @@ pub const RunCommand = struct {
     } ++ if (!Environment.isDebug)
         "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
-        "/bun-debug-node";
+        "/bun-node-debug";
 
     pub fn bunNodeFileUtf8(allocator: std.mem.Allocator) ![:0]const u8 {
         if (!Environment.isWindows) return bun_node_dir;
@@ -734,10 +734,7 @@ pub const RunCommand = struct {
             if (Environment.isDebug) {
                 std.fs.deleteTreeAbsolute(bun_node_dir) catch {};
             }
-            const paths = if (Environment.isDebug)
-                .{ bun_node_dir ++ "/node", bun_node_dir ++ "/bun" }
-            else
-                .{bun_node_dir ++ "/node"};
+            const paths = .{ bun_node_dir ++ "/node", bun_node_dir ++ "/bun" };
             inline for (paths) |path| {
                 var retried = false;
                 while (true) {
@@ -756,7 +753,6 @@ pub const RunCommand = struct {
                     break;
                 }
             }
-
             if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
                 try PATH.append(std.fs.path.delimiter);
             }
@@ -787,7 +783,15 @@ pub const RunCommand = struct {
                 "-" ++ Environment.git_sha_short
             else
                 "";
+            @memcpy(target_path_buffer[prefix.len..][len..].ptr, comptime bun.strings.w(dir_name));
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
+
+            if (Environment.isDebug) {
+                const dir_slice_u8 = std.unicode.utf16leToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
+                defer bun.default_allocator.free(dir_slice_u8);
+                std.fs.deleteTreeAbsolute(dir_slice_u8) catch {};
+                std.fs.makeDirAbsolute(dir_slice_u8) catch @panic("huh?");
+            }
 
             const image_path = bun.windows.exePathW();
             inline for (.{ "node.exe", "bun.exe" }) |name| {
@@ -813,6 +817,9 @@ pub const RunCommand = struct {
                         },
                     }
                 }
+            }
+            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+                try PATH.append(std.fs.path.delimiter);
             }
 
             // The reason for the extra delim is because we are going to append the system PATH
@@ -1577,7 +1584,7 @@ pub const RunCommand = struct {
         }
 
         if (path_for_which.len > 0) {
-            if (which(&path_buf, path_for_which, script_name_to_search)) |destination| {
+            if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
                 const out = bun.asByteSlice(destination);
                 return try runBinaryWithoutBunxPath(
                     ctx,

@@ -734,10 +734,7 @@ pub const RunCommand = struct {
             if (Environment.isDebug) {
                 std.fs.deleteTreeAbsolute(bun_node_dir) catch {};
             }
-            const paths = if (Environment.isDebug)
-                .{ bun_node_dir ++ "/node", bun_node_dir ++ "/bun" }
-            else
-                .{bun_node_dir ++ "/node"};
+            const paths = .{ bun_node_dir ++ "/node", bun_node_dir ++ "/bun" };
             inline for (paths) |path| {
                 var retried = false;
                 while (true) {

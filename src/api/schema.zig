@@ -325,46 +325,19 @@ pub const FileWriter = Writer(std.fs.File);
 pub const Api = struct {
     pub const Loader = enum(u8) {
         _none,
-        /// jsx
         jsx,
-
-        /// js
         js,
-
-        /// ts
         ts,
-
-        /// tsx
         tsx,
-
-        /// css
         css,
-
-        /// file
         file,
-
-        /// json
         json,
-
-        /// toml
         toml,
-
-        /// wasm
         wasm,
-
-        /// napi
         napi,
-
-        /// base64
         base64,
-
-        /// dataurl
         dataurl,
-
-        /// text
         text,
-
-        /// sqlite
         sqlite,
 
         _,

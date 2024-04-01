@@ -23,11 +23,8 @@ expect.extend({
   toHaveWorkspaceLink: async function (package_dir: string, [link, real]: [string, string]) {
     const isWindows = process.platform === "win32";
     if (!isWindows) {
-      // expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBeWorkspaceLink(join("..", "bar"));
-      // expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
     } else {
-      // expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, real));
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, real));
     }
   },

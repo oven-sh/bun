@@ -60,7 +60,7 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
     return null;
 }
 
-const win_extensionsW = .{
+const win_extensionsW = [_][:0]const u16{
     bun.strings.w("exe"),
     bun.strings.w("cmd"),
     bun.strings.w("bat"),
@@ -103,7 +103,7 @@ fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: 
 }
 
 /// Check if bin file exists in this path (internally used by whichWin)
-fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, bin: []const u8, check_windows_extensions: bool) ?[:0]u16 {
+fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *bun.PathBuffer, path: []const u8, bin: []const u8, check_windows_extensions: bool) ?[:0]u16 {
     if (path.len == 0) return null;
     const segment = if (std.fs.path.isAbsolute(path)) (PosixToWinNormalizer.resolveCWDWithExternalBuf(path_buf, path) catch return null) else path;
     const segment_utf16 = bun.strings.convertUTF8toUTF16InBuffer(buf, segment);

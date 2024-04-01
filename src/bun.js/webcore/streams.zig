@@ -3772,6 +3772,9 @@ pub const FileReader = struct {
 
             if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
                 if (this.reader.isDone()) {
+                    if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
+                        this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
+                    }
                     this.pending.result = .{
                         .temporary_and_done = bun.ByteList.init(buf),
                     };
@@ -3779,6 +3782,10 @@ pub const FileReader = struct {
                     this.pending.result = .{
                         .temporary = bun.ByteList.init(buf),
                     };
+
+                    if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
+                        this.reader.buffer().clearRetainingCapacity();
+                    }
                 }
 
                 this.pending_value.clear();
@@ -3803,6 +3810,9 @@ pub const FileReader = struct {
             return !was_done;
         } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
             this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+            if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
+                this.reader.buffer().clearRetainingCapacity();
+            }
         }
 
         // For pipes, we have to keep pulling or the other process will block.
@@ -3909,6 +3919,9 @@ pub const FileReader = struct {
         if (this.buffered.items.len > 0) {
             const out = bun.ByteList.init(this.buffered.items);
             this.buffered = .{};
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(this.reader.buffer().items.ptr != out.ptr);
+            }
             return out;
         }
 
@@ -3916,7 +3929,7 @@ pub const FileReader = struct {
             return .{};
         }
 
-        const out = this.reader.buffer();
+        const out = this.reader.buffer().*;
         this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         return bun.ByteList.fromList(out);
     }

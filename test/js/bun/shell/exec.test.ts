@@ -37,4 +37,31 @@ describe("bun exec", () => {
         .join("")}`,
     )
     .runAsTest("write a lot of data");
+
+  describe("--help works", () => {
+    // prettier-ignore
+    const programs = [
+      // ["cat",    1, "", ""],
+      ["touch",  1, "touch: illegal option -- help\n", ""],
+      ["mkdir",  1, "mkdir: illegal option -- help\n", ""],
+      // ["cd",     1, "cd: no such file or directory: --help\n", ""],
+      ["echo",   0, "", "--help\n"],
+      ["pwd",    1, "pwd: too many arguments\n", ""],
+      // ["which",  1, "--help not found\n", ""],
+      ["rm",     1, "rm: illegal option -- -\n", ""],
+      ["mv",     1, "mv: illegal option -- -\n", ""],
+      ["ls",     1, "ls: illegal option -- -\n", ""],
+      ["exit",   1, "exit: numeric argument required\n", ""],
+      ["true",   0, "", ""],
+      ["false",  1, "", ""],
+    ] as const;
+    for (const [item, exitCode, stderr, stdout] of programs) {
+      TestBuilder.command`${BUN} exec ${`${item} --help`}`
+        .env(bunEnv)
+        .exitCode(exitCode)
+        .stderr(stderr)
+        .stdout(stdout)
+        .runAsTest(item);
+    }
+  });
 });

@@ -6792,7 +6792,7 @@ pub const Interpreter = struct {
             pub fn start(this: *Pwd) Maybe(void) {
                 const args = this.bltn.argsSlice();
                 if (args.len > 0) {
-                    const msg = "pwd: too many arguments";
+                    const msg = "pwd: too many arguments\n";
                     if (this.bltn.stderr.needsIO()) {
                         this.state = .{ .waiting_io = .{ .kind = .stderr } };
                         this.bltn.stderr.enqueue(this, msg);
@@ -6800,7 +6800,6 @@ pub const Interpreter = struct {
                     }
 
                     _ = this.bltn.writeNoIO(.stderr, msg);
-
                     this.bltn.done(1);
                     return Maybe(void).success;
                 }
@@ -6851,7 +6850,10 @@ pub const Interpreter = struct {
                     return;
                 }
 
-                this.state = .done;
+                this.state = switch (this.state.waiting_io.kind) {
+                    .stdout => .done,
+                    .stderr => .err,
+                };
 
                 this.next();
             }
@@ -6885,6 +6887,7 @@ pub const Interpreter = struct {
 
             pub fn writeFailingError(this: *Ls, buf: []const u8, exit_code: ExitCode) Maybe(void) {
                 if (this.bltn.stderr.needsIO()) {
+                    this.state = .waiting_write_err;
                     this.bltn.stderr.enqueue(this, buf);
                     return Maybe(void).success;
                 }
@@ -9361,14 +9364,14 @@ pub const Interpreter = struct {
                     1 => {
                         const first_arg = args[0][0..std.mem.len(args[0]) :0];
                         const exit_code: ExitCode = std.fmt.parseInt(u8, first_arg, 10) catch |err| switch (err) {
-                            error.Overflow => @intCast((std.fmt.parseInt(usize, first_arg, 10) catch return this.fail("exit: numeric argument required")) % 256),
-                            error.InvalidCharacter => return this.fail("exit: numeric argument required"),
+                            error.Overflow => @intCast((std.fmt.parseInt(usize, first_arg, 10) catch return this.fail("exit: numeric argument required\n")) % 256),
+                            error.InvalidCharacter => return this.fail("exit: numeric argument required\n"),
                         };
                         this.bltn.done(exit_code);
                         return Maybe(void).success;
                     },
                     else => {
-                        return this.fail("exit: too many arguments");
+                        return this.fail("exit: too many arguments\n");
                     },
                 }
             }

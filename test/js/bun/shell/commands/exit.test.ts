@@ -13,10 +13,10 @@ describe("exit", async () => {
     }
   });
 
-  TestBuilder.command`exit 3 5`.exitCode(1).stderr("exit: too many arguments").runAsTest("too many arguments");
+  TestBuilder.command`exit 3 5`.exitCode(1).stderr("exit: too many arguments\n").runAsTest("too many arguments");
 
   TestBuilder.command`exit 62757836`.exitCode(204).runAsTest("exit code wraps u8");
 
   // prettier-ignore
-  TestBuilder.command`exit abc`.exitCode(1).stderr("exit: numeric argument required").runAsTest("numeric argument required");
+  TestBuilder.command`exit abc`.exitCode(1).stderr("exit: numeric argument required\n").runAsTest("numeric argument required");
 });

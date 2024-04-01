@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 param(
   # TODO: change this to 'latest' when Bun for Windows is stable.
-  [String]$Version = "canary",
+  [String]$Version = "latest",
   # Forces installing the baseline build regardless of what CPU you are actually using.
   [Switch]$ForceBaseline = $false,
   # Skips adding the bun.exe directory to the user's %PATH%
@@ -18,7 +18,7 @@ param(
 # filter out 32 bit + ARM
 if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
   Write-Output "Install Failed:"
-  Write-Output "Bun for Windows is only available for x86 64-bit Windows.`n"
+  Write-Output "Bun for Windows is currently only available for x86 64-bit Windows.`n"
   return 1
 }
 
@@ -102,10 +102,6 @@ function Install-Bun {
   }
   elseif ($Version -match "^v\d+\.\d+\.\d+$") {
     $Version = "bun-$Version"
-  }
-  # todo: remove this when Bun for Windows is stable
-  elseif ($Version -eq "latest") {
-    $Version = "canary"
   }
 
   $Arch = "x64"
@@ -263,8 +259,6 @@ function Install-Bun {
 
   Write-Output "${C_GREEN}Bun ${DisplayVersion} was installed successfully!${C_RESET}"
   Write-Output "The binary is located at ${BunBin}\bun.exe`n"
-
-  Write-Warning "Bun for Windows is currently experimental.`nFor a more stable experience, install Bun within WSL:`nhttps://bun.sh/docs/installation`n"
 
   $hasExistingOther = $false;
   try {

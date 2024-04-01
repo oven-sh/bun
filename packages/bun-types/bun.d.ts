@@ -43,8 +43,9 @@ declare module "bun" {
    *
    * @param {string} command The name of the executable or script
    * @param {string} options.PATH Overrides the PATH environment variable
+   * @param {string} options.cwd When given a relative path, use this path to join it.
    */
-  function which(command: string, options?: { PATH?: string }): string | null;
+  function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
 
   /**
    * Get the column count of a string as it would be displayed in a terminal.
@@ -276,12 +277,16 @@ declare module "bun" {
     blob(): Promise<Blob>;
 
     /**
-     * Configure the shell to not throw an exception on non-zero exit codes.
+     * Configure the shell to not throw an exception on non-zero exit codes. Throwing can be re-enabled with `.throws(true)`.
+     *
+     * By default, the shell with throw an exception on commands which return non-zero exit codes.
      */
     nothrow(): this;
 
     /**
      * Configure whether or not the shell should throw an exception on non-zero exit codes.
+     *
+     * By default, this is configured to `true`.
      */
     throws(shouldThrow: boolean): this;
   }

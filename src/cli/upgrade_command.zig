@@ -612,7 +612,7 @@ pub const UpgradeCommand = struct {
                 }
 
                 if (comptime Environment.isPosix) {
-                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", "unzip") orelse {
+                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
                         save_dir.deleteFileZ(tmpname) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
                         Global.exit(1);
@@ -949,46 +949,12 @@ pub const UpgradeCommand = struct {
 
             if (Environment.isWindows) {
                 if (outdated_filename) |to_remove| {
-                    current_executable_buf[target_dir_.len] = '\\';
-                    const delete_old_script = try std.fmt.allocPrint(
-                        ctx.allocator,
-                        // What is this?
-                        // 1. spawns powershell
-                        // 2. waits for all processes with the same path as the current executable to exit (including the current process)
-                        // 3. deletes the old executable
-                        //
-                        // probably possible to hit a race condition, but i think the worst case is simply the file not getting deleted.
-                        //
-                        // in that edge case, the next time you upgrade it will simply override itself, fixing the bug.
-                        //
-                        // -NoNewWindow doesnt work, will keep the parent alive it seems
-                        // -WindowStyle Hidden seems to just do nothing, not sure why.
-                        // Using -WindowStyle Minimized seems to work, but you can spot a powershell icon appear in your taskbar for about ~1 second
-                        //
-                        // Alternative: we could simply do nothing and leave the `.outdated` file.
-                        \\Start-Process powershell.exe -WindowStyle Minimized -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-Command",'&{{$ErrorActionPreference=''SilentlyContinue''; Get-Process|Where-Object{{ $_.Path -eq ''{s}'' }}|Wait-Process; Remove-Item -Path ''{s}'' -Force }};'; exit
-                    ,
-                        .{
-                            destination_executable,
-                            to_remove,
-                        },
-                    );
-
-                    var delete_argv = [_]string{
-                        "powershell.exe",
-                        "-NoProfile",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-Command",
-                        delete_old_script,
-                    };
-
-                    _ = std.ChildProcess.run(.{
-                        .allocator = ctx.allocator,
-                        .argv = &delete_argv,
-                        .cwd = tmpdir_path,
-                        .max_output_bytes = 512,
-                    }) catch {};
+                    // TODO: this file gets left on disk
+                    //
+                    // We should remove it, however we cannot remove an exe that is still running.
+                    // A prior approach was to spawn a subprocess to remove the file, but that
+                    // would open a terminal window, which steals user focus (even if minimized).
+                    _ = to_remove;
                 }
             }
         }

@@ -23,14 +23,18 @@ describe("bun exec", () => {
     .stdout('hi "there bud"\n')
     .runAsTest("it works2");
 
-  TestBuilder.command`${BUN} exec ${`echo ${Array(128 * 1024)
-    .fill("a")
-    .join("")}`}`
+  TestBuilder.command`${BUN} exec ${"cat filename"}`
+    .file(
+      "filename",
+      Array(128 * 1024)
+        .fill("a")
+        .join(""),
+    )
     .env(bunEnv)
     .stdout(
       `${Array(128 * 1024)
         .fill("a")
-        .join("")}\n`,
+        .join("")}`,
     )
     .runAsTest("write a lot of data");
 });

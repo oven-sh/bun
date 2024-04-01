@@ -13,7 +13,6 @@ const open = @import("../open.zig");
 const Command = bun.CLI.Command;
 
 pub const ExecCommand = struct {
-    const discord_url = "https://bun.sh/discord";
     pub fn exec(ctx: Command.Context) !void {
         const script = ctx.positionals[1];
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
@@ -25,8 +24,23 @@ pub const ExecCommand = struct {
         );
         try bundle.runEnvLoader(false);
         const mini = bun.JSC.MiniEventLoop.initGlobal(bundle.env);
-        const code = bun.shell.Interpreter.initAndRunFromSource(mini, "<script>", script) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ script, @errorName(err) });
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+        const cwd = switch (bun.sys.getcwd(&buf)) {
+            .result => |p| p,
+            .err => |e| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ script, e.toSystemError() });
+                Global.exit(1);
+            },
+        };
+        const parts: []const []const u8 = &[_][]const u8{
+            cwd,
+            "[eval]",
+        };
+        const script_path = bun.path.join(parts, .auto);
+
+        const code = bun.shell.Interpreter.initAndRunFromSource(mini, script_path, script) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ script_path, @errorName(err) });
             Global.exit(1);
         };
 

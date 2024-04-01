@@ -15,7 +15,7 @@ describe("bun exec", () => {
   TestBuilder.command`${BUN} exec`
     .env(bunEnv)
     .stdout(
-      'Usage: bun exec <script>\n\nExecute a shell script directly from Bun.\n\nNote: If executing this from a shell, make sure to escape the string!\n\nExamples:\n  bunx exec echo hi\n  bunx exec "echo \\"hey friends\\"!"\n',
+      'Usage: bun exec <script>\n\nExecute a shell script directly from Bun.\n\nNote: If executing this from a shell, make sure to escape the string!\n\nExamples:\n  bunx exec "echo hi"\n  bunx exec "echo \\"hey friends\\"!"\n',
     )
     .runAsTest("no args prints help text");
 

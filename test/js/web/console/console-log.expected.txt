@@ -250,3 +250,5 @@ myCustomName {
 }
 <Revoked Proxy>
 custom inspect
+| 0 | 0 | 132 | -42 | 4 | -8 |
+| NaN | NaN | NaN | 0 | NaN | NaN |

@@ -1698,7 +1698,7 @@ pub const PackageInstall = struct {
                                 bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
                             },
                             .file => {
-                                std.os.symlinkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path) catch |err| {
+                                std.os.symlinkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
                                     if (err != error.PathAlreadyExists) {
                                         return err;
                                     }

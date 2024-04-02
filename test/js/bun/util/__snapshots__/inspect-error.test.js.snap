@@ -57,8 +57,7 @@ error: error inside long minified file!
       at [dir]/inspect-error-fixture.min.js:26:2846
       at [dir]/inspect-error-fixture.min.js:26:2890
       at require (:1:21)
-      at [dir]/inspect-error.test.js:37:5
-"
+      at [dir]/inspect-error.test.js:37:5"
 `;
 
 exports[`Error inside minified file (color)  1`] = `
@@ -73,6 +72,5 @@ exports[`Error inside minified file (color)  1`] = `
 [0m      [2mat [0m[0m[36m[dir]/inspect-error-fixture.min.js[0m[2m:[0m[33m26[0m[2m:[33m2846[0m
 [0m      [2mat [0m[0m[36m[dir]/inspect-error-fixture.min.js[0m[2m:[0m[33m26[0m[2m:[33m2890[0m
 [0m      [2mat [0m[0m[1m[3mrequire[0m[2m ([0m[0m[36m[0m[2m:[0m[33m1[0m[2m:[33m21[0m[2m)[0m
-[0m      [2mat [0m[0m[36m[dir]/inspect-error.test.js[0m[2m:[0m[33m50[0m[2m:[33m5[0m
-"
+[0m      [2mat [0m[0m[36m[dir]/inspect-error.test.js[0m[2m:[0m[33m51[0m[2m:[33m5[0m"
 `;

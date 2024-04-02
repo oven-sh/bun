@@ -40,7 +40,8 @@ test("Error inside minified file (no color) ", () => {
     expect(
       Bun.inspect(e)
         .replaceAll(import.meta.dir, "[dir]")
-        .replaceAll("\\", "/"),
+        .replaceAll("\\", "/")
+        .trim(),
     ).toMatchSnapshot();
   }
 });
@@ -53,7 +54,8 @@ test("Error inside minified file (color) ", () => {
     expect(
       Bun.inspect(e, { colors: true })
         .replaceAll(import.meta.dir, "[dir]")
-        .replaceAll("\\", "/"),
+        .replaceAll("\\", "/")
+        .trim(),
     ).toMatchSnapshot();
   }
 });

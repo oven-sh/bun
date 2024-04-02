@@ -31,7 +31,7 @@ using SourceProviderSourceType = JSC::SourceProviderSourceType;
 SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 {
 
-    ASSERT_WITH_MESSAGE(!specifier.startsWith("file://"_s), "specifier should not already be a file URL");
+    ASSERT_WITH_MESSAGE(!sourceURL.startsWith("file://"_s), "specifier should not already be a file URL");
 
     if (isBuiltin) {
         if (sourceURL.startsWith("node:"_s)) {

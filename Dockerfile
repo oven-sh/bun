@@ -147,7 +147,7 @@ RUN tar xf ${ZIG_FILENAME} \
   && mv ${ZIG_FOLDERNAME}/zig /usr/bin/zig \
   && rm -rf ${ZIG_FILENAME} ${ZIG_FOLDERNAME}
 
-COPY zig ${BUN_DIR}/zig
+COPY src/deps/zig /usr/local/bun-zig
 
 FROM bun-base as c-ares
 
@@ -431,6 +431,7 @@ RUN mkdir -p build \
   -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
   -DCANARY="${CANARY}" \
   -DZIG_COMPILER=system \
+  -DZIG_LIB_DIR="/usr/local/bun-zig/lib" \
   && ONLY_ZIG=1 ninja "/tmp/bun-zig.o" -v
 
 FROM scratch as build_release_obj

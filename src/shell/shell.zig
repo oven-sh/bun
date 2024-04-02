@@ -3290,40 +3290,11 @@ fn isValidVarNameAscii(var_name: []const u8) bool {
         '=', '0'...'9' => {
             return false;
         },
-        'a'...'z', 'A'...'Z', '_' => {},
+        'a'...'z', 'A'...'Z', '_' => {
+            if (var_name.len == 1) return true;
+        },
         else => return false,
     }
-
-    if (var_name.len - 1 < 16)
-        return isValidVarNameSlowAscii(var_name);
-
-    const upper_a: @Vector(16, u8) = @splat('A');
-    const upper_z: @Vector(16, u8) = @splat('Z');
-    const lower_a: @Vector(16, u8) = @splat('a');
-    const lower_z: @Vector(16, u8) = @splat('z');
-    const zero: @Vector(16, u8) = @splat(0);
-    const nine: @Vector(16, u8) = @splat(9);
-    const underscore: @Vector(16, u8) = @splat('_');
-
-    const BoolVec = @Vector(16, u1);
-
-    var i: usize = 0;
-    while (i + 16 <= var_name.len) : (i += 16) {
-        const chars: @Vector(16, u8) = var_name[i..][0..16].*;
-
-        const in_upper = @as(BoolVec, @bitCast(chars > upper_a)) & @as(BoolVec, @bitCast(chars < upper_z));
-        const in_lower = @as(BoolVec, @bitCast(chars > lower_a)) & @as(BoolVec, @bitCast(chars < lower_z));
-        const in_digit = @as(BoolVec, @bitCast(chars > zero)) & @as(BoolVec, @bitCast(chars < nine));
-        const is_underscore = @as(BoolVec, @bitCast(chars == underscore));
-
-        const merged = @as(@Vector(16, bool), @bitCast(in_upper | in_lower | in_digit | is_underscore));
-        if (std.simd.countTrues(merged) != 16) return false;
-    }
-
-    return isValidVarNameSlowAscii(var_name[i..]);
-}
-
-fn isValidVarNameSlowAscii(var_name: []const u8) bool {
     for (var_name) |c| {
         switch (c) {
             '0'...'9', 'a'...'z', 'A'...'Z', '_' => {},
@@ -3331,6 +3302,11 @@ fn isValidVarNameSlowAscii(var_name: []const u8) bool {
         }
     }
     return true;
+}
+
+fn isValidVarNameSlowAscii(var_name: []const u8) bool {
+    _ = var_name; // autofix
+
 }
 
 var stderr_mutex = std.Thread.Mutex{};

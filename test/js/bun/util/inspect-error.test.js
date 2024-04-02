@@ -31,3 +31,29 @@ test("BuildMessage", async () => {
     ).toMatchSnapshot();
   }
 });
+
+test("Error inside minified file (no color) ", () => {
+  try {
+    require("./inspect-error-fixture.min.js");
+    expect.unreachable();
+  } catch (e) {
+    expect(
+      Bun.inspect(e)
+        .replaceAll(import.meta.dir, "[dir]")
+        .replaceAll("\\", "/"),
+    ).toMatchSnapshot();
+  }
+});
+
+test("Error inside minified file (color) ", () => {
+  try {
+    require("./inspect-error-fixture.min.js");
+    expect.unreachable();
+  } catch (e) {
+    expect(
+      Bun.inspect(e, { colors: true })
+        .replaceAll(import.meta.dir, "[dir]")
+        .replaceAll("\\", "/"),
+    ).toMatchSnapshot();
+  }
+});

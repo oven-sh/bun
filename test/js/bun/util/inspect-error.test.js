@@ -32,7 +32,15 @@ test("BuildMessage", async () => {
   }
 });
 
-const stripANSIColors = str => str.replace(/\x1b\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]/g, "");
+function ansiRegex({ onlyFirst = false } = {}) {
+  const pattern = [
+    "[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)",
+    "(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))",
+  ].join("|");
+
+  return new RegExp(pattern, onlyFirst ? undefined : "g");
+}
+const stripANSIColors = str => str.replace(ansiRegex(), "");
 
 test("Error inside minified file (no color) ", () => {
   try {

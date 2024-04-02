@@ -1,16 +1,16 @@
 /*
  * Copyright 2022 Ciro Spaciari
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- * 
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -19,7 +19,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-
+// clang-format off
 #ifndef LIBUWS_CAPI_HEADER
 #define LIBUWS_CAPI_HEADER
 
@@ -209,7 +209,7 @@ extern "C"
 
     //Response
     DLL_EXPORT void uws_res_end(int ssl, uws_res_t *res, const char *data, size_t length, bool close_connection);
-    DLL_EXPORT uws_try_end_result_t uws_res_try_end(int ssl, uws_res_t *res, const char *data, size_t length, uintmax_t total_size, bool close_connection);
+    DLL_EXPORT uws_try_end_result_t uws_res_try_end(int ssl, uws_res_t *res, const char *data, size_t length, uint64_t total_size, bool close_connection);
     DLL_EXPORT void uws_res_cork(int ssl, uws_res_t *res, void(*callback)(uws_res_t *res, void* user_data) ,void* user_data);
     DLL_EXPORT void uws_res_pause(int ssl, uws_res_t *res);
     DLL_EXPORT void uws_res_resume(int ssl, uws_res_t *res);
@@ -220,10 +220,10 @@ extern "C"
     DLL_EXPORT void uws_res_write_header_int(int ssl, uws_res_t *res, const char *key, size_t key_length, uint64_t value);
     DLL_EXPORT void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection);
     DLL_EXPORT bool uws_res_write(int ssl, uws_res_t *res, const char *data, size_t length);
-    DLL_EXPORT uintmax_t uws_res_get_write_offset(int ssl, uws_res_t *res);
-    DLL_EXPORT void uws_res_override_write_offset(int ssl, uws_res_t *res, uintmax_t offset);
+    DLL_EXPORT uint64_t uws_res_get_write_offset(int ssl, uws_res_t *res);
+    DLL_EXPORT void uws_res_override_write_offset(int ssl, uws_res_t *res, uint64_t offset);
     DLL_EXPORT bool uws_res_has_responded(int ssl, uws_res_t *res);
-    DLL_EXPORT void uws_res_on_writable(int ssl, uws_res_t *res, bool (*handler)(uws_res_t *res, uintmax_t, void *optional_data), void *user_data);
+    DLL_EXPORT void uws_res_on_writable(int ssl, uws_res_t *res, bool (*handler)(uws_res_t *res, uint64_t, void *optional_data), void *user_data);
     DLL_EXPORT void uws_res_on_aborted(int ssl, uws_res_t *res, void (*handler)(uws_res_t *res, void *optional_data), void *optional_data);
     DLL_EXPORT void uws_res_on_data(int ssl, uws_res_t *res, void (*handler)(uws_res_t *res, const char *chunk, size_t chunk_length, bool is_end, void *optional_data), void *optional_data);
     DLL_EXPORT void uws_res_upgrade(int ssl, uws_res_t *res, void *data, const char *sec_web_socket_key, size_t sec_web_socket_key_length, const char *sec_web_socket_protocol, size_t sec_web_socket_protocol_length, const char *sec_web_socket_extensions, size_t sec_web_socket_extensions_length, uws_socket_context_t *ws);

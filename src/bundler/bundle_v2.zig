@@ -2344,7 +2344,7 @@ pub const ParseTask = struct {
         // runtime here.
         const runtime_require = switch (target) {
             // __require is intentionally not implemented here, as we
-            // always inline 'import.meta.require' and 'import.meta.resolveSync'
+            // always inline 'import.meta.require' and 'import.meta.require.resolve'
             // Omitting it here acts as an extra assertion.
             .bun, .bun_macro => "",
 

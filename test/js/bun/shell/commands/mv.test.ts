@@ -4,6 +4,8 @@ import { TestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 import { join } from "path";
 
+$.nothrow();
+
 describe("mv", async () => {
   TestBuilder.command`echo foo > a; mv a b`.ensureTempDir().fileEquals("b", "foo\n").runAsTest("move file -> file");
 

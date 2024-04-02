@@ -2121,11 +2121,11 @@ pub const PackageManager = struct {
             };
         }
 
-        this.env.loadCCachePath();
+        this.env.loadCCachePath(this_bundler.fs);
 
         {
             var node_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-            if (this.env.getNodePath(&node_path)) |node_pathZ| {
+            if (this.env.getNodePath(this_bundler.fs, &node_path)) |node_pathZ| {
                 _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
             } else brk: {
                 const current_path = this.env.get("PATH") orelse "";
@@ -2633,29 +2633,27 @@ pub const PackageManager = struct {
         };
         defer node_gyp_file.close();
 
-        const shebang = switch (Environment.os) {
+        const content = switch (Environment.os) {
             .windows =>
-            \\0</* :{
-            \\  @echo off
-            \\  node %~f0 %*
-            \\  exit /b %errorlevel%
-            \\:} */0;
-            \\
+            \\if not defined npm_config_node_gyp (
+            \\  bun x --silent node-gyp %*
+            \\) else (
+            \\  node "%npm_config_node_gyp%" %*
+            \\)
             \\
             ,
             else =>
-            \\#!/usr/bin/env node
-            \\
+            \\#!/bin/sh
+            \\if [ "x$npm_config_node_gyp" = "x" ]; then
+            \\  bun x --silent node-gyp $@
+            \\else
+            \\  "$npm_config_node_gyp" $@
+            \\fi
             \\
             ,
         };
-        const content =
-            \\const child_process = require("child_process");
-            \\child_process.spawnSync("bun", ["x", "node-gyp", ...process.argv.slice(2)], { stdio: "inherit" });
-            \\
-        ;
 
-        node_gyp_file.writeAll(shebang ++ content) catch |err| {
+        node_gyp_file.writeAll(content) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@errorName(err)});
             Global.crash();
         };
@@ -2681,7 +2679,6 @@ pub const PackageManager = struct {
 
         const node_gyp_abs_dir = std.fs.path.dirname(npm_config_node_gyp).?;
         try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
-        try this.env.map.putAllocKeyAndValue(this.allocator, "npm_config_node_gyp", npm_config_node_gyp);
     }
 
     pub var instance: PackageManager = undefined;
@@ -6456,27 +6453,17 @@ pub const PackageManager = struct {
                 if (request.e_string) |e_string| {
                     e_string.data = switch (request.resolution.tag) {
                         .npm => brk: {
-                            if (comptime FeatureFlags.breaking_changes_1_1_0) {
-                                if (request.version.tag == .dist_tag) {
-                                    const fmt = if (options.exact_versions) "{}" else "^{}";
-                                    break :brk try std.fmt.allocPrint(allocator, fmt, .{
-                                        request.resolution.value.npm.version.fmt(request.version_buf),
-                                    });
+                            if (request.version.tag == .dist_tag) {
+                                switch (options.exact_versions) {
+                                    inline else => |exact_versions| {
+                                        const fmt = if (exact_versions) "{}" else "^{}";
+                                        break :brk try std.fmt.allocPrint(allocator, fmt, .{
+                                            request.resolution.value.npm.version.fmt(request.version_buf),
+                                        });
+                                    },
                                 }
-                                break :brk null;
-                            } else {
-                                break :brk if (request.version.tag == .dist_tag and request.version.literal.isEmpty())
-                                    switch (options.exact_versions) {
-                                        false => std.fmt.allocPrint(allocator, "^{}", .{
-                                            request.resolution.value.npm.version.fmt(request.version_buf),
-                                        }) catch unreachable,
-                                        true => std.fmt.allocPrint(allocator, "{}", .{
-                                            request.resolution.value.npm.version.fmt(request.version_buf),
-                                        }) catch unreachable,
-                                    }
-                                else
-                                    null;
                             }
+                            break :brk null;
                         },
                         .uninitialized => switch (request.version.tag) {
                             .uninitialized => try allocator.dupe(u8, latest),
@@ -8292,7 +8279,8 @@ pub const PackageManager = struct {
                 const tree_id = entry.tree_id;
                 if (this.canRunScripts(tree_id)) {
                     _ = this.pending_lifecycle_scripts.swapRemove(i);
-                    this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level) catch |err| {
+                    const output_in_foreground = false;
+                    this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, output_in_foreground) catch |err| {
                         if (comptime log_level != .silent) {
                             const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                             const args = .{ name, @errorName(err) };
@@ -8330,7 +8318,8 @@ pub const PackageManager = struct {
                     PackageManager.instance.sleep();
                 }
 
-                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level) catch |err| {
+                const output_in_foreground = false;
+                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, output_in_foreground) catch |err| {
                     if (comptime log_level != .silent) {
                         const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                         const args = .{ package_name, @errorName(err) };
@@ -9213,23 +9202,6 @@ pub const PackageManager = struct {
             );
         }
 
-        const root_lifecycle_scripts_count = brk: {
-            if (this.options.do.run_scripts and
-                this.options.do.install_packages and
-                this.root_lifecycle_scripts != null)
-            {
-                var counter: usize = 0;
-
-                for (this.root_lifecycle_scripts.?.items) |item| {
-                    if (item != null) counter += 1;
-                }
-
-                this.total_scripts += counter;
-                break :brk counter;
-            }
-            break :brk 0;
-        };
-
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
@@ -9243,7 +9215,7 @@ pub const PackageManager = struct {
             download_node = root_node.start(ProgressStrings.download(), 0);
 
             install_node = root_node.start(ProgressStrings.install(), this.lockfile.packages.len);
-            scripts_node = root_node.start(ProgressStrings.script(), root_lifecycle_scripts_count);
+            scripts_node = root_node.start(ProgressStrings.script(), 0);
             this.downloads_node = &download_node;
             this.scripts_node = &scripts_node;
         }
@@ -9538,18 +9510,12 @@ pub const PackageManager = struct {
 
             installer.completeRemainingScripts(log_level);
 
-            if (root_lifecycle_scripts_count > 0) {
-                // root lifecycle scripts can run now that all dependencies are installed
-                // and their lifecycle script have finished
-                try this.spawnPackageLifecycleScripts(ctx, this.root_lifecycle_scripts.?, log_level);
-            }
-
             while (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
                 if (PackageManager.verbose_install) {
                     if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{this.pending_lifecycle_script_tasks.load(.Monotonic)});
                 }
 
-                PackageManager.instance.sleep();
+                this.sleep();
             }
 
             if (comptime log_level.showProgress()) {
@@ -10189,6 +10155,31 @@ pub const PackageManager = struct {
             }
         }
 
+        if (manager.options.do.run_scripts) {
+            if (manager.root_lifecycle_scripts) |scripts| {
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(scripts.total > 0);
+                }
+
+                if (comptime log_level != .silent) {
+                    Output.printError("\n", .{});
+                    Output.flush();
+                }
+                // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
+                // have finished, and lockfiles have been saved
+                const output_in_foreground = true;
+                try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, output_in_foreground);
+
+                while (manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+                    if (PackageManager.verbose_install) {
+                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{manager.pending_lifecycle_script_tasks.load(.Monotonic)});
+                    }
+
+                    manager.sleep();
+                }
+            }
+        }
+
         var printed_timestamp = false;
         if (comptime log_level != .silent) {
             if (manager.options.do.summary) {
@@ -10309,6 +10300,7 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
+        comptime foreground: bool,
     ) !void {
         var any_scripts = false;
         for (list.items) |maybe_item| {
@@ -10356,7 +10348,7 @@ pub const PackageManager = struct {
         try this_bundler.env.map.put("PATH", original_path);
         PATH.deinit();
 
-        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level, foreground);
     }
 };
 

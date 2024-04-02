@@ -339,7 +339,7 @@ pub fn WindowsPipeReader(
             var this = bun.cast(*This, stream.data);
 
             const nread_int = nread.int();
-            bun.sys.syslog("onStreamRead() = {d}", .{nread_int});
+            bun.sys.syslog("onStreamRead(0x{d}) = {d}", .{ @intFromPtr(this), nread_int });
 
             // NOTE: pipes/tty need to call stopReading on errors (yeah)
             switch (nread_int) {
@@ -472,9 +472,14 @@ pub fn WindowsPipeReader(
             if (this.source) |source| {
                 switch (source) {
                     .sync_file, .file => |file| {
+                        if (!this.flags.is_paused) {
+                            // always cancel the current one
+                            file.fs.cancel();
+                            this.flags.is_paused = true;
+                        }
                         // always use close_fs here because we can have a operation in progress
                         file.close_fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, @ptrCast(&onFileClose));
+                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
                     },
                     .pipe => |pipe| {
                         pipe.data = pipe;
@@ -532,10 +537,7 @@ pub fn WindowsPipeReader(
                 },
                 .drained => {
                     // we call drained so we know if we should stop here
-                    const keep_reading = onReadChunk(this, slice, hasMore);
-                    if (!keep_reading) {
-                        this.pause();
-                    }
+                    _ = onReadChunk(this, slice, hasMore);
                 },
                 else => {
                     var buffer = getBuffer(this);
@@ -546,10 +548,7 @@ pub fn WindowsPipeReader(
                     }
                     // move cursor foward
                     buffer.items.len += amount.result;
-                    const keep_reading = onReadChunk(this, slice, hasMore);
-                    if (!keep_reading) {
-                        this.pause();
-                    }
+                    _ = onReadChunk(this, slice, hasMore);
                 },
             }
         }

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "../../../../harness";
+import { bunEnv, bunExe } from "../../../harness";
 import { Subprocess } from "bun";
 import { copyFileSync, rmSync } from "fs";
 import { join } from "path";

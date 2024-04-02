@@ -6,7 +6,9 @@ export const os = process.platform;
 
 export const arch = os === "darwin" && process.arch === "x64" && isRosetta2() ? "arm64" : process.arch;
 
-export const avx2 = (arch === "x64" && os === "linux" && isLinuxAVX2()) || (os === "darwin" && isDarwinAVX2());
+export const avx2 =
+  arch === "x64" &&
+  ((os === "linux" && isLinuxAVX2()) || (os === "darwin" && isDarwinAVX2()) || (os === "win32" && isWindowsAVX2()));
 
 export type Platform = {
   os: string;
@@ -55,6 +57,19 @@ export const platforms: Platform[] = [
     bin: "bun-linux-x64-baseline",
     exe: "bin/bun",
   },
+  {
+    os: "win32",
+    arch: "x64",
+    avx2: true,
+    bin: "bun-windows-x64",
+    exe: "bin/bun.exe",
+  },
+  {
+    os: "win32",
+    arch: "x64",
+    bin: "bun-windows-x64-baseline",
+    exe: "bin/bun.exe",
+  },
 ];
 
 export const supportedPlatforms: Platform[] = platforms
@@ -88,4 +103,9 @@ function isRosetta2(): boolean {
     debug("isRosetta2 failed", error);
     return false;
   }
+}
+
+function isWindowsAVX2(): boolean {
+  // TODO: Implement AVX2 detection on Windows
+  return false;
 }

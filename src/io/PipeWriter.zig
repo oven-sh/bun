@@ -785,13 +785,12 @@ fn BaseWindowsPipeWriter(
             this.is_done = true;
             if (this.source) |source| {
                 switch (source) {
-                    .file => |file| {
+                    .sync_file, .file => |file| {
+                        // always cancel the current one
+                        file.fs.cancel();
                         // always use close_fs here because we can have a operation in progress
                         file.close_fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, @ptrCast(&onFileClose));
-                    },
-                    .sync_file => {
-                        // no-op
+                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
                     },
                     .pipe => |pipe| {
                         pipe.data = pipe;
@@ -940,12 +939,20 @@ pub fn WindowsBufferedWriter(
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            const result = fs.result;
+            if (result.int() == uv.UV_ECANCELED) {
+                fs.deinit();
+                return;
+            }
             const this = bun.cast(*WindowsWriter, fs.data);
-            if (fs.result.toError(.write)) |err| {
+
+            fs.deinit();
+            if (result.toError(.write)) |err| {
                 this.close();
                 onError(this.parent, err);
                 return;
             }
+
             this.onWriteComplete(.zero);
         }
 

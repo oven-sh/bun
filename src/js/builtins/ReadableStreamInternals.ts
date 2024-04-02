@@ -1656,7 +1656,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
       $assert(controller, "controller is missing");
 
       if (result && $isPromise(result)) {
-        return result.then(
+        return result.$then(
           handleNativeReadableStreamPromiseResult.bind({
             c: controller,
             v: view,

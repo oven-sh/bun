@@ -1097,7 +1097,7 @@ pub const PosixLoop = extern struct {
         us_loop_run(this);
     }
 };
-const uintmax_t = c_ulong;
+pub const uintmax_t = if (Environment.isWindows) c_ulonglong else c_ulong;
 extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
 
 extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;

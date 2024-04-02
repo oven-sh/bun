@@ -147,6 +147,8 @@ RUN tar xf ${ZIG_FILENAME} \
   && mv ${ZIG_FOLDERNAME}/zig /usr/bin/zig \
   && rm -rf ${ZIG_FILENAME} ${ZIG_FOLDERNAME}
 
+COPY zig ${BUN_DIR}/zig
+
 FROM bun-base as c-ares
 
 ARG BUN_DIR
@@ -366,7 +368,6 @@ COPY packages ${BUN_DIR}/packages
 COPY src ${BUN_DIR}/src
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
-COPY zig ${BUN_DIR}/zig
 
 ENV CCACHE_DIR=/ccache
 

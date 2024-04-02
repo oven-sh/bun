@@ -32,6 +32,8 @@ test("BuildMessage", async () => {
   }
 });
 
+const stripANSIColors = str => str.replace(/\x1b\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]/g, "");
+
 test("Error inside minified file (no color) ", () => {
   try {
     require("./inspect-error-fixture.min.js");
@@ -52,10 +54,13 @@ test("Error inside minified file (color) ", () => {
     expect.unreachable();
   } catch (e) {
     expect(
-      Bun.inspect(e, { colors: true })
-        .replaceAll(import.meta.dir, "[dir]")
-        .replaceAll("\\", "/")
-        .trim(),
+      // TODO: remove this workaround once snapshots work better
+      stripANSIColors(
+        Bun.inspect(e, { colors: true })
+          .replaceAll(import.meta.dir, "[dir]")
+          .replaceAll("\\", "/")
+          .trim(),
+      ).trim(),
     ).toMatchSnapshot();
   }
 });

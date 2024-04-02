@@ -83,3 +83,7 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
+[submodule "zig"]
+	path = zig
+	url = https://github.com/oven-sh/zig
+	branch = bun

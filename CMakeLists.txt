@@ -835,6 +835,11 @@ file(GLOB ZIG_FILES
     "${BUN_SRC}/*/*/*/*/*.zig"
 )
 
+# --- Zig Stdlib ---
+file(GLOB_RECURSE ZIG_STDLIB_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/zig/lib/*.zig"
+)
+
 if(NOT BUN_ZIG_OBJ)
     set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun-zig.o")
 endif()
@@ -852,6 +857,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         OUTPUT "${BUN_ZIG_OBJ}"
         COMMAND
         "${ZIG_COMPILER}" "build" "obj"
+        "--zig-lib-dir" "${CMAKE_CURRENT_SOURCE_DIR}/zig/lib"
         "-Doutput-file=${BUN_ZIG_OBJ}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-Dversion=${Bun_VERSION}"
@@ -861,6 +867,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Dtarget=${ZIG_TARGET}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
+        "${ZIG_STDLIB_FILES}"
         "${ZIG_FILES}"
         "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"

@@ -1639,10 +1639,10 @@ pub const PackageInstall = struct {
 
         defer subdir.close();
 
-        var buf: bun.windows.WPathBuffer = undefined;
-        var buf2: bun.windows.WPathBuffer = undefined;
+        var buf: bun.WPathBuffer = undefined;
+        var buf2: bun.OSPathBuffer = undefined;
         var to_copy_buf: []u16 = undefined;
-        var to_copy_buf2: []u16 = undefined;
+        var to_copy_buf2: []if (Environment.isWindows) u16 else u8 = undefined;
         if (comptime Environment.isWindows) {
             const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(subdir.fd, &buf, buf.len, 0);
             if (dest_path_length == 0) {
@@ -1679,6 +1679,14 @@ pub const PackageInstall = struct {
             } else {
                 to_copy_buf2 = buf2[cache_path.len..];
             }
+        } else {
+            const cache_dir_path = try bun.getFdPath(cached_package_dir.fd, &buf2);
+            if (cache_dir_path.len > 0 and cache_dir_path[cache_dir_path.len - 1] != std.fs.path.sep) {
+                buf2[cache_dir_path.len] = std.fs.path.sep;
+                to_copy_buf2 = buf2[cache_dir_path.len + 1 ..];
+            } else {
+                to_copy_buf2 = buf2[cache_dir_path.len..];
+            }
         }
 
         const FileCopier = struct {
@@ -1687,8 +1695,8 @@ pub const PackageInstall = struct {
                 walker: *Walker,
                 to_copy_into1: if (Environment.isWindows) []u16 else void,
                 head1: if (Environment.isWindows) []u16 else void,
-                to_copy_into2: if (Environment.isWindows) []u16 else void,
-                head2: if (Environment.isWindows) []u16 else void,
+                to_copy_into2: []if (Environment.isWindows) u16 else u8,
+                head2: []if (Environment.isWindows) u16 else u8,
             ) !u32 {
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
@@ -1698,7 +1706,11 @@ pub const PackageInstall = struct {
                                 bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
                             },
                             .file => {
-                                std.os.symlinkat(entry.basename, destination_dir.fd, entry.path) catch |err| {
+                                @memcpy(to_copy_into2[0..entry.path.len], entry.path);
+                                head2[entry.path.len + (head2.len - to_copy_into2.len)] = 0;
+                                const target: [:0]u8 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
+
+                                std.os.symlinkat(target, destination_dir.fd, entry.path) catch |err| {
                                     if (err != error.PathAlreadyExists) {
                                         return err;
                                     }
@@ -1783,8 +1795,8 @@ pub const PackageInstall = struct {
             &walker_,
             if (Environment.isWindows) to_copy_buf else void{},
             if (Environment.isWindows) &buf else void{},
-            if (Environment.isWindows) to_copy_buf2 else void{},
-            if (Environment.isWindows) &buf2 else void{},
+            to_copy_buf2,
+            &buf2,
         ) catch |err| {
             if (comptime Environment.isWindows) {
                 if (err == error.FailedToCopyFile) {

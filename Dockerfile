@@ -309,20 +309,6 @@ COPY src/deps/ls-hpack ${BUN_DIR}/src/deps/ls-hpack
 
 WORKDIR $BUN_DIR
 
-FROM bun-base as zig
-
-ARG BUN_DIR
-
-ARG CPU_TARGET
-ENV CPU_TARGET=${CPU_TARGET}
-
-ENV CCACHE_DIR=/ccache
-
-COPY Makefile ${BUN_DIR}/Makefile
-COPY zig ${BUN_DIR}/zig
-
-WORKDIR $BUN_DIR
-
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make lshpack
 
 FROM bun-base-with-zig as bun-identifier-cache
@@ -380,6 +366,7 @@ COPY packages ${BUN_DIR}/packages
 COPY src ${BUN_DIR}/src
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
+COPY zig ${BUN_DIR}/zig
 
 ENV CCACHE_DIR=/ccache
 

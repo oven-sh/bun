@@ -2017,8 +2017,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 }
                 return true;
             }
-
-            unreachable;
         }
 
         fn send(this: *@This(), buf: []const u8) bool {
@@ -2030,9 +2028,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return this.buffer.ptr[this.offset..this.buffer.cap][0..this.buffer.len];
         }
 
-        pub fn onWritable(this: *@This(), write_offset_: c_ulong, _: *UWSResponse) callconv(.C) bool {
-            const write_offset: u64 = @as(u64, write_offset_);
-            log("onWritable ({d})", .{write_offset});
+        pub fn onWritable(this: *@This(), write_offset_ulong: c_ulong, _: *UWSResponse) callconv(.C) bool {
+            const write_offset: u64 = @as(u64, write_offset_ulong);
+            log("onWritable({d}, done={})", .{ write_offset, this.done });
+
+            if (write_offset == 0) {
+                @breakpoint();
+            }
 
             if (this.done) {
                 if (this.aborted == false) {
@@ -2049,6 +2051,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // figure out how much data exactly to write
             const readable = this.readableSlice()[0..to_write];
             if (!this.send(readable)) {
+                log("onWritable({d}) send failed", .{write_offset});
                 // if we were unable to send it, retry
                 this.res.onWritable(*@This(), onWritable, this);
                 return true;
@@ -2057,7 +2060,10 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             this.handleWrote(@as(Blob.SizeType, @truncate(readable.len)));
             const initial_wrote = this.wrote;
 
+            log("this.buffer.len = {d}", .{this.buffer.len});
+            log("this.done = {}", .{this.done});
             if (this.buffer.len > 0 and !this.done) {
+                log("onWritable({d}) buffered", .{write_offset});
                 this.res.onWritable(*@This(), onWritable, this);
                 return true;
             }
@@ -2073,6 +2079,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 const to_report = pending - @min(written_after_flush, pending);
 
                 if ((written_after_flush == initial_wrote and pending == 0) or to_report > 0) {
+                    log("call this.signal.ready({d}, {d})", .{ written_after_flush, to_report });
                     this.signal.ready(to_report, null);
                 }
             }
@@ -2490,6 +2497,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         // so it must zero out state instead of make it
         pub fn finalize(this: *@This()) void {
             log("finalize()", .{});
+            std.debug.dumpCurrentStackTrace(@returnAddress());
 
             if (!this.done) {
                 this.done = true;
@@ -2519,13 +2527,15 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn flushPromise(this: *@This()) void {
             if (this.pending_flush) |prom| {
-                log("flushPromise()", .{});
+                log("flushPromise({d})", .{this.wrote -| this.wrote_at_start_of_flush});
 
                 this.pending_flush = null;
                 const globalThis = this.globalThis;
                 prom.asValue(globalThis).unprotect();
                 prom.resolve(globalThis, JSC.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
                 this.wrote_at_start_of_flush = this.wrote;
+            } else {
+                log("flushPromise() no pending flush", .{});
             }
         }
 

@@ -1731,6 +1731,28 @@ if [[ "123abc" == *?(a)bc ]]; then echo ok 43; else echo bad 43; fi
 });
 
 describe("subshell", () => {
+  const sharppkgjson = /* json */ `{
+    "name": "sharp-test",
+    "module": "index.ts",
+    "type": "module",
+    "dependencies": {
+      "sharp": "^0.33.3"
+    }
+  }`;
+
+  TestBuilder.command/* sh */ `
+  mkdir sharp-test
+  cd sharp-test
+  echo ${sharppkgjson} > package.json
+  ${BUN} i
+  `
+    .ensureTempDir()
+    .stdout(out => expect(out).toInclude("+ sharp@0.33.3"))
+    .stderr(() => {})
+    .exitCode(0)
+    .env(bunEnv)
+    .runAsTest("sharp");
+
   TestBuilder.command/* sh */ `( ( ( ( echo HI! ) ) ) )`.stdout("HI!\n").runAsTest("multiple levels");
   TestBuilder.command/* sh */ `(
     echo HELLO! ;

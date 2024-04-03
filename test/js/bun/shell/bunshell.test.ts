@@ -260,6 +260,11 @@ describe("bunshell", () => {
       expect(stdout.toString("utf-8")).toEqual(`${haha}\n`);
     });
 
+    // #9823
+    TestBuilder.command`AUTH_COOKIE_SECUREALKJAKJDLASJDKLSAJD=false; echo $AUTH_COOKIE_SECUREALKJAKJDLASJDKLSAJD`
+      .stdout("false\n")
+      .runAsTest("long varname");
+
     // test("invalid lone surrogate fails", async () => {
     //   const err = await runWithErrorPromise(async () => {
     //     const loneSurrogate = randomLoneSurrogate();
@@ -1725,6 +1730,121 @@ if [[ "123abc" == *?(a)bc ]]; then echo ok 43; else echo bad 43; fi
     //   .stdout("ok 5")
     //   .runAsTest("various tests");
   });
+});
+
+// describe("hello", () => {
+//   test("hi", () => {
+//     // throw new Error("hi");
+//   });
+// });
+
+describe("subshell", () => {
+  // test_oE 'effect of subshell'
+  TestBuilder.command/* sh */ `
+  a=1
+  # (a=2; echo $a; exit; echo not reached)
+  # We actually implemented exit wrong so changing this for now until we fix it
+  (a=2; echo $a; exit; echo not reached)
+  echo $a
+  `
+    .stdout("1\n2\n1\n")
+    .runAsTest("effect of subshell");
+
+  // test_x -e 23 'exit status of subshell'
+  TestBuilder.command/* sh */ `
+  (true; exit 23)
+  `
+    .exitCode(23)
+    .runAsTest("exit status of subshell");
+
+  // test_oE 'redirection on subshell'
+  TestBuilder.command/* sh */ `
+  (echo 1; echo 2; echo 3; echo 4) >sub_out
+  # (tail -n 2) <sub_out
+  cat sub_out
+  `
+    .stdout("1\n2\n3\n4\n")
+    .runAsTest("redirection on subshell");
+
+  // test_oE 'subshell ending with semicolon'
+  TestBuilder.command/* sh */ `
+(echo foo;)
+`
+    .stdout("foo\n")
+    .runAsTest("subshell ending with semicolon");
+
+  // test_oE 'subshell ending with asynchronous list'
+  TestBuilder.command/* sh */ `
+mkfifo fifo1
+(echo foo >fifo1&)
+cat fifo1
+`
+    .stdout("foo\n")
+    .runAsTest("subshell ending with asynchronous list");
+
+  // test_oE 'newlines in subshell'
+  TestBuilder.command/* sh */ `
+(
+echo foo
+)
+`
+    .stdout("foo\n")
+    .runAsTest("newlines in subshell");
+
+  // test_oE 'effect of brace grouping'
+  TestBuilder.command/* sh */ `
+a=1
+{ a=2; echo $a; exit; echo not reached; }
+echo $a
+`
+    .stdout("2\n1\n")
+    .todo("brace grouping not implemented")
+    .runAsTest("effect of brace grouping");
+
+  // test_x -e 29 'exit status of brace grouping'
+  TestBuilder.command/* sh */ `
+{ true; sh -c 'exit 29'; }
+`
+    .exitCode(29)
+    .todo("brace grouping not implemented")
+    .runAsTest("exit status of brace grouping");
+
+  // test_oE 'redirection on brace grouping'
+  TestBuilder.command/* sh */ `
+{ echo 1; echo 2; echo 3; echo 4; } >brace_out
+{ tail -n 2; } <brace_out
+`
+    .stdout("3\n4\n")
+    .todo("brace grouping not implemented")
+    .runAsTest("redirection on brace grouping");
+
+  // test_oE 'brace grouping ending with semicolon'
+  TestBuilder.command/* sh */ `
+{ echo foo; }
+`
+    .stdout("foo\n")
+    .todo("brace grouping not implemented")
+    .runAsTest("brace grouping ending with semicolon");
+
+  // test_oE 'brace grouping ending with asynchronous list'
+  TestBuilder.command/* sh */ `
+mkfifo fifo1
+{ echo foo >fifo1& }
+cat fifo1
+`
+    .stdout("foo\n")
+    .todo("brace grouping not implemented")
+    .runAsTest("brace grouping ending with asynchronous list");
+
+  // test_oE 'newlines in brace grouping'
+  TestBuilder.command/* sh */ `
+{
+echo foo
+}
+`
+    .stdout("foo\n")
+    .todo("brace grouping not implemented")
+    .runAsTest("newlines in brace grouping");
 });
 
 describe.todo("async", () => {

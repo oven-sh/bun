@@ -53,7 +53,7 @@ const SmolList = shell.SmolList;
 
 const GlobWalker = @import("../glob.zig").GlobWalker_(null, true);
 
-pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue.";
+// pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue.";
 const stdin_no = 0;
 const stdout_no = 1;
 const stderr_no = 2;
@@ -762,15 +762,29 @@ pub const Interpreter = struct {
                 .result => |fd| fd,
             };
 
-            const stdout: Bufio = if (io.stdout == .fd) brk: {
-                if (io.stdout.fd.captured != null) break :brk .{ .borrowed = io.stdout.fd.captured.? };
-                break :brk .{ .owned = .{} };
-            } else if (kind == .pipeline) .{ .borrowed = this.buffered_stdout() } else .{ .owned = .{} };
+            const stdout: Bufio = switch (io.stdout) {
+                .fd => brk: {
+                    if (io.stdout.fd.captured != null) break :brk .{ .borrowed = io.stdout.fd.captured.? };
+                    break :brk .{ .owned = .{} };
+                },
+                .ignore => .{ .owned = .{} },
+                .pipe => switch (kind) {
+                    .normal, .cmd_subst => .{ .owned = .{} },
+                    .subshell, .pipeline => .{ .borrowed = this.buffered_stdout() },
+                },
+            };
 
-            const stderr: Bufio = if (io.stderr == .fd) brk: {
-                if (io.stderr.fd.captured != null) break :brk .{ .borrowed = io.stderr.fd.captured.? };
-                break :brk .{ .owned = .{} };
-            } else if (kind == .pipeline) .{ .borrowed = this.buffered_stderr() } else .{ .owned = .{} };
+            const stderr: Bufio = switch (io.stderr) {
+                .fd => brk: {
+                    if (io.stderr.fd.captured != null) break :brk .{ .borrowed = io.stderr.fd.captured.? };
+                    break :brk .{ .owned = .{} };
+                },
+                .ignore => .{ .owned = .{} },
+                .pipe => switch (kind) {
+                    .normal, .cmd_subst => .{ .owned = .{} },
+                    .subshell, .pipeline => .{ .borrowed = this.buffered_stderr() },
+                },
+            };
 
             duped.* = .{
                 .kind = kind,
@@ -2386,6 +2400,9 @@ pub const Interpreter = struct {
         pub const ParentPtr = StatePtrUnion(.{
             ThisInterpreter,
             Expansion,
+            Pipeline, // Subshell
+            Binary, // Subshell
+            Stmt, // Subshell
         });
 
         pub const ChildPtr = struct {
@@ -2420,7 +2437,7 @@ pub const Interpreter = struct {
             return this.io;
         }
 
-        fn start(this: *Script) void {
+        pub fn start(this: *Script) void {
             if (this.node.stmts.len == 0)
                 return this.finish(0);
             this.next();
@@ -2447,15 +2464,10 @@ pub const Interpreter = struct {
                 return;
             }
 
-            if (this.parent.ptr.is(Expansion)) {
-                this.parent.childDone(this, exit_code);
-                return;
-            }
-
-            @panic("Expected Script to have a parent of type Interpreter or Expansion");
+            this.parent.childDone(this, exit_code);
         }
 
-        fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) void {
+        pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) void {
             child.deinit();
             if (this.state.normal.idx >= this.node.stmts.len) {
                 this.finish(exit_code);
@@ -2467,11 +2479,15 @@ pub const Interpreter = struct {
         pub fn deinit(this: *Script) void {
             log("Script(0x{x}) deinit", .{@intFromPtr(this)});
             this.io.deref();
-            if (this.parent.ptr.is(ThisInterpreter)) {
-                return;
+            if (!this.parent.ptr.is(ThisInterpreter)) {
+                // If the parent is not Interpreter it means the script is not top-level
+                // So it is either a:
+                // - command substitution (duped from parent)
+                // - subshell (duped from parent)
+                // In both cases we own the shell state and should deinit it
+                this.base.shell.deinit();
             }
 
-            this.base.shell.deinit();
             bun.default_allocator.destroy(this);
         }
 
@@ -2662,6 +2678,7 @@ pub const Interpreter = struct {
             Assigns,
             If,
             CondExpr,
+            Script,
         });
 
         pub fn init(
@@ -2722,7 +2739,15 @@ pub const Interpreter = struct {
                     assign_machine.start();
                 },
                 .subshell => {
-                    @panic(SUBSHELL_TODO_ERROR);
+                    switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
+                        .result => |shell_state| {
+                            var script = Script.init(this.base.interpreter, shell_state, child.subshell, Script.ParentPtr.init(this), this.io.copy());
+                            script.start();
+                        },
+                        .err => |e| {
+                            this.base.throw(&bun.shell.ShellErr.newSys(e));
+                        },
+                    }
                 },
                 .@"if" => {
                     const if_clause = If.init(this.base.interpreter, this.base.shell, child.@"if", If.ParentPtr.init(this), this.io.copy());
@@ -2780,6 +2805,7 @@ pub const Interpreter = struct {
             Assigns,
             If,
             CondExpr,
+            Script,
         });
 
         const ParentPtr = StatePtrUnion(.{
@@ -2846,7 +2872,18 @@ pub const Interpreter = struct {
                     assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
                     return ChildPtr.init(assign_machine);
                 },
-                .subshell => @panic(SUBSHELL_TODO_ERROR),
+                .subshell => {
+                    switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
+                        .result => |shell_state| {
+                            const script = Script.init(this.base.interpreter, shell_state, node.subshell, Script.ParentPtr.init(this), this.io.copy());
+                            return ChildPtr.init(script);
+                        },
+                        .err => |e| {
+                            this.base.throw(&bun.shell.ShellErr.newSys(e));
+                            return null;
+                        },
+                    }
+                },
                 .@"if" => {
                     const if_clause = If.init(this.base.interpreter, this.base.shell, node.@"if", If.ParentPtr.init(this), this.io.copy());
                     return ChildPtr.init(if_clause);
@@ -2936,9 +2973,10 @@ pub const Interpreter = struct {
             Assigns,
             If,
             CondExpr,
+            Script,
         });
 
-        const PipelineItem = TaggedPointerUnion(.{ Cmd, If, CondExpr });
+        const PipelineItem = TaggedPointerUnion(.{ Cmd, If, CondExpr, Script });
 
         const CmdOrResult = union(enum) {
             cmd: PipelineItem,
@@ -3012,7 +3050,7 @@ pub const Interpreter = struct {
             const evtloop = this.base.eventLoop();
             for (this.node.items) |*item| {
                 switch (item.*) {
-                    .@"if", .cmd, .condexpr => {
+                    .@"if", .cmd, .condexpr, .subshell => {
                         var cmd_io = this.getIO();
                         const stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io, evtloop) else cmd_io.stdin.ref();
                         const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io, evtloop) else cmd_io.stdout.ref();
@@ -3032,6 +3070,7 @@ pub const Interpreter = struct {
                                 .@"if" => PipelineItem.init(If.init(this.base.interpreter, subshell_state, item.@"if", If.ParentPtr.init(this), cmd_io)),
                                 .cmd => PipelineItem.init(Cmd.init(this.base.interpreter, subshell_state, item.cmd, Cmd.ParentPtr.init(this), cmd_io)),
                                 .condexpr => PipelineItem.init(CondExpr.init(this.base.interpreter, subshell_state, item.condexpr, CondExpr.ParentPtr.init(this), cmd_io)),
+                                .subshell => PipelineItem.init(Script.init(this.base.interpreter, subshell_state, item.subshell, Script.ParentPtr.init(this), cmd_io)),
                                 else => @panic("Pipeline runnable should be a command or an if conditional, this appears to be a bug in Bun."),
                             },
                         };
@@ -3039,7 +3078,7 @@ pub const Interpreter = struct {
                     },
                     // in a pipeline assignments have no effect
                     .assigns => {},
-                    .subshell => @panic(SUBSHELL_TODO_ERROR),
+                    // .subshell => @panic(SUBSHELL_TODO_ERROR),
                 }
             }
 
@@ -3121,6 +3160,10 @@ pub const Interpreter = struct {
                 condexpr.base.shell.deinit();
             } else if (child.ptr.is(Assigns)) {
                 // We don't do anything here since assigns have no effect in a pipeline
+            } else if (child.ptr.is(Script)) {
+                // Script already deinitializes its shell state so don't need to do anything here
+                const script = child.as(Script);
+                _ = script;
             }
 
             child.deinit();

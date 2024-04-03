@@ -351,7 +351,7 @@ pub const AST = struct {
         binary: *Binary,
         pipeline: *Pipeline,
         cmd: *Cmd,
-        subshell: Script,
+        subshell: *Script,
         @"if": *If,
         condexpr: *CondExpr,
         /// Valid async (`&`) expressions:
@@ -651,7 +651,7 @@ pub const AST = struct {
     pub const PipelineItem = union(enum) {
         cmd: *Cmd,
         assigns: []Assign,
-        subshell: Script,
+        subshell: *Script,
         @"if": *If,
         condexpr: *CondExpr,
     };
@@ -944,19 +944,19 @@ pub const Parser = struct {
     /// Loosely based on the shell gramar documented in the spec: https://pubs.opengroup.org/onlinepubs/009604499/utilities/xcu_chap02.html#tag_02_10
     pub fn parse(self: *Parser) !AST.Script {
         // Check for subshell syntax which is not supported rn
-        for (self.tokens) |tok| {
-            switch (tok) {
-                .OpenParen => {
-                    try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
-                    return ParseError.Expected;
-                },
-                .CloseParen => {
-                    try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
-                    return ParseError.Expected;
-                },
-                else => {},
-            }
-        }
+        // for (self.tokens) |tok| {
+        //     switch (tok) {
+        //         .OpenParen => {
+        //             try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
+        //             return ParseError.Expected;
+        //         },
+        //         .CloseParen => {
+        //             try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
+        //             return ParseError.Expected;
+        //         },
+        //         else => {},
+        //     }
+        // }
 
         return try self.parse_impl();
     }
@@ -1123,13 +1123,13 @@ pub const Parser = struct {
 
     fn parse_compound_cmd(self: *Parser) anyerror!AST.Expr {
         // Placeholder for when we fully support subshells
-        // if (self.peek() == .OpenParen) {
-        //     _ = self.expect(.OpenParen);
-        //     const script = try self.parse_impl(true);
-        //     _ = self.expect(.CloseParen);
-        //     return .{ .subshell = script };
-        // }
-        // return (try self.parse_cmd_or_assigns()).to_expr(self.alloc);
+        if (self.peek() == .OpenParen) {
+            _ = self.expect(.OpenParen);
+            var subparser = self.make_subparser(.normal);
+            const script = try subparser.parse_impl();
+            self.continue_from_subparser(&subparser);
+            return .{ .subshell = try self.allocate(AST.Script, script) };
+        }
 
         if (self.isIfClauseTextToken(.@"if")) return (try self.parse_if_clause()).to_expr(self.alloc);
 
@@ -1414,6 +1414,17 @@ pub const Parser = struct {
         while (try self.parse_atom()) |arg| {
             try name_and_args.append(arg);
         }
+        //         var name_and_args = std.ArrayList(AST.Atom).init(self.alloc);
+        // try name_and_args.append(name);
+        // while (if (self.inside_subshell == null)
+        //     !self.check_any_comptime(&.{ .Semicolon, .Newline, .Eof })
+        // else
+        //     !self.check_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
+        // {
+        //     if (try self.parse_atom()) |arg| {
+        //         try name_and_args.append(arg);
+        //     } else break;
+        // }
 
         // TODO Parse redirects (need to update lexer to have tokens for different parts e.g. &>>)
         const has_redirect = self.match(.Redirect);
@@ -3302,11 +3313,6 @@ fn isValidVarNameAscii(var_name: []const u8) bool {
         }
     }
     return true;
-}
-
-fn isValidVarNameSlowAscii(var_name: []const u8) bool {
-    _ = var_name; // autofix
-
 }
 
 var stderr_mutex = std.Thread.Mutex{};

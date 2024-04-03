@@ -16,7 +16,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #ifndef UWS_ASYNCSOCKET_H
 #define UWS_ASYNCSOCKET_H
 
@@ -255,10 +255,8 @@ public:
         if (asyncSocketData->buffer.length()) {
             /* Write off as much as we can */
             int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), (int) asyncSocketData->buffer.length(), /*nextLength != 0 | */length);
-
             /* On failure return, otherwise continue down the function */
             if ((unsigned int) written < asyncSocketData->buffer.length()) {
-
                 /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
                 asyncSocketData->buffer.erase((unsigned int) written);
 
@@ -268,8 +266,8 @@ public:
                 } else {
                     /* This path is horrible and points towards erroneous usage */
                     asyncSocketData->buffer.append(src, (unsigned int) length);
-
-                    return {length, true};
+                    /* Return that we actually buffered the data so we return success */
+                    return {length, false};
                 }
             }
 
@@ -310,7 +308,7 @@ public:
                     if (optionally) {
                         return {written, true};
                     }
-
+               
                     /* Fall back to worst possible case (should be very rare for HTTP) */
                     /* At least we can reserve room for next chunk if we know it up front */
                     if (nextLength) {
@@ -320,8 +318,8 @@ public:
                     /* Buffer this chunk */
                     asyncSocketData->buffer.append(src + written, (size_t) (length - written));
 
-                    /* Return the failure */
-                    return {length, true};
+                    /* Return that we actually buffered the data so we return success */
+                    return {length, false};
                 }
                 /* Fall through to default return */
             }

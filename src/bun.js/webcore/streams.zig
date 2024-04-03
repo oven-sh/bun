@@ -1986,7 +1986,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         fn hasBackpressure(this: *const @This()) bool {
             return this.has_backpressure;
         }
-
         fn sendWithoutAutoFlusher(this: *@This(), buf: []const u8) bool {
             std.debug.assert(!this.done);
             defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
@@ -2048,7 +2047,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             this.has_backpressure = false;
             if (this.aborted) {
                 log("onWritable aborted", .{});
-
+                this.res.clearOnWritable();
                 this.signal.close(null);
                 this.flushPromise();
                 this.finalize();
@@ -2069,9 +2068,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 if (chunk.len == 0) {
                     if (this.done) {
                         log("onWritable done and finalized", .{});
+                        this.res.clearOnWritable();
                         this.signal.close(null);
                         this.flushPromise();
                         this.finalize();
+                        // we drained all the data
                         return true;
                     }
                     log("onWritable no more data to write", .{});
@@ -2094,10 +2095,12 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 total_written += chunk.len;
 
                 if (this.requested_end) {
+                    log("onWritable requested_end", .{});
+                    this.res.clearOnWritable();
                     this.signal.close(null);
                     this.flushPromise();
                     this.finalize();
-                    return false;
+                    return true;
                 }
             }
 

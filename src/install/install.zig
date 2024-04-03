@@ -1256,6 +1256,7 @@ pub const PackageInstall = struct {
             },
         };
     }
+
     fn installWithCopyfile(this: *PackageInstall) Result {
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
@@ -1439,7 +1440,62 @@ pub const PackageInstall = struct {
         };
     }
 
-    var node_fs_for_package_installer: bun.JSC.Node.NodeFS = undefined;
+    threadlocal var node_fs_for_package_installer: bun.JSC.Node.NodeFS = .{};
+
+    const InstallDirState = struct {
+        subdir: std.fs.Dir = if (Environment.isWindows) std.fs.Dir{ .fd = std.os.windows.INVALID_HANDLE_VALUE } else undefined,
+        buf: bun.windows.WPathBuffer = if (Environment.isWindows) undefined else {},
+        buf2: bun.windows.WPathBuffer = if (Environment.isWindows) undefined else {},
+        to_copy_buf: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined else {},
+        to_copy_buf2: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined else {},
+    };
+
+    fn initInstallDir(destbase: std.fs.Dir, destpath: []const u8, cachedir: std.fs.Dir, state: *InstallDirState) !void {
+        if (!Environment.isWindows) {
+            state.subdir = destbase.makeOpenPath(bun.span(destpath), .{
+                .iterate = true,
+                .access_sub_paths = true,
+            }) catch |err| return err;
+            return;
+        }
+
+        const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(destbase.fd, &state.buf, state.buf.len, 0);
+        if (dest_path_length == 0) {
+            const e = bun.windows.Win32Error.get();
+            return if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+        }
+
+        var i: usize = dest_path_length;
+        if (state.buf[i] != '\\') {
+            state.buf[i] = '\\';
+            i += 1;
+        }
+
+        i += bun.strings.toWPathNormalized(state.buf[i..], destpath).len;
+        state.buf[i] = std.fs.path.sep_windows;
+        i += 1;
+        state.buf[i] = 0;
+        const fullpath = state.buf[0..i :0];
+
+        _ = try node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap();
+
+        const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(cachedir.fd, &state.buf2, state.buf2.len, 0);
+        if (cache_path_length == 0) {
+            const e = bun.windows.Win32Error.get();
+            return if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+        }
+        const cache_path = state.buf2[0..cache_path_length];
+        var to_copy_buf2: []u16 = undefined;
+        if (state.buf2[cache_path.len - 1] != '\\') {
+            state.buf2[cache_path.len] = '\\';
+            to_copy_buf2 = state.buf2[cache_path.len + 1 ..];
+        } else {
+            to_copy_buf2 = state.buf2[cache_path.len..];
+        }
+        state.to_copy_buf = state.buf[fullpath.len..];
+        state.to_copy_buf2 = to_copy_buf2;
+    }
+
     fn installWithHardlink(this: *PackageInstall) !Result {
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir);
         defer cached_package_dir.close();
@@ -1451,75 +1507,10 @@ pub const PackageInstall = struct {
         ) catch |err| return Result.fail(err, .opening_cache_dir);
         defer walker_.deinit();
 
-        var buf: bun.windows.WPathBuffer = undefined;
-        var buf2: bun.windows.WPathBuffer = undefined;
-        var to_copy_buf: []u16 = undefined;
-        var to_copy_buf2: []u16 = undefined;
+        var state = InstallDirState{};
+        try initInstallDir(this.destination_dir, this.destination_dir_subpath, cached_package_dir, &state);
 
-        var subdir = if (Environment.isPosix)
-            this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{
-                .iterate = true,
-                .access_sub_paths = true,
-            }) catch |err| return Result.fail(err, .opening_cache_dir)
-        else if (Environment.isWindows) brk: {
-            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(this.destination_dir.fd, &buf, buf.len, 0);
-            if (dest_path_length == 0) {
-                const e = bun.windows.Win32Error.get();
-                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk2: {
-                    // If this code path is reached, it should have a toSystemErrno mapping
-                    Output.warn("Failed to get destination path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
-                    break :brk2 error.Unexpected;
-                };
-                return Result.fail(err, .copying_files);
-            }
-
-            var i: usize = dest_path_length;
-            to_copy_buf = buf[i..];
-            if (to_copy_buf[0] != '\\') {
-                to_copy_buf[0] = '\\';
-                to_copy_buf = to_copy_buf[1..];
-                i += 1;
-            }
-
-            i += bun.strings.toWPathNormalized(buf[i..], this.destination_dir_subpath).len;
-            buf[i] = std.fs.path.sep_windows;
-            i += 1;
-            buf[i] = 0;
-            const path = buf[0..i :0];
-
-            node_fs_for_package_installer.vm = null;
-            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, path, 0, false).unwrap() catch |err| {
-                return Result.fail(err, .copying_files);
-            };
-            to_copy_buf = buf[i..];
-
-            break :brk std.fs.Dir{ .fd = std.os.windows.INVALID_HANDLE_VALUE };
-        } else {
-            // non-windows non-posix?
-            @compileError("TODO");
-        };
-
-        defer if (!Environment.isWindows) subdir.close();
-
-        if (comptime Environment.isWindows) {
-            const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(cached_package_dir.fd, &buf2, buf2.len, 0);
-            if (cache_path_length == 0) {
-                const e = bun.windows.Win32Error.get();
-                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
-                    // If this code path is reached, it should have a toSystemErrno mapping
-                    Output.warn("Failed to get cache path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
-                    break :brk error.Unexpected;
-                };
-                return Result.fail(err, .copying_files);
-            }
-            const cache_path = buf2[0..cache_path_length];
-            if (buf2[cache_path.len - 1] != '\\') {
-                buf2[cache_path.len] = '\\';
-                to_copy_buf2 = buf2[cache_path.len + 1 ..];
-            } else {
-                to_copy_buf2 = buf2[cache_path.len..];
-            }
-        }
+        defer if (!Environment.isWindows) state.subdir.close();
 
         const FileCopier = struct {
             pub fn copy(
@@ -1613,12 +1604,12 @@ pub const PackageInstall = struct {
         };
 
         this.file_count = FileCopier.copy(
-            subdir,
+            state.subdir,
             &walker_,
-            if (Environment.isWindows) to_copy_buf else void{},
-            if (Environment.isWindows) &buf else void{},
-            if (Environment.isWindows) to_copy_buf2 else void{},
-            if (Environment.isWindows) &buf2 else void{},
+            state.to_copy_buf,
+            if (Environment.isWindows) &state.buf else void{},
+            state.to_copy_buf2,
+            if (Environment.isWindows) &state.buf2 else void{},
         ) catch |err| {
             if (comptime Environment.isWindows) {
                 if (err == error.FailedToCopyFile) {

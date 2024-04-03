@@ -405,7 +405,6 @@ COPY *.zig package.json CMakeLists.txt ${BUN_DIR}/
 COPY completions ${BUN_DIR}/completions
 COPY packages ${BUN_DIR}/packages
 COPY src ${BUN_DIR}/src
-COPY src/deps/zig ${BUN_DIR}/src/deps/zig
 
 COPY --from=bun-identifier-cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=bun-node-fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out

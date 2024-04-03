@@ -50,6 +50,8 @@ jobs:
             tag: bun-obj-darwin-x64
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout submodules
+        run: git submodule update --init --recursive --depth=1 --progress --force
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:

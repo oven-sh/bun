@@ -75,17 +75,17 @@ JSC::JSValue JSStringDecoder::fillLast(JSC::VM& vm, JSC::JSGlobalObject* globalO
         // utf8CheckExtraBytes
         if ((bufPtr[0] & 0xC0) != 0x80) {
             m_lastNeed = 0;
-            RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTF::String(u"\uFFFD")));
+            RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTF::String("\uFFFD"_span)));
         }
         if (m_lastNeed > 1 && length > 1) {
             if ((bufPtr[1] & 0xC0) != 0x80) {
                 m_lastNeed = 1;
-                RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTF::String(u"\uFFFD")));
+                RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTF::String("\uFFFD"_span)));
             }
             if (m_lastNeed > 2 && length > 2) {
                 if ((bufPtr[2] & 0xC0) != 0x80) {
                     m_lastNeed = 2;
-                    RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTF::String(u"\uFFFD")));
+                    RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTF::String("\uFFFD"_span)));
                 }
             }
         }
@@ -297,11 +297,11 @@ JSStringDecoder::end(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint8_t* bu
     }
     case BufferEncodingType::utf8: {
         if (length == 0) {
-            RELEASE_AND_RETURN(throwScope, m_lastNeed ? JSC::jsString(vm, WTF::String(u"\uFFFD")) : JSC::jsEmptyString(vm));
+            RELEASE_AND_RETURN(throwScope, m_lastNeed ? JSC::jsString(vm, WTF::String("\uFFFD"_span)) : JSC::jsEmptyString(vm));
         }
         JSString* firstHalf = write(vm, globalObject, bufPtr, length).toString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
-        RELEASE_AND_RETURN(throwScope, m_lastNeed ? JSC::jsString(globalObject, firstHalf, WTF::String(u"\uFFFD")) : firstHalf);
+        RELEASE_AND_RETURN(throwScope, m_lastNeed ? JSC::jsString(globalObject, firstHalf, WTF::String("\uFFFD"_span)) : firstHalf);
     }
     case BufferEncodingType::base64:
     case BufferEncodingType::base64url: {

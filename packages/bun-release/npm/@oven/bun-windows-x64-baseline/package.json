@@ -1,0 +1,11 @@
+{
+  "name": "@oven/bun-windows-x64-baseline",
+  "version": "1.1.0",
+  "preferUnplugged": true,
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ]
+}

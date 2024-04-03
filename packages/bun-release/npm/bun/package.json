@@ -1,6 +1,6 @@
 {
   "name": "bun",
-  "version": "0.5.3",
+  "version": "1.1.0",
   "description": "Bun is a fast all-in-one JavaScript runtime.",
   "keywords": [
     "bun",
@@ -16,24 +16,27 @@
   "bugs": "https://github.com/oven-sh/issues",
   "license": "MIT",
   "bin": {
-    "bun": "bin/bun",
-    "bunx": "bin/bun"
+    "bun": "bin/bun.exe",
+    "bunx": "bin/bun.exe"
   },
   "repository": "https://github.com/oven-sh/bun",
   "scripts": {
     "postinstall": "node install.js"
   },
   "optionalDependencies": {
-    "@oven/bun-darwin-aarch64": "0.5.3",
-    "@oven/bun-darwin-x64": "0.5.3",
-    "@oven/bun-darwin-x64-baseline": "0.5.3",
-    "@oven/bun-linux-aarch64": "0.5.3",
-    "@oven/bun-linux-x64": "0.5.3",
-    "@oven/bun-linux-x64-baseline": "0.5.3"
+    "@oven/bun-darwin-aarch64": "1.1.0",
+    "@oven/bun-darwin-x64": "1.1.0",
+    "@oven/bun-darwin-x64-baseline": "1.1.0",
+    "@oven/bun-linux-aarch64": "1.1.0",
+    "@oven/bun-linux-x64": "1.1.0",
+    "@oven/bun-linux-x64-baseline": "1.1.0",
+    "@oven/bun-windows-x64": "1.1.0",
+    "@oven/bun-windows-x64-baseline": "1.1.0"
   },
   "os": [
     "darwin",
-    "linux"
+    "linux",
+    "win32"
   ],
   "cpu": [
     "arm64",

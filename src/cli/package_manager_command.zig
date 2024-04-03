@@ -205,10 +205,17 @@ pub const PackageManagerCommand = struct {
 
                 var had_err = false;
 
+                var window_access_denied = false;
+
                 std.fs.deleteTreeAbsolute(outpath) catch |err| {
                     Output.err(err, "Could not delete {s}", .{outpath});
+                    if (Environment.isWindows and err == error.AccessDenied and !window_access_denied) {
+                        window_access_denied = true;
+                        Output.note("Windows disallows deleting files in-use by other processes.", .{});
+                    }
                     had_err = true;
                 };
+                Output.flush();
                 Output.prettyln("Cleared 'bun install' cache", .{});
 
                 bunx: {
@@ -233,7 +240,11 @@ pub const PackageManagerCommand = struct {
                     }) |entry| {
                         if (std.mem.startsWith(u8, entry.name, prefix)) {
                             tmp_dir.deleteTree(entry.name) catch |err| {
-                                Output.err(err, "Could not delete {s}", .{entry.name});
+                                Output.err(err, "Could not delete {s}{c}{s}", .{ tmp, std.fs.path.sep, entry.name });
+                                if (Environment.isWindows and err == error.AccessDenied and !window_access_denied) {
+                                    window_access_denied = true;
+                                    Output.note("Windows disallows deleting files in-use by other processes.", .{});
+                                }
                                 had_err = true;
                                 continue;
                             };

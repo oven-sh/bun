@@ -97,6 +97,7 @@ packages/bun-*/bun-profile
 packages/bun-*/debug-bun
 packages/bun-cli/bin/*
 packages/bun-cli/postinstall.js
+packages/bun-release/**/*.tgz
 packages/bun-wasm/*.cjs
 packages/bun-wasm/*.d.cts
 packages/bun-wasm/*.d.mts

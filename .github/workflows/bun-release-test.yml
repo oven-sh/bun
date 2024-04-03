@@ -1,0 +1,37 @@
+# This workflow tests bun-release's code and the packages to ensure that npm,
+# yarn, and pnpm can install bun on all platforms. This does not test that bun
+# itself works as it hardcodes 1.1.0 as the version to package.
+name: bun-release-test
+concurrency: release-test
+
+on:
+  pull_request:
+    paths:
+      - "packages/bun-release/**"
+
+jobs:
+  test-release-script:
+    name: Test Release Script
+    strategy:
+      matrix:
+        machine: [linux-amd64, linux-arm64, macos-arm64, macos-12-large, windows-latest]
+    runs-on: ${{ matrix.machine }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/bun-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: "1.1.0"
+      - name: Install Dependencies
+        run: bun install && npm i -g pnpm yarn npm
+
+      - name: Release
+        run: bun upload-npm -- 1.1.0 test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

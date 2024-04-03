@@ -290,7 +290,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
     if (basename.len != name.len and !this.resolution.tag.isGit()) {
-        bun.MakePath.makePath(u8, cache_dir, std.mem.trim(u8, name[0 .. name.len - basename.len], "/")) catch {};
+        bun.MakePath.makePath(u8, cache_dir, strings.withoutTrailingSlash(u8, name[0 .. name.len - basename.len])) catch {};
     }
 
     // Now that we've extracted the archive, we rename.
@@ -306,7 +306,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                     null,
                     logger.Loc.Empty,
                     this.package_manager.allocator,
-                    "moving \"{s}\" to cache dir failed\n{}\n  From: {s}\n    To: {s}",
+                    "moving \"{s}\" to cache dir failed\n{}\n From: {s}\n   To: {s}",
                     .{ name, err, tmpname, folder_name },
                 ) catch unreachable;
                 return error.InstallFailed;

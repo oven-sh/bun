@@ -402,12 +402,13 @@ jobs:
         run: |
           # If this hangs, it means something is seriously wrong with the build
           bun --version
-      - id: install
-        name: Install dependencies
-        run: |
-          bun install --verbose
-          bun install --cwd=test --verbose
-          bun install --cwd=packages/bun-internal-test --verbose
+      # Split these into multiple steps to make it clear which one fails
+      - name: "Install dependencies (root)"
+        run: bun install --verbose
+      - name: "Install dependencies (test)"
+        run: bun install --cwd=test --verbose
+      - name: "Install dependencies (runner)"
+        run: bun install --cwd=packages/bun-internal-test --verbose
       - id: test
         name: Test (node runner)
         env:

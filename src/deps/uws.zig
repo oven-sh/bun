@@ -2036,6 +2036,9 @@ pub fn NewApp(comptime ssl: bool) type {
                 };
                 uws_res_on_writable(ssl_flag, res.downcast(), Wrapper.handle, user_data);
             }
+            pub fn clearOnWritable(res: *Response) void {
+                uws_res_on_writable(ssl_flag, res.downcast(), null, null);
+            }
             pub inline fn markNeedsMore(res: *Response) void {
                 if (!ssl) {
                     us_socket_mark_needs_more_not_ssl(res.downcast());

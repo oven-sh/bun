@@ -1967,7 +1967,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             const amount = @as(Blob.SizeType, @truncate(amount1));
             this.offset += amount;
             this.wrote += amount;
-            this.buffer.len -|= @as(u32, @truncate(amount));
 
             if (this.offset >= this.buffer.len) {
                 this.offset = 0;
@@ -2039,7 +2038,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn readableSlice(this: *@This()) []const u8 {
-            return this.buffer.ptr[this.offset..this.buffer.cap][0..this.buffer.len];
+            return this.buffer.ptr[this.offset..this.buffer.len];
         }
 
         pub fn onWritable(this: *@This(), write_offset: u64, _: *UWSResponse) callconv(.C) bool {
@@ -2059,43 +2058,46 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             while (true) {
                 // do not write more than available
                 // if we do, it will cause this to be delayed until the next call, each time
-                // limit chunk in 64KB at a time
-                const to_write: u64 = if (this.requested_end) this.buffer.len else @min(64 * 1024, this.buffer.len);
+
+                const readable = this.readableSlice();
+                // limit chunk in 64KB at a time or highWaterMark if it is bigger than 64KB, if requested ended we try to write all pending data
+                const to_write: u64 = if (this.requested_end) readable.len else @min(@max(64 * 1024, this.highWaterMark), readable.len);
 
                 // figure out how much data exactly to write
-                const readable = this.readableSlice()[0..to_write];
+                const chunk = readable[0..to_write];
                 // if we have nothing to write, we are done
-                if (readable.len == 0) {
+                if (chunk.len == 0) {
                     if (this.done) {
                         log("onWritable done and finalized", .{});
                         this.signal.close(null);
                         this.flushPromise();
                         this.finalize();
-                        return false;
+                        return true;
                     }
                     log("onWritable no more data to write", .{});
                     break;
                 }
-                // request did not end and we dont have enough data to write
-                if (readable.len < this.highWaterMark and !this.requested_end) {
+                if (total_written > 0) return false;
+                // only allow less than highWaterMark to be written if the request has ended
+                if (chunk.len < this.highWaterMark and !this.requested_end) {
                     return false;
                 }
-                log("onWritable flushing ({d})", .{readable.len});
-                if (!this.send(readable)) {
+                log("onWritable flushing ({d})", .{chunk.len});
+                if (!this.send(chunk)) {
                     log("onWritable fail to flush", .{});
                     // if we were unable to send it, retry
                     this.res.onWritable(*@This(), onWritable, this);
                     return false;
                 }
                 log("onWritable flushed", .{});
-                this.handleWrote(@as(Blob.SizeType, @truncate(readable.len)));
-                total_written += readable.len;
+                this.handleWrote(@as(Blob.SizeType, @truncate(chunk.len)));
+                total_written += chunk.len;
 
                 if (this.requested_end) {
                     this.signal.close(null);
                     this.flushPromise();
                     this.finalize();
-                    return true;
+                    return false;
                 }
             }
 
@@ -2105,6 +2107,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // pending_flush or callback could have caused another send()
             // so we check again if we should report readiness
             if (!this.done and !this.requested_end and !this.hasBackpressure()) {
+                // no pending and total_written > 0
                 if (total_written > 0 and this.readableSlice().len == 0) {
                     this.signal.ready(@as(Blob.SizeType, @truncate(total_written)), null);
                 }
@@ -2525,7 +2528,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             this.unregisterAutoFlusher();
-
+            this.res.clearOnWritable();
             this.allocator.destroy(this);
         }
 

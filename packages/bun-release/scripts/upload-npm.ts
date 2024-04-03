@@ -1,7 +1,8 @@
 import { join, copy, exists, chmod, write, writeJson } from "../src/fs";
 import { mkdtemp } from "fs/promises";
-import { rmSync } from "fs";
+import { rmSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
+import { dirname } from "path";
 import { fetch } from "../src/fetch";
 import { spawn } from "../src/spawn";
 import type { Platform } from "../src/platform";
@@ -133,6 +134,7 @@ async function buildModule(
   }
   const bun = await extractFromZip(asset.browser_download_url, `${bin}/bun`);
   const cwd = join("npm", module);
+  mkdirSync(dirname(join(cwd, exe)), { recursive: true });
   write(join(cwd, exe), await bun.async("arraybuffer"));
   chmod(join(cwd, exe), 0o755);
   writeJson(join(cwd, "package.json"), {

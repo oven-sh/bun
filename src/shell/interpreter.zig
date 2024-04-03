@@ -4627,6 +4627,7 @@ pub const Interpreter = struct {
             exit: Exit,
             true: True,
             false: False,
+            yes: Yes,
         };
 
         const Result = @import("../result.zig").Result;
@@ -4647,6 +4648,7 @@ pub const Interpreter = struct {
             exit,
             true,
             false,
+            yes,
 
             pub fn parentType(this: Kind) type {
                 _ = this;
@@ -4668,6 +4670,7 @@ pub const Interpreter = struct {
                     .exit => "usage: exit [n]\n",
                     .true => "",
                     .false => "",
+                    .yes => "yes [expletive]\n",
                 };
             }
 
@@ -4825,6 +4828,7 @@ pub const Interpreter = struct {
                 .exit => this.callImplWithType(Exit, Ret, "exit", field, args_),
                 .true => this.callImplWithType(True, Ret, "true", field, args_),
                 .false => this.callImplWithType(False, Ret, "false", field, args_),
+                .yes => this.callImplWithType(Yes, Ret, "yes", field, args_),
             };
         }
 
@@ -9429,6 +9433,55 @@ pub const Interpreter = struct {
                 _ = this;
             }
         };
+
+        pub const Yes = struct {
+            bltn: *Builtin,
+            state: enum { idle, waiting_io, err, done } = .idle,
+            expletive: string = "y",
+
+            pub fn start(this: *@This()) Maybe(void) {
+                const args = this.bltn.argsSlice();
+
+                if (args.len > 0) {
+                    this.expletive = std.mem.sliceTo(args[0], 0);
+                }
+
+                while (true) {
+                    var res: Maybe(usize) = undefined;
+
+                    res = this.print(this.expletive);
+                    if (res == .err) {
+                        this.bltn.done(1);
+                        return Maybe(void).success;
+                    }
+
+                    res = this.print("\n");
+                    if (res == .err) {
+                        this.bltn.done(1);
+                        return Maybe(void).success;
+                    }
+                }
+            }
+
+            fn print(this: *@This(), msg: string) Maybe(usize) {
+                if (this.bltn.stdout.needsIO()) {
+                    this.state = .waiting_io;
+                    this.bltn.stdout.enqueue(this, msg);
+                    return Maybe(usize).success;
+                }
+                return this.bltn.writeNoIO(.stdout, msg);
+            }
+
+            pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
+                _ = this;
+                _ = maybe_e;
+                unreachable;
+            }
+
+            pub fn deinit(this: *@This()) void {
+                _ = this;
+            }
+        };
     };
 
     /// This type is reference counted, but deinitialization is queued onto the event loop
@@ -10472,6 +10525,7 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.Exit,
         Interpreter.Builtin.True,
         Interpreter.Builtin.False,
+        Interpreter.Builtin.Yes,
         shell.subproc.PipeReader.CapturedWriter,
     });
 

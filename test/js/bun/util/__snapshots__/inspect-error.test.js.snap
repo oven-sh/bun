@@ -56,7 +56,7 @@ exports[`Error inside minified file (no color)  1`] = `
 error: error inside long minified file!
       at [dir]/inspect-error-fixture.min.js:26:2846
       at [dir]/inspect-error-fixture.min.js:26:2890
-      at [dir]/inspect-error.test.js:61:5"
+      at [dir]/inspect-error.test.js:63:5"
 `;
 
 exports[`Error inside minified file (color)  1`] = `
@@ -70,5 +70,5 @@ exports[`Error inside minified file (color)  1`] = `
 error: error inside long minified file!
       at [dir]/inspect-error-fixture.min.js:26:2846
       at [dir]/inspect-error-fixture.min.js:26:2890
-      at [dir]/inspect-error.test.js:77:5"
+      at [dir]/inspect-error.test.js:79:5"
 `;

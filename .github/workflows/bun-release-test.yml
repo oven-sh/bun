@@ -16,6 +16,7 @@ jobs:
     strategy:
       matrix:
         machine: [namespace-profile-bun-linux-x64, linux-arm64, macos-arm64, macos-12-large, windows-latest]
+      fail-fast: false
     runs-on: ${{ matrix.machine }}
     permissions:
       contents: read

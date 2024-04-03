@@ -211,6 +211,8 @@ async function test() {
   const $ = new Bun.$.Shell().cwd(root);
 
   for (const platform of platforms) {
+    if (platform.os !== process.platform) continue;
+    if (platform.arch !== process.arch) continue;
     copy(
       join(
         import.meta.dir,

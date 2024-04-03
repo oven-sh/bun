@@ -289,15 +289,19 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
-    if (basename.len != name.len and !this.resolution.tag.isGit()) {
-        bun.MakePath.makePath(u8, cache_dir, strings.withoutTrailingSlash(name[0 .. name.len - basename.len])) catch {};
-    }
+    const create_subdir = basename.len != name.len and !this.resolution.tag.isGit();
 
     // Now that we've extracted the archive, we rename.
     if (comptime Environment.isWindows) {
         var did_retry = false;
         var path2_buf: bun.WPathBuffer = undefined;
         const path2 = bun.strings.toWPathNormalized(&path2_buf, folder_name);
+
+        if (create_subdir) {
+            if (bun.Dirname.dirname(u16, path2)) |folder| {
+                bun.MakePath.makePath(u16, cache_dir, folder) catch {};
+            }
+        }
 
         while (true) {
             const dir_to_move = bun.sys.openDirAtWindowsA(bun.toFD(this.temp_dir.fd), bun.span(tmpname), .{ .can_rename_or_delete = true, .create = false, .iterable = false }).unwrap() catch |err| {
@@ -355,6 +359,12 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
         //
         const src = bun.sliceTo(tmpname, 0);
+
+        if (create_subdir) {
+            if (bun.Dirname.dirname(u8, folder_name)) |folder| {
+                bun.MakePath.makePath(u8, cache_dir, folder) catch {};
+            }
+        }
 
         var did_atomically_replace = false;
         if (did_atomically_replace and PackageManager.using_fallback_temp_dir) tmpdir.deleteTree(src) catch {};

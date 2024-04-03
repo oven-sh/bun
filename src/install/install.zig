@@ -1885,7 +1885,7 @@ pub const PackageInstall = struct {
                 dest_buf[offset] = std.fs.path.sep_windows;
                 offset += 1;
             }
-            @memcpy(dest_buf[offset..offset+dest.len], dest);
+            @memcpy(dest_buf[offset .. offset + dest.len], dest);
             offset += dest.len;
             dest_buf[offset] = 0;
 

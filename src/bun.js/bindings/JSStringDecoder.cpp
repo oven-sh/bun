@@ -24,9 +24,10 @@ static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastChar);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastNeed);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastTotal);
 
-static inline WTF::String replacementString()
+static WTF::String replacementString()
 {
-    return WTF::String(MAKE_STATIC_STRING_IMPL({ WTF::Unicode::replacementCharacter }));
+    static NeverDestroyed<String> replacementStr = WTF::String(MAKE_STATIC_STRING_IMPL({ WTF::Unicode::replacementCharacter }));
+    return replacementStr;
 }
 
 static inline JSC::EncodedJSValue jsStringDecoderCast(JSGlobalObject* globalObject, JSValue stringDecoderValue)

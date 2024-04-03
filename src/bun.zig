@@ -1922,7 +1922,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         return switch (T) {
             FileDescriptor => fd, // TODO: remove the toFD call from these places and make this a @compileError
             std.fs.File, sys.File => toFD(fd.handle),
-            std.fs.Dir => toFD(fd.fd),
+            std.fs.Dir => @enumFromInt(@as(i32, @intCast(fd.fd))),
             c_int, i32, u32, comptime_int => @enumFromInt(fd),
             usize, i64 => @enumFromInt(@as(i32, @intCast(fd))),
             else => @compileError("bun.toFD() not implemented for: " ++ @typeName(T)),

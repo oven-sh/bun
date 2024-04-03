@@ -147,8 +147,6 @@ RUN tar xf ${ZIG_FILENAME} \
   && mv ${ZIG_FOLDERNAME}/zig /usr/bin/zig \
   && rm -rf ${ZIG_FILENAME} ${ZIG_FOLDERNAME}
 
-COPY src/deps/zig /usr/local/zig
-
 FROM bun-base as c-ares
 
 ARG BUN_DIR
@@ -407,6 +405,7 @@ COPY *.zig package.json CMakeLists.txt ${BUN_DIR}/
 COPY completions ${BUN_DIR}/completions
 COPY packages ${BUN_DIR}/packages
 COPY src ${BUN_DIR}/src
+COPY src/deps/zig ${BUN_DIR}/src/deps/zig
 
 COPY --from=bun-identifier-cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=bun-node-fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
@@ -431,7 +430,7 @@ RUN mkdir -p build \
   -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
   -DCANARY="${CANARY}" \
   -DZIG_COMPILER=system \
-  -DZIG_LIB_DIR="/usr/local/zig/lib" \
+  -DZIG_LIB_DIR=$BUN_DIR/src/deps/zig/lib \
   && ONLY_ZIG=1 ninja "/tmp/bun-zig.o" -v
 
 FROM scratch as build_release_obj

@@ -2036,8 +2036,14 @@ pub fn NewApp(comptime ssl: bool) type {
                 };
                 uws_res_on_writable(ssl_flag, res.downcast(), Wrapper.handle, user_data);
             }
+
             pub fn clearOnWritable(res: *Response) void {
-                uws_res_on_writable(ssl_flag, res.downcast(), null, null);
+                const Dummy = struct {
+                    pub fn handle(_: *uws_res, _: u64, _: ?*anyopaque) callconv(.C) bool {
+                        return true;
+                    }
+                };
+                uws_res_on_writable(ssl_flag, res.downcast(), Dummy.handle, null);
             }
             pub inline fn markNeedsMore(res: *Response) void {
                 if (!ssl) {

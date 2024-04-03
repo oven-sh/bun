@@ -92,6 +92,7 @@ without *requiring* a postinstall script.
   const cpu = [...new Set(platforms.map(({ arch }) => arch))];
   writeJson(join(cwd, "package.json"), {
     name: module,
+    description: "Bun is a fast all-in-one JavaScript runtime.",
     version: version,
     scripts: {
       postinstall: "node install.js",
@@ -108,6 +109,11 @@ without *requiring* a postinstall script.
     },
     os,
     cpu,
+    keywords: ["bun", "bun.js", "node", "node.js", "runtime", "bundler", "transpiler", "typescript"],
+    homepage: "https://bun.sh",
+    bugs: "https://github.com/oven-sh/issues",
+    license: "MIT",
+    repository: "https://github.com/oven-sh/bun",
   });
   if (exists(".npmrc")) {
     copy(".npmrc", join(cwd, ".npmrc"));
@@ -132,6 +138,11 @@ async function buildModule(
   writeJson(join(cwd, "package.json"), {
     name: module,
     version: version,
+    description: "This is the macOS arm64 binary for Bun, a fast all-in-one JavaScript runtime.",
+    homepage: "https://bun.sh",
+    bugs: "https://github.com/oven-sh/issues",
+    license: "MIT",
+    repository: "https://github.com/oven-sh/bun",
     preferUnplugged: true,
     os: [os],
     cpu: [arch],

@@ -792,7 +792,8 @@ describe("deno_task", () => {
 
   test("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
-    const code = /* ts */ `import { $ } from 'bun'
+    const code = /* ts */ `
+    import { $ } from 'bun'
 
     $.throws(true)
 

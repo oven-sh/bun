@@ -1856,35 +1856,42 @@ pub const PackageInstall = struct {
             var dest_buf2: bun.PathBuffer = undefined;
             const dest_z = brk: {
                 const basepath = brk2: {
-                    var dest_dir = this.destination_dir;
-                    if (subdir) |dir| {
-                        dest_dir = this.destination_dir.makeOpenPath(dir, .{}) catch |err| return Result{
-                            .fail = .{
-                                .err = err,
-                                .step = .linking,
-                            },
-                        };
-
-                        defer {
-                            if (dest_dir.fd != this.destination_dir.fd) {
-                                dest_dir.close();
-                            }
-                        }
+                    var wbuf: bun.WPathBuffer = undefined;
+                    const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(this.destination_dir.fd, &wbuf, dest_buf.len, 0);
+                    if (dest_path_length == 0) {
+                        const e = bun.windows.Win32Error.get();
+                        const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+                        return Result.fail(err, .linking);
                     }
 
-                    break :brk2 bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result{
-                        .fail = .{
-                            .err = err,
-                            .step = .linking,
-                        },
-                    };
+                    var i: usize = dest_path_length;
+                    if (wbuf[i] != '\\') {
+                        wbuf[i] = '\\';
+                        i += 1;
+                    }
+
+                    if (subdir) |dir| {
+                        i += bun.strings.toWPathNormalized(wbuf[i..], dir).len;
+                        wbuf[i] = std.fs.path.sep_windows;
+                        i += 1;
+                        wbuf[i] = 0;
+                        const fullpath = wbuf[0..i :0];
+
+                        _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
+                            return Result.fail(err, .linking);
+                        };
+                    }
+
+                    const res = strings.copyUTF16IntoUTF8(dest_buf[0..], []const u16, wbuf[0..i], true);
+
+                    break :brk2 dest_buf[0..res.written];
                 };
 
-                break :brk bun.path.joinAbsStringBufZNT(
+                break :brk bun.path.joinAbsStringBufZ(
                     basepath,
                     &dest_buf2,
                     &.{
-                        subdir orelse "",
+                        // subdir orelse "",
                         dest,
                     },
                     .windows,

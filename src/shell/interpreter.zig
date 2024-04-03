@@ -34,8 +34,6 @@ const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
-const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
@@ -43,6 +41,7 @@ pub const WorkPool = @import("../work_pool.zig").WorkPool;
 const windows = bun.windows;
 const uv = windows.libuv;
 const Maybe = JSC.Maybe;
+const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
 
 const Pipe = [2]bun.FileDescriptor;
 const shell = @import("./shell.zig");
@@ -65,7 +64,7 @@ pub fn OOM(e: anyerror) noreturn {
     @panic("Out of memory");
 }
 
-const log = bun.Output.scoped(.SHELL, false);
+const log = bun.Output.scoped(.SHELL, true);
 
 pub fn assert(cond: bool, comptime msg: []const u8) void {
     if (bun.Environment.allow_assert) {
@@ -158,7 +157,7 @@ const CowFd = struct {
     refcount: u32 = 1,
     being_used: bool = false,
 
-    const print = bun.Output.scoped(.CowFd, false);
+    const print = bun.Output.scoped(.CowFd, true);
 
     pub fn init(fd: bun.FileDescriptor) *CowFd {
         const this = bun.default_allocator.create(CowFd) catch bun.outOfMemory();
@@ -612,6 +611,7 @@ pub const EnvMap = struct {
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
+    command_ctx: *const bun.CLI.Command.Context,
     event_loop: JSC.EventLoopHandle,
     /// This is the arena used to allocate the input shell script's AST nodes,
     /// tokens, and a string pool used to store all strings.
@@ -634,6 +634,7 @@ pub const Interpreter = struct {
     has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
+    vm_args_utf8: std.ArrayList(JSC.ZigString.Slice),
     async_commands_executing: u32 = 0,
 
     flags: packed struct(u8) {
@@ -1004,6 +1005,7 @@ pub const Interpreter = struct {
         script_heap.* = script_ast;
 
         const interpreter = switch (ThisInterpreter.init(
+            undefined, // command_ctx, unused when event_loop is .js
             .{ .js = globalThis.bunVM().event_loop },
             allocator,
             &arena,
@@ -1055,16 +1057,13 @@ pub const Interpreter = struct {
     /// If all initialization allocations succeed, the arena will be copied
     /// into the interpreter struct, so it is not a stale reference and safe to call `arena.deinit()` on error.
     pub fn init(
+        ctx: *const bun.CLI.Command.Context,
         event_loop: JSC.EventLoopHandle,
         allocator: Allocator,
         arena: *bun.ArenaAllocator,
         script: *ast.Script,
         jsobjs: []JSValue,
     ) shell.Result(*ThisInterpreter) {
-        var interpreter = allocator.create(ThisInterpreter) catch bun.outOfMemory();
-        interpreter.event_loop = event_loop;
-        interpreter.allocator = allocator;
-
         const export_env = brk: {
             // This will be set in the shell builtin to `process.env`
             if (event_loop == .js) break :brk EnvMap.init(allocator);
@@ -1120,7 +1119,9 @@ pub const Interpreter = struct {
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
 
+        const interpreter = allocator.create(ThisInterpreter) catch bun.outOfMemory();
         interpreter.* = .{
+            .command_ctx = ctx,
             .event_loop = event_loop,
 
             .script = script,
@@ -1150,12 +1151,14 @@ pub const Interpreter = struct {
                 .stdout = .pipe,
                 .stderr = .pipe,
             },
+
+            .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.default_allocator),
         };
 
         return .{ .result = interpreter };
     }
 
-    pub fn initAndRunFromFile(mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
+    pub fn initAndRunFromFile(ctx: *const bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
@@ -1192,7 +1195,7 @@ pub const Interpreter = struct {
         };
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
-        var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        var interp = switch (ThisInterpreter.init(ctx, .{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return 1;
@@ -1229,7 +1232,7 @@ pub const Interpreter = struct {
         return code;
     }
 
-    pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
+    pub fn initAndRunFromSource(ctx: *bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
         bun.Analytics.Features.standalone_shell += 1;
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -1255,7 +1258,7 @@ pub const Interpreter = struct {
         };
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
-        var interp: *ThisInterpreter = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        var interp: *ThisInterpreter = switch (ThisInterpreter.init(ctx, .{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return 1;
@@ -1455,6 +1458,10 @@ pub const Interpreter = struct {
         this.resolve.deinit();
         this.reject.deinit();
         this.root_shell.deinitImpl(false, true);
+        for (this.vm_args_utf8.items[0..]) |str| {
+            str.deinit();
+        }
+        this.vm_args_utf8.deinit();
         this.allocator.destroy(this);
     }
 
@@ -1609,6 +1616,16 @@ pub const Interpreter = struct {
 
     pub fn rootIO(this: *const Interpreter) *const IO {
         return &this.root_io;
+    }
+
+    fn getVmArgsUtf8(this: *Interpreter, argv: []const *WTFStringImplStruct, idx: u8) []const u8 {
+        if (this.vm_args_utf8.items.len != argv.len) {
+            this.vm_args_utf8.ensureTotalCapacity(argv.len) catch bun.outOfMemory();
+            for (argv) |arg| {
+                this.vm_args_utf8.append(arg.toUTF8(bun.default_allocator)) catch bun.outOfMemory();
+            }
+        }
+        return this.vm_args_utf8.items[idx].slice();
     }
 
     const AssignCtx = enum {
@@ -2132,6 +2149,9 @@ pub const Interpreter = struct {
                 .Var => |label| {
                     str_list.appendSlice(this.expandVar(label).slice()) catch bun.outOfMemory();
                 },
+                .VarArgv => |int| {
+                    str_list.appendSlice(this.expandVarArgv(int)) catch bun.outOfMemory();
+                },
                 .asterisk => {
                     str_list.append('*') catch bun.outOfMemory();
                 },
@@ -2184,6 +2204,38 @@ pub const Interpreter = struct {
             return value;
         }
 
+        fn expandVarArgv(this: *const Expansion, original_int: u8) []const u8 {
+            var int = original_int;
+            switch (this.base.interpreter.event_loop) {
+                .js => |js| {
+                    if (int == 0) return bun.selfExePath() catch "";
+                    int -= 1;
+
+                    const vm = js.virtual_machine;
+                    if (vm.main.len > 0) {
+                        if (int == 0) return vm.main;
+                        int -= 1;
+                    }
+
+                    if (vm.worker) |worker| {
+                        if (worker.argv) |argv| {
+                            if (int >= argv.len) return "";
+                            return this.base.interpreter.getVmArgsUtf8(argv, int);
+                        }
+                    }
+                    const argv = vm.argv;
+                    if (int >= argv.len) return "";
+                    return argv[int];
+                },
+                .mini => {
+                    const ctx = this.base.interpreter.command_ctx;
+                    if (int >= 1 + ctx.passthrough.len) return "";
+                    if (int == 0) return ctx.positionals[ctx.positionals.len - 1 - int];
+                    return ctx.passthrough[int - 1];
+                },
+            }
+        }
+
         fn currentWord(this: *Expansion) *const ast.SimpleAtom {
             return switch (this.node) {
                 .simple => &this.node.simple,
@@ -2214,6 +2266,7 @@ pub const Interpreter = struct {
             return switch (simple.*) {
                 .Text => |txt| txt.len,
                 .Var => |label| this.expandVar(label).len,
+                .VarArgv => |int| this.expandVarArgv(int).len,
                 .brace_begin, .brace_end, .comma, .asterisk => 1,
                 .double_asterisk => 2,
                 .cmd_subst => |subst| {
@@ -2242,7 +2295,7 @@ pub const Interpreter = struct {
         }
 
         pub const ShellGlobTask = struct {
-            const print = bun.Output.scoped(.ShellGlobTask, false);
+            const print = bun.Output.scoped(.ShellGlobTask, true);
 
             task: WorkPoolTask = .{ .callback = &runFromThreadPool },
 
@@ -5247,7 +5300,7 @@ pub const Interpreter = struct {
         }
 
         pub const Cat = struct {
-            const print = bun.Output.scoped(.ShellCat, false);
+            const print = bun.Output.scoped(.ShellCat, true);
 
             bltn: *Builtin,
             opts: Opts = .{},
@@ -5783,7 +5836,7 @@ pub const Interpreter = struct {
                     try writer.print("ShellTouchTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
                 }
 
-                const print = bun.Output.scoped(.ShellTouchTask, false);
+                const print = bun.Output.scoped(.ShellTouchTask, true);
 
                 pub fn deinit(this: *ShellTouchTask) void {
                     if (this.err) |e| {
@@ -6167,7 +6220,7 @@ pub const Interpreter = struct {
                 event_loop: JSC.EventLoopHandle,
                 concurrent_task: JSC.EventLoopTask,
 
-                const print = bun.Output.scoped(.ShellMkdirTask, false);
+                const print = bun.Output.scoped(.ShellMkdirTask, true);
 
                 fn takeOutput(this: *ShellMkdirTask) ArrayList(u8) {
                     const out = this.created_directories;
@@ -7042,7 +7095,7 @@ pub const Interpreter = struct {
             };
 
             pub const ShellLsTask = struct {
-                const print = bun.Output.scoped(.ShellLsTask, false);
+                const print = bun.Output.scoped(.ShellLsTask, true);
                 ls: *Ls,
                 opts: Opts,
 
@@ -7675,14 +7728,14 @@ pub const Interpreter = struct {
             } = .idle,
 
             pub const ShellMvCheckTargetTask = struct {
-                const print = bun.Output.scoped(.MvCheckTargetTask, false);
+                const print = bun.Output.scoped(.MvCheckTargetTask, true);
                 mv: *Mv,
 
                 cwd: bun.FileDescriptor,
                 target: [:0]const u8,
                 result: ?Maybe(?bun.FileDescriptor) = null,
 
-                task: shell.eval.ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
+                task: ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
 
                 pub fn runFromThreadPool(this: *@This()) void {
                     const fd = switch (ShellSyscall.openat(this.cwd, this.target, os.O.RDONLY | os.O.DIRECTORY, 0)) {
@@ -7713,7 +7766,7 @@ pub const Interpreter = struct {
 
             pub const ShellMvBatchedTask = struct {
                 const BATCH_SIZE = 5;
-                const print = bun.Output.scoped(.MvBatchedTask, false);
+                const print = bun.Output.scoped(.MvBatchedTask, true);
 
                 mv: *Mv,
                 sources: []const [*:0]const u8,
@@ -7724,7 +7777,7 @@ pub const Interpreter = struct {
 
                 err: ?Syscall.Error = null,
 
-                task: shell.eval.ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
+                task: ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
                 event_loop: JSC.EventLoopHandle,
 
                 pub fn runFromThreadPool(this: *@This()) void {
@@ -8620,7 +8673,7 @@ pub const Interpreter = struct {
             }
 
             pub const ShellRmTask = struct {
-                const print = bun.Output.scoped(.AsyncRmTask, false);
+                const print = bun.Output.scoped(.AsyncRmTask, true);
 
                 rm: *Rm,
                 opts: Opts,
@@ -9745,7 +9798,7 @@ pub const Interpreter = struct {
 
         pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOWriterRefCount";
 
-        const print = bun.Output.scoped(.IOWriter, false);
+        const print = bun.Output.scoped(.IOWriter, true);
 
         const ChildPtr = IOWriterChildPtr;
 

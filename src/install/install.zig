@@ -1300,15 +1300,20 @@ pub const PackageInstall = struct {
             this.allocator,
             &[_]bun.OSPathSlice{},
             &[_]bun.OSPathSlice{},
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
+        ) catch |err| {
+            state.cached_package_dir.close();
+            return Result.fail(err, .opening_cache_dir);
         };
 
         if (!Environment.isWindows) {
             state.subdir = destbase.makeOpenPath(bun.span(destpath), .{
                 .iterate = true,
                 .access_sub_paths = true,
-            }) catch |err| return Result.fail(err, .copying_files);
+            }) catch |err| {
+                state.cached_package_dir.close();
+                state.walker.deinit();
+                return Result.fail(err, .copying_files);
+            };
             return Result.success();
         }
 
@@ -1316,6 +1321,8 @@ pub const PackageInstall = struct {
         if (dest_path_length == 0) {
             const e = bun.windows.Win32Error.get();
             const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+            state.cached_package_dir.close();
+            state.walker.deinit();
             return Result.fail(err, .copying_files);
         }
 
@@ -1332,6 +1339,8 @@ pub const PackageInstall = struct {
         const fullpath = state.buf[0..i :0];
 
         _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
+            state.cached_package_dir.close();
+            state.walker.deinit();
             return Result.fail(err, .copying_files);
         };
 
@@ -1339,6 +1348,8 @@ pub const PackageInstall = struct {
         if (cache_path_length == 0) {
             const e = bun.windows.Win32Error.get();
             const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+            state.cached_package_dir.close();
+            state.walker.deinit();
             return Result.fail(err, .copying_files);
         }
         const cache_path = state.buf2[0..cache_path_length];

@@ -64,7 +64,7 @@ pub fn OOM(e: anyerror) noreturn {
     @panic("Out of memory");
 }
 
-const log = bun.Output.scoped(.SHELL, true);
+const log = bun.Output.scoped(.SHELL, false);
 
 pub fn assert(cond: bool, comptime msg: []const u8) void {
     if (bun.Environment.allow_assert) {
@@ -87,6 +87,7 @@ pub const StateKind = enum(u8) {
     if_clause,
     condexpr,
     @"async",
+    subshell,
 };
 
 /// Copy-on-write
@@ -1002,6 +1003,9 @@ pub const Interpreter = struct {
             }
 
             if (parser) |*p| {
+                if (bun.Environment.allow_assert) {
+                    std.debug.assert(p.errors.items.len > 0);
+                }
                 const errstr = p.combineErrors();
                 globalThis.throwPretty("{s}", .{errstr});
                 return null;
@@ -1692,6 +1696,7 @@ pub const Interpreter = struct {
             Cmd,
             Assigns,
             CondExpr,
+            Subshell,
         });
 
         const ChildPtr = StatePtrUnion(.{
@@ -2453,9 +2458,7 @@ pub const Interpreter = struct {
         pub const ParentPtr = StatePtrUnion(.{
             ThisInterpreter,
             Expansion,
-            Pipeline, // Subshell
-            Binary, // Subshell
-            Stmt, // Subshell
+            Subshell,
         });
 
         pub const ChildPtr = struct {
@@ -2467,6 +2470,10 @@ pub const Interpreter = struct {
                 this.val.deinit();
             }
         };
+
+        pub fn format(this: *const Script, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("Script(0x{x}, stmts={d})", .{ @intFromPtr(this), this.node.stmts.len });
+        }
 
         fn init(
             interpreter: *ThisInterpreter,
@@ -2482,7 +2489,7 @@ pub const Interpreter = struct {
                 .parent = parent_ptr,
                 .io = io,
             };
-            log("Script(0x{x}) init", .{@intFromPtr(script)});
+            log("{} init", .{script});
             return script;
         }
 
@@ -2532,12 +2539,10 @@ pub const Interpreter = struct {
         pub fn deinit(this: *Script) void {
             log("Script(0x{x}) deinit", .{@intFromPtr(this)});
             this.io.deref();
-            if (!this.parent.ptr.is(ThisInterpreter)) {
-                // If the parent is not Interpreter it means the script is not top-level
-                // So it is either a:
-                // - command substitution (duped from parent)
-                // - subshell (duped from parent)
-                // In both cases we own the shell state and should deinit it
+            if (!this.parent.ptr.is(ThisInterpreter) and !this.parent.ptr.is(Subshell)) {
+                // The shell state is owned by the parent when the parent is Interpreter or Subshell
+                // Otherwise this Script represents a command substitution which is duped from the parent
+                // and must be deinitalized.
                 this.base.shell.deinit();
             }
 
@@ -2731,7 +2736,7 @@ pub const Interpreter = struct {
             Assigns,
             If,
             CondExpr,
-            Script,
+            Subshell,
         });
 
         pub fn init(
@@ -2794,7 +2799,7 @@ pub const Interpreter = struct {
                 .subshell => {
                     switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
                         .result => |shell_state| {
-                            var script = Script.init(this.base.interpreter, shell_state, child.subshell, Script.ParentPtr.init(this), this.io.copy());
+                            var script = Subshell.init(this.base.interpreter, shell_state, child.subshell, Subshell.ParentPtr.init(this), this.io.copy());
                             script.start();
                         },
                         .err => |e| {
@@ -2858,7 +2863,7 @@ pub const Interpreter = struct {
             Assigns,
             If,
             CondExpr,
-            Script,
+            Subshell,
         });
 
         const ParentPtr = StatePtrUnion(.{
@@ -2928,7 +2933,7 @@ pub const Interpreter = struct {
                 .subshell => {
                     switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
                         .result => |shell_state| {
-                            const script = Script.init(this.base.interpreter, shell_state, node.subshell, Script.ParentPtr.init(this), this.io.copy());
+                            const script = Subshell.init(this.base.interpreter, shell_state, node.subshell, Subshell.ParentPtr.init(this), this.io.copy());
                             return ChildPtr.init(script);
                         },
                         .err => |e| {
@@ -3026,10 +3031,15 @@ pub const Interpreter = struct {
             Assigns,
             If,
             CondExpr,
-            Script,
+            Subshell,
         });
 
-        const PipelineItem = TaggedPointerUnion(.{ Cmd, If, CondExpr, Script });
+        const PipelineItem = TaggedPointerUnion(.{
+            Cmd,
+            If,
+            CondExpr,
+            Subshell,
+        });
 
         const CmdOrResult = union(enum) {
             cmd: PipelineItem,
@@ -3075,8 +3085,8 @@ pub const Interpreter = struct {
                 var i: u32 = 0;
                 for (this.node.items) |*item| {
                     if (switch (item.*) {
-                        .cmd, .@"if", .condexpr => true,
-                        else => false,
+                        .assigns => false,
+                        else => true,
                     }) i += 1;
                 }
                 break :brk i;
@@ -3123,7 +3133,7 @@ pub const Interpreter = struct {
                                 .@"if" => PipelineItem.init(If.init(this.base.interpreter, subshell_state, item.@"if", If.ParentPtr.init(this), cmd_io)),
                                 .cmd => PipelineItem.init(Cmd.init(this.base.interpreter, subshell_state, item.cmd, Cmd.ParentPtr.init(this), cmd_io)),
                                 .condexpr => PipelineItem.init(CondExpr.init(this.base.interpreter, subshell_state, item.condexpr, CondExpr.ParentPtr.init(this), cmd_io)),
-                                .subshell => PipelineItem.init(Script.init(this.base.interpreter, subshell_state, item.subshell, Script.ParentPtr.init(this), cmd_io)),
+                                .subshell => PipelineItem.init(Subshell.init(this.base.interpreter, subshell_state, item.subshell, Subshell.ParentPtr.init(this), cmd_io)),
                                 else => @panic("Pipeline runnable should be a command or an if conditional, this appears to be a bug in Bun."),
                             },
                         };
@@ -3213,10 +3223,10 @@ pub const Interpreter = struct {
                 condexpr.base.shell.deinit();
             } else if (child.ptr.is(Assigns)) {
                 // We don't do anything here since assigns have no effect in a pipeline
-            } else if (child.ptr.is(Script)) {
-                // Script already deinitializes its shell state so don't need to do anything here
-                const script = child.as(Script);
-                _ = script;
+            } else if (child.ptr.is(Subshell)) {
+                // Subshell already deinitializes its shell state so don't need to do anything here
+                const subshell = child.as(Subshell);
+                _ = subshell;
             }
 
             child.deinit();
@@ -3289,6 +3299,7 @@ pub const Interpreter = struct {
 
                         break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
                     };
+                    log("socketpair() = {{{}, {}}}", .{ fds[0], fds[1] });
                     pipe.* = fds;
                 }
                 set_count.* += 1;
@@ -3313,6 +3324,169 @@ pub const Interpreter = struct {
             // First command in the pipeline should read from stdin
             if (proc_idx == 0) return io.stdin.ref();
             return .{ .fd = IOReader.init(pipes[proc_idx - 1][0], evtloop) };
+        }
+    };
+
+    pub const Subshell = struct {
+        base: State,
+        node: *const ast.Subshell,
+        parent: ParentPtr,
+        io: IO,
+        state: union(enum) {
+            idle,
+            expanding_redirect: struct {
+                idx: u32 = 0,
+                expansion: Expansion,
+            },
+            exec,
+            wait_write_err,
+            done,
+        } = .idle,
+        redirection_file: std.ArrayList(u8),
+        exit_code: ExitCode = 0,
+
+        const ParentPtr = StatePtrUnion(.{
+            Pipeline,
+            Binary,
+            Stmt,
+        });
+
+        const ChildPtr = StatePtrUnion(.{
+            Script,
+            Subshell,
+            Expansion,
+        });
+
+        pub fn format(this: *const Subshell, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("Subshell(0x{x})", .{@intFromPtr(this)});
+        }
+
+        pub fn init(
+            interpreter: *ThisInterpreter,
+            shell_state: *ShellState,
+            node: *const ast.Subshell,
+            parent: ParentPtr,
+            io: IO,
+        ) *Subshell {
+            return bun.new(Subshell, .{
+                .base = .{ .kind = .condexpr, .interpreter = interpreter, .shell = shell_state },
+                .node = node,
+                .parent = parent,
+                .io = io,
+                .redirection_file = std.ArrayList(u8).init(bun.default_allocator),
+            });
+        }
+
+        pub fn start(this: *Subshell) void {
+            log("{} start", .{this});
+            const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
+            script.start();
+        }
+
+        pub fn next(this: *Subshell) void {
+            while (this.state != .done) {
+                switch (this.state) {
+                    .idle => {
+                        this.state = .{
+                            .expanding_redirect = .{ .expansion = undefined },
+                        };
+                        this.next();
+                    },
+                    .expanding_redirect => {
+                        if (this.state.expanding_redirect.idx >= 1) {
+                            this.transitionToExec();
+                            return;
+                        }
+                        this.state.expanding_redirect.idx += 1;
+
+                        // Get the node to expand otherwise go straight to
+                        // `expanding_args` state
+                        const node_to_expand = brk: {
+                            if (this.node.redirect != null and this.node.redirect.? == .atom) break :brk &this.node.redirect.?.atom;
+                            this.transitionToExec();
+                            return;
+                        };
+
+                        Expansion.init(
+                            this.base.interpreter,
+                            this.base.shell,
+                            &this.state.expanding_redirect.expansion,
+                            node_to_expand,
+                            Expansion.ParentPtr.init(this),
+                            .{
+                                .single = .{
+                                    .list = &this.redirection_file,
+                                },
+                            },
+                            this.io.copy(),
+                        );
+
+                        this.state.expanding_redirect.expansion.start();
+                        return;
+                    },
+                    .wait_write_err, .exec => return,
+                    .done => @panic("This should not be possible."),
+                }
+            }
+
+            this.parent.childDone(this, 0);
+        }
+
+        pub fn transitionToExec(this: *Subshell) void {
+            log("{} transitionToExec", .{this});
+            const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
+            this.state = .exec;
+            script.start();
+        }
+
+        pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) void {
+            child_ptr.deinit();
+            this.exit_code = exit_code;
+            if (child_ptr.ptr.is(Expansion) and exit_code != 0) {
+                if (exit_code != 0) {
+                    const err = this.state.expanding_redirect.expansion.state.err;
+                    defer err.deinit(bun.default_allocator);
+                    this.state.expanding_redirect.expansion.deinit();
+                    const buf = err.fmt();
+                    this.writeFailingError("{s}", .{buf});
+                    return;
+                }
+                this.next();
+            }
+
+            if (child_ptr.ptr.is(Script)) {
+                this.parent.childDone(this, exit_code);
+                return;
+            }
+        }
+
+        pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) void {
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.state == .wait_write_err);
+            }
+
+            if (err) |e| {
+                e.deref();
+            }
+
+            this.state = .done;
+            this.parent.childDone(this, this.exit_code);
+        }
+
+        pub fn deinit(this: *Subshell) void {
+            this.base.shell.deinit();
+            this.io.deref();
+            this.redirection_file.deinit();
+            bun.destroy(this);
+        }
+
+        pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytype) void {
+            const handler = struct {
+                fn enqueueCb(ctx: *Subshell) void {
+                    ctx.state = .wait_write_err;
+                }
+            };
+            this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
         }
     };
 
@@ -4534,7 +4708,7 @@ pub const Interpreter = struct {
             arena.deinit();
         }
 
-        fn setStdioFromRedirect(stdio: *[3]shell.subproc.Stdio, flags: ast.Cmd.RedirectFlags, val: shell.subproc.Stdio) void {
+        fn setStdioFromRedirect(stdio: *[3]shell.subproc.Stdio, flags: ast.RedirectFlags, val: shell.subproc.Stdio) void {
             if (flags.stdin) {
                 stdio.*[stdin_no] = val;
             }
@@ -10578,6 +10752,7 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Cmd,
         Interpreter.Pipeline,
         Interpreter.CondExpr,
+        Interpreter.Subshell,
         Interpreter.Builtin.Cd,
         Interpreter.Builtin.Echo,
         Interpreter.Builtin.Export,

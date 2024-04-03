@@ -3296,7 +3296,7 @@ pub fn getShellConstructor(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
-    return JSC.API.Shell.eval.Interpreter.getConstructor(globalThis);
+    return JSC.API.Shell.Interpreter.getConstructor(globalThis);
 }
 
 pub fn getGlobConstructor(

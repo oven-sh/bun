@@ -18,14 +18,14 @@ const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIter
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 
-pub const eval = @import("./interpreter.zig");
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
 
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
-pub const Interpreter = eval.Interpreter;
+pub const Interpreter = interpret.Interpreter;
 pub const Subprocess = subproc.ShellSubprocess;
+pub const ExitCode = interpret.ExitCode;
 pub const IOWriter = Interpreter.IOWriter;
 pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
@@ -108,23 +108,20 @@ pub const ShellErr = union(enum) {
     pub fn throwMini(this: @This()) void {
         defer this.deinit(bun.default_allocator);
         switch (this) {
-            .sys => {
-                const err = this.sys;
-                const str = std.fmt.allocPrint(bun.default_allocator, "bunsh: {s}: {}", .{ err.message, err.path }) catch bun.outOfMemory();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{str});
+            .sys => |err| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>bunsh: {s}: {}<r>", .{ err.message, err.path });
                 bun.Global.exit(1);
             },
-            .custom => {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{this.custom});
+            .custom => |custom| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>{s}<r>", .{custom});
                 bun.Global.exit(1);
             },
-            .invalid_arguments => {
-                const str = std.fmt.allocPrint(bun.default_allocator, "bunsh: invalid arguments: {s}", .{this.invalid_arguments.val}) catch bun.outOfMemory();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{str});
+            .invalid_arguments => |invalid_arguments| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>bunsh: invalid arguments: {s}<r>", .{invalid_arguments.val});
                 bun.Global.exit(1);
             },
-            .todo => {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>TODO: {s}<r>", .{this.todo});
+            .todo => |todo| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>TODO: {s}<r>", .{todo});
                 bun.Global.exit(1);
             },
         }
@@ -177,8 +174,8 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 /// [1] => write end
 pub const Pipe = [2]bun.FileDescriptor;
 
-const log = bun.Output.scoped(.SHELL, false);
-const logsys = bun.Output.scoped(.SYS, false);
+const log = bun.Output.scoped(.SHELL, true);
+const logsys = bun.Output.scoped(.SYS, true);
 
 pub const GlobalJS = struct {
     globalThis: *JSC.JSGlobalObject,
@@ -822,7 +819,7 @@ pub const AST = struct {
         pub fn is_compound(self: *const Atom) bool {
             switch (self.*) {
                 .compound => return true,
-                else => return false,
+                .simple => return false,
             }
         }
 
@@ -847,6 +844,7 @@ pub const AST = struct {
 
     pub const SimpleAtom = union(enum) {
         Var: []const u8,
+        VarArgv: u8,
         Text: []const u8,
         asterisk,
         double_asterisk,
@@ -860,15 +858,15 @@ pub const AST = struct {
 
         pub fn glob_hint(this: SimpleAtom) bool {
             return switch (this) {
-                .asterisk, .double_asterisk => true,
-                else => false,
-            };
-        }
-
-        pub fn mightNeedIO(this: SimpleAtom) bool {
-            return switch (this) {
-                .asterisk, .double_asterisk, .cmd_subst => true,
-                else => false,
+                .Var => false,
+                .VarArgv => false,
+                .Text => false,
+                .asterisk => true,
+                .double_asterisk => true,
+                .brace_begin => false,
+                .brace_end => false,
+                .comma => false,
+                .cmd_subst => false,
             };
         }
     };
@@ -1619,11 +1617,34 @@ pub const Parser = struct {
                             if (should_break) break;
                         }
                     },
+                    .VarArgv => |int| {
+                        _ = self.expect(.VarArgv);
+                        try atoms.append(.{ .VarArgv = int });
+                        if (next_delimits) {
+                            _ = self.match(.Delimit);
+                            if (should_break) break;
+                        }
+                    },
                     .OpenParen, .CloseParen => {
                         try self.add_error("Unexpected token: `{s}`", .{if (peeked == .OpenParen) "(" else ")"});
                         return null;
                     },
-                    else => return null,
+                    .Pipe => return null,
+                    .DoublePipe => return null,
+                    .Ampersand => return null,
+                    .DoubleAmpersand => return null,
+                    .Redirect => return null,
+                    .Dollar => return null,
+                    .Eq => return null,
+                    .Semicolon => return null,
+                    .Newline => return null,
+                    .CmdSubstQuoted => return null,
+                    .CmdSubstEnd => return null,
+                    .JSObjRef => return null,
+                    .Delimit => return null,
+                    .Eof => return null,
+                    .DoubleBracketOpen => return null,
+                    .DoubleBracketClose => return null,
                 }
             }
         }
@@ -1879,6 +1900,7 @@ pub const TokenTag = enum {
     OpenParen,
     CloseParen,
     Var,
+    VarArgv,
     Text,
     SingleQuotedText,
     DoubleQuotedText,
@@ -1931,6 +1953,7 @@ pub const Token = union(TokenTag) {
     CloseParen,
 
     Var: TextRange,
+    VarArgv: u8,
     Text: TextRange,
     /// Quotation information is lost from the lexer -> parser stage and it is
     /// helpful to disambiguate from regular text and quoted text
@@ -1947,9 +1970,22 @@ pub const Token = union(TokenTag) {
     pub const TextRange = struct {
         start: u32,
         end: u32,
+
+        pub fn len(range: TextRange) u32 {
+            if (bun.Environment.allow_assert) std.debug.assert(range.start <= range.end);
+            return range.end - range.start;
+        }
     };
 
     pub fn asHumanReadable(self: Token, strpool: []const u8) []const u8 {
+        const varargv_strings = blk: {
+            var res: [10][2]u8 = undefined;
+            for (&res, 0..) |*item, i| {
+                item[0] = '$';
+                item[1] = @as(u8, @intCast(i)) + '0';
+            }
+            break :blk res;
+        };
         return switch (self) {
             .Pipe => "`|`",
             .DoublePipe => "`||`",
@@ -1972,6 +2008,7 @@ pub const Token = union(TokenTag) {
             .OpenParen => "`(`",
             .CloseParen => "`)",
             .Var => strpool[self.Var.start..self.Var.end],
+            .VarArgv => &varargv_strings[self.VarArgv],
             .Text => strpool[self.Text.start..self.Text.end],
             .SingleQuotedText => strpool[self.SingleQuotedText.start..self.SingleQuotedText.end],
             .DoubleQuotedText => strpool[self.DoubleQuotedText.start..self.DoubleQuotedText.end],
@@ -2339,12 +2376,23 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             // Handle variable
                             try self.break_word(false);
                             const var_tok = try self.eat_var();
-                            // empty var
-                            if (var_tok.start == var_tok.end) {
-                                try self.appendCharToStrPool('$');
-                                try self.break_word(false);
-                            } else {
-                                try self.tokens.append(.{ .Var = var_tok });
+
+                            switch (var_tok.len()) {
+                                0 => {
+                                    try self.appendCharToStrPool('$');
+                                    try self.break_word(false);
+                                },
+                                1 => blk: {
+                                    const c = self.strpool.items[var_tok.start];
+                                    if (c >= '0' and c <= '9') {
+                                        try self.tokens.append(.{ .VarArgv = c - '0' });
+                                        break :blk;
+                                    }
+                                    try self.tokens.append(.{ .Var = var_tok });
+                                },
+                                else => {
+                                    try self.tokens.append(.{ .Var = var_tok });
+                                },
                             }
                             self.word_start = self.j;
                             continue;
@@ -2554,8 +2602,38 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 }
             } else if ((in_normal_space or in_redirect_operator) and self.tokens.items.len > 0 and
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
-                .Var, .Text, .SingleQuotedText, .DoubleQuotedText, .BraceBegin, .Comma, .BraceEnd, .CmdSubstEnd => true,
-                else => false,
+                .Var,
+                .VarArgv,
+                .Text,
+                .SingleQuotedText,
+                .DoubleQuotedText,
+                .BraceBegin,
+                .Comma,
+                .BraceEnd,
+                .CmdSubstEnd,
+                => true,
+
+                .Pipe,
+                .DoublePipe,
+                .Ampersand,
+                .DoubleAmpersand,
+                .Redirect,
+                .Dollar,
+                .Asterisk,
+                .DoubleAsterisk,
+                .Eq,
+                .Semicolon,
+                .Newline,
+                .CmdSubstBegin,
+                .CmdSubstQuoted,
+                .OpenParen,
+                .CloseParen,
+                .JSObjRef,
+                .DoubleBracketOpen,
+                .DoubleBracketClose,
+                .Delimit,
+                .Eof,
+                => false,
             }) {
                 try self.tokens.append(.Delimit);
                 self.delimit_quote = false;
@@ -2973,6 +3051,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         fn eat_var(self: *@This()) !Token.TextRange {
             const start = self.j;
             var i: usize = 0;
+            var is_int = false;
             // Eat until special character
             while (self.peek()) |result| {
                 defer i += 1;
@@ -2981,10 +3060,19 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                 if (i == 0) {
                     switch (char) {
-                        '=', '0'...'9' => return .{ .start = start, .end = self.j },
+                        '=' => return .{ .start = start, .end = self.j },
+                        '0'...'9' => {
+                            is_int = true;
+                            _ = self.eat().?;
+                            try self.appendCharToStrPool(char);
+                            continue;
+                        },
                         'a'...'z', 'A'...'Z', '_' => {},
                         else => return .{ .start = start, .end = self.j },
                     }
+                }
+                if (is_int) {
+                    return .{ .start = start, .end = self.j };
                 }
 
                 // if (char
@@ -3441,6 +3529,7 @@ pub const Test = struct {
         CloseParen,
 
         Var: []const u8,
+        VarArgv: u8,
         Text: []const u8,
         SingleQuotedText: []const u8,
         DoubleQuotedText: []const u8,
@@ -3455,6 +3544,7 @@ pub const Test = struct {
         pub fn from_real(the_token: Token, buf: []const u8) TestToken {
             switch (the_token) {
                 .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
+                .VarArgv => |int| return .{ .VarArgv = int },
                 .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },
                 .SingleQuotedText => |txt| return .{ .SingleQuotedText = buf[txt.start..txt.end] },
                 .DoubleQuotedText => |txt| return .{ .DoubleQuotedText = buf[txt.start..txt.end] },
@@ -3919,7 +4009,6 @@ pub fn needsEscapeUtf8AsciiLatin1Slow(str: []const u8) bool {
     }
     return false;
 }
-pub const ExitCode = eval.ExitCode;
 
 /// A list that can store its items inlined, and promote itself to a heap allocated bun.ByteList
 pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {

@@ -348,8 +348,9 @@ pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppT
 
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
     JSC.markBinding(@src());
-
-    var jsc_vm = globalObject.bunVM();
+    // This JSGlobalObject might not be the main script execution context
+    // See the crash in https://github.com/oven-sh/bun/issues/9778
+    const jsc_vm = JSC.VirtualMachine.get();
     jsc_vm.onUnhandledError(globalObject, value);
     return JSC.JSValue.jsUndefined();
 }

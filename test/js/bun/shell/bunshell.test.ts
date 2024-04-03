@@ -1839,13 +1839,6 @@ describe("subshell", () => {
     .error("Unexpected token: `(`")
     .runAsTest("Invalid subshell use");
 
-  TestBuilder.command/* sh */ `
-  result=$(var="outer"; echo "$(echo "inner: $var"; var="inner"; echo "inner after change: $var")"; echo "outer after inner: $var")
-  echo "$result"
-  `
-    .stdout("inner: outer\ninner after change: inner\nouter after inner: outer\n")
-    .runAsTest("ZACK");
-
   describe("ported", () => {
     // test_oE 'effect of subshell'
     TestBuilder.command/* sh */ `

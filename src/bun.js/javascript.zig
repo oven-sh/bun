@@ -2864,6 +2864,11 @@ pub const VirtualMachine = struct {
             defer printGithubAnnotation(exception);
         }
 
+        // This is a longer number than necessary because we don't handle this case very well
+        // At the very least, we shouldn't dump 100 KB of minified code into your terminal.
+        const max_line_length_with_divot = 512;
+        const max_line_length = 1024;
+
         const line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
         for (line_numbers) |line| max_line = @max(max_line, line);
@@ -2880,13 +2885,27 @@ pub const VirtualMachine = struct {
             last_pad = pad;
             try writer.writeByteNTimes(' ', pad);
 
-            try writer.print(
-                comptime Output.prettyFmt("<r><d>{d} | <r>{}\n", allow_ansi_color),
-                .{
-                    display_line,
-                    bun.fmt.fmtJavaScript(std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t "), allow_ansi_color),
-                },
-            );
+            const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
+            const clamped = trimmed[0..@min(trimmed.len, max_line_length)];
+
+            if (clamped.len != trimmed.len) {
+                const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r><b>{d} |<r> {}" ++ fmt,
+                        allow_ansi_color,
+                    ),
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                );
+            } else {
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r><b>{d} |<r> {}\n",
+                        allow_ansi_color,
+                    ),
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                );
+            }
         }
 
         const name = exception.name;
@@ -2910,17 +2929,28 @@ pub const VirtualMachine = struct {
             if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 defer source.text.deinit();
-                const text = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
+                const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
 
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r><d>- |<r> {}\n",
-                        allow_ansi_color,
-                    ),
-                    .{
-                        bun.fmt.fmtJavaScript(text, allow_ansi_color),
-                    },
-                );
+                const text = trimmed[0..@min(trimmed.len, max_line_length)];
+
+                if (text.len != trimmed.len) {
+                    const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>- |<r> {}" ++ fmt,
+                            allow_ansi_color,
+                        ),
+                        .{bun.fmt.fmtJavaScript(text, allow_ansi_color)},
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><d>- |<r> {}\n",
+                            allow_ansi_color,
+                        ),
+                        .{bun.fmt.fmtJavaScript(text, allow_ansi_color)},
+                    );
+                }
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
             } else if (top_frame) |top| {
@@ -2931,24 +2961,40 @@ pub const VirtualMachine = struct {
                 try writer.writeByteNTimes(' ', pad);
                 defer source.text.deinit();
                 const text = source.text.slice();
-                const remainder = std.mem.trimRight(u8, std.mem.trim(u8, text, "\n"), "\t ");
+                const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, text, "\n"), "\t ");
 
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r><b>{d} |<r> {}\n",
-                        allow_ansi_color,
-                    ),
-                    .{ display_line, bun.fmt.fmtJavaScript(remainder, allow_ansi_color) },
-                );
+                // TODO: preserve the divot position and possibly use stringWidth() to figure out where to put the divot
+                const clamped = trimmed[0..@min(trimmed.len, max_line_length)];
 
-                if (!top.position.isInvalid()) {
-                    const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column_start));
+                if (clamped.len != trimmed.len) {
+                    const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n\n" else "\n\n";
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>{d} |<r> {}" ++ fmt,
+                            allow_ansi_color,
+                        ),
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>{d} |<r> {}\n",
+                            allow_ansi_color,
+                        ),
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                    );
 
-                    try writer.writeByteNTimes(' ', indent);
-                    try writer.print(comptime Output.prettyFmt(
-                        "<red><b>^<r>\n",
-                        allow_ansi_color,
-                    ), .{});
+                    if (clamped.len < max_line_length_with_divot or top.position.column_start > max_line_length_with_divot) {
+                        const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column_start));
+
+                        try writer.writeByteNTimes(' ', indent);
+                        try writer.print(comptime Output.prettyFmt(
+                            "<red><b>^<r>\n",
+                            allow_ansi_color,
+                        ), .{});
+                    } else {
+                        try writer.writeAll("\n");
+                    }
                 }
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);

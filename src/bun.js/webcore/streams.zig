@@ -2418,15 +2418,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             this.markDone();
-            defer this.flushPromise();
-            // this.signal.close(null);
-            // this.finalize();
-            this.pending_flush = JSC.JSPromise.create(globalThis);
-            this.globalThis = globalThis;
-            const value = this.pending_flush.?.asValue(globalThis);
-            value.protect();
-            return .{ .result = value };
-            // return .{ .result = JSC.JSValue.jsNumber(this.wrote) };
+            this.flushPromise();
+            this.signal.close(null);
+            this.finalize();
+
+            return .{ .result = JSC.JSValue.jsNumber(this.wrote) };
         }
 
         pub fn sink(this: *@This()) Sink {

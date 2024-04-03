@@ -2987,11 +2987,29 @@ pub extern fn LoadLibraryA(
 
 pub extern fn LoadLibraryExW([*:0]const u16, ?HANDLE, DWORD) ?*anyopaque;
 
-pub extern "kernel32" fn CreateHardLinkW(
-    newFileName: LPCWSTR,
-    existingFileName: LPCWSTR,
-    securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
-) BOOL;
+pub const CreateHardLinkW = struct {
+    pub fn wrapper(newFileName: LPCWSTR, existingFileName: LPCWSTR, securityAttributes: ?*win32.SECURITY_ATTRIBUTES) BOOL {
+        const run = struct {
+            pub extern "kernel32" fn CreateHardLinkW(
+                newFileName: LPCWSTR,
+                existingFileName: LPCWSTR,
+                securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
+            ) BOOL;
+        }.CreateHardLinkW;
+
+        const rc = run(newFileName, existingFileName, securityAttributes);
+        if (comptime Environment.isDebug)
+            bun.sys.syslog(
+                "CreateHardLinkW({}, {}) = {d}",
+                .{
+                    bun.fmt.fmtOSPath(std.mem.span(newFileName), .{}),
+                    bun.fmt.fmtOSPath(std.mem.span(existingFileName), .{}),
+                    if (rc == 0) @intFromEnum(Win32Error.get()) else 0,
+                },
+            );
+        return rc;
+    }
+}.wrapper;
 
 pub extern "kernel32" fn CopyFileW(
     source: LPCWSTR,

@@ -1439,6 +1439,7 @@ pub const PackageInstall = struct {
         };
     }
 
+    var node_fs_for_package_installer: bun.JSC.Node.NodeFS = undefined;
     fn installWithHardlink(this: *PackageInstall) !Result {
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir);
         defer cached_package_dir.close();
@@ -1450,33 +1451,57 @@ pub const PackageInstall = struct {
         ) catch |err| return Result.fail(err, .opening_cache_dir);
         defer walker_.deinit();
 
-        var subdir = bun.MakePath.makeOpenPath(this.destination_dir, bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_cache_dir);
-
-        defer subdir.close();
-
         var buf: bun.windows.WPathBuffer = undefined;
         var buf2: bun.windows.WPathBuffer = undefined;
         var to_copy_buf: []u16 = undefined;
         var to_copy_buf2: []u16 = undefined;
-        if (comptime Environment.isWindows) {
-            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(subdir.fd, &buf, buf.len, 0);
+
+        var subdir = if (Environment.isPosix)
+            this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{
+                .iterable = true,
+                .access_sub_paths = true,
+            }) catch |err| return Result.fail(err, .opening_cache_dir)
+        else if (Environment.isWindows) brk: {
+            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(this.destination_dir.fd, &buf, buf.len, 0);
             if (dest_path_length == 0) {
                 const e = bun.windows.Win32Error.get();
-                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk2: {
                     // If this code path is reached, it should have a toSystemErrno mapping
                     Output.warn("Failed to get destination path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
-                    break :brk error.Unexpected;
+                    break :brk2 error.Unexpected;
                 };
                 return Result.fail(err, .copying_files);
             }
-            const dest_path = buf[0..dest_path_length];
-            if (buf[dest_path.len - 1] != '\\') {
-                buf[dest_path.len] = '\\';
-                to_copy_buf = buf[dest_path.len + 1 ..];
-            } else {
-                to_copy_buf = buf[dest_path.len..];
+
+            var i: usize = dest_path_length;
+            to_copy_buf = buf[i..];
+            if (to_copy_buf[0] != '\\') {
+                to_copy_buf[0] = '\\';
+                to_copy_buf = to_copy_buf[1..];
+                i += 1;
             }
 
+            i += bun.strings.toWPathNormalized(buf[i..], this.destination_dir_subpath).len;
+            buf[i] = std.fs.path.sep_windows;
+            i += 1;
+            buf[i] = 0;
+            const path = buf[0..i :0];
+
+            node_fs_for_package_installer.vm = null;
+            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, path, 0, false).unwrap() catch |err| {
+                return Result.fail(err, .copying_files);
+            };
+            to_copy_buf = buf[i..];
+
+            break :brk std.fs.Dir{ .fd = std.os.windows.INVALID_HANDLE_VALUE };
+        } else {
+            // non-windows non-posix?
+            @compileError("TODO");
+        };
+
+        defer if (!Environment.isWindows) subdir.close();
+
+        if (comptime Environment.isWindows) {
             const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(cached_package_dir.fd, &buf2, buf2.len, 0);
             if (cache_path_length == 0) {
                 const e = bun.windows.Win32Error.get();
@@ -1528,7 +1553,7 @@ pub const PackageInstall = struct {
                         }
                     } else {
                         switch (entry.kind) {
-                            .directory, .file => {},
+                            .file => {},
                             else => continue,
                         }
 
@@ -1544,49 +1569,42 @@ pub const PackageInstall = struct {
                         head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
                         const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
 
-                        switch (entry.kind) {
-                            .directory => {
-                                if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
-                                    bun.MakePath.makePath(u16, destination_dir, entry.path) catch {};
-                                }
-                            },
-                            .file => {
-                                if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) == 0) {
-                                    if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
-                                        bun.MakePath.makePath(u16, destination_dir, entry_dirname) catch {};
-                                        if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
-                                            continue;
-                                        }
-                                    }
-
-                                    if (PackageManager.verbose_install) {
-                                        const once_log = struct {
-                                            var once = false;
-
-                                            pub fn get() bool {
-                                                const prev = once;
-                                                once = true;
-                                                return !prev;
-                                            }
-                                        }.get();
-
-                                        if (once_log) {
-                                            Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
-                                                bun.fmt.fmtOSPath(src, .{}),
-                                                bun.fmt.fmtOSPath(dest, .{}),
-                                            });
-                                        }
-                                    }
-
-                                    if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
-                                        continue;
-                                    }
-
-                                    return bun.errnoToZigErr(bun.windows.getLastErrno());
-                                }
-                            },
-                            else => unreachable, // handled above
+                        if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                            continue;
                         }
+
+                        dest[dest.len - entry.basename.len - 1] = 0;
+                        const dirpath = dest[0 .. dest.len - entry.basename.len - 1 :0];
+                        _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, dirpath, 0, false).unwrap() catch {};
+                        dest[dest.len - entry.basename.len - 1] = std.fs.path.sep;
+                        if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                            continue;
+                        }
+
+                        if (PackageManager.verbose_install) {
+                            const once_log = struct {
+                                var once = false;
+
+                                pub fn get() bool {
+                                    const prev = once;
+                                    once = true;
+                                    return !prev;
+                                }
+                            }.get();
+
+                            if (once_log) {
+                                Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
+                                    bun.fmt.fmtOSPath(src, .{}),
+                                    bun.fmt.fmtOSPath(dest, .{}),
+                                });
+                            }
+                        }
+
+                        if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
+                            continue;
+                        }
+
+                        return bun.errnoToZigErr(bun.windows.getLastErrno());
                     }
                 }
 

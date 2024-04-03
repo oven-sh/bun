@@ -4365,7 +4365,9 @@ pub const NodeFS = struct {
     ) Maybe(Return.Mkdir) {
         const VTable = struct {
             pub fn onCreateDir(c: Ctx, dirpath: bun.OSPathSliceZ) void {
-                c.onCreateDir(dirpath);
+                if (Ctx != void) {
+                    c.onCreateDir(dirpath);
+                }
                 return;
             }
         };

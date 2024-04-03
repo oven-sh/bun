@@ -2502,8 +2502,7 @@ pub const MakePath = struct {
                     w.FILE_READ_ATTRIBUTES |
                     w.FILE_READ_EA |
                     w.SYNCHRONIZE |
-                    w.FILE_TRAVERSE |
-                    w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY,
+                    w.FILE_TRAVERSE,
                 false,
             );
         }

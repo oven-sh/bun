@@ -569,10 +569,18 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
         else => mkdir(file_path, flags),
         .windows => {
             assertIsValidWindowsPath(bun.OSPathChar, file_path);
-            return Maybe(void).errnoSys(
-                kernel32.CreateDirectoryW(file_path, null),
+            const rc = kernel32.CreateDirectoryW(file_path, null);
+
+            if (Maybe(void).errnoSys(
+                rc,
                 .mkdir,
-            ) orelse Maybe(void).success;
+            )) |err| {
+                log("CreateDirectoryW({}) = {s}", .{ bun.fmt.fmtOSPath(file_path, .{}), err.err.name() });
+                return err;
+            }
+
+            log("CreateDirectoryW({}) = 0", .{bun.fmt.fmtOSPath(file_path, .{})});
+            return Maybe(void).success;
         },
     };
 }

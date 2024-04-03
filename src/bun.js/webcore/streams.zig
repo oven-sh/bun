@@ -2056,7 +2056,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return false;
             }
             var total_written: u64 = 0;
-            // const initial_wrote = this.wrote;
             while (true) {
                 // do not write more than available
                 // if we do, it will cause this to be delayed until the next call, each time
@@ -2078,7 +2077,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     break;
                 }
                 // request did not end and we dont have enough data to write
-                if (readable.len < this.highWaterMark or !this.requested_end) {
+                if (readable.len < this.highWaterMark and !this.requested_end) {
                     return false;
                 }
                 log("onWritable flushing ({d})", .{readable.len});
@@ -2091,11 +2090,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 log("onWritable flushed", .{});
                 this.handleWrote(@as(Blob.SizeType, @truncate(readable.len)));
                 total_written += readable.len;
-
-                if (this.buffer.len > 0 and !this.done) {
-                    this.res.onWritable(*@This(), onWritable, this);
-                    return false;
-                }
 
                 if (this.requested_end) {
                     this.signal.close(null);
@@ -2111,13 +2105,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // pending_flush or callback could have caused another send()
             // so we check again if we should report readiness
             if (!this.done and !this.requested_end and !this.hasBackpressure()) {
-                // const pending = @as(Blob.SizeType, @truncate(write_offset)) -| total_written;
-                // const written_after_flush = this.wrote - initial_wrote;
-                // const to_report = pending - @min(written_after_flush, pending);
-
-                // if ((written_after_flush == initial_wrote and pending == 0) or to_report > 0) {
-                //     this.signal.ready(to_report, null);
-                // }
                 if (total_written > 0 and this.readableSlice().len == 0) {
                     this.signal.ready(@as(Blob.SizeType, @truncate(total_written)), null);
                 }

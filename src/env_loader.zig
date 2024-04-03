@@ -66,14 +66,14 @@ pub const Loader = struct {
         return strings.eqlComptime(env, "test");
     }
 
-    pub fn getNodePath(this: *Loader, buf: *bun.PathBuffer) ?[:0]const u8 {
+    pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *bun.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
             @memcpy(buf[0..node.len], node);
             buf[node.len] = 0;
             return buf[0..node.len :0];
         }
 
-        if (which(buf, this.get("PATH") orelse return null, "node")) |node| {
+        if (which(buf, this.get("PATH") orelse return null, fs.top_level_dir, "node")) |node| {
             return node;
         }
 
@@ -180,15 +180,15 @@ pub const Loader = struct {
 
     var did_load_ccache_path: bool = false;
 
-    pub fn loadCCachePath(this: *Loader) void {
+    pub fn loadCCachePath(this: *Loader, fs: *Fs.FileSystem) void {
         if (did_load_ccache_path) {
             return;
         }
         did_load_ccache_path = true;
-        loadCCachePathImpl(this) catch {};
+        loadCCachePathImpl(this, fs) catch {};
     }
 
-    fn loadCCachePathImpl(this: *Loader) !void {
+    fn loadCCachePathImpl(this: *Loader, fs: *Fs.FileSystem) !void {
 
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
@@ -196,6 +196,7 @@ pub const Loader = struct {
         const ccache_path = bun.which(
             &buf,
             this.get("PATH") orelse return,
+            fs.top_level_dir,
             "ccache",
         ) orelse "";
 
@@ -228,7 +229,7 @@ pub const Loader = struct {
             if (node_path_to_use_set_once.len > 0) {
                 node_path_to_use = node_path_to_use_set_once;
             } else {
-                const node = this.getNodePath(&buf) orelse return false;
+                const node = this.getNodePath(fs, &buf) orelse return false;
                 node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
             }
         }

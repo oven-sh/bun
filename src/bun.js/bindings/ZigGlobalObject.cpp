@@ -2070,26 +2070,6 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
     return 0;
 }
 
-extern "C" JSC__JSValue ReadableStream__consume(Zig::GlobalObject* globalObject, JSC__JSValue stream, JSC__JSValue nativeType, JSC__JSValue nativePtr);
-extern "C" JSC__JSValue ReadableStream__consume(Zig::GlobalObject* globalObject, JSC__JSValue stream, JSC__JSValue nativeType, JSC__JSValue nativePtr)
-{
-    ASSERT(globalObject);
-
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-
-    auto& builtinNames = WebCore::builtinNames(vm);
-
-    auto function = globalObject->getDirect(vm, builtinNames.consumeReadableStreamPrivateName()).getObject();
-    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(nativePtr));
-    arguments.append(JSValue::decode(nativeType));
-    arguments.append(JSValue::decode(stream));
-
-    auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
-}
-
 extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativePtr)
 {
     auto& vm = globalObject->vm();
@@ -3390,7 +3370,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), streamInternalsCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createUsedReadableStreamPrivateName(), readableStreamCreateUsedReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.consumeReadableStreamPrivateName(), readableStreamConsumeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), importMetaObjectRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.loadCJS2ESMPrivateName(), importMetaObjectLoadCJS2ESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -3865,16 +3844,19 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     } else {
         moduleNameZ = Bun::toStringRef(moduleName);
     }
-    auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd : Bun::toStringRef(sourceURL.fileSystemPath());
+    auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd
+        : sourceURL.protocolIsFile()
+        ? Bun::toStringRef(sourceURL.fileSystemPath())
+        : sourceURL.protocol() == "builtin"_s
+        ? // On Windows, drive letter from standalone mode gets put into the URL host
+        Bun::toStringRef(sourceURL.string().substring(10 /* builtin:// */))
+        : Bun::toStringRef(sourceURL.path().toString());
     ZigString queryString = { 0, 0 };
     resolved.success = false;
     Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
     moduleNameZ.deref();
     sourceOriginZ.deref();
-#if BUN_DEBUG
-    // TODO: ASSERT doesnt work right now
-    RELEASE_ASSERT(startRefCount == moduleName.impl()->refCount());
-#endif
+    ASSERT(startRefCount == moduleName.impl()->refCount());
     if (!resolved.success) {
         throwException(scope, resolved.result.err, globalObject);
         return promise->rejectWithCaughtException(globalObject, scope);

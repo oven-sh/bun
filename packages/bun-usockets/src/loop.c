@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
@@ -380,7 +380,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     }
 
                     break;
-                } while (1);
+                } while (s);
             }
 
             /* Such as epollerr epollhup */

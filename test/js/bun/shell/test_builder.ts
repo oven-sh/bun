@@ -21,6 +21,8 @@ export class TestBuilder {
   private tempdir: string | undefined = undefined;
   private _env: { [key: string]: string } | undefined = undefined;
 
+  private __todo: boolean | string = false;
+
   static UNEXPECTED_SUBSHELL_ERROR_OPEN =
     "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
 
@@ -44,7 +46,7 @@ export class TestBuilder {
   static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
     try {
       if (process.env.BUN_DEBUG_SHELL_LOG_CMD === "1") console.info("[ShellTestBuilder] Cmd", strings.join(""));
-      const promise = Bun.$(strings, ...expressions);
+      const promise = Bun.$(strings, ...expressions).nothrow();
       const This = new this({ type: "ok", val: promise });
       This._testName = strings.join("");
       return This;
@@ -228,16 +230,27 @@ export class TestBuilder {
     // return output;
   }
 
+  todo(reason?: string): this {
+    this.__todo = typeof reason === "string" ? reason : true;
+    return this;
+  }
+
   runAsTest(name: string) {
     // biome-ignore lint/complexity/noUselessThisAlias: <explanation>
     const tb = this;
-    test(
-      name,
-      async () => {
+    if (this.__todo) {
+      test.todo(typeof this.__todo === "string" ? `${name} skipped: ${this.__todo}` : name, async () => {
         await tb.run();
-      },
-      this._timeout,
-    );
+      });
+    } else {
+      test(
+        name,
+        async () => {
+          await tb.run();
+        },
+        this._timeout,
+      );
+    }
   }
 
   // async run(): Promise<undefined> {

@@ -563,11 +563,18 @@ pub fn which(
     path_str = ZigString.Slice.fromUTF8NeverFree(
         globalThis.bunVM().bundler.env.get("PATH") orelse "",
     );
+    cwd_str = ZigString.Slice.fromUTF8NeverFree(
+        globalThis.bunVM().bundler.fs.top_level_dir,
+    );
 
     if (arguments.nextEat()) |arg| {
         if (!arg.isEmptyOrUndefinedOrNull() and arg.isObject()) {
             if (arg.get(globalThis, "PATH")) |str_| {
                 path_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
+            }
+
+            if (arg.get(globalThis, "cwd")) |str_| {
+                cwd_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
             }
         }
     }
@@ -575,6 +582,7 @@ pub fn which(
     if (Which.which(
         &path_buf,
         path_str.slice(),
+        cwd_str.slice(),
         bin_str.slice(),
     )) |bin_path| {
         return ZigString.init(bin_path).withEncoding().toValueGC(globalThis);
@@ -1203,6 +1211,19 @@ export fn Bun__resolveSync(
     };
 }
 
+export fn Bun__resolveSyncWithStrings(
+    global: *JSGlobalObject,
+    specifier: *bun.String,
+    source: *bun.String,
+    is_esm: bool,
+) JSC.JSValue {
+    Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
+    var exception = [1]JSC.JSValueRef{null};
+    return doResolveWithArgs(global, specifier.*, source.*, &exception, is_esm, true) orelse {
+        return JSC.JSValue.fromRef(exception[0]);
+    };
+}
+
 export fn Bun__resolveSyncWithSource(
     global: *JSGlobalObject,
     specifier: JSValue,
@@ -1217,14 +1238,6 @@ export fn Bun__resolveSyncWithSource(
     return doResolveWithArgs(global, specifier_str, source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
-}
-
-comptime {
-    if (!is_bindgen) {
-        _ = Bun__resolve;
-        _ = Bun__resolveSync;
-        _ = Bun__resolveSyncWithSource;
-    }
 }
 
 pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {

@@ -151,8 +151,8 @@ pub const PackageManagerCommand = struct {
                 warner: {
                     if (Output.enable_ansi_colors_stderr) {
                         if (bun.getenvZ("PATH")) |path| {
-                            var path_splitter = std.mem.split(u8, path, ":");
-                            while (path_splitter.next()) |entry| {
+                            var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
+                            while (path_iter.next()) |entry| {
                                 if (strings.eql(entry, output_path)) {
                                     break :warner;
                                 }

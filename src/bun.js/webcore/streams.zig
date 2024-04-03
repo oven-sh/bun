@@ -2011,11 +2011,12 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return true;
             } else {
                 this.handleFirstWriteIfNecessary();
-                this.has_backpressure = !this.res.write(buf);
+                const success = this.res.write(buf);
+                this.has_backpressure = !success;
                 if (this.has_backpressure) {
                     this.res.onWritable(*@This(), onWritable, this);
                 }
-                return true;
+                return success;
             }
 
             unreachable;
@@ -2048,6 +2049,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             // figure out how much data exactly to write
             const readable = this.readableSlice()[0..to_write];
+            if (readable.len == 0) {
+                return false;
+            }
             if (!this.send(readable)) {
                 // if we were unable to send it, retry
                 this.res.onWritable(*@This(), onWritable, this);

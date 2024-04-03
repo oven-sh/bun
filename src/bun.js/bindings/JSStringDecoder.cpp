@@ -26,8 +26,8 @@ static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastTotal);
 
 static WTF::String replacementString()
 {
-    static NeverDestroyed<String> replacementStr = WTF::String(MAKE_STATIC_STRING_IMPL({ WTF::Unicode::replacementCharacter }));
-    return replacementStr;
+
+    return WTF::String(std::span<const UChar> { u"\uFFFD", 1 });
 }
 
 static inline JSC::EncodedJSValue jsStringDecoderCast(JSGlobalObject* globalObject, JSValue stringDecoderValue)

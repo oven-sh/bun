@@ -533,6 +533,20 @@ it("dlopen args parsing", () => {
   expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
 });
 
+it("dlopen accepts file: URLs", () => {
+  const mod = { exports: {} };
+  try {
+    process.dlopen(mod, import.meta.url);
+    throw "Expected error";
+  } catch (e) {
+    expect(e.message).not.toContain("file:");
+  }
+
+  expect(() => process.dlopen(mod, "file://asd[kasd[po@[p1o23]1po!-10923-095-@$@8123=-9123=-0==][pc;!")).toThrow(
+    "invalid file: URL passed to dlopen",
+  );
+});
+
 it("process.constrainedMemory()", () => {
   if (process.platform === "linux") {
     // On Linux, it returns 0 if the kernel doesn't support it

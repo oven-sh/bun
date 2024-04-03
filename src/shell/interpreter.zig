@@ -4631,6 +4631,7 @@ pub const Interpreter = struct {
 
         const Result = @import("../result.zig").Result;
 
+        // Note: this enum uses @tagName, choose wisely!
         pub const Kind = enum {
             cat,
             touch,
@@ -4670,25 +4671,6 @@ pub const Interpreter = struct {
                 };
             }
 
-            pub fn asString(this: Kind) []const u8 {
-                return switch (this) {
-                    .cat => "cat",
-                    .touch => "touch",
-                    .mkdir => "mkdir",
-                    .@"export" => "export",
-                    .cd => "cd",
-                    .echo => "echo",
-                    .pwd => "pwd",
-                    .which => "which",
-                    .rm => "rm",
-                    .mv => "mv",
-                    .ls => "ls",
-                    .exit => "exit",
-                    .true => "true",
-                    .false => "false",
-                };
-            }
-
             pub fn fromStr(str: []const u8) ?Builtin.Kind {
                 if (!bun.Environment.isWindows) {
                     if (bun.strings.eqlComptime(str, "cat")) {
@@ -4696,14 +4678,7 @@ pub const Interpreter = struct {
                         return null;
                     }
                 }
-                @setEvalBranchQuota(5000);
-                const tyinfo = @typeInfo(Builtin.Kind);
-                inline for (tyinfo.Enum.fields) |field| {
-                    if (bun.strings.eqlComptime(str, field.name)) {
-                        return comptime std.meta.stringToEnum(Builtin.Kind, field.name).?;
-                    }
-                }
-                return null;
+                return std.meta.stringToEnum(Builtin.Kind, str);
             }
         };
 
@@ -5186,7 +5161,7 @@ pub const Interpreter = struct {
             switch (io.*) {
                 .fd => @panic("writeNoIO(. " ++ @tagName(io_kind) ++ ", buf) can't write to a file descriptor, did you check that needsIO(." ++ @tagName(io_kind) ++ ") was false?"),
                 .buf => {
-                    log("{s} write to buf len={d} str={s}{s}\n", .{ this.kind.asString(), buf.len, buf[0..@min(buf.len, 16)], if (buf.len > 16) "..." else "" });
+                    log("{s} write to buf len={d} str={s}{s}\n", .{ @tagName(this.kind), buf.len, buf[0..@min(buf.len, 16)], if (buf.len > 16) "..." else "" });
                     io.buf.appendSlice(buf) catch bun.outOfMemory();
                     return buf.len;
                 },
@@ -5209,7 +5184,7 @@ pub const Interpreter = struct {
                     const slice = io.arraybuf.buf.slice()[io.arraybuf.i .. io.arraybuf.i + write_len];
                     @memcpy(slice, buf[0..write_len]);
                     io.arraybuf.i +|= @truncate(write_len);
-                    log("{s} write to arraybuf {d}\n", .{ this.kind.asString(), write_len });
+                    log("{s} write to arraybuf {d}\n", .{ @tagName(this.kind), write_len });
                     return write_len;
                 },
                 .blob, .ignore => return buf.len,
@@ -5241,7 +5216,7 @@ pub const Interpreter = struct {
         }
 
         pub fn fmtErrorArena(this: *Builtin, comptime kind: ?Kind, comptime fmt_: []const u8, args: anytype) []u8 {
-            const cmd_str = comptime if (kind) |k| k.asString() ++ ": " else "";
+            const cmd_str = comptime if (kind) |k| @tagName(k) ++ ": " else "";
             const fmt = cmd_str ++ fmt_;
             return std.fmt.allocPrint(this.arena.allocator(), fmt, args) catch bun.outOfMemory();
         }
@@ -10145,7 +10120,7 @@ pub const Interpreter = struct {
             comptime fmt_: []const u8,
             args: anytype,
         ) void {
-            const cmd_str = comptime if (kind) |k| k.asString() ++ ": " else "";
+            const cmd_str = comptime if (kind) |k| @tagName(k) ++ ": " else "";
             const fmt__ = cmd_str ++ fmt_;
             this.enqueueFmt(ptr, bytelist, fmt__, args);
         }

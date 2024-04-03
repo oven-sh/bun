@@ -1632,6 +1632,8 @@ pub const Parser = struct {
                     .JSObjRef => return null,
                     .Delimit => return null,
                     .Eof => return null,
+                    .DoubleBracketOpen => return null,
+                    .DoubleBracketClose => return null,
                 }
             }
         }
@@ -1965,6 +1967,14 @@ pub const Token = union(TokenTag) {
     };
 
     pub fn asHumanReadable(self: Token, strpool: []const u8) []const u8 {
+        const varargv_strings = blk: {
+            var res: [10][2]u8 = undefined;
+            for (&res, 0..) |*item, i| {
+                item[0] = '$';
+                item[1] = @as(u8, @intCast(i)) + '0';
+            }
+            break :blk res;
+        };
         return switch (self) {
             .Pipe => "`|`",
             .DoublePipe => "`||`",
@@ -1987,6 +1997,7 @@ pub const Token = union(TokenTag) {
             .OpenParen => "`(`",
             .CloseParen => "`)",
             .Var => strpool[self.Var.start..self.Var.end],
+            .VarArgv => &varargv_strings[self.VarArgv],
             .Text => strpool[self.Text.start..self.Text.end],
             .SingleQuotedText => strpool[self.SingleQuotedText.start..self.SingleQuotedText.end],
             .DoubleQuotedText => strpool[self.DoubleQuotedText.start..self.DoubleQuotedText.end],
@@ -2607,6 +2618,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .OpenParen,
                 .CloseParen,
                 .JSObjRef,
+                .DoubleBracketOpen,
+                .DoubleBracketClose,
                 .Delimit,
                 .Eof,
                 => false,

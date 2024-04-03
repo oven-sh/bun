@@ -109,9 +109,9 @@ pub const TOML = struct {
 
         switch (p.lexer.token) {
             .t_string_literal => {
-                const str = p.lexer.toEString();
+                const str = p.lexer.toString(loc);
                 try p.lexer.next();
-                return p.e(str, loc);
+                return str;
             },
             .t_identifier => {
                 const str = E.String{ .data = p.lexer.identifier };
@@ -292,10 +292,9 @@ pub const TOML = struct {
                 }, loc);
             },
             .t_string_literal => {
-                const str: E.String = p.lexer.toEString();
-
+                const result = p.lexer.toString(loc);
                 try p.lexer.next();
-                return p.e(str, loc);
+                return result;
             },
             .t_identifier => {
                 const str: E.String = E.String{ .data = p.lexer.identifier };

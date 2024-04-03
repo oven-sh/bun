@@ -1458,7 +1458,7 @@ pub const PackageInstall = struct {
 
         var subdir = if (Environment.isPosix)
             this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{
-                .iterable = true,
+                .iterate = true,
                 .access_sub_paths = true,
             }) catch |err| return Result.fail(err, .opening_cache_dir)
         else if (Environment.isWindows) brk: {

@@ -159,7 +159,7 @@ threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     const tmpdir = this.temp_dir;
-    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
     const name = this.name.slice();
     const basename = brk: {
         var tmp = name;
@@ -183,8 +183,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
 
     var resolved: string = "";
-    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, bun.hashWithRandomSeed(std.mem.asBytes(&tgz_bytes.len)));
-    const windows_extract_destination = brk: {
+    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], std.mem.asBytes(&tmpname_buf), bun.fastRandom());
+    {
         var extract_destination = bun.MakePath.makeOpenPath(tmpdir, bun.span(tmpname), .{}) catch |err| {
             this.package_manager.log.addErrorFmt(
                 null,
@@ -196,8 +196,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             return error.InstallFailed;
         };
 
-        defer if (!Environment.isWindows) extract_destination.close();
-        errdefer if (Environment.isWindows) extract_destination.close();
+        defer extract_destination.close();
 
         if (PackageManager.verbose_install) {
             Output.prettyErrorln("[{s}] Start extracting {s}<r>", .{ name, tmpname });
@@ -278,11 +277,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             Output.prettyErrorln("[{s}] Extracted<r>", .{name});
             Output.flush();
         }
-
-        if (Environment.isWindows) {
-            break :brk extract_destination;
-        }
-    };
+    }
     const folder_name = switch (this.resolution.tag) {
         .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
         .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved),
@@ -303,13 +298,28 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         var did_retry = false;
         var path2_buf: bun.WPathBuffer = undefined;
         const path2 = bun.strings.toWPathNormalized(&path2_buf, folder_name);
-        defer _ = bun.sys.close(bun.toFD(windows_extract_destination.fd));
+
         while (true) {
-            switch (bun.C.moveOpenedFileAtLoose(bun.toFD(windows_extract_destination.fd), bun.toFD(cache_dir.fd), path2, true)) {
+            const dir_to_move = bun.sys.openDirAtWindowsA(bun.toFD(this.temp_dir.fd), bun.span(tmpname), .{ .can_rename_or_delete = true, .create = false, .iterable = false }).unwrap() catch |err| {
+                // i guess we just
+                this.package_manager.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.package_manager.allocator,
+                    "moving \"{s}\" to cache dir failed\n{}\n  From: {s}\n    To: {s}",
+                    .{ name, err, tmpname, folder_name },
+                ) catch unreachable;
+                return error.InstallFailed;
+            };
+
+            switch (bun.C.moveOpenedFileAtLoose(dir_to_move, bun.toFD(cache_dir.fd), path2, true)) {
                 .err => |err| {
                     if (!did_retry) {
                         switch (err.getErrno()) {
                             .PERM, .BUSY, .EXIST => {
+                                // before we attempt to delete the destination, let's close the source dir.
+                                _ = bun.sys.close(dir_to_move);
+
                                 // two copies of bun are trying to extract the same package version to the same folder
                                 cache_dir.deleteTree(bun.span(folder_name)) catch {};
                                 did_retry = true;
@@ -318,7 +328,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                             else => {},
                         }
                     }
-
+                    _ = bun.sys.close(dir_to_move);
                     this.package_manager.log.addErrorFmt(
                         null,
                         logger.Loc.Empty,
@@ -330,6 +340,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 },
                 .result => break,
             }
+            _ = bun.sys.close(dir_to_move);
             break;
         }
     } else {

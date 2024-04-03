@@ -458,24 +458,43 @@ pub fn hash(content: []const u8) u64 {
     return std.hash.Wyhash.hash(0, content);
 }
 
-/// Get a decently random value from something detrministic
-/// Intended to be used for things like task ids or temporary file names
-pub fn hashWithRandomSeed(content: []const u8) u64 {
-    const random_seed = struct {
-        var seed_value: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+/// Get a random-ish value
+pub fn fastRandom() u64 {
+    const pcrng = struct {
+        const random_seed = struct {
+            var seed_value: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+            pub fn get() u64 {
+                // This is slightly racy but its fine because this memoization is done as a performance optimization
+                // and we only need to do it once per process
+                var value = seed_value.load(.Monotonic);
+                while (value == 0) : (value = seed_value.load(.Monotonic)) {
+                    if (comptime Environment.isDebug) outer: {
+                        if (getenvZ("BUN_DEBUG_HASH_RANDOM_SEED")) |env| {
+                            value = std.fmt.parseInt(u64, env, 10) catch break :outer;
+                            seed_value.store(value, .Monotonic);
+                            return value;
+                        }
+                    }
+                    rand(std.mem.asBytes(&value));
+                    seed_value.store(value, .Monotonic);
+                }
+
+                return value;
+            }
+        };
+
+        var prng_: ?std.rand.DefaultPrng = null;
+
         pub fn get() u64 {
-            // This is slightly racy but its fine because this memoization is done as a performance optimization
-            // and we only need to do it once per process
-            var value = seed_value.load(.Monotonic);
-            while (value == 0) : (value = seed_value.load(.Monotonic)) {
-                rand(std.mem.asBytes(&value));
-                seed_value.store(value, .Monotonic);
+            if (prng_ == null) {
+                prng_ = std.rand.DefaultPrng.init(random_seed.get());
             }
 
-            return value;
+            return prng_.?.random().uintAtMost(u64, std.math.maxInt(u64));
         }
-    }.get();
-    return hashWithSeed(random_seed, content);
+    };
+
+    return pcrng.get();
 }
 
 pub fn hashWithSeed(seed: u64, content: []const u8) u64 {
@@ -1273,6 +1292,7 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
 
     if (comptime Environment.isWindows) {
         const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, buf);
+
         return wide_slice;
     }
 
@@ -1890,6 +1910,8 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
             FDImpl.System => FDImpl.fromSystem(fd),
             FDImpl.UV, i32, comptime_int => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd),
+            std.fs.Dir => FDImpl.fromSystem(fd.fd),
+            sys.File, std.fs.File => FDImpl.fromSystem(fd.handle),
             // TODO: remove u32
             u32 => FDImpl.fromUV(@intCast(fd)),
             else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
@@ -1899,6 +1921,8 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         // even though file descriptors are always positive, linux/mac repesents them as signed integers
         return switch (T) {
             FileDescriptor => fd, // TODO: remove the toFD call from these places and make this a @compileError
+            std.fs.File, sys.File => toFD(fd.handle),
+            std.fs.Dir => toFD(fd.fd),
             c_int, i32, u32, comptime_int => @enumFromInt(fd),
             usize, i64 => @enumFromInt(@as(i32, @intCast(fd))),
             else => @compileError("bun.toFD() not implemented for: " ++ @typeName(T)),
@@ -2448,7 +2472,7 @@ pub const MakePath = struct {
             w.FILE_ATTRIBUTE_NORMAL,
             w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
             flags.create_disposition,
-            w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
+            w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | w.FILE_WRITE_THROUGH | open_reparse_point,
             null,
             0,
         );
@@ -2479,7 +2503,7 @@ pub const MakePath = struct {
                     w.FILE_READ_EA |
                     w.SYNCHRONIZE |
                     w.FILE_TRAVERSE |
-                    w.DELETE | w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY | w.FILE_WRITE_ATTRIBUTES,
+                    w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY,
                 false,
             );
         }

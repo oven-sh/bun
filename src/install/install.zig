@@ -1833,7 +1833,6 @@ pub const PackageInstall = struct {
         // } else {
         //     this.destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
         // }
-
         this.destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
     }
 
@@ -1895,25 +1894,8 @@ pub const PackageInstall = struct {
         if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallBeforeInstall();
 
         const subdir = std.fs.path.dirname(dest_path);
-        var dest_dir = if (subdir) |dir| brk: {
-            break :brk bun.MakePath.makeOpenPath(this.destination_dir, dir, .{}) catch |err| return Result{
-                .fail = .{
-                    .err = err,
-                    .step = .linking,
-                },
-            };
-        } else this.destination_dir;
-        defer {
-            if (subdir != null) dest_dir.close();
-        }
 
         var dest_buf: bun.PathBuffer = undefined;
-        const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result{
-            .fail = .{
-                .err = err,
-                .step = .linking,
-            },
-        };
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         const symlinked_path = this.cache_dir_subpath;
         var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1925,23 +1907,52 @@ pub const PackageInstall = struct {
         };
 
         const dest = std.fs.path.basename(dest_path);
+        // When we're linking on Windows, we want to avoid keeping the source directory handle open
         if (comptime Environment.isWindows) {
             var dest_buf2: bun.PathBuffer = undefined;
-            const dest_z = bun.path.joinAbsStringBufZ(
-                dest_dir_path,
-                &dest_buf2,
-                &.{
-                    dest,
-                },
-                .windows,
-            );
+            const dest_z = brk: {
+                const basepath = brk2: {
+                    var dest_dir = this.destination_dir;
+                    if (subdir) |dir| {
+                        dest_dir = this.destination_dir.makeOpenPath(dir, .{}) catch |err| return Result{
+                            .fail = .{
+                                .err = err,
+                                .step = .linking,
+                            },
+                        };
+
+                        defer {
+                            if (dest_dir.fd != this.destination_dir.fd) {
+                                dest_dir.close();
+                            }
+                        }
+                    }
+
+                    break :brk2 bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result{
+                        .fail = .{
+                            .err = err,
+                            .step = .linking,
+                        },
+                    };
+                };
+
+                break :brk bun.path.joinAbsStringBufZNT(
+                    basepath,
+                    &dest_buf2,
+                    &.{
+                        subdir orelse "",
+                        dest,
+                    },
+                    .windows,
+                );
+            };
 
             to_buf[to_path.len] = 0;
             const to_path_z = to_buf[0..to_path.len :0];
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
-            switch (bun.sys.sys_uv.symlinkUV(to_path_z, dest_z, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION)) {
+            switch (bun.sys.symlinkOrJunctionOnWindows(to_path_z, dest_z)) {
                 .err => |err| {
                     return Result{
                         .fail = .{
@@ -1953,6 +1964,25 @@ pub const PackageInstall = struct {
                 .result => {},
             }
         } else {
+            var dest_dir = if (subdir) |dir| brk: {
+                break :brk bun.MakePath.makeOpenPath(this.destination_dir, dir, .{}) catch |err| return Result{
+                    .fail = .{
+                        .err = err,
+                        .step = .linking,
+                    },
+                };
+            } else this.destination_dir;
+            defer {
+                if (subdir != null) dest_dir.close();
+            }
+
+            const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result{
+                .fail = .{
+                    .err = err,
+                    .step = .linking,
+                },
+            };
+
             const target = Path.relative(dest_dir_path, to_path);
             std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
                 .fail = .{
@@ -2736,7 +2766,7 @@ pub const PackageManager = struct {
             };
         };
         var tmpbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, bun.hashWithRandomSeed("test file")) catch unreachable;
+        const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, bun.fastRandom()) catch unreachable;
         var timer: std.time.Timer = if (this.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
         brk: while (true) {
             var file = tempdir.createFileZ(tmpname, .{ .truncate = true }) catch |err2| {
@@ -9442,8 +9472,16 @@ pub const PackageManager = struct {
         // no need to download packages you've already installed!!
         var skip_verify_installed_version_number = false;
         const cwd = std.fs.cwd();
-        const node_modules_folder = bun.MakePath.makeOpenPath(cwd, "node_modules", .{ .iterate = true, .access_sub_paths = true }) catch brk: {
+        const node_modules_folder = brk: {
+            // Attempt to open the existing node_modules folder
+            switch (bun.sys.openatOSPath(bun.toFD(cwd), bun.OSPathLiteral("node_modules"), std.os.O.DIRECTORY | std.os.O.RDWR, 0o755)) {
+                .result => |fd| break :brk std.fs.Dir{ .fd = fd.cast() },
+                .err => {},
+            }
+
             skip_verify_installed_version_number = true;
+
+            // Attempt to create a new node_modules folder
             bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
                 if (err != error.EEXIST) {
                     Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});

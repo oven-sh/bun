@@ -1712,7 +1712,26 @@ pub const WindowsSymlinkOptions = packed struct {
     pub fn denied() void {
         symlink_flags = 0;
     }
+
+    pub var has_failed_to_create_symlink = false;
 };
+
+pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe(void) {
+    if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
+        var sym16: bun.WPathBuffer = undefined;
+        var target16: bun.WPathBuffer = undefined;
+        const sym_path = bun.strings.toNTPath(&sym16, sym);
+        const target_path = bun.strings.toNTPath(&target16, target);
+        switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
+            .result => {
+                return Maybe(void).success;
+            },
+            .err => {},
+        }
+    }
+
+    return sys_uv.symlinkUV(sym, target, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
+}
 
 pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
     while (true) {
@@ -1720,6 +1739,12 @@ pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymli
 
         if (windows.kernel32.CreateSymbolicLinkW(sym, target, flags) == 0) {
             const errno = bun.windows.Win32Error.get();
+            log("CreateSymbolicLinkW({}, {}, {any}) = {s}", .{
+                bun.fmt.fmtPath(u16, sym, .{}),
+                bun.fmt.fmtPath(u16, target, .{}),
+                flags,
+                @tagName(errno),
+            });
             switch (errno) {
                 .INVALID_PARAMETER => {
                     if ((flags & w.SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0) {
@@ -1731,6 +1756,7 @@ pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymli
             }
 
             if (errno.toSystemErrno()) |err| {
+                WindowsSymlinkOptions.has_failed_to_create_symlink = true;
                 return .{
                     .err = .{
                         .errno = @intFromEnum(err),
@@ -1739,6 +1765,12 @@ pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymli
                 };
             }
         }
+
+        log("CreateSymbolicLinkW({}, {}, {any}) = 0", .{
+            bun.fmt.fmtPath(u16, sym, .{}),
+            bun.fmt.fmtPath(u16, target, .{}),
+            flags,
+        });
 
         return Maybe(void).success;
     }
@@ -2066,24 +2098,29 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
     }
 
     if (comptime Environment.isWindows) {
-        // TODO(dylan-conway): this is not tested
-        var wbuf: bun.MAX_WPATH = undefined;
-        const path_to_use = bun.strings.toWPath(&wbuf, subpath);
-        const nt_name = windows.UNICODE_STRING{
-            .Length = path_to_use.len * 2,
-            .MaximumLength = path_to_use.len * 2,
-            .Buffer = path_to_use,
+        var wbuf: bun.WPathBuffer = undefined;
+        const path = bun.strings.toWPath(&wbuf, subpath);
+        const path_len_bytes: u16 = @truncate(path.len * 2);
+        var nt_name = w.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(path.ptr),
         };
-        const attr = windows.OBJECT_ATTRIBUTES{
-            .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
-            .RootDirectory = fd,
-            .Attributes = 0,
+        var attr = w.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
+                null
+            else if (fd == bun.invalid_fd)
+                std.fs.cwd().fd
+            else
+                fd.cast(),
+            .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
             .ObjectName = &nt_name,
             .SecurityDescriptor = null,
             .SecurityQualityOfService = null,
         };
-        const basic_info: windows.FILE_BASIC_INFORMATION = undefined;
-        return switch (kernel32.NtQueryAttributesFile(&attr, basic_info)) {
+        var basic_info: w.FILE_BASIC_INFORMATION = undefined;
+        return switch (kernel32.NtQueryAttributesFile(&attr, &basic_info)) {
             .SUCCESS => true,
             else => false,
         };

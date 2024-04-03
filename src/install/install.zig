@@ -4925,7 +4925,7 @@ pub const PackageManager = struct {
     const CacheDir = struct { path: string, is_node_modules: bool };
     pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader) CacheDir {
         if (env.get("BUN_INSTALL_CACHE_DIR")) |dir| {
-            return CacheDir{ .path = Fs.FileSystem.instance.abs(&dir), .is_node_modules = false };
+            return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
         }
 
         if (env.get("BUN_INSTALL")) |dir| {

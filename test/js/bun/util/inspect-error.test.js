@@ -41,6 +41,22 @@ function ansiRegex({ onlyFirst = false } = {}) {
   return new RegExp(pattern, onlyFirst ? undefined : "g");
 }
 const stripANSIColors = str => str.replace(ansiRegex(), "");
+const normalizeError = str => {
+  // remove debug-only stack trace frames
+  // like "at require (:1:21)"
+  if (str.includes(" (:")) {
+    const splits = str.split("\n");
+    for (let i = 0; i < splits.length; i++) {
+      if (splits[i].includes(" (:")) {
+        splits.splice(i, 1);
+        i--;
+      }
+    }
+    return splits.join("\n");
+  }
+
+  return str;
+};
 
 test("Error inside minified file (no color) ", () => {
   try {
@@ -48,10 +64,12 @@ test("Error inside minified file (no color) ", () => {
     expect.unreachable();
   } catch (e) {
     expect(
-      Bun.inspect(e)
-        .replaceAll(import.meta.dir, "[dir]")
-        .replaceAll("\\", "/")
-        .trim(),
+      normalizeError(
+        Bun.inspect(e)
+          .replaceAll(import.meta.dir, "[dir]")
+          .replaceAll("\\", "/")
+          .trim(),
+      ),
     ).toMatchSnapshot();
   }
 });
@@ -63,12 +81,14 @@ test("Error inside minified file (color) ", () => {
   } catch (e) {
     expect(
       // TODO: remove this workaround once snapshots work better
-      stripANSIColors(
-        Bun.inspect(e, { colors: true })
-          .replaceAll(import.meta.dir, "[dir]")
-          .replaceAll("\\", "/")
-          .trim(),
-      ).trim(),
+      normalizeError(
+        stripANSIColors(
+          Bun.inspect(e, { colors: true })
+            .replaceAll(import.meta.dir, "[dir]")
+            .replaceAll("\\", "/")
+            .trim(),
+        ).trim(),
+      ),
     ).toMatchSnapshot();
   }
 });

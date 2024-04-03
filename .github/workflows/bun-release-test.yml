@@ -8,6 +8,7 @@ on:
   pull_request:
     paths:
       - "packages/bun-release/**"
+      - ".github/workflows/bun-release-test.yml"
 
 jobs:
   test-release-script:
@@ -24,6 +25,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:

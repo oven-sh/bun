@@ -3,7 +3,7 @@ extern "C" {
 }
 
 #include "Http3ResponseData.h"
-
+// clang-format off
 namespace uWS {
 
     /* Is a quic stream */
@@ -40,7 +40,7 @@ namespace uWS {
             return this;
         }
 
-        std::pair<bool, bool> tryEnd(std::string_view data, uintmax_t totalSize = 0) {
+        std::pair<bool, bool> tryEnd(std::string_view data, uint64_t totalSize = 0) {
             Http3ResponseData *responseData = (Http3ResponseData *) us_quic_stream_ext((us_quic_stream_t *) this);
 
             writeStatus("200 OK");
@@ -109,7 +109,7 @@ namespace uWS {
             return this;
         }
 
-        Http3Response *onWritable(MoveOnlyFunction<bool(uintmax_t)> &&handler) {
+        Http3Response *onWritable(MoveOnlyFunction<bool(uint64_t)> &&handler) {
             Http3ResponseData *responseData = (Http3ResponseData *) us_quic_stream_ext((us_quic_stream_t *) this);
 
             responseData->onWritable = std::move(handler);

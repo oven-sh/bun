@@ -2030,7 +2030,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return this.buffer.ptr[this.offset..this.buffer.cap][0..this.buffer.len];
         }
 
-        pub fn onWritable(this: *@This(), write_offset_: c_ulong, _: *UWSResponse) callconv(.C) bool {
+        pub fn onWritable(this: *@This(), write_offset_: u64, _: *UWSResponse) callconv(.C) bool {
             const write_offset: u64 = @as(u64, write_offset_);
             log("onWritable ({d})", .{write_offset});
 

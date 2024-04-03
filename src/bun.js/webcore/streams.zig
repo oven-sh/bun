@@ -2049,29 +2049,21 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return false;
             }
             var total_written: u64 = 0;
-            while (true) {
-                // do not write more than available
-                // if we do, it will cause this to be delayed until the next call, each time
 
-                const readable = this.readableSlice();
-                // limit chunk in 64KB at a time or highWaterMark if it is bigger than 64KB, if requested ended we try to write all pending data
-                const to_write: u64 = if (this.requested_end) readable.len else @min(@max(64 * 1024, this.highWaterMark), readable.len);
-
-                // figure out how much data exactly to write
-                const chunk = readable[0..to_write];
-                // if we have nothing to write, we are done
-                if (chunk.len == 0) {
-                    if (this.done) {
-                        this.res.clearOnWritable();
-                        this.signal.close(null);
-                        this.flushPromise();
-                        this.finalize();
-                        // we drained all the data
-                        return true;
-                    }
-                    break;
+            // do not write more than available
+            // if we do, it will cause this to be delayed until the next call, each time
+            // TODO: should we break it in smaller chunks?
+            const chunk = this.readableSlice();
+            // if we have nothing to write, we are done
+            if (chunk.len == 0) {
+                if (this.done) {
+                    this.res.clearOnWritable();
+                    this.signal.close(null);
+                    this.flushPromise();
+                    this.finalize();
+                    return true;
                 }
-                if (total_written > 0) return false;
+            } else {
                 // only allow less than highWaterMark to be written if the request has ended
                 if (chunk.len < this.highWaterMark and !this.requested_end) {
                     return false;

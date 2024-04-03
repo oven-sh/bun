@@ -1993,11 +1993,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
             // we never write if we have backpressure we wait for onWritable to be called
             if (this.hasBackpressure()) {
+                log("send: backpressure", .{});
                 return false;
             }
 
             if (this.requested_end and !this.res.state().isHttpWriteCalled()) {
                 this.handleFirstWriteIfNecessary();
+                log("res.tryEnd({d}, {d})", .{ buf.len, this.end_len });
                 const success = this.res.tryEnd(buf, this.end_len, false);
                 this.has_backpressure = !success;
                 if (this.has_backpressure) {
@@ -2012,11 +2014,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // so in this scenario, we just append to the buffer
             // and report success
             if (this.requested_end) {
+                log("res.end({d})", .{buf.len});
                 this.handleFirstWriteIfNecessary();
                 this.res.end(buf, false);
                 this.has_backpressure = false;
                 return true;
             } else {
+                log("res.write({d})", .{buf.len});
                 this.handleFirstWriteIfNecessary();
                 const success = this.res.write(buf);
                 this.has_backpressure = !success;
@@ -2056,14 +2060,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             while (true) {
                 // do not write more than available
                 // if we do, it will cause this to be delayed until the next call, each time
-                const to_write: u64 = if (this.requested_end) this.buffer.len else brk: {
-                    if (this.highWaterMark == 0) {
-                        // send in 64KB chunks
-                        break :brk @min(64 * 1024, this.buffer.len);
-                    } else {
-                        break :brk @min(this.highWaterMark, this.buffer.len);
-                    }
-                };
+                // limit chunk in 64KB at a time
+                const to_write: u64 = if (this.requested_end) this.buffer.len else @min(64 * 1024, this.buffer.len);
 
                 // figure out how much data exactly to write
                 const readable = this.readableSlice()[0..to_write];

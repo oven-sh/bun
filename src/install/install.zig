@@ -1269,16 +1269,41 @@ pub const PackageInstall = struct {
     }
 
     const InstallDirState = struct {
+        cached_package_dir: std.fs.Dir = undefined,
+        walker: Walker = undefined,
         subdir: std.fs.Dir = if (Environment.isWindows) std.fs.Dir{ .fd = std.os.windows.INVALID_HANDLE_VALUE } else undefined,
         buf: bun.windows.WPathBuffer = if (Environment.isWindows) undefined else {},
         buf2: bun.windows.WPathBuffer = if (Environment.isWindows) undefined else {},
         to_copy_buf: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined else {},
         to_copy_buf2: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined else {},
+
+        pub fn deinit(this: *@This()) void {
+            if (!Environment.isWindows) {
+                this.subdir.close();
+            }
+            defer this.walker.deinit();
+            defer this.cached_package_dir.close();
+        }
     };
 
     threadlocal var node_fs_for_package_installer: bun.JSC.Node.NodeFS = .{};
 
-    fn initInstallDir(destbase: std.fs.Dir, destpath: []const u8, cachedir: std.fs.Dir, state: *InstallDirState) Result {
+    fn initInstallDir(this: *PackageInstall, state: *InstallDirState) Result {
+        const destbase = this.destination_dir;
+        const destpath = this.destination_dir_subpath;
+
+        state.cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+        state.walker = Walker.walk(
+            state.cached_package_dir,
+            this.allocator,
+            &[_]bun.OSPathSlice{},
+            &[_]bun.OSPathSlice{},
+        ) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+
         if (!Environment.isWindows) {
             state.subdir = destbase.makeOpenPath(bun.span(destpath), .{
                 .iterate = true,
@@ -1310,7 +1335,7 @@ pub const PackageInstall = struct {
             return Result.fail(err, .copying_files);
         };
 
-        const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(cachedir.fd, &state.buf2, state.buf2.len, 0);
+        const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);
         if (cache_path_length == 0) {
             const e = bun.windows.Win32Error.get();
             const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
@@ -1331,24 +1356,10 @@ pub const PackageInstall = struct {
     }
 
     fn installWithCopyfile(this: *PackageInstall) Result {
-        var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-        defer cached_package_dir.close();
-        var walker_ = Walker.walk(
-            cached_package_dir,
-            this.allocator,
-            &[_]bun.OSPathSlice{},
-            &[_]bun.OSPathSlice{},
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-        defer walker_.deinit();
-
         var state = InstallDirState{};
-        const res = initInstallDir(this.destination_dir, this.destination_dir_subpath, cached_package_dir, &state);
+        const res = this.initInstallDir(&state);
         if (res.isFail()) return res;
-        defer if (!Environment.isWindows) state.subdir.close();
+        defer state.deinit();
 
         const FileCopier = struct {
             pub fn copy(
@@ -1458,7 +1469,7 @@ pub const PackageInstall = struct {
 
         this.file_count = FileCopier.copy(
             state.subdir,
-            &walker_,
+            &state.walker,
             this.progress,
             if (Environment.isWindows) state.to_copy_buf else void{},
             if (Environment.isWindows) &state.buf else void{},
@@ -1474,22 +1485,10 @@ pub const PackageInstall = struct {
     }
 
     fn installWithHardlink(this: *PackageInstall) !Result {
-        var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir);
-        defer cached_package_dir.close();
-        var walker_ = Walker.walk(
-            cached_package_dir,
-            this.allocator,
-            &[_]bun.OSPathSlice{},
-            &[_]bun.OSPathSlice{},
-        ) catch |err| return Result.fail(err, .opening_cache_dir);
-        defer walker_.deinit();
-
         var state = InstallDirState{};
-        const res = initInstallDir(this.destination_dir, this.destination_dir_subpath, cached_package_dir, &state);
-        if (res.isFail()) {
-            return res;
-        }
-        defer if (!Environment.isWindows) state.subdir.close();
+        const res = this.initInstallDir(&state);
+        if (res.isFail()) return res;
+        defer state.deinit();
 
         const FileCopier = struct {
             pub fn copy(
@@ -1584,7 +1583,7 @@ pub const PackageInstall = struct {
 
         this.file_count = FileCopier.copy(
             state.subdir,
-            &walker_,
+            &state.walker,
             state.to_copy_buf,
             if (Environment.isWindows) &state.buf else void{},
             state.to_copy_buf2,
@@ -1606,27 +1605,10 @@ pub const PackageInstall = struct {
     }
 
     fn installWithSymlink(this: *PackageInstall) !Result {
-        var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-        defer cached_package_dir.close();
-        var walker_ = Walker.walk(
-            cached_package_dir,
-            this.allocator,
-            &[_]bun.OSPathSlice{},
-            &[_]bun.OSPathSlice{
-                bun.OSPathLiteral("node_modules"),
-                bun.OSPathLiteral(".git"),
-            },
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-        defer walker_.deinit();
-
         var state = InstallDirState{};
-        const res = initInstallDir(this.destination_dir, this.destination_dir_subpath, cached_package_dir, &state);
+        const res = this.initInstallDir(&state);
         if (res.isFail()) return res;
-        defer if (!Environment.isWindows) state.subdir.close();
+        defer state.deinit();
 
         const FileCopier = struct {
             pub fn copy(
@@ -1731,7 +1713,7 @@ pub const PackageInstall = struct {
 
         this.file_count = FileCopier.copy(
             state.subdir,
-            &walker_,
+            &state.walker,
             if (Environment.isWindows) state.to_copy_buf else void{},
             if (Environment.isWindows) &state.buf else void{},
             state.to_copy_buf2,

@@ -1772,7 +1772,7 @@ describe("subshell", () => {
   echo $PWD
   `
     .ensureTempDir()
-    .stdout("$TEMP_DIR\n$TEMP_DIR/foo\n$TEMP_DIR\n")
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}foo\n$TEMP_DIR\n`)
     .runAsTest("does not change cwd");
 
   TestBuilder.command`
@@ -1801,7 +1801,7 @@ describe("subshell", () => {
   pwd
   `
     .ensureTempDir()
-    .stdout("$TEMP_DIR/dir\n$TEMP_DIR\n")
+    .stdout(`$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
     .runAsTest("pipeline in subshell");
 
   TestBuilder.command/* sh */ `
@@ -1811,7 +1811,7 @@ describe("subshell", () => {
   pwd
   `
     .ensureTempDir()
-    .stdout("$TEMP_DIR\n$TEMP_DIR/dir\n$TEMP_DIR\n")
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
     .runAsTest("subshell in pipeline");
 
   TestBuilder.command/* sh */ `
@@ -1821,7 +1821,7 @@ describe("subshell", () => {
   pwd
   `
     .ensureTempDir()
-    .stdout("$TEMP_DIR\n$TEMP_DIR/dir\n$TEMP_DIR\n")
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
     .runAsTest("subshell in pipeline");
 
   TestBuilder.command/* sh */ `
@@ -1830,7 +1830,7 @@ describe("subshell", () => {
 
   `
     .ensureTempDir()
-    .stdout("$TEMP_DIR/foo\n")
+    .stdout(`$TEMP_DIR${sep}foo\n`)
     .runAsTest("imbricated subshells and pipelines");
 
   TestBuilder.command/* sh */ `

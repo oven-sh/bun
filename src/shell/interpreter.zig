@@ -5149,12 +5149,12 @@ pub const Interpreter = struct {
         }
 
         /// **WARNING** You should make sure that stdout/stderr does not need IO (e.g. `.needsIO(.stderr)` is false before caling `.writeNoIO(.stderr, buf)`)
-        pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) usize {
+        pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) Maybe(usize) {
             if (comptime io_kind != .stdout and io_kind != .stderr) {
                 @compileError("Bad IO" ++ @tagName(io_kind));
             }
 
-            if (buf.len == 0) return 0;
+            if (buf.len == 0) return Maybe(usize).initResult(0);
 
             var io: *BuiltinIO.Output = &@field(this, @tagName(io_kind));
 
@@ -5163,13 +5163,11 @@ pub const Interpreter = struct {
                 .buf => {
                     log("{s} write to buf len={d} str={s}{s}\n", .{ @tagName(this.kind), buf.len, buf[0..@min(buf.len, 16)], if (buf.len > 16) "..." else "" });
                     io.buf.appendSlice(buf) catch bun.outOfMemory();
-                    return buf.len;
+                    return Maybe(usize).initResult(buf.len);
                 },
                 .arraybuf => {
                     if (io.arraybuf.i >= io.arraybuf.buf.array_buffer.byte_len) {
-                        // TODO is it correct to return an error here? is this error the correct one to return?
-                        // return Maybe(usize).initErr(Syscall.Error.fromCode(bun.C.E.NOSPC, .write));
-                        @panic("TODO shell: forgot this");
+                        return Maybe(usize).initErr(Syscall.Error.fromCode(bun.C.E.NOSPC, .write));
                     }
 
                     const len = buf.len;
@@ -5185,9 +5183,9 @@ pub const Interpreter = struct {
                     @memcpy(slice, buf[0..write_len]);
                     io.arraybuf.i +|= @truncate(write_len);
                     log("{s} write to arraybuf {d}\n", .{ @tagName(this.kind), write_len });
-                    return write_len;
+                    return Maybe(usize).initResult(write_len);
                 },
-                .blob, .ignore => return buf.len,
+                .blob, .ignore => return Maybe(usize).initResult(buf.len),
             }
         }
 

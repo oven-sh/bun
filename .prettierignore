@@ -3,3 +3,4 @@ src/deps
 test/snapshots
 test/js/deno
 src/react-refresh.js
+*.min.js

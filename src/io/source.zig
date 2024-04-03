@@ -2,7 +2,7 @@ const std = @import("std");
 const bun = @import("root").bun;
 const uv = bun.windows.libuv;
 
-const log = bun.Output.scoped(.PipeSource, false);
+const log = bun.Output.scoped(.PipeSource, true);
 
 pub const Source = union(enum) {
     pipe: *Pipe,

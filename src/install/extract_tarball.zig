@@ -338,9 +338,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                     ) catch unreachable;
                     return error.InstallFailed;
                 },
-                .result => break,
+                .result => {
+                    _ = bun.sys.close(dir_to_move);
+                },
             }
-            _ = bun.sys.close(dir_to_move);
+
             break;
         }
     } else {

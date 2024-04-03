@@ -1621,6 +1621,18 @@ pub const PackageInstall = struct {
         if (res.isFail()) return res;
         defer state.deinit();
 
+        var buf2: bun.PathBuffer = undefined;
+        var to_copy_buf2: []u8 = undefined;
+        if (Environment.isPosix) {
+            const cache_dir_path = try bun.getFdPath(state.cached_package_dir.fd, &buf2);
+            if (cache_dir_path.len > 0 and cache_dir_path[cache_dir_path.len - 1] != std.fs.path.sep) {
+                buf2[cache_dir_path.len] = std.fs.path.sep;
+                to_copy_buf2 = buf2[cache_dir_path.len + 1 ..];
+            } else {
+                to_copy_buf2 = buf2[cache_dir_path.len..];
+            }
+        }
+
         const FileCopier = struct {
             pub fn copy(
                 destination_dir: std.fs.Dir,
@@ -1727,8 +1739,8 @@ pub const PackageInstall = struct {
             &state.walker,
             if (Environment.isWindows) state.to_copy_buf else void{},
             if (Environment.isWindows) &state.buf else void{},
-            state.to_copy_buf2,
-            &state.buf2,
+            if (Environment.isWindows) state.to_copy_buf2 else to_copy_buf2,
+            if (Environment.isWindows) &state.buf2 else &buf2,
         ) catch |err| {
             if (comptime Environment.isWindows) {
                 if (err == error.FailedToCopyFile) {

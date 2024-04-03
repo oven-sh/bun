@@ -17,6 +17,8 @@ pub const BunObject = struct {
     pub const generateHeapSnapshot = Bun.generateHeapSnapshot;
     pub const gunzipSync = JSC.wrapStaticMethod(JSZlib, "gunzipSync", true);
     pub const gzipSync = JSC.wrapStaticMethod(JSZlib, "gzipSync", true);
+    pub const zstdDecompressSync = JSC.wrapStaticMethod(JSZstd, "zstdDecompressSync", true);
+    pub const zstdCompressSync = JSC.wrapStaticMethod(JSZstd, "zstdCompressSync", true);
     pub const indexOfLine = Bun.indexOfLine;
     pub const inflateSync = JSC.wrapStaticMethod(JSZlib, "inflateSync", true);
     pub const jest = @import("../test/jest.zig").Jest.call;
@@ -130,6 +132,8 @@ pub const BunObject = struct {
         @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
+        @export(BunObject.zstdDecompressSync, .{ .name = callbackName("zstdDecompressSync") });
+        @export(BunObject.zstdCompressSync, .{ .name = callbackName("zstdCompressSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
         @export(BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
         @export(BunObject.jest, .{ .name = callbackName("jest") });
@@ -230,6 +234,7 @@ const JSBundler = bun.JSC.API.JSBundler;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
+const zstd = @import("../../zstd.zig");
 const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
@@ -5105,6 +5110,100 @@ comptime {
         _ = EnvironmentVariables.Bun__getEnvValue;
     }
 }
+
+pub const JSZstd = struct {
+    export fn zstd_reader_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
+        var reader: *zstd.ZstdReaderArrayList = bun.cast(*zstd.ZstdReaderArrayList, ctx.?);
+        reader.list.deinit(reader.list_allocator);
+        reader.deinit();
+    }
+
+    export fn zstd_compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
+        var compressor: *zstd.ZstdCompressorArrayList = bun.cast(*zstd.ZstdCompressorArrayList, ctx.?);
+        compressor.list.deinit(compressor.list_allocator);
+        compressor.deinit();
+    }
+
+    pub fn zstdDecompressSync(
+        globalThis: *JSGlobalObject,
+        buffer: JSC.Node.StringOrBuffer,
+        options_val_: ?JSValue,
+    ) JSValue {
+        var opts = zstd.Options{};
+        if (options_val_) |options_val| {
+            if (options_val.isObject()) {
+                if (options_val.get(globalThis, "windowLog")) |window| {
+                    opts.window_log_max = window.coerce(i32, globalThis);
+                }
+            }
+        }
+
+        const compressed = buffer.slice();
+        const allocator = JSC.VirtualMachine.get().allocator;
+        var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
+        var reader = zstd.ZstdReaderArrayList.initWithOptions(compressed, &list, allocator, opts) catch |err| {
+            if (err == error.InvalidArgument) {
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
+            }
+
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
+        };
+
+        reader.readAll(true) catch {
+            defer reader.deinit();
+
+            return ZigString.init("Zstd returned an error").toErrorInstance(globalThis);
+        };
+        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
+        reader.list.capacity = reader.list.items.len;
+        reader.list_ptr = &reader.list;
+
+        var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
+        return array_buffer.toJSWithContext(globalThis, reader, zstd_reader_deallocator, null);
+    }
+
+    pub fn zstdCompressSync(
+        globalThis: *JSGlobalObject,
+        buffer: JSC.Node.StringOrBuffer,
+        options_val_: ?JSValue,
+    ) JSValue {
+        var opts = zstd.Options{};
+        if (options_val_) |options_val| {
+            if (options_val.isObject()) {
+                if (options_val.get(globalThis, "windowLog")) |window| {
+                    opts.window_log_max = window.coerce(i32, globalThis);
+                }
+
+                if (options_val.get(globalThis, "level")) |level| {
+                    opts.compression_level = level.coerce(i32, globalThis);
+                }
+            }
+        }
+
+        const compressed = buffer.slice();
+        const allocator = JSC.VirtualMachine.get().allocator;
+        var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
+        var reader = zstd.ZstdCompressorArrayList.initWithOptions(compressed, &list, allocator, opts) catch |err| {
+            if (err == error.InvalidArgument) {
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
+            }
+
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
+        };
+
+        reader.readAll(true) catch {
+            defer reader.deinit();
+
+            return ZigString.init("Zstd returned an error").toErrorInstance(globalThis);
+        };
+        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
+        reader.list.capacity = reader.list.items.len;
+        reader.list_ptr = &reader.list;
+
+        var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
+        return array_buffer.toJSWithContext(globalThis, reader, zstd_compressor_deallocator, null);
+    }
+};
 
 pub const JSZlib = struct {
     export fn reader_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {

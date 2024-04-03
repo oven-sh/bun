@@ -373,7 +373,10 @@ private:
                     /* Skip testing if we can drain anything since that might perform an extra syscall */
                     return s;
                 }
-                // If we return success we actually wanna drain the asyncSocket
+
+                /* We don't want to fall through since we don't want to mess with timeout.
+                 * It makes little sense to drain any backpressure when the user has registered onWritable. */
+                return s;
             }
 
             /* Drain any socket buffer, this might empty our backpressure and thus finish the request */

@@ -266,8 +266,8 @@ public:
                 } else {
                     /* This path is horrible and points towards erroneous usage */
                     asyncSocketData->buffer.append(src, (unsigned int) length);
-                    /* Return that we actually buffered the data so we return success */
-                    return {length, false};
+                    /* Return the failure */
+                    return {length, true};
                 }
             }
 
@@ -276,29 +276,29 @@ public:
         }
 
         if (length) {
-            if (loopData->corkedSocket == this) {
-                /* We are corked */
-                if (LoopData::CORK_BUFFER_SIZE - loopData->corkOffset >= (unsigned int) length) {
-                    /* If the entire chunk fits in cork buffer */
-                    memcpy(loopData->corkBuffer + loopData->corkOffset, src, (unsigned int) length);
-                    loopData->corkOffset += (unsigned int) length;
-                    /* Fall through to default return */
-                } else {
-                    /* Strategy differences between SSL and non-SSL regarding syscall minimizing */
-                    if constexpr (false) {
-                        /* Cork up as much as we can */
-                        unsigned int stripped = LoopData::CORK_BUFFER_SIZE - loopData->corkOffset;
-                        memcpy(loopData->corkBuffer + loopData->corkOffset, src, stripped);
-                        loopData->corkOffset = LoopData::CORK_BUFFER_SIZE;
+            // if (loopData->corkedSocket == this) {
+            //     /* We are corked */
+            //     if (LoopData::CORK_BUFFER_SIZE - loopData->corkOffset >= (unsigned int) length) {
+            //         /* If the entire chunk fits in cork buffer */
+            //         memcpy(loopData->corkBuffer + loopData->corkOffset, src, (unsigned int) length);
+            //         loopData->corkOffset += (unsigned int) length;
+            //         /* Fall through to default return */
+            //     } else {
+            //         /* Strategy differences between SSL and non-SSL regarding syscall minimizing */
+            //         if constexpr (false) {
+            //             /* Cork up as much as we can */
+            //             unsigned int stripped = LoopData::CORK_BUFFER_SIZE - loopData->corkOffset;
+            //             memcpy(loopData->corkBuffer + loopData->corkOffset, src, stripped);
+            //             loopData->corkOffset = LoopData::CORK_BUFFER_SIZE;
 
-                        auto [written, failed] = uncork(src + stripped, length - (int) stripped, optionally);
-                        return {written + (int) stripped, failed};
-                    }
+            //             auto [written, failed] = uncork(src + stripped, length - (int) stripped, optionally);
+            //             return {written + (int) stripped, failed};
+            //         }
 
-                    /* For non-SSL we take the penalty of two syscalls */
-                    return uncork(src, length, optionally);
-                }
-            } else {
+            //         /* For non-SSL we take the penalty of two syscalls */
+            //         return uncork(src, length, optionally);
+            //     }
+            // } else {
                 /* We are not corked */
                 int written = us_socket_write(SSL, (us_socket_t *) this, src, length, nextLength != 0);
 
@@ -318,11 +318,11 @@ public:
                     /* Buffer this chunk */
                     asyncSocketData->buffer.append(src + written, (size_t) (length - written));
 
-                    /* Return that we actually buffered the data so we return success */
-                    return {length, false};
+                     /* Return the failure */
+                    return {length, true};
                 }
                 /* Fall through to default return */
-            }
+            // }
         }
 
         /* Default fall through return */

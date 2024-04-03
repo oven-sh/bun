@@ -1989,10 +1989,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         fn sendWithoutAutoFlusher(this: *@This(), buf: []const u8) bool {
             std.debug.assert(!this.done);
             defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
-            // we never write if we have backpressure we wait for onWritable to be called
-            if (this.hasBackpressure()) {
-                return false;
-            }
 
             if (this.requested_end and !this.res.state().isHttpWriteCalled()) {
                 this.handleFirstWriteIfNecessary();
@@ -2003,28 +1999,23 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 }
                 return success;
             }
-
+            // we clear the onWritable handler so uWS can handle the backpressure for us
+            this.res.clearOnWritable();
+            // let uWS handle backpressure
+            this.has_backpressure = false;
+            this.handleFirstWriteIfNecessary();
             // uWebSockets lacks a tryWrite() function
             // This means that backpressure will be handled by appending to an "infinite" memory buffer
             // It will do the backpressure handling for us
             // so in this scenario, we just append to the buffer
             // and report success
             if (this.requested_end) {
-                this.handleFirstWriteIfNecessary();
                 this.res.end(buf, false);
-                this.has_backpressure = false;
-                return true;
             } else {
-                this.handleFirstWriteIfNecessary();
-                const success = this.res.write(buf);
-                this.has_backpressure = !success;
-                if (this.has_backpressure) {
-                    this.res.onWritable(*@This(), onWritable, this);
-                }
-                return success;
+                _ = this.res.write(buf);
             }
 
-            unreachable;
+            return true;
         }
 
         fn send(this: *@This(), buf: []const u8) bool {
@@ -2053,7 +2044,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // do not write more than available
             // if we do, it will cause this to be delayed until the next call, each time
             // TODO: should we break it in smaller chunks?
-            const chunk = this.readableSlice();
+            const to_write = @min(@as(Blob.SizeType, @truncate(write_offset)), @as(Blob.SizeType, this.buffer.len - 1));
+            const chunk = this.readableSlice()[to_write..];
             // if we have nothing to write, we are done
             if (chunk.len == 0) {
                 if (this.done) {
@@ -2070,7 +2062,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 }
                 if (!this.send(chunk)) {
                     // if we were unable to send it, retry
-                    this.res.onWritable(*@This(), onWritable, this);
                     return false;
                 }
                 this.handleWrote(@as(Blob.SizeType, @truncate(chunk.len)));
@@ -2190,8 +2181,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     this.handleWrote(@as(Blob.SizeType, @truncate(slice.len)));
                     return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(slice.len)) };
                 }
-
-                this.res.onWritable(*@This(), onWritable, this);
             }
             this.wrote_at_start_of_flush = this.wrote;
             this.pending_flush = JSC.JSPromise.create(globalThis);
@@ -2263,7 +2252,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             this.registerAutoFlusher();
-            this.res.onWritable(*@This(), onWritable, this);
 
             return .{ .owned = len };
         }
@@ -2326,7 +2314,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             this.registerAutoFlusher();
-            this.res.onWritable(*@This(), onWritable, this);
 
             return .{ .owned = len };
         }
@@ -2361,7 +2348,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             this.registerAutoFlusher();
-            this.res.onWritable(*@This(), onWritable, this);
             return .{ .owned = @as(Blob.SizeType, @intCast(written)) };
         }
 
@@ -2397,7 +2383,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.finalize();
                 return .{ .result = {} };
             }
-            this.res.onWritable(*@This(), onWritable, this);
             return .{ .result = {} };
         }
 
@@ -2433,11 +2418,15 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             this.markDone();
-            this.flushPromise();
-            this.signal.close(null);
-            this.finalize();
-
-            return .{ .result = JSC.JSValue.jsNumber(this.wrote) };
+            defer this.flushPromise();
+            // this.signal.close(null);
+            // this.finalize();
+            this.pending_flush = JSC.JSPromise.create(globalThis);
+            this.globalThis = globalThis;
+            const value = this.pending_flush.?.asValue(globalThis);
+            value.protect();
+            return .{ .result = value };
+            // return .{ .result = JSC.JSValue.jsNumber(this.wrote) };
         }
 
         pub fn sink(this: *@This()) Sink {
@@ -2451,9 +2440,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             this.aborted = true;
 
-            if (this.hasBackpressure()) {
-                return;
-            }
             this.signal.close(null);
 
             this.flushPromise();
@@ -2486,7 +2472,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             if (!this.sendWithoutAutoFlusher(readable)) {
                 this.auto_flusher.registered = true;
-                this.res.onWritable(*@This(), onWritable, this);
                 return true;
             }
 
@@ -2504,7 +2489,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             this.unregisterAutoFlusher();
-            this.res.clearOnWritable();
             this.allocator.destroy(this);
         }
 
@@ -2512,7 +2496,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         // so it must zero out state instead of make it
         pub fn finalize(this: *@This()) void {
             log("finalize()", .{});
-
+            this.res.clearOnWritable();
             if (!this.done) {
                 this.done = true;
                 this.unregisterAutoFlusher();

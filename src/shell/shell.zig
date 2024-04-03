@@ -928,7 +928,7 @@ pub const Parser = struct {
 
     /// __WARNING__:
     /// If you make a subparser and call some fallible functions on it, you need to catch the errors and call `.continue_from_subparser()`, otherwise errors
-    /// will not propagate upwards.
+    /// will not propagate upwards to the parent.
     pub fn make_subparser(this: *Parser, kind: SubshellKind) Parser {
         const subparser = .{
             .strpool = this.strpool,
@@ -955,21 +955,6 @@ pub const Parser = struct {
     ///
     /// Loosely based on the shell gramar documented in the spec: https://pubs.opengroup.org/onlinepubs/009604499/utilities/xcu_chap02.html#tag_02_10
     pub fn parse(self: *Parser) !AST.Script {
-        // Check for subshell syntax which is not supported rn
-        // for (self.tokens) |tok| {
-        //     switch (tok) {
-        //         .OpenParen => {
-        //             try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
-        //             return ParseError.Expected;
-        //         },
-        //         .CloseParen => {
-        //             try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
-        //             return ParseError.Expected;
-        //         },
-        //         else => {},
-        //     }
-        // }
-
         return try self.parse_impl();
     }
 
@@ -1040,7 +1025,7 @@ pub const Parser = struct {
             }
             try exprs.append(expr);
 
-            // Should we enable this?
+            // This might be necessary, so leaving it here in case it is
             // switch (self.peek()) {
             //     .Eof, .Newline, .Semicolon => {},
             //     else => |t| {
@@ -1457,18 +1442,6 @@ pub const Parser = struct {
         while (try self.parse_atom()) |arg| {
             try name_and_args.append(arg);
         }
-        //         var name_and_args = std.ArrayList(AST.Atom).init(self.alloc);
-        // try name_and_args.append(name);
-        // while (if (self.inside_subshell == null)
-        //     !self.check_any_comptime(&.{ .Semicolon, .Newline, .Eof })
-        // else
-        //     !self.check_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
-        // {
-        //     if (try self.parse_atom()) |arg| {
-        //         try name_and_args.append(arg);
-        //     } else break;
-        // }
-
         const parsed_redirect = try self.parse_redirect();
 
         return .{ .cmd = .{
@@ -1756,69 +1729,6 @@ pub const Parser = struct {
         }
 
         unreachable;
-    }
-
-    fn assert(self: *Parser, toktag: TokenTag) !void {
-        if (@as(TokenTag, self.peek()) == toktag) {
-            _ = self.advance();
-            return true;
-        }
-        try self.add_error("Expected {s} token, but got: {s}", .{ @tagName(toktag), @tagName(self.peek()) });
-        return ParseError.Expected;
-    }
-
-    fn assert_any(self: *Parser, toktags: []const TokenTag) bool {
-        const peeked = @as(TokenTag, self.peek());
-        for (toktags) |tag| {
-            if (peeked == tag) {
-                _ = self.advance();
-                return true;
-            }
-        }
-        const expected_str = brk: {
-            var buf: [1024]u8 = undefined;
-            var i: usize = 0;
-            for (toktags, 0..) |tag, idx| {
-                const name = @tagName(tag);
-                if (idx != toktags.len - 1) {
-                    const written_slice = std.fmt.bufPrint(buf[i..], "{s}, ", .{name}) catch @panic("This shouldn't happen");
-                    i += written_slice;
-                } else {
-                    const written_slice = std.fmt.bufPrint(buf[i..], "{s}", .{name}) catch @panic("This shouldn't happen");
-                    i += written_slice;
-                }
-            }
-            break :brk buf[0..i];
-        };
-        try self.add_error("Expected one of the: {s} tokens, but got: {s}", .{ expected_str, @tagName(self.peek()) });
-        return false;
-    }
-
-    fn assert_any_comptime(self: *Parser, comptime toktags: []const TokenTag) bool {
-        const peeked = @as(TokenTag, self.peek());
-        inline for (toktags) |tag| {
-            if (peeked == tag) {
-                _ = self.advance();
-                return true;
-            }
-        }
-        const expected_str = comptime brk: {
-            var buf: [1024]u8 = undefined;
-            var i: usize = 0;
-            for (toktags, 0..) |tag, idx| {
-                const name = @tagName(tag);
-                if (idx != toktags.len - 1) {
-                    const written_slice = std.fmt.bufPrint(buf[i..], "{s}, ", .{name}) catch @panic("This shouldn't happen");
-                    i += written_slice;
-                } else {
-                    const written_slice = std.fmt.bufPrint(buf[i..], "{s}", .{name}) catch @panic("This shouldn't happen");
-                    i += written_slice;
-                }
-            }
-            break :brk buf[0..i];
-        };
-        try self.add_error("Expected one of the: {s} tokens, but got: {s}", .{ expected_str, @tagName(self.peek()) });
-        return false;
     }
 
     fn delimits(self: *Parser, tok: Token) bool {

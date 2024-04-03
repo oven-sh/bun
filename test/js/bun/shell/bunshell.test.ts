@@ -1730,12 +1730,6 @@ if [[ "123abc" == *?(a)bc ]]; then echo ok 43; else echo bad 43; fi
   });
 });
 
-// describe("hello", () => {
-//   test("hi", () => {
-//     // throw new Error("hi");
-//   });
-// });
-
 describe("subshell", () => {
   TestBuilder.command/* sh */ `( ( ( ( echo HI! ) ) ) )`.stdout("HI!\n").runAsTest("multiple levels");
   TestBuilder.command/* sh */ `(

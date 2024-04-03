@@ -52,7 +52,6 @@ const SmolList = shell.SmolList;
 
 const GlobWalker = @import("../glob.zig").GlobWalker_(null, true);
 
-// pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue.";
 const stdin_no = 0;
 const stdout_no = 1;
 const stderr_no = 2;
@@ -3141,7 +3140,6 @@ pub const Interpreter = struct {
                     },
                     // in a pipeline assignments have no effect
                     .assigns => {},
-                    // .subshell => @panic(SUBSHELL_TODO_ERROR),
                 }
             }
 

@@ -316,7 +316,7 @@ option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
 
 if(NOT ZIG_LIB_DIR)
-    set(ZIG_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/zig/lib")
+    cmake_path(SET ZIG_LIB_DIR NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/zig/lib")
 endif()
 
 if(USE_VALGRIND)
@@ -859,6 +859,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "--zig-lib-dir" "${ZIG_LIB_DIR}"
         "-Doutput-file=${BUN_ZIG_OBJ}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
+        "-freference-trace=10"
         "-Dversion=${Bun_VERSION}"
         "-Dcanary=${CANARY}"
         "-Doptimize=${ZIG_OPTIMIZE}"

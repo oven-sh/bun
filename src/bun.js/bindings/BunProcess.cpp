@@ -279,6 +279,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     }
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
+    if (filename.isEmpty()) {
+        JSC::throwTypeError(globalObject, scope, "dlopen requires a non-empty string as the second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    if (filename.startsWith("file://"_s)) {
+        WTF::URL fileURL = WTF::URL(filename);
+        if (!fileURL.isValid() || !fileURL.protocolIsFile()) {
+            JSC::throwTypeError(globalObject, scope, "invalid file: URL passed to dlopen"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        filename = fileURL.fileSystemPath();
+    }
+
     // Support embedded .node files
     // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
 #if OS(WINDOWS)

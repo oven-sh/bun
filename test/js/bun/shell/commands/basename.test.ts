@@ -28,4 +28,10 @@ describe("basename", async () => {
     .stdout("Summer2018.pdf\n")
     .stderr("")
     .runAsTest("works windows");
+
+  TestBuilder.command`basename /catalog/`.exitCode(0).stdout("catalog\n").stderr("").runAsTest("leading slash");
+
+  TestBuilder.command`basename /catalog`.exitCode(0).stdout("catalog\n").stderr("").runAsTest("at root");
+
+  TestBuilder.command`basename /`.exitCode(0).stdout("/\n").stderr("").runAsTest("root is idempotent");
 });

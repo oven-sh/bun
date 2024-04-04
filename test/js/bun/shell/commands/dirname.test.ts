@@ -28,4 +28,10 @@ describe("dirname", async () => {
     .stdout("C:/Documents/Newsletters\n")
     .stderr("")
     .runAsTest("works windows");
+
+  TestBuilder.command`dirname /catalog/`.exitCode(0).stdout("/\n").stderr("").runAsTest("leading slash");
+
+  TestBuilder.command`dirname /catalog`.exitCode(0).stdout("/\n").stderr("").runAsTest("at root");
+
+  TestBuilder.command`dirname /`.exitCode(0).stdout("/\n").stderr("").runAsTest("root is idempotent");
 });

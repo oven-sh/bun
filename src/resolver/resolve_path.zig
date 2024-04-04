@@ -479,6 +479,8 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
         },
         .posix => {
             const separator = lastIndexOfSeparatorPosix(str) orelse return "";
+            if (separator == 0) return "/";
+            if (separator == str.len - 1) return dirname(str[0 .. str.len - 1], platform);
             return str[0..separator];
         },
         .windows => {
@@ -2005,7 +2007,7 @@ pub fn basename(path: []const u8) []const u8 {
     var end_index: usize = path.len - 1;
     while (isSepAny(path[end_index])) {
         if (end_index == 0)
-            return &[_]u8{};
+            return "/";
         end_index -= 1;
     }
     var start_index: usize = end_index;

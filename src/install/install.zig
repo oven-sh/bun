@@ -1396,7 +1396,7 @@ pub const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     if (comptime Environment.isWindows) {
                         switch (entry.kind) {
-                            .directory, .file => {},
+                            .directory, .file, .sym_link => {},
                             else => continue,
                         }
 
@@ -1539,10 +1539,7 @@ pub const PackageInstall = struct {
                             else => {},
                         }
                     } else {
-                        switch (entry.kind) {
-                            .file => {},
-                            else => continue,
-                        }
+                        if (entry.kind != .file and entry.kind != .sym_link) continue;
 
                         if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
                             return error.NameTooLong;

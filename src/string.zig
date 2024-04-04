@@ -121,6 +121,13 @@ pub const WTFStringImplStruct = extern struct {
         return ZigString.Slice.init(this.refCountAllocator(), this.latin1Slice());
     }
 
+    extern fn Bun__WTFStringImpl__ensureHash(this: WTFStringImpl) void;
+    /// Compute the hash() if necessary
+    pub fn ensureHash(this: WTFStringImpl) void {
+        JSC.markBinding(@src());
+        Bun__WTFStringImpl__ensureHash(this);
+    }
+
     pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.is8Bit()) {
             if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
@@ -288,6 +295,10 @@ pub const String = extern struct {
         return this.tag == Tag.ZigString and this.value.ZigString.isGloballyAllocated();
     }
 
+    pub fn ensureHash(this: String) void {
+        if (this.tag == .WTFStringImpl) this.value.WTFStringImpl.ensureHash();
+    }
+
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
         switch (this.tag) {
             .ZigString => return try this.value.ZigString.toOwnedSlice(allocator),
@@ -306,6 +317,16 @@ pub const String = extern struct {
             .Empty => return &[_]u8{},
             else => unreachable,
         }
+    }
+
+    pub fn createIfDifferent(other: String, utf8_slice: []const u8) String {
+        if (other.tag == .WTFStringImpl) {
+            if (other.eqlUTF8(utf8_slice)) {
+                return other.dupeRef();
+            }
+        }
+
+        return createUTF8(utf8_slice);
     }
 
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
@@ -376,11 +397,19 @@ pub const String = extern struct {
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
+    pub fn createFormat(comptime fmt: []const u8, args: anytype) !String {
+        var sba = std.heap.stackFallback(16384, bun.default_allocator);
+        const alloc = sba.get();
+        const buf = try std.fmt.allocPrint(alloc, fmt, args);
+        defer alloc.free(buf);
+        return createUTF8(buf);
+    }
+
     pub fn createFromOSPath(os_path: bun.OSPathSlice) String {
         return switch (@TypeOf(os_path)) {
             []const u8 => createUTF8(os_path),
             []const u16 => createUTF16(os_path),
-            else => comptime unreachable,
+            else => @compileError("unreachable"),
         };
     }
 
@@ -512,7 +541,12 @@ pub const String = extern struct {
         callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void,
     ) String;
 
-    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void) String {
+    /// ctx is the pointer passed into `createExternal`
+    /// buffer is the pointer to the buffer, either [*]u8 or [*]u16
+    /// len is the number of characters in that buffer.
+    pub const ExternalStringImplFreeFunction = fn (ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void;
+
+    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
         JSC.markBinding(@src());
         std.debug.assert(bytes.len > 0);
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
@@ -896,8 +930,6 @@ pub const String = extern struct {
         }
     }
 
-    pub const unref = deref;
-
     pub fn eqlComptime(this: String, comptime value: []const u8) bool {
         return this.toZigString().eqlComptime(value);
     }
@@ -1154,7 +1186,7 @@ pub const String = extern struct {
         return try concat(strings.len, allocator, strings);
     }
 
-    pub export fn BunString__getStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub export fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {

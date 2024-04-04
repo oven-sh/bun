@@ -214,7 +214,7 @@ class Database {
     }
 
     if (!SQL) {
-      SQL = $lazy("sqlite");
+      SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
     }
 
     this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags);
@@ -249,7 +249,7 @@ class Database {
 
   static #deserialize(serialized, isReadOnly = false) {
     if (!SQL) {
-      SQL = $lazy("sqlite");
+      SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
     }
 
     return SQL.deserialize(serialized, isReadOnly);
@@ -261,7 +261,7 @@ class Database {
 
   static setCustomSQLite(path) {
     if (!SQL) {
-      SQL = $lazy("sqlite");
+      SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
     }
 
     return SQL.setCustomSQLite(path);

@@ -10,9 +10,6 @@ let x_dir: string;
 beforeEach(async () => {
   x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test")));
 });
-afterEach(async () => {
-  await rm(x_dir, { force: true, recursive: true });
-});
 
 describe("should not crash", async () => {
   const args = [

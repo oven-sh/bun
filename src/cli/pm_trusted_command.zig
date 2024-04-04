@@ -5,6 +5,7 @@ const logger = bun.logger;
 const Environment = bun.Environment;
 const Command = @import("../cli.zig").Command;
 const Install = @import("../install/install.zig");
+const LifecycleScriptSubprocess = Install.LifecycleScriptSubprocess;
 const PackageID = Install.PackageID;
 const String = @import("../install/semver.zig").String;
 const PackageManager = Install.PackageManager;
@@ -100,14 +101,19 @@ pub const UntrustedCommand = struct {
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
 
-                    if (try package_scripts.getList(
+                    const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
                         node_modules_dir,
                         abs_node_modules_path.items,
                         alias,
                         resolution,
-                    )) |scripts_list| {
+                    ) catch |err| {
+                        if (err == error.ENOENT) continue;
+                        return err;
+                    };
+
+                    if (maybe_scripts_list) |scripts_list| {
                         if (scripts_list.total == 0 or scripts_list.items.len == 0) continue;
                         try untrusted_deps.put(ctx.allocator, dep_id, scripts_list);
                     }
@@ -263,14 +269,19 @@ pub const TrustCommand = struct {
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
 
-                    if (try package_scripts.getList(
+                    const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
                         node_modules_dir,
                         abs_node_modules_path.items,
                         alias,
                         resolution,
-                    )) |scripts_list| {
+                    ) catch |err| {
+                        if (err == error.ENOENT) continue;
+                        return err;
+                    };
+
+                    if (maybe_scripts_list) |scripts_list| {
                         const skip = brk: {
                             if (trust_all) break :brk false;
 
@@ -329,8 +340,17 @@ pub const TrustCommand = struct {
                 for (entry.items) |info| {
                     if (info.skip) continue;
 
+                    while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= pm.options.max_concurrent_lifecycle_scripts) {
+                        if (pm.options.log_level.isVerbose()) {
+                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.Monotonic)});
+                        }
+
+                        pm.sleep();
+                    }
+
+                    const output_in_foreground = false;
                     switch (pm.options.log_level) {
-                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, info.scripts_list, log_level),
+                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, info.scripts_list, log_level, output_in_foreground),
                     }
 
                     if (pm.options.log_level.showProgress()) {
@@ -340,7 +360,7 @@ pub const TrustCommand = struct {
                 }
 
                 while (pm.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                    pm.event_loop.loop().tick();
+                    pm.sleep();
                 }
             }
         }

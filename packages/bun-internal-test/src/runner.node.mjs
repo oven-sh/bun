@@ -12,6 +12,7 @@ import PQueue from "p-queue";
 const run_start = new Date();
 const TIMEOUT_DURATION = 1000 * 60 * 5;
 const SHORT_TIMEOUT_DURATION = Math.ceil(TIMEOUT_DURATION / 5);
+
 function defaultConcurrency() {
   // This causes instability due to the number of open file descriptors / sockets in some tests
   // Windows has higher limits
@@ -30,6 +31,22 @@ let force_ram_size = Number(BigInt(nativeMemory) >> BigInt(2)) + "";
 if (!(Number.isSafeInteger(force_ram_size_input) && force_ram_size_input > 0)) {
   force_ram_size = force_ram_size_input + "";
 }
+function uncygwinTempDir() {
+  if (process.platform === "win32") {
+    for (let key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP"]) {
+      let TMPDIR = process.env[key] || "";
+      if (!/^\/[a-zA-Z]\//.test(TMPDIR)) {
+        continue;
+      }
+
+      const driveLetter = TMPDIR[1];
+      TMPDIR = path.win32.normalize(`${driveLetter.toUpperCase()}:` + TMPDIR.substring(2));
+      process.env[key] = TMPDIR;
+    }
+  }
+}
+
+uncygwinTempDir();
 
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
@@ -130,8 +147,6 @@ function lookupWindowsError(code) {
 
 const failing_tests = [];
 const passing_tests = [];
-const fixes = [];
-const regressions = [];
 let maxFd = -1;
 function getMaxFileDescriptor(path) {
   if (process.platform === "win32") {
@@ -196,13 +211,6 @@ async function runTest(path) {
   const thisTestNumber = currentTestNumber++;
   const name = path.replace(cwd, "").slice(1);
   let exitCode, signal, err, output;
-
-  const expected_crash_reason = windows
-    ? await readFile(resolve(path), "utf-8").then(data => {
-        const match = data.match(/@known-failing-on-windows:(.*)\n/);
-        return match ? match[1].trim() : null;
-      })
-    : null;
 
   const start = Date.now();
 
@@ -353,7 +361,7 @@ Starting "${name}"
 
   console.log(
     `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
-      passed ? "\x1b[32m✔" : expected_crash_reason ? "\x1b[33m⚠" : "\x1b[31m✖"
+      passed ? "\x1b[32m✔" : "\x1b[31m✖"
     } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
   );
 
@@ -368,20 +376,10 @@ Starting "${name}"
   }
 
   if (!passed) {
-    if (reason) {
-      if (windows && !expected_crash_reason) {
-        regressions.push({ path: name, reason, output });
-      }
-    }
-
-    failing_tests.push({ path: name, reason, output, expected_crash_reason });
+    failing_tests.push({ path: name, reason, output });
     process.exitCode = 1;
     if (err) console.error(err);
   } else {
-    if (windows && expected_crash_reason !== null) {
-      fixes.push({ path: name, output, expected_crash_reason });
-    }
-
     passing_tests.push(name);
   }
 
@@ -479,30 +477,6 @@ ${header}
 
 `;
 
-if (fixes.length > 0) {
-  report += `## Fixes\n\n`;
-  report += "The following tests had @known-failing-on-windows but now pass:\n\n";
-  report += fixes
-    .map(
-      ({ path, expected_crash_reason }) => `- [\`${path}\`](${sectionLink(path)}) (before: ${expected_crash_reason})`,
-    )
-    .join("\n");
-  report += "\n\n";
-}
-
-if (regressions.length > 0) {
-  report += `## Regressions\n\n`;
-  report += regressions
-    .map(
-      ({ path, reason, expected_crash_reason }) =>
-        `- [\`${path}\`](${sectionLink(path)}) ${reason}${
-          expected_crash_reason ? ` (expected: ${expected_crash_reason})` : ""
-        }`,
-    )
-    .join("\n");
-  report += "\n\n";
-}
-
 if (failingTestDisplay.length > 0) {
   report += `## Failing tests\n\n`;
   report += failingTestDisplay;
@@ -517,17 +491,10 @@ if (failingTestDisplay.length > 0) {
 
 if (failing_tests.length) {
   report += `## Failing tests log output\n\n`;
-  for (const { path, output, reason, expected_crash_reason } of failing_tests) {
+  for (const { path, output, reason } of failing_tests) {
     report += `### ${path}\n\n`;
     report += "[Link to file](" + linkToGH(path) + ")\n\n";
-    if (windows && reason !== expected_crash_reason) {
-      report += `To mark this as a known failing test, add this to the start of the file:\n`;
-      report += `\`\`\`ts\n`;
-      report += `// @known-failing-on-windows: ${reason}\n`;
-      report += `\`\`\`\n\n`;
-    } else {
-      report += `${reason}\n\n`;
-    }
+    report += `${reason}\n\n`;
     report += "```\n";
     report += output
       .replace(/\x1b\[[0-9;]*m/g, "")
@@ -542,18 +509,12 @@ writeFileSync(
   JSON.stringify({
     failing_tests,
     passing_tests,
-    fixes,
-    regressions,
   }),
 );
 
 console.log("-> test-report.md, test-report.json");
 
 if (ci) {
-  if (windows) {
-    action.setOutput("regressing_tests", regressions.map(({ path }) => `- \`${path}\``).join("\n"));
-    action.setOutput("regressing_test_count", regressions.length);
-  }
   if (failing_tests.length > 0) {
     action.setFailed(`${failing_tests.length} files with failing tests`);
   }
@@ -565,12 +526,6 @@ if (ci) {
   }
   action.summary.addRaw(truncated_report);
   await action.summary.write();
-} else {
-  if (windows && (regressions.length > 0 || fixes.length > 0)) {
-    console.log(
-      "\n\x1b[34mnote\x1b[0;2m:\x1b[0m If you would like to update the @known-failing-on-windows annotations, run `bun update-known-failures`",
-    );
-  }
 }
 
 process.exit(failing_tests.length ? 1 : process.exitCode);

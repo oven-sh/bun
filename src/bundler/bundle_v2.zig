@@ -804,7 +804,7 @@ pub const BundleV2 = struct {
 
         if (this.bundler.router) |router| {
             defer this.bundler.resetStore();
-            Analytics.Features.filesystem_router = true;
+            Analytics.Features.filesystem_router += 1;
 
             const entry_points = try router.getEntryPoints();
             try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, entry_points.len);
@@ -2344,7 +2344,7 @@ pub const ParseTask = struct {
         // runtime here.
         const runtime_require = switch (target) {
             // __require is intentionally not implemented here, as we
-            // always inline 'import.meta.require' and 'import.meta.resolveSync'
+            // always inline 'import.meta.require' and 'import.meta.require.resolve'
             // Omitting it here acts as an extra assertion.
             .bun, .bun_macro => "",
 

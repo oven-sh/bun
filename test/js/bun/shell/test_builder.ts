@@ -16,9 +16,12 @@ export class TestBuilder {
   private expected_error: ShellError | string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
   private _doesNotExist: string[] = [];
+  private _timeout: number | undefined = undefined;
 
   private tempdir: string | undefined = undefined;
   private _env: { [key: string]: string } | undefined = undefined;
+
+  private __todo: boolean | string = false;
 
   static UNEXPECTED_SUBSHELL_ERROR_OPEN =
     "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
@@ -30,10 +33,20 @@ export class TestBuilder {
     this.promise = promise;
   }
 
+  /**
+   * Start the test builder with a command:
+   *
+   * @example
+   * ```ts
+   * await TestBuilder.command`echo hi!`.stdout('hi!\n').run()
+
+   * TestBuilder.command`echo hi!`.stdout('hi!\n').runAsTest('echo works')
+   * ```
+   */
   static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
     try {
       if (process.env.BUN_DEBUG_SHELL_LOG_CMD === "1") console.info("[ShellTestBuilder] Cmd", strings.join(""));
-      const promise = Bun.$(strings, ...expressions);
+      const promise = Bun.$(strings, ...expressions).nothrow();
       const This = new this({ type: "ok", val: promise });
       This._testName = strings.join("");
       return This;
@@ -53,6 +66,20 @@ export class TestBuilder {
     return this;
   }
 
+  /**
+   * Create a file in a temp directory
+   * @param path Path to the new file, this will be inside the TestBuilder's temp directory
+   * @param contents Contents of the new file
+   * @returns
+   *
+   * @example
+   * ```ts
+   * TestBuilder.command`ls .`
+   *   .file('hi.txt', 'hi!')
+   *   .file('hello.txt', 'hello!')
+   *   .runAsTest('List files')
+   * ```
+   */
   file(path: string, contents: string): this {
     const tempdir = this.getTempDir();
     fs.writeFileSync(join(tempdir, path), contents);
@@ -76,6 +103,11 @@ export class TestBuilder {
     return this;
   }
 
+  /**
+   * Expect output from stdout
+   *
+   * @param expected - can either be a string or a function which itself calls `expect()`
+   */
   stdout(expected: string | ((stdout: string, tempDir: string) => void)): this {
     this.expected_stdout = expected;
     return this;
@@ -86,6 +118,12 @@ export class TestBuilder {
     return this;
   }
 
+  /**
+   * Makes this test use a temp directory:
+   * - The shell's cwd will be set to the temp directory
+   * - All FS functions on the `TestBuilder` will use this temp directory.
+   * @returns
+   */
   ensureTempDir(): this {
     this.getTempDir();
     return this;
@@ -135,6 +173,11 @@ export class TestBuilder {
       return this.tempdir!;
     }
     return this.tempdir;
+  }
+
+  timeout(ms: number): this {
+    this._timeout = ms;
+    return this;
   }
 
   async run(): Promise<undefined> {
@@ -187,12 +230,27 @@ export class TestBuilder {
     // return output;
   }
 
+  todo(reason?: string): this {
+    this.__todo = typeof reason === "string" ? reason : true;
+    return this;
+  }
+
   runAsTest(name: string) {
     // biome-ignore lint/complexity/noUselessThisAlias: <explanation>
     const tb = this;
-    test(name, async () => {
-      await tb.run();
-    });
+    if (this.__todo) {
+      test.todo(typeof this.__todo === "string" ? `${name} skipped: ${this.__todo}` : name, async () => {
+        await tb.run();
+      });
+    } else {
+      test(
+        name,
+        async () => {
+          await tb.run();
+        },
+        this._timeout,
+      );
+    }
   }
 
   // async run(): Promise<undefined> {

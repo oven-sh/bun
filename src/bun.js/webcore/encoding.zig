@@ -599,7 +599,7 @@ pub const TextDecoder = struct {
         };
 
         if (arguments.len > 1 and arguments[1].isObject()) {
-            if (arguments[1].get(globalThis, "stream")) |stream| {
+            if (arguments[1].fastGet(globalThis, .stream)) |stream| {
                 if (stream.coerce(bool, globalThis)) {
                     return this.decodeSlice(globalThis, array_buffer.slice(), true);
                 }
@@ -652,10 +652,9 @@ pub const TextDecoder = struct {
                     } else |err| {
                         switch (err) {
                             error.InvalidByteSequence => {
-                                globalThis.throwValue(
-                                    globalThis.createTypeErrorInstance("Invalid byte sequence", .{}),
-                                );
-                                return JSValue.zero;
+                                const type_error = globalThis.createErrorInstanceWithCode(.ERR_ENCODING_INVALID_ENCODED_DATA, "Invalid byte sequence", .{});
+                                globalThis.throwValue(type_error);
+                                return .zero;
                             },
                             error.OutOfMemory => {
                                 globalThis.throwOutOfMemory();

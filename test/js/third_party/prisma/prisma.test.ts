@@ -1,5 +1,3 @@
-// @known-failing-on-windows: 1 failing
-
 import { test as bunTest, it as bunIt, expect, describe } from "bun:test";
 import { generate, generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
@@ -191,7 +189,7 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
 
         for (let i = 0; i < 10; i++) {
           const loadAllUsers10Times = await Promise.all(
-            new Array(10).fill(0).map(() => prisma.user.findMany({ where: { testId } })),
+            new Array(10).fill(0).map(() => prisma.user.findMany({ where: { testId }, orderBy: { id: "asc" } })),
           );
           for (const users of loadAllUsers10Times) {
             expect(users).toEqual(createdUsers);
@@ -207,7 +205,12 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
     );
 
     bunIt("generates client successfully", async () => {
-      generate(type);
+      try {
+        generate(type);
+      } catch (err: any) {
+        // already generated from previous test, ignore error
+        if (err.message.indexOf("EPERM: operation not permitted, unlink") === -1) throw err;
+      }
     });
   });
 });

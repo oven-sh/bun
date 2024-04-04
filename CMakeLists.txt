@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.30")
-set(WEBKIT_TAG 089023cc9078b3aa173869fd6685f3e7bed2a994)
+set(Bun_VERSION "1.1.1")
+set(WEBKIT_TAG 2475726ed0329ab2d2a92daf73e12ee1e485d575)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -47,6 +47,45 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             set(bun "bun-profile")
         endif()
     endif()
+endif()
+
+# --- MacOS SDK ---
+if(APPLE AND DEFINED ENV{CI})
+    if(ARCH STREQUAL "x86_64")
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
+    else()
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+    endif()
+endif()
+
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    execute_process(COMMAND xcrun --show-sdk-path OUTPUT_VARIABLE SDKROOT)
+    string(STRIP ${SDKROOT} SDKROOT)
+    message(STATUS "MacOS SDK path: ${SDKROOT}")
+    SET(CMAKE_OSX_SYSROOT ${SDKROOT})
+
+    execute_process(COMMAND xcrun --sdk macosx --show-sdk-version OUTPUT_VARIABLE MACOSX_DEPLOYMENT_TARGET)
+    string(STRIP ${MACOSX_DEPLOYMENT_TARGET} MACOSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET ${MACOSX_DEPLOYMENT_TARGET})
+
+    # Check if current version of macOS is less than the deployment target and if so, raise an error
+    execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE MACOS_VERSION)
+    string(STRIP ${MACOS_VERSION} MACOS_VERSION)
+
+    if(MACOS_VERSION VERSION_LESS ${MACOSX_DEPLOYMENT_TARGET})
+        message(WARNING
+            "The current version of macOS (${MACOS_VERSION}) is less than the deployment target (${MACOSX_DEPLOYMENT_TARGET}).\n"
+            "The build will be incompatible with your current device due to mismatches in `icucore` versions.\n"
+            "To fix this, please either:\n"
+            " - Upgrade to at least macOS ${MACOSX_DEPLOYMENT_TARGET}\n"
+            " - Use `xcode-select` to switch to an SDK version <= ${MACOS_VERSION}\n"
+            " - Set CMAKE_OSX_DEPLOYMENT_TARGET=${MACOS_VERSION} (make sure to build all dependencies with this variable set too)"
+        )
+    endif()
+endif()
+
+if(APPLE)
+    message(STATUS "Building for macOS v${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif()
 
 # --- LLVM ---
@@ -247,7 +286,7 @@ endif()
 if(UNIX AND NOT APPLE)
     execute_process(COMMAND grep -w "NAME" /etc/os-release OUTPUT_VARIABLE LINUX_DISTRO)
 
-    if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"\n")
+    if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"|NAME=\"openSUSE Tumbleweed\"\n")
         set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
     endif()
 endif()
@@ -275,6 +314,10 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+if(NOT ZIG_LIB_DIR)
+    cmake_path(SET ZIG_LIB_DIR NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/zig/lib")
+endif()
 
 if(USE_VALGRIND)
     # Disable SIMD
@@ -486,7 +529,7 @@ if(NOT WEBKIT_DIR)
     set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include")
 
     if(APPLE)
-        set(ICU_INCLUDE_DIR "${HOMEBREW_PREFIX}/opt/icu4c/include")
+        set(ICU_INCLUDE_DIR "")
     else()
         set(ICU_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include/wtf/unicode")
     endif()
@@ -706,19 +749,26 @@ if(NOT NO_CODEGEN)
     file(GLOB BUN_TS_MODULES ${CONFIGURE_DEPENDS}
         "${BUN_SRC}/js/node/*.ts"
         "${BUN_SRC}/js/node/*.js"
-        "${BUN_SRC}/js/bun/*.js"
         "${BUN_SRC}/js/bun/*.ts"
+        "${BUN_SRC}/js/bun/*.js"
+        "${BUN_SRC}/js/builtins/*.ts"
+        "${BUN_SRC}/js/builtins/*.js"
         "${BUN_SRC}/js/thirdparty/*.js"
         "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal/*.js"
         "${BUN_SRC}/js/internal/*.ts"
+        "${BUN_SRC}/js/node/*.js"
+        "${BUN_SRC}/js/node/*.ts"
+        "${BUN_SRC}/js/thirdparty/*.js"
+        "${BUN_SRC}/js/thirdparty/*.ts"
     )
-    file(GLOB BUN_TS_FUNCTIONS ${CONFIGURE_DEPENDS} "${BUN_SRC}/js/builtins/*.ts")
 
     file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")
 
     add_custom_command(
         OUTPUT
+        "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
+        "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
         "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
         "${BUN_WORKDIR}/codegen/InternalModuleRegistry+createInternalModuleById.h"
         "${BUN_WORKDIR}/codegen/InternalModuleRegistry+enum.h"
@@ -726,25 +776,18 @@ if(NOT NO_CODEGEN)
         "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
         "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
+        "${BUN_WORKDIR}/codegen/GeneratedJS2Native.h"
+        "${BUN_SRC}/bun.js/bindings/GeneratedJS2Native.zig"
         COMMAND ${BUN_EXECUTABLE} run "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
         DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Bundling JS modules"
+        COMMENT "Bundling JS"
     )
 endif()
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
     "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
     "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
-)
-
-add_custom_command(
-    OUTPUT "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
-    "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
-    COMMAND ${BUN_EXECUTABLE} run "${BUN_SRC}/codegen/bundle-functions.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
-    DEPENDS ${BUN_TS_FUNCTIONS} ${CODEGEN_FILES}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Bundling JS builtin functions"
 )
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
@@ -813,8 +856,10 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         OUTPUT "${BUN_ZIG_OBJ}"
         COMMAND
         "${ZIG_COMPILER}" "build" "obj"
+        "--zig-lib-dir" "${ZIG_LIB_DIR}"
         "-Doutput-file=${BUN_ZIG_OBJ}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
+        "-freference-trace=10"
         "-Dversion=${Bun_VERSION}"
         "-Dcanary=${CANARY}"
         "-Doptimize=${ZIG_OPTIMIZE}"
@@ -827,6 +872,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
         "${BUN_IDENTIFIER_CACHE_OUT}"
         "${BUN_SRC}/api/schema.zig"
+        "${BUN_SRC}/bun.js/bindings/GeneratedJS2Native.zig"
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Building zig code"
         VERBATIM
@@ -970,6 +1016,14 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
+            -Werror=uninitialized
+            -Werror=conditional-uninitialized
+            -Werror=suspicious-memaccess
+            -Werror=move
+            -Werror=sometimes-uninitialized
+            -Werror=unused
+            -Wno-unused-function
+            -Werror
         )
     else()
         target_compile_options(${bun} PUBLIC /Od /Z7)
@@ -984,16 +1038,24 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
         endif()
 
+        # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
         target_compile_options(${bun} PUBLIC -O3 ${LTO_FLAG} -g1
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
+            -Werror=uninitialized
+            -Werror=conditional-uninitialized
+            -Werror=suspicious-memaccess
+            -Werror=move
+            -Werror=sometimes-uninitialized
+            -Werror
         )
     else()
         set(LTO_LINK_FLAG "")
 
         if(USE_LTO)
-            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+            # -emit-llvm seems to not be supported or under a different name on Windows.
+            list(APPEND LTO_FLAG "-flto=full")
             list(APPEND LTO_LINK_FLAG "/LTCG")
         endif()
 
@@ -1050,16 +1112,6 @@ else()
 endif()
 
 if(APPLE)
-    # this is gated to avoid the following warning when developing on modern versions of macOS.
-    # ld: warning: object file (/opt/homebrew/opt/icu4c/lib/libicudata.a[2](icudt73l_dat.o)) was built for newer 'macOS' version (14.0) than being linked (11.0)
-    if(DEFINED ENV{CI})
-    if(ARCH STREQUAL "x86_64")
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
-    else()
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
-    endif()
-    endif()
-
     target_link_options(${bun} PUBLIC "-dead_strip")
     target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
     target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
@@ -1125,21 +1177,7 @@ endif()
 
 # --- ICU ---
 if(APPLE)
-    # TODO: a much better check can be done to find this path
-    find_path(
-        ICU4C_DIR NAMES lib/libicudata.a
-        PATHS ENV PATH /usr/local/opt/icu4c /opt/homebrew/opt/icu4c
-    )
-    find_path(
-        ICONV_DIR NAMES lib/libiconv.a
-        PATHS ENV PATH /usr/local/opt/libiconv /opt/homebrew/opt/libiconv
-    )
-
     target_link_libraries(${bun} PRIVATE "icucore")
-    target_link_libraries(${bun} PRIVATE "${ICONV_DIR}/lib/libiconv.a")
-    target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicudata.a")
-    target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicui18n.a")
-    target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicuuc.a")
 endif()
 
 # --- Stripped Binary "bun"

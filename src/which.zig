@@ -23,6 +23,7 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         std.debug.assert(result_converted.ptr == buf.ptr);
         return buf[0..result_converted.len :0];
     }
+
     if (bin.len == 0) return null;
 
     // handle absolute paths
@@ -31,16 +32,22 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         buf[bin.len] = 0;
         const binZ: [:0]u8 = buf[0..bin.len :0];
         if (bun.sys.isExecutableFilePath(binZ)) return binZ;
-
-        // note that directories are often executable
-        // TODO: should we return null here? What about the case where ytou have
-        //   /foo/bar/baz as a path and you're in /home/jarred?
+        // Do not look absolute paths in $PATH
+        return null;
     }
 
-    if (cwd.len > 0) {
-        if (isValid(buf, std.mem.trimRight(u8, cwd, std.fs.path.sep_str), bin)) |len| {
-            return buf[0..len :0];
+    if (bun.strings.containsChar(bin, '/')) {
+        if (cwd.len > 0) {
+            if (isValid(
+                buf,
+                std.mem.trimRight(u8, cwd, std.fs.path.sep_str),
+                bun.strings.withoutPrefixComptime(bin, "./"),
+            )) |len| {
+                return buf[0..len :0];
+            }
         }
+        // Do not lookup paths with slashes in $PATH
+        return null;
     }
 
     var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
@@ -53,12 +60,16 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
     return null;
 }
 
-const win_extensionsW = .{
+const win_extensionsW = [_][:0]const u16{
     bun.strings.w("exe"),
     bun.strings.w("cmd"),
     bun.strings.w("bat"),
 };
-const win_extensions = .{ "exe", "cmd", "bat" };
+const win_extensions = .{
+    "exe",
+    "cmd",
+    "bat",
+};
 
 pub fn endsWithExtension(str: []const u8) bool {
     if (str.len < 4) return false;
@@ -72,9 +83,12 @@ pub fn endsWithExtension(str: []const u8) bool {
 }
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by whichWin)
-fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: bool) ?[:0]const u16 {
-    if (bun.sys.existsOSPath(buf[0..path_size :0], true))
-        return buf[0..path_size :0];
+fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: bool) ?[:0]u16 {
+    if (!check_windows_extensions)
+        // On Windows, files without extensions are not executable
+        // Therefore, we should only care about this check when the file already has an extension.
+        if (bun.sys.existsOSPath(buf[0..path_size :0], true))
+            return buf[0..path_size :0];
 
     if (check_windows_extensions) {
         buf[path_size] = '.';
@@ -89,7 +103,7 @@ fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: 
 }
 
 /// Check if bin file exists in this path (internally used by whichWin)
-fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, bin: []const u8, check_windows_extensions: bool) ?[:0]const u16 {
+fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *bun.PathBuffer, path: []const u8, bin: []const u8, check_windows_extensions: bool) ?[:0]u16 {
     if (path.len == 0) return null;
     const segment = if (std.fs.path.isAbsolute(path)) (PosixToWinNormalizer.resolveCWDWithExternalBuf(path_buf, path) catch return null) else path;
     const segment_utf16 = bun.strings.convertUTF8toUTF16InBuffer(buf, segment);
@@ -127,8 +141,19 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
     }
 
     // check if bin is in cwd
-    if (searchBinInPath(buf, &path_buf, cwd, bin, check_windows_extensions)) |bin_path| {
-        return bin_path;
+    if (bun.strings.containsChar(bin, '/') or bun.strings.containsChar(bin, '\\')) {
+        if (searchBinInPath(
+            buf,
+            &path_buf,
+            cwd,
+            bun.strings.withoutPrefixComptime(bin, "./"),
+            check_windows_extensions,
+        )) |bin_path| {
+            bun.path.posixToPlatformInPlace(u16, bin_path);
+            return bin_path;
+        }
+        // Do not lookup paths with slashes in $PATH
+        return null;
     }
 
     // iterate over system path delimiter

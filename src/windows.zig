@@ -2987,11 +2987,29 @@ pub extern fn LoadLibraryA(
 
 pub extern fn LoadLibraryExW([*:0]const u16, ?HANDLE, DWORD) ?*anyopaque;
 
-pub extern "kernel32" fn CreateHardLinkW(
-    newFileName: LPCWSTR,
-    existingFileName: LPCWSTR,
-    securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
-) BOOL;
+pub const CreateHardLinkW = struct {
+    pub fn wrapper(newFileName: LPCWSTR, existingFileName: LPCWSTR, securityAttributes: ?*win32.SECURITY_ATTRIBUTES) BOOL {
+        const run = struct {
+            pub extern "kernel32" fn CreateHardLinkW(
+                newFileName: LPCWSTR,
+                existingFileName: LPCWSTR,
+                securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
+            ) BOOL;
+        }.CreateHardLinkW;
+
+        const rc = run(newFileName, existingFileName, securityAttributes);
+        if (comptime Environment.isDebug)
+            bun.sys.syslog(
+                "CreateHardLinkW({}, {}) = {d}",
+                .{
+                    bun.fmt.fmtOSPath(std.mem.span(newFileName), .{}),
+                    bun.fmt.fmtOSPath(std.mem.span(existingFileName), .{}),
+                    if (rc == 0) @intFromEnum(Win32Error.get()) else 0,
+                },
+            );
+        return rc;
+    }
+}.wrapper;
 
 pub extern "kernel32" fn CopyFileW(
     source: LPCWSTR,
@@ -3020,6 +3038,18 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .FILE_IS_A_DIRECTORY => .ISDIR,
         .OBJECT_PATH_NOT_FOUND => .NOENT,
         .OBJECT_NAME_NOT_FOUND => .NOENT,
+        .NOT_A_DIRECTORY => .NOTDIR,
+        .RETRY => .AGAIN,
+        .DIRECTORY_NOT_EMPTY => .EXIST,
+        .FILE_TOO_LARGE => .@"2BIG",
+        .SHARING_VIOLATION => if (comptime Environment.isDebug) brk: {
+            bun.Output.debugWarn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE", .{});
+            break :brk .BUSY;
+        } else .BUSY,
+        .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
+            bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
+            break :brk .INVAL;
+        } else .INVAL,
 
         else => |t| {
             // if (bun.Environment.isDebug) {
@@ -3299,8 +3329,10 @@ pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
         .WSA_QOS_ESHAPERATEOBJ => error.WSA_QOS_ESHAPERATEOBJ,
         .WSA_QOS_RESERVED_PETYPE => error.WSA_QOS_RESERVED_PETYPE,
         _ => |t| {
-            if (Environment.isDebug) {
-                bun.Output.debugWarn("Unknown WinSockError: {d}", .{@intFromEnum(t)});
+            if (@intFromEnum(t) != 0) {
+                if (Environment.isDebug) {
+                    bun.Output.debugWarn("Unknown WinSockError: {d}", .{@intFromEnum(t)});
+                }
             }
         },
     };
@@ -3309,3 +3341,14 @@ pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
 pub fn WSAGetLastError() !void {
     return winSockErrorToZigError(std.os.windows.ws2_32.WSAGetLastError());
 }
+
+// BOOL CreateDirectoryExW(
+//   [in]           LPCWSTR               lpTemplateDirectory,
+//   [in]           LPCWSTR               lpNewDirectory,
+//   [in, optional] LPSECURITY_ATTRIBUTES lpSecurityAttributes
+// );
+pub extern "kernel32" fn CreateDirectoryExW(
+    lpTemplateDirectory: [*:0]const u16,
+    lpNewDirectory: [*:0]const u16,
+    lpSecurityAttributes: ?*win32.SECURITY_ATTRIBUTES,
+) callconv(windows.WINAPI) BOOL;

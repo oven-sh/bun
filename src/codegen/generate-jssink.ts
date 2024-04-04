@@ -380,7 +380,6 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 
 JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
     auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
     if (LIKELY(sink)) {
         sink->ref();
@@ -392,7 +391,6 @@ JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObjec
 
 JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
     auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
     if (LIKELY(sink)) {
         sink->unref();
@@ -403,7 +401,6 @@ JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObj
 
 JSC_DEFINE_CUSTOM_GETTER(function${name}__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    auto& vm = lexicalGlobalObject->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     return JSC::JSValue::encode(globalObject->${name}());
@@ -494,6 +491,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
 class ${prototypeName} final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     static ${prototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
@@ -527,6 +525,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(${prototypeName}, ${prototypeName}::Base);
 class ${controllerPrototypeName} final : public JSC::JSNonFinalObject {
     public:
         using Base = JSC::JSNonFinalObject;
+        static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
     
         static ${controllerPrototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
         {
@@ -855,7 +854,6 @@ extern "C" JSC__JSValue ${name}__createObject(JSC__JSGlobalObject* arg0, void* s
 
 extern "C" void* ${name}__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
 {
-    JSC::VM& vm = WebCore::getVM(arg0);
     if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(JSValue1)))
         return sink->wrapped();
 

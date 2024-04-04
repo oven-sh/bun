@@ -11070,7 +11070,7 @@ fn NewParser_(
             const what = switch (kind) {
                 .k_await_using, .k_using => "declaration",
                 .k_const => "constant",
-                else => comptime unreachable,
+                else => @compileError("unreachable"),
             };
 
             for (decls) |decl| {
@@ -19648,7 +19648,7 @@ fn NewParser_(
                         var output_properties = object.properties.slice();
                         var end: u32 = 0;
                         for (bound_object.properties) |property| {
-                            if (property.key.asString(p.allocator)) |name| {
+                            if (property.key.asStringLiteral(p.allocator)) |name| {
                                 if (object.asProperty(name)) |query| {
                                     switch (query.expr.data) {
                                         .e_object, .e_array => p.visitBindingAndExprForMacro(property.value, query.expr),

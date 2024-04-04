@@ -26,7 +26,6 @@ All imported files and packages are bundled into the executable, along with a co
 **Note** — Currently, the `--compile` flag can only accept a single entrypoint at a time and does not support the following flags:
 
 - `--outdir` — use `outfile` instead.
-- `--external`
 - `--splitting`
 - `--public-path`
 

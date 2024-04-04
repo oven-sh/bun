@@ -18,6 +18,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/*.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -29,6 +30,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - ".github/workflows/*.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -59,6 +61,8 @@ jobs:
     steps:
       - run: git config --global core.autocrlf false && git config --global core.eol lf
       - uses: actions/checkout@v4
+      - name: Checkout submodules
+        run: git submodule update --init --recursive --depth=1 --progress --force
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -88,7 +92,7 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{ matrix.arch }}-windows-msvc
             GIT_SHA=${{ github.sha }}
-            CANARY=${{ env.canary == 'true' && steps.canary.outputs.canary_revision || '0' }}
+            CANARY=0
             ZIG_OPTIMIZE=ReleaseSafe
           # TODO(@paperdave): enable ASSERTIONS=1
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
@@ -245,7 +249,8 @@ jobs:
           # $env:AWS_SECRET_ACCESS_KEY="${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }}"
           # $SCCACHE="$PWD/${sczip}/${sczip}/sccache.exe"
 
-          $CANARY_REVISION = if (Test-Path build/.canary_revision) { Get-Content build/.canary_revision } else { "0" }
+          # $CANARY_REVISION = if (Test-Path build/.canary_revision) { Get-Content build/.canary_revision } else { "0" }
+          $CANARY_REVISION = 0
 
           .\scripts\env.ps1 ${{ matrix.cpu == 'nehalem' && '-Baseline' || '' }}
           .\scripts\update-submodules.ps1
@@ -310,7 +315,8 @@ jobs:
           .\scripts\update-submodules.ps1
           .\scripts\env.ps1 ${{ matrix.cpu == 'nehalem' && '-Baseline' || '' }}
           Set-Location build
-          $CANARY_REVISION = if (Test-Path build/.canary_revision) { Get-Content build/.canary_revision } else { "0" }
+          # $CANARY_REVISION = if (Test-Path build/.canary_revision) { Get-Content build/.canary_revision } else { "0" }
+          $CANARY_REVISION = 0
           cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
             -DNO_CODEGEN=1 `
             -DNO_CONFIGURE_DEPENDS=1 `
@@ -417,19 +423,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - uses: secondlife/setup-cygwin@v1
+      - uses: secondlife/setup-cygwin@v3
         with:
           packages: bash
-      - name: Install dependencies
-        run: |
-          # bun install --verbose
-          # bun install --cwd=test --verbose
-          # bun install --cwd=packages/bun-internal-test --verbose
-
-          npm install
-          cd test && npm install
-          cd ../packages/bun-internal-test && npm install
-          cd ../..
+      # Split these into multiple steps to make it clear which one fails
+      - name: Install dependencies (root)
+        run: bun install --verbose
+      - name: Install dependencies (test)
+        run: bun install --cwd=test --verbose
+      - name: Install dependencies (runner)
+        run: bun install --cwd=packages/bun-internal-test --verbose
       - id: test
         name: Run tests
         env:
@@ -437,6 +440,7 @@ jobs:
           TMPDIR: ${{runner.temp}}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
           SHELLOPTS: igncr
           BUN_PATH_BASE: ${{runner.temp}}
           BUN_PATH: release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe
@@ -460,7 +464,7 @@ jobs:
 
             [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
       - uses: sarisia/actions-status-discord@v1
-        if: always() && steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
+        if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         with:
           title: ""
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
@@ -468,26 +472,29 @@ jobs:
           noprefix: true
           nocontext: true
           description: |
-            ### ❌🪟 [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
+            Pull Request
+            ### ❌ [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
 
-            @${{ github.actor }}, there are **${{ steps.test.outputs.regressing_test_count }} test regressions** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
+            @${{ github.actor }}, there are ${{ steps.test.outputs.failing_tests_count }} files with test failures on bun-windows-${{ matrix.arch }}-${{ matrix.cpu }}
 
-            ${{ steps.test.outputs.regressing_tests }}
+            ${{ steps.test.outputs.failing_tests }}
 
-            [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
+            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
       - name: Comment on PR
-        if: always() && steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
+        if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2
         with:
           comment_tag: test-windows-${{ matrix.arch }}-${{ matrix.cpu }}
           message: |
-            ### ❌🪟 @${{ github.actor }}, there are **${{ steps.test.outputs.regressing_test_count }} test regressions** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
+            ❌ @${{ github.actor }} ${{ steps.test.outputs.failing_tests_count }} files with test failures on bun-windows-${{ matrix.arch }}-${{ matrix.cpu }}
 
-            ${{ steps.test.outputs.regressing_tests }}
+            ${{ steps.test.outputs.failing_tests }}
 
-            [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
+            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
+
+            <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
       - name: Uncomment on PR
-        if: steps.test.outputs.regressing_tests == '' && github.event_name == 'pull_request'
+        if: steps.test.outputs.failing_tests == '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2
         with:
           comment_tag: test-windows-${{ matrix.arch }}-${{ matrix.cpu }}
@@ -497,5 +504,5 @@ jobs:
             ✅🪟 Test regressions on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }} have been resolved.
       - id: fail
         name: Fail the build
-        if: steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
+        if: steps.test.outputs.failing_tests != ''
         run: exit 1

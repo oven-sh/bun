@@ -1097,7 +1097,7 @@ pub const PosixLoop = extern struct {
         us_loop_run(this);
     }
 };
-const uintmax_t = c_ulong;
+
 extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
 
 extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;
@@ -1970,11 +1970,11 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn write(res: *Response, data: []const u8) bool {
                 return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
             }
-            pub fn getWriteOffset(res: *Response) uintmax_t {
+            pub fn getWriteOffset(res: *Response) u64 {
                 return uws_res_get_write_offset(ssl_flag, res.downcast());
             }
             pub fn overrideWriteOffset(res: *Response, offset: anytype) void {
-                uws_res_override_write_offset(ssl_flag, res.downcast(), @as(uintmax_t, @intCast(offset)));
+                uws_res_override_write_offset(ssl_flag, res.downcast(), @as(u64, @intCast(offset)));
             }
             pub fn hasResponded(res: *Response) bool {
                 return uws_res_has_responded(ssl_flag, res.downcast());
@@ -2018,11 +2018,11 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn onWritable(
                 res: *Response,
                 comptime UserDataType: type,
-                comptime handler: fn (UserDataType, uintmax_t, *Response) callconv(.C) bool,
+                comptime handler: fn (UserDataType, u64, *Response) callconv(.C) bool,
                 user_data: UserDataType,
             ) void {
                 const Wrapper = struct {
-                    pub fn handle(this: *uws_res, amount: uintmax_t, data: ?*anyopaque) callconv(.C) bool {
+                    pub fn handle(this: *uws_res, amount: u64, data: ?*anyopaque) callconv(.C) bool {
                         if (comptime UserDataType == void) {
                             return @call(bun.callmod_inline, handler, .{ {}, amount, castRes(this) });
                         } else {
@@ -2035,6 +2035,10 @@ pub fn NewApp(comptime ssl: bool) type {
                     }
                 };
                 uws_res_on_writable(ssl_flag, res.downcast(), Wrapper.handle, user_data);
+            }
+
+            pub fn clearOnWritable(res: *Response) void {
+                uws_res_clear_on_writable(ssl_flag, res.downcast());
             }
             pub inline fn markNeedsMore(res: *Response) void {
                 if (!ssl) {
@@ -2374,10 +2378,11 @@ extern fn uws_res_write_header(ssl: i32, res: *uws_res, key: [*c]const u8, key_l
 extern fn uws_res_write_header_int(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: u64) void;
 extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
-extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) uintmax_t;
-extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, uintmax_t) void;
+extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
+extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;
 extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;
-extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, uintmax_t, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
+extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, u64, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
+extern fn uws_res_clear_on_writable(ssl: i32, res: *uws_res) void;
 extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
 extern fn uws_res_on_data(
     ssl: i32,

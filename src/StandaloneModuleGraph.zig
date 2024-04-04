@@ -10,8 +10,6 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const Syscall = bun.sys;
 
-const exe_suffix = bun.exe_suffix;
-
 const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
@@ -277,19 +275,16 @@ pub const StandaloneModuleGraph = struct {
         }.toClean;
 
         const cloned_executable_fd: bun.FileDescriptor = brk: {
-            var self_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-            const self_exe = std.fs.selfExePath(&self_buf) catch |err| {
+            const self_exe = bun.selfExePath() catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get self executable path: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
-            self_buf[self_exe.len] = 0;
-            const self_exeZ = self_buf[0..self_exe.len :0];
 
             if (comptime Environment.isWindows) {
                 // copy self and then open it for writing
 
                 var in_buf: bun.WPathBuffer = undefined;
-                strings.copyU8IntoU16(&in_buf, self_exeZ);
+                strings.copyU8IntoU16(&in_buf, self_exe);
                 in_buf[self_exe.len] = 0;
                 const in = in_buf[0..self_exe.len :0];
                 var out_buf: bun.WPathBuffer = undefined;
@@ -301,7 +296,6 @@ pub const StandaloneModuleGraph = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                     Global.exit(1);
                 };
-
                 const file = bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     out,
@@ -322,7 +316,7 @@ pub const StandaloneModuleGraph = struct {
             if (comptime Environment.isMac) {
                 // if we're on a mac, use clonefile() if we can
                 // failure is okay, clonefile is just a fast path.
-                if (Syscall.clonefile(self_exeZ, zname) == .result) {
+                if (Syscall.clonefile(self_exe, zname) == .result) {
                     switch (Syscall.open(zname, std.os.O.RDWR | std.os.O.CLOEXEC, 0)) {
                         .result => |res| break :brk res,
                         .err => {},
@@ -376,7 +370,7 @@ pub const StandaloneModuleGraph = struct {
             };
             const self_fd = brk2: {
                 for (0..3) |retry| {
-                    switch (Syscall.open(self_exeZ, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
+                    switch (Syscall.open(self_exe, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
                         .result => |res| break :brk2 res,
                         .err => |err| {
                             if (retry < 2) {
@@ -665,30 +659,32 @@ pub const StandaloneModuleGraph = struct {
         return try StandaloneModuleGraph.fromBytes(allocator, to_read, offsets);
     }
 
-    fn isBuiltInExe(argv0: []const u8) bool {
+    /// heuristic: `bun build --compile` won't be supported if the name is "bun", "bunx", or "node".
+    /// this is a cheap way to avoid the extra overhead of opening the executable, and also just makes sense.
+    fn isBuiltInExe(comptime T: type, argv0: []const T) bool {
         if (argv0.len == 0) return false;
 
         if (argv0.len == 3) {
-            if (bun.strings.eqlComptimeIgnoreLen(argv0, "bun" ++ exe_suffix)) {
+            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bun"), false)) {
                 return true;
             }
         }
 
         if (argv0.len == 4) {
-            if (bun.strings.eqlComptimeIgnoreLen(argv0, "bunx" ++ exe_suffix)) {
+            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bunx"), false)) {
                 return true;
             }
 
-            if (bun.strings.eqlComptimeIgnoreLen(argv0, "node" ++ exe_suffix)) {
+            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "node"), false)) {
                 return true;
             }
         }
 
         if (comptime Environment.isDebug) {
-            if (bun.strings.eqlComptime(argv0, "bun-debug")) {
+            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bun-debug"), true)) {
                 return true;
             }
-            if (bun.strings.eqlComptime(argv0, "bun-debugx")) {
+            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bun-debugx"), true)) {
                 return true;
             }
         }
@@ -697,13 +693,10 @@ pub const StandaloneModuleGraph = struct {
     }
 
     fn openSelf() std.fs.OpenSelfExeError!bun.FileDescriptor {
-        // heuristic: `bun build --compile` won't be supported if the name is "bun", "bunx", or "node".
-        // this is a cheap way to avoid the extra overhead
-        // of opening the executable and also just makes sense.
         if (!Environment.isWindows) {
             const argv = bun.argv();
             if (argv.len > 0) {
-                if (isBuiltInExe(argv[0])) {
+                if (isBuiltInExe(u8, argv[0])) {
                     return error.FileNotFound;
                 }
             }
@@ -733,10 +726,8 @@ pub const StandaloneModuleGraph = struct {
             .mac => {
                 // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
                 // opened with no modification.
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const self_exe_path = try std.fs.selfExePath(&buf);
-                buf[self_exe_path.len] = 0;
-                const file = try std.fs.openFileAbsoluteZ(buf[0..self_exe_path.len :0].ptr, .{});
+                const self_exe_path = try bun.selfExePath();
+                const file = try std.fs.openFileAbsoluteZ(self_exe_path.ptr, .{});
                 return bun.toFD(file.handle);
             },
             .windows => {
@@ -746,8 +737,15 @@ pub const StandaloneModuleGraph = struct {
                 var nt_path_buf: bun.WPathBuffer = undefined;
                 const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
 
+                const basename_start = std.mem.lastIndexOfScalar(u16, nt_path, '\\') orelse
+                    return error.FileNotFound;
+                const basename = nt_path[basename_start + 1 .. nt_path.len - ".exe".len];
+                if (isBuiltInExe(u16, basename)) {
+                    return error.FileNotFound;
+                }
+
                 return bun.sys.openFileAtWindows(
-                    bun.invalid_fd,
+                    bun.FileDescriptor.cwd(),
                     nt_path,
                     // access_mask
                     w.SYNCHRONIZE | w.GENERIC_READ,

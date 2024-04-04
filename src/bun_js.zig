@@ -123,7 +123,7 @@ pub const Run = struct {
         vm.global.vm().holdAPILock(&run, callback);
     }
 
-    fn bootBunShell(ctx: *const Command.Context, entry_path: []const u8) !void {
+    fn bootBunShell(ctx: *const Command.Context, entry_path: []const u8) !bun.shell.ExitCode {
         @setCold(true);
 
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
@@ -133,31 +133,32 @@ pub const Run = struct {
             try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
-        try bundle.runEnvLoader();
+        try bundle.runEnvLoader(false);
         const mini = JSC.MiniEventLoop.initGlobal(bundle.env);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
-        try bun.shell.Interpreter.initAndRunFromFile(mini, entry_path);
-        return;
+        return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
 
     pub fn boot(ctx_: Command.Context, entry_path: string) !void {
         var ctx = ctx_;
         JSC.markBinding(@src());
-        bun.JSC.initialize();
-
-        if (strings.endsWithComptime(entry_path, ".bun.sh")) {
-            try bootBunShell(&ctx, entry_path);
-            Global.exit(0);
-            return;
-        }
-
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
-        var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
         }
+
+        if (strings.endsWithComptime(entry_path, ".sh")) {
+            const exit_code = try bootBunShell(&ctx, entry_path);
+            Global.exitWide(exit_code);
+            return;
+        }
+
+        // The shell does not need to initialize JSC.
+        // JSC initialization costs 1-3ms
+        bun.JSC.initialize();
+        js_ast.Expr.Data.Store.create(default_allocator);
+        js_ast.Stmt.Data.Store.create(default_allocator);
+        var arena = try Arena.init();
 
         run = .{
             .vm = try VirtualMachine.init(
@@ -219,16 +220,6 @@ pub const Run = struct {
                 b.options.macro_remap = macros;
             },
             .unspecified => {},
-        }
-
-        // Set NODE_ENV to a value if something else hadn't already set it
-        const node_env_entry = try b.env.map.getOrPutWithoutValue("NODE_ENV");
-        if (!node_env_entry.found_existing) {
-            node_env_entry.key_ptr.* = try b.env.allocator.dupe(u8, node_env_entry.key_ptr.*);
-            node_env_entry.value_ptr.* = .{
-                .value = try b.env.allocator.dupe(u8, "development"),
-                .conditional = false,
-            };
         }
 
         b.configureRouter(false) catch {
@@ -368,10 +359,37 @@ pub const Run = struct {
                     vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                 }
             } else {
-                //
                 while (vm.isEventLoopAlive()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
+                }
+
+                if (this.ctx.runtime_options.eval.eval_and_print) {
+                    const to_print = brk: {
+                        const result = vm.entry_point_result.value.get() orelse .undefined;
+                        if (result.asAnyPromise()) |promise| {
+                            switch (promise.status(vm.jsc)) {
+                                .Pending => {
+                                    result._then(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+
+                                    vm.tick();
+                                    vm.eventLoop().autoTickActive();
+
+                                    while (vm.isEventLoopAlive()) {
+                                        vm.tick();
+                                        vm.eventLoop().autoTickActive();
+                                    }
+
+                                    break :brk result;
+                                },
+                                else => break :brk promise.result(vm.jsc),
+                            }
+                        }
+
+                        break :brk result;
+                    };
+
+                    to_print.print(vm.global, .Log, .Log);
                 }
 
                 vm.onBeforeExit();
@@ -392,15 +410,26 @@ pub const Run = struct {
 
         vm.onExit();
 
-        if (this.ctx.runtime_options.eval.eval_and_print) {
-            const result = vm.entry_point_result.trySwap() orelse .undefined;
-            result.print(vm.global, .Log, .Log);
-        }
-
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
         Global.exit(exit_code);
     }
 };
+
+pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+    const arguments = callframe.arguments(1).slice();
+    const result = arguments[0];
+    result.print(global, .Log, .Log);
+    Global.exit(global.bunVM().exit_handler.exit_code);
+    return .undefined;
+}
+
+pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+    const arguments = callframe.arguments(1).slice();
+    const result = arguments[0];
+    result.print(global, .Log, .Log);
+    Global.exit(global.bunVM().exit_handler.exit_code);
+    return .undefined;
+}
 
 noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
     @setCold(true);

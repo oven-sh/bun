@@ -1,3 +1,4 @@
+import { SpawnOptions, Subprocess, SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { bunEnv, bunExe } from "harness";
@@ -86,7 +87,7 @@ describe("--print for cjs/esm", () => {
   });
 });
 
-function group(run: (code: string) => ReturnType<typeof Bun.spawnSync>) {
+function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
   test("it works", async () => {
     const { stdout } = run('console.log("hello world")');
     expect(stdout.toString("utf8")).toEqual("hello world\n");
@@ -120,11 +121,18 @@ describe("bun run - < file-path.js", () => {
     const file = join(tmpdir(), "bun-run-eval-test.js").replaceAll("\\", "/");
     require("fs").writeFileSync(file, code);
     try {
-      const result = Bun.spawnSync({
-        cmd: ["bash", "-c", `${bunExe().replaceAll("\\", "/")} run - < ${file}`],
-        env: bunEnv,
-        stderr: "inherit",
-      });
+      let result;
+      if (process.platform === "win32") {
+        result = Bun.spawnSync(["powershell", "-c", `Get-Content ${file} | ${bunExe()} run -`], {
+          env: bunEnv,
+          stderr: "inherit",
+        });
+      } else {
+        result = Bun.spawnSync(["bash", "-c", `${bunExe()} run - < ${file}`], {
+          env: bunEnv,
+          stderr: "inherit",
+        });
+      }
 
       if (!result.success) {
         queueMicrotask(() => {
@@ -145,10 +153,10 @@ describe("bun run - < file-path.js", () => {
 
 describe("echo | bun run -", () => {
   function run(code: string) {
-    const result = Bun.spawnSync({
-      cmd: [bunExe(), "run", "-"],
+    const result = Bun.spawnSync([bunExe(), "run", "-"], {
       env: bunEnv,
       stdin: Buffer.from(code),
+      stderr: "inherit",
     });
     if (!result.success) {
       queueMicrotask(() => {

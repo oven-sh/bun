@@ -1571,7 +1571,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn onWritableResponseBuffer(this: *RequestContext, _: c_ulong, resp: *App.Response) callconv(.C) bool {
+        pub fn onWritableResponseBuffer(this: *RequestContext, _: u64, resp: *App.Response) callconv(.C) bool {
+            ctxLog("onWritableResponseBuffer", .{});
+
             std.debug.assert(this.resp == resp);
             if (this.flags.aborted) {
                 this.finalizeForAbort();
@@ -1583,7 +1585,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         // TODO: should we cork?
-        pub fn onWritableCompleteResponseBufferAndMetadata(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+        pub fn onWritableCompleteResponseBufferAndMetadata(this: *RequestContext, write_offset: u64, resp: *App.Response) callconv(.C) bool {
+            ctxLog("onWritableCompleteResponseBufferAndMetadata", .{});
             std.debug.assert(this.resp == resp);
 
             if (this.flags.aborted) {
@@ -1604,7 +1607,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return this.sendWritableBytesForCompleteResponseBuffer(this.response_buf_owned.items, write_offset, resp);
         }
 
-        pub fn onWritableCompleteResponseBuffer(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+        pub fn onWritableCompleteResponseBuffer(this: *RequestContext, write_offset: u64, resp: *App.Response) callconv(.C) bool {
+            ctxLog("onWritableCompleteResponseBuffer", .{});
             std.debug.assert(this.resp == resp);
             if (this.flags.aborted) {
                 this.finalizeForAbort();
@@ -1945,7 +1949,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return true;
         }
 
-        pub fn onWritableBytes(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+        pub fn onWritableBytes(this: *RequestContext, write_offset: u64, resp: *App.Response) callconv(.C) bool {
+            ctxLog("onWritableBytes", .{});
             std.debug.assert(this.resp == resp);
             if (this.flags.aborted) {
                 this.finalizeForAbort();
@@ -1960,7 +1965,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return true;
         }
 
-        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset_: c_ulong, resp: *App.Response) bool {
+        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset_: u64, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
             const write_offset: usize = write_offset_;
 
@@ -1975,7 +1980,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset_: c_ulong, resp: *App.Response) bool {
+        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset_: u64, resp: *App.Response) bool {
             const write_offset: usize = write_offset_;
             std.debug.assert(this.resp == resp);
 
@@ -1991,7 +1996,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return true;
         }
 
-        pub fn onWritableSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
+        pub fn onWritableSendfile(this: *RequestContext, _: u64, _: *App.Response) callconv(.C) bool {
+            ctxLog("onWritableSendfile", .{});
             return this.onSendfile();
         }
 
@@ -3240,7 +3246,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 var prev = body.value.Locked.readable;
                                 body.value.Locked.readable = .{};
                                 readable.value.ensureStillAlive();
-                                prev.deinit();
+                                defer prev.deinit();
                                 readable.value.ensureStillAlive();
                                 readable.ptr.Bytes.onData(
                                     .{
@@ -5671,6 +5677,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             server.request_pool_allocator = RequestContext.pool.?;
 
+            if (comptime ssl_enabled_) {
+                Analytics.Features.https_server += 1;
+            } else {
+                Analytics.Features.http_server += 1;
+            }
+
             return server;
         }
 
@@ -5899,10 +5911,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             req.setYield(false);
-            var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
+            var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
             ctx.create(this, req, resp);
             this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
-            var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
+            var request_object = this.allocator.create(JSC.WebCore.Request) catch bun.outOfMemory();
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;

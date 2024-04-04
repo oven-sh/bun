@@ -259,12 +259,14 @@ pub const FilePoll = struct {
     pub fn deactivate(this: *FilePoll, loop: *Loop) void {
         std.debug.assert(this.flags.contains(.has_incremented_poll_count));
         loop.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        log("deactivate - {d}", .{loop.active_handles});
         this.flags.remove(.has_incremented_poll_count);
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(this: *FilePoll, loop: *Loop) void {
         loop.active_handles += @as(u32, @intFromBool(!this.flags.contains(.closed) and !this.flags.contains(.has_incremented_poll_count)));
+        log("activate - {d}", .{loop.active_handles});
         this.flags.insert(.has_incremented_poll_count);
     }
 
@@ -396,19 +398,19 @@ pub const Closer = struct {
 
     pub fn close(fd: uv.uv_file, loop: *uv.Loop) void {
         var closer = Closer.new(.{});
-
-        if (uv.uv_fs_close(loop, &closer.io_request, fd, &onClose).errEnum()) |err| {
+        // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
+        closer.io_request.data = closer;
+        if (uv.uv_fs_close(loop, &closer.io_request, fd, onClose).errEnum()) |err| {
             Output.debugWarn("libuv close() failed = {}", .{err});
             closer.destroy();
+            return;
         }
-
-        closer.io_request.data = closer;
     }
 
     fn onClose(req: *uv.fs_t) callconv(.C) void {
         var closer = @fieldParentPtr(Closer, "io_request", req);
         std.debug.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
-        bun.sys.syslog("uv_fs_close() = {}", .{req.result});
+        bun.sys.syslog("uv_fs_close({}) = {}", .{ bun.toFD(req.file.fd), req.result });
 
         if (comptime Environment.allow_assert) {
             if (closer.io_request.result.errEnum()) |err| {
@@ -416,7 +418,7 @@ pub const Closer = struct {
             }
         }
 
-        uv.uv_fs_req_cleanup(req);
+        req.deinit();
         closer.destroy();
     }
 };

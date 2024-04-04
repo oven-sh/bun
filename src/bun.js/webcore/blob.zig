@@ -2298,7 +2298,13 @@ pub const Blob = struct {
                         open_source_flags,
                         0,
                     )) {
-                        .result => |result| bun.toLibUVOwnedFD(result),
+                        .result => |result| switch (bun.sys.toLibUVOwnedFD(result, .open, .close_on_fail)) {
+                            .result => |result_fd| result_fd,
+                            .err => |errno| {
+                                this.system_error = errno.toSystemError();
+                                return bun.errnoToZigErr(errno.errno);
+                            },
+                        },
                         .err => |errno| {
                             this.system_error = errno.toSystemError();
                             return bun.errnoToZigErr(errno.errno);
@@ -2314,7 +2320,13 @@ pub const Blob = struct {
                             open_destination_flags,
                             JSC.Node.default_permission,
                         )) {
-                            .result => |result| bun.toLibUVOwnedFD(result),
+                            .result => |result| switch (bun.sys.toLibUVOwnedFD(result, .open, .close_on_fail)) {
+                                .result => |result_fd| result_fd,
+                                .err => |errno| {
+                                    this.system_error = errno.toSystemError();
+                                    return bun.errnoToZigErr(errno.errno);
+                                },
+                            },
                             .err => |errno| {
                                 switch (mkdirIfNotExists(this, errno, dest, dest)) {
                                     .@"continue" => continue,
@@ -2943,6 +2955,7 @@ pub const Blob = struct {
 
         if (Environment.isWindows) {
             const pathlike = store.data.file.pathlike;
+            const vm = globalThis.bunVM();
             const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
                 switch (bun.sys.open(
@@ -2961,16 +2974,48 @@ pub const Blob = struct {
                 unreachable;
             };
 
+            const is_stdout_or_stderr = brk: {
+                if (pathlike != .fd) {
+                    break :brk false;
+                }
+
+                if (vm.rare_data) |rare| {
+                    if (store == rare.stdout_store) {
+                        break :brk true;
+                    }
+
+                    if (store == rare.stderr_store) {
+                        break :brk true;
+                    }
+                }
+
+                break :brk switch (bun.FDTag.get(fd)) {
+                    .stdout, .stderr => true,
+                    else => false,
+                };
+            };
             var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
 
-            switch (sink.writer.start(fd, false)) {
-                .err => |err| {
-                    globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-                    sink.deref();
+            if (is_stdout_or_stderr) {
+                switch (sink.writer.startSync(fd, false)) {
+                    .err => |err| {
+                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        sink.deref();
 
-                    return JSC.JSValue.zero;
-                },
-                else => {},
+                        return JSC.JSValue.zero;
+                    },
+                    else => {},
+                }
+            } else {
+                switch (sink.writer.start(fd, true)) {
+                    .err => |err| {
+                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        sink.deref();
+
+                        return JSC.JSValue.zero;
+                    },
+                    else => {},
+                }
             }
 
             return sink.toJS(globalThis);

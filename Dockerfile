@@ -16,7 +16,7 @@ ARG BUILD_MACHINE_ARCH=x86_64
 ARG BUILDARCH=amd64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG GIT_SHA=""
-ARG BUN_VERSION="bun-v1.0.7"
+ARG BUN_VERSION="bun-v1.0.30"
 ARG BUN_DOWNLOAD_URL_BASE="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${BUN_VERSION}"
 ARG CANARY=0
 ARG ASSERTIONS=OFF
@@ -116,7 +116,7 @@ RUN apt-get update -y \
   && case "${arch##*-}" in \
   amd64) variant="x64";; \
   arm64) variant="aarch64";; \
-  *) echo "error: unsupported architecture: $arch"; exit 1 ;; \
+  *) echo "unsupported architecture: $arch"; exit 1 ;; \
   esac \
   && wget "${BUN_DOWNLOAD_URL_BASE}/bun-linux-${variant}.zip" \
   && unzip bun-linux-${variant}.zip \
@@ -414,7 +414,7 @@ COPY --from=bun-codegen-for-zig ${BUN_DIR}/packages/bun-error/dist ${BUN_DIR}/pa
 WORKDIR $BUN_DIR
 
 RUN mkdir -p build \
-  && bun run $BUN_DIR/src/codegen/bundle-modules-fast.ts $BUN_DIR/build \
+  && bun run $BUN_DIR/src/codegen/bundle-modules.ts --debug=OFF $BUN_DIR/build \
   && cd build \
   && cmake .. \
   -G Ninja \
@@ -429,6 +429,7 @@ RUN mkdir -p build \
   -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
   -DCANARY="${CANARY}" \
   -DZIG_COMPILER=system \
+  -DZIG_LIB_DIR=$BUN_DIR/src/deps/zig/lib \
   && ONLY_ZIG=1 ninja "/tmp/bun-zig.o" -v
 
 FROM scratch as build_release_obj

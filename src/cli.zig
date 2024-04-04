@@ -21,6 +21,8 @@ const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 
+const debug = Output.scoped(.CLI, true);
+
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
@@ -44,7 +46,7 @@ const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
-    var log_: logger.Log = undefined;
+    pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
     pub fn start(allocator: std.mem.Allocator, comptime MainPanicHandler: type) void {
         start_time = std.time.nanoTimestamp();
@@ -97,6 +99,7 @@ pub const ShellCompletions = @import("./cli/shell_completions.zig");
 pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -182,23 +185,22 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
     };
 
+    const auto_or_run_params = [_]ParamType{
+        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+        clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
+    };
+
     const auto_only_params = [_]ParamType{
         // clap.parseParam("--all") catch unreachable,
-        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
-    };
+    } ++ auto_or_run_params;
     const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
-        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    } ++ if (Environment.isWindows) [_]ParamType{
-        clap.parseParam("--system-shell                    Use cmd.exe to interpret package.json scripts") catch unreachable,
-    } else .{
-        clap.parseParam("--bun-shell                       Use Bun Shell to interpret package.json scripts") catch unreachable,
-    };
+    } ++ auto_or_run_params;
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
@@ -409,10 +411,21 @@ pub const Arguments = struct {
         if (args.option("--cwd")) |cwd_| {
             cwd = brk: {
                 var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = std.os.realpath(cwd_, &outbuf) catch |err| {
-                    Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
-                    Global.exit(1);
-                };
+                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_);
+
+                // On POSIX, we don't actually call chdir() on the path
+                //
+                // On Windows, we do change the current directory.
+                // Not all system calls on Windows support passing a dirfd (and libuv entirely doesn't)
+                // So we have to do it the real way
+                if (comptime Environment.isWindows) {
+                    var wbuf: bun.WPathBuffer = undefined;
+                    bun.sys.chdir(bun.strings.toWPathNormalized(&wbuf, out)).unwrap() catch |err| {
+                        Output.prettyErrorln("{}\n", .{err});
+                        Global.exit(1);
+                    };
+                }
+
                 break :brk try allocator.dupe(u8, out);
             };
         } else {
@@ -663,7 +676,8 @@ pub const Arguments = struct {
                     else => invalidTarget(&diag, _target),
                 };
 
-                ctx.debug.run_in_bun = opts.target.? == .bun;
+                if (opts.target.? == .bun)
+                    ctx.debug.run_in_bun = opts.target.? == .bun;
             }
 
             if (args.flag("--watch")) {
@@ -784,7 +798,10 @@ pub const Arguments = struct {
         const react_fast_refresh = true;
 
         if (cmd == .AutoCommand or cmd == .RunCommand) {
-            ctx.debug.silent = args.flag("--silent");
+            // "run.silent" in bunfig.toml
+            if (args.flag("--silent")) {
+                ctx.debug.silent = true;
+            }
 
             if (opts.define) |define| {
                 if (define.keys.len > 0)
@@ -793,7 +810,10 @@ pub const Arguments = struct {
         }
 
         if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunxCommand) {
-            ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
+            // "run.bun" in bunfig.toml
+            if (args.flag("--bun")) {
+                ctx.debug.run_in_bun = true;
+            }
         }
 
         opts.resolve = Api.ResolveMode.lazy;
@@ -858,11 +878,17 @@ pub const Arguments = struct {
         if (output_file != null)
             ctx.debug.output_file = output_file.?;
 
-        if (cmd == .RunCommand) {
-            ctx.debug.use_system_shell = if (Environment.isWindows)
-                args.flag("--system-shell")
-            else
-                !args.flag("--bun-shell");
+        if (cmd == .RunCommand or cmd == .AutoCommand) {
+            if (args.option("--shell")) |shell| {
+                if (strings.eqlComptime(shell, "bun")) {
+                    ctx.debug.use_system_shell = false;
+                } else if (strings.eqlComptime(shell, "system")) {
+                    ctx.debug.use_system_shell = true;
+                } else {
+                    Output.errGeneric("Expected --shell to be one of 'bun' or 'system'. Received: \"{s}\"", .{shell});
+                    Global.exit(1);
+                }
+            }
         }
 
         return opts;
@@ -943,6 +969,7 @@ pub const HelpCommand = struct {
         \\  <b><magenta>test<r>                           Run unit tests with Bun
         \\  <b><magenta>x<r>         <d>{s:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
         \\  <b><magenta>repl<r>                           Start a REPL session with Bun
+        \\  <b><magenta>exec<r>                           Run a shell script directly with Bun
         \\
         \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
@@ -1010,6 +1037,7 @@ pub const HelpCommand = struct {
 
         Output.flush();
     }
+
     pub fn execWithReason(_: std.mem.Allocator, comptime reason: Reason) void {
         @setCold(true);
         printWithReason(reason, false);
@@ -1017,6 +1045,7 @@ pub const HelpCommand = struct {
         if (reason == .invalid_command) {
             std.process.exit(1);
         }
+        std.process.exit(0);
     }
 };
 
@@ -1062,7 +1091,7 @@ pub const Command = struct {
         run_in_bun: bool = false,
         loaded_bunfig: bool = false,
         /// Disables using bun.shell.Interpreter for `bun run`, instead spawning cmd.exe
-        use_system_shell: bool = false,
+        use_system_shell: bool = !bun.Environment.isWindows,
 
         // technical debt
         macros: MacroOptions = MacroOptions.unspecified,
@@ -1177,7 +1206,7 @@ pub const Command = struct {
 
     // std.process.args allocates!
     const ArgsIterator = struct {
-        buf: [][:0]u8 = undefined,
+        buf: [][:0]const u8 = undefined,
         i: u32 = 0,
 
         pub fn next(this: *ArgsIterator) ?[]const u8 {
@@ -1195,11 +1224,11 @@ pub const Command = struct {
     };
 
     pub fn isBunX(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "bunx") or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug"));
+        return strings.endsWithComptime(argv0, "bunx" ++ bun.exe_suffix);
     }
 
     pub fn isNode(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "node");
+        return strings.endsWithComptime(argv0, "node" ++ bun.exe_suffix);
     }
 
     pub fn which() Tag {
@@ -1207,13 +1236,7 @@ pub const Command = struct {
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
-        const without_exe = if (Environment.isWindows)
-            strings.withoutSuffixComptime(argv0, ".exe")
-        else
-            argv0;
-
-        // symlink is argv[0]
-        if (isBunX(without_exe)) {
+        if (isBunX(argv0)) {
             // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
             // want to recursively run bunx. so this check lets us peek back into bun install.
             if (args_iter.next()) |next| {
@@ -1228,7 +1251,7 @@ pub const Command = struct {
             return .BunxCommand;
         }
 
-        if (isNode(without_exe)) {
+        if (isNode(argv0)) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;
@@ -1283,6 +1306,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("run") => .RunCommand,
             RootCommandMatcher.case("help") => .HelpCommand,
+
+            RootCommandMatcher.case("exec") => .ExecCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1364,6 +1389,8 @@ pub const Command = struct {
             return;
         }
 
+        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv(), ", ")});
+
         const tag = which();
 
         switch (tag) {
@@ -1415,7 +1442,7 @@ pub const Command = struct {
                 var ctx = try Command.Context.create(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
                 var args = bun.argv()[0..];
-                args[1] = @constCast("bun-repl");
+                args[1] = "bun-repl";
                 try BunxCommand.exec(ctx, args);
                 return;
             },
@@ -1809,7 +1836,7 @@ pub const Command = struct {
                     });
                     Global.exit(1);
                 } else if (ctx.positionals.len > 0) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>File not found \"{s}\"<r>", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>File not found: \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
@@ -1822,6 +1849,13 @@ pub const Command = struct {
                 }
                 Output.flush();
                 try HelpCommand.exec(allocator);
+            },
+            .ExecCommand => {
+                var ctx = try Command.Context.create(allocator, log, .RunCommand);
+
+                if (ctx.positionals.len > 1) {
+                    try ExecCommand.exec(&ctx);
+                } else Tag.printHelp(.ExecCommand, true);
             },
         }
     }
@@ -1872,7 +1906,7 @@ pub const Command = struct {
                     const file_pathZ = script_name_buf[0..file_path.len :0];
                     break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                 }
-            }) catch return false).handle);
+            }) catch return false).handle) catch return false;
             defer _ = bun.sys.close(file);
 
             switch (bun.sys.fstat(file)) {
@@ -1947,6 +1981,7 @@ pub const Command = struct {
         UpgradeCommand,
         ReplCommand,
         ReservedCommand,
+        ExecCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return comptime &switch (cmd) {
@@ -2145,6 +2180,21 @@ pub const Command = struct {
                 },
                 Command.Tag.InstallCompletionsCommand => {
                     Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
+                    Output.flush();
+                },
+                Command.Tag.ExecCommand => {
+                    Output.pretty(
+                        \\<b>Usage: bun exec <r><cyan>\<script\><r>
+                        \\
+                        \\Execute a shell script directly from Bun.
+                        \\
+                        \\<b><red>Note<r>: If executing this from a shell, make sure to escape the string!
+                        \\
+                        \\<b>Examples<d>:<r>
+                        \\  <b>bunx exec "echo hi"<r>
+                        \\  <b>bunx exec "echo \"hey friends\"!"<r>
+                        \\
+                    , .{});
                     Output.flush();
                 },
                 else => {

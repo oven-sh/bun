@@ -127,7 +127,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         }
 
         const This = @This();
-        fn assert_type(comptime Type: type) void {
+        pub fn assert_type(comptime Type: type) void {
             const name = comptime typeBaseName(@typeName(Type));
             if (!comptime @hasField(Tag, name)) {
                 @compileError("TaggedPointerUnion does not have " ++ name ++ ".");

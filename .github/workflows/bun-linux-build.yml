@@ -233,16 +233,18 @@ jobs:
         run: |
           # If this hangs, it means something is seriously wrong with the build
           bun --version
-      - id: install-dependnecies
-        name: Install dependencies
-        run: |
-          sudo apt-get update && sudo apt-get install -y openssl
-          bun install --verbose
-          bun install --cwd=test --verbose
-          bun install --cwd=packages/bun-internal-test --verbose
 
-          bun install --cwd=test/js/third_party/prisma --verbose
-
+      # Split these into multiple steps to make it clear which one fails
+      - name: Install dependencies (apt-get)
+        run: sudo apt-get update && sudo apt-get install -y openssl
+      - name: Install dependencies (root)
+        run: bun install --verbose
+      - name: Install dependencies (test)
+        run: bun install --cwd=test --verbose
+      - name: Install dependencies (runner)
+        run: bun install --cwd=packages/bun-internal-test --verbose
+      - name: Install dependencies (prisma)
+        run: bun install --cwd=test/js/third_party/prisma --verbose
       # This is disabled because the cores are ~5.5gb each
       # so it is easy to hit 50gb coredump downloads. Only enable if you need to retrive one
 
@@ -260,6 +262,7 @@ jobs:
           TMPDIR: ${{runner.temp}}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
           node packages/bun-internal-test/src/runner.node.mjs || true

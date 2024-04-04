@@ -43,7 +43,7 @@ declare module "bun" {
    *
    * @param {string} command The name of the executable or script
    * @param {string} options.PATH Overrides the PATH environment variable
-   * @param {string} options.cwd Limits the search to a particular directory in which to searc
+   * @param {string} options.cwd When given a relative path, use this path to join it.
    */
   function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
 
@@ -277,12 +277,16 @@ declare module "bun" {
     blob(): Promise<Blob>;
 
     /**
-     * Configure the shell to not throw an exception on non-zero exit codes.
+     * Configure the shell to not throw an exception on non-zero exit codes. Throwing can be re-enabled with `.throws(true)`.
+     *
+     * By default, the shell with throw an exception on commands which return non-zero exit codes.
      */
     nothrow(): this;
 
     /**
      * Configure whether or not the shell should throw an exception on non-zero exit codes.
+     *
+     * By default, this is configured to `true`.
      */
     throws(shouldThrow: boolean): this;
   }
@@ -4195,19 +4199,19 @@ declare module "bun" {
     };
 
     /**
-     * The amount of CPU time used by the process, in nanoseconds.
+     * The amount of CPU time used by the process, in microseconds.
      */
     cpuTime: {
       /**
-       * User CPU time used by the process, in nanoseconds.
+       * User CPU time used by the process, in microseconds.
        */
       user: number;
       /**
-       * System CPU time used by the process, in nanoseconds.
+       * System CPU time used by the process, in microseconds.
        */
       system: number;
       /**
-       * Total CPU time used by the process, in nanoseconds.
+       * Total CPU time used by the process, in microseconds.
        */
       total: number;
     };
@@ -4483,7 +4487,7 @@ declare module "bun" {
        */
       cmd: string[];
 
-      onExit: never;
+      onExit?: never;
     },
   ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
 

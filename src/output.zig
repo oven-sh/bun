@@ -133,8 +133,117 @@ pub const Source = struct {
         return false;
     }
 
-    pub fn set(_source: *Source) void {
-        source = _source.*;
+    export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
+
+    const WindowsStdio = struct {
+        const w = std.os.windows;
+
+        // TODO: when https://github.com/ziglang/zig/pull/18692 merges, use std.os.windows for this
+        extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
+        extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
+        extern fn GetConsoleOutputCP() u32;
+        pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+
+        pub var console_mode = [3]?u32{ null, null, null };
+        pub var console_codepage = @as(u32, 0);
+        pub var console_output_codepage = @as(u32, 0);
+
+        pub fn restore() void {
+            const peb = std.os.windows.peb();
+            const stdout = peb.ProcessParameters.hStdOutput;
+            const stderr = peb.ProcessParameters.hStdError;
+            const stdin = peb.ProcessParameters.hStdInput;
+
+            const handles = &.{ &stdin, &stdout, &stderr };
+            inline for (console_mode, handles) |mode, handle| {
+                if (mode) |m| {
+                    _ = SetConsoleMode(handle.*, m);
+                }
+            }
+
+            if (console_output_codepage != 0)
+                _ = w.kernel32.SetConsoleOutputCP(console_output_codepage);
+
+            if (console_codepage != 0)
+                _ = SetConsoleCP(console_codepage);
+        }
+
+        pub fn init() void {
+            bun.windows.libuv.uv_disable_stdio_inheritance();
+
+            const stdin = w.GetStdHandle(w.STD_INPUT_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
+            const stdout = w.GetStdHandle(w.STD_OUTPUT_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
+            const stderr = w.GetStdHandle(w.STD_ERROR_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
+
+            bun.win32.STDERR_FD = if (stderr != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stderr) else bun.invalid_fd;
+            bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
+            bun.win32.STDIN_FD = if (stdin != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdin) else bun.invalid_fd;
+
+            buffered_stdin.unbuffered_reader.context.handle = bun.win32.STDIN_FD;
+
+            // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
+            const CP_UTF8 = 65001;
+            console_output_codepage = w.kernel32.GetConsoleOutputCP();
+            _ = w.kernel32.SetConsoleOutputCP(CP_UTF8);
+
+            console_codepage = w.kernel32.GetConsoleOutputCP();
+            _ = SetConsoleCP(CP_UTF8);
+
+            const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
+            const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
+            const ENABLE_PROCESSED_OUTPUT = 0x0001;
+
+            var mode: w.DWORD = undefined;
+            if (w.kernel32.GetConsoleMode(stdin, &mode) != 0) {
+                console_mode[0] = mode;
+                bun_stdio_tty[0] = 1;
+                _ = SetConsoleMode(stdin, mode | ENABLE_VIRTUAL_TERMINAL_INPUT);
+            }
+
+            if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
+                console_mode[1] = mode;
+                bun_stdio_tty[1] = 1;
+                _ = SetConsoleMode(stdout, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_WRAP_AT_EOL_OUTPUT | mode);
+            }
+
+            if (w.kernel32.GetConsoleMode(stderr, &mode) != 0) {
+                console_mode[2] = mode;
+                bun_stdio_tty[2] = 1;
+                _ = SetConsoleMode(stderr, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_WRAP_AT_EOL_OUTPUT | mode);
+            }
+        }
+    };
+
+    pub const Stdio = struct {
+        pub fn init() void {
+            bun.C.bun_initialize_process();
+
+            if (Environment.isWindows) {
+                WindowsStdio.init();
+            }
+
+            const stdout = bun.sys.File.from(std.io.getStdOut());
+            const stderr = bun.sys.File.from(std.io.getStdErr());
+
+            Output.Source.init(stdout, stderr)
+                .set();
+
+            if (comptime Environment.isDebug) {
+                initScopedDebugWriterAtStartup();
+            }
+        }
+
+        pub fn restore() void {
+            if (Environment.isWindows) {
+                WindowsStdio.restore();
+            } else {
+                bun.C.bun_restore_stdio();
+            }
+        }
+    };
+
+    pub fn set(new_source: *const Source) void {
+        source = new_source.*;
 
         source_set = true;
         if (!stdout_stream_set) {
@@ -147,12 +256,12 @@ pub const Source = struct {
                     enable_color = false;
                 }
 
-                const is_stdout_tty = _source.stream.isTty();
+                const is_stdout_tty = bun_stdio_tty[1] != 0;
                 if (is_stdout_tty) {
                     stdout_descriptor_type = OutputStreamDescriptor.terminal;
                 }
 
-                const is_stderr_tty = _source.error_stream.isTty();
+                const is_stderr_tty = bun_stdio_tty[2] != 0;
                 if (is_stderr_tty) {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
                 }
@@ -162,8 +271,8 @@ pub const Source = struct {
                 enable_ansi_colors = enable_ansi_colors_stdout or enable_ansi_colors_stderr;
             }
 
-            stdout_stream = _source.stream;
-            stderr_stream = _source.error_stream;
+            stdout_stream = new_source.stream;
+            stderr_stream = new_source.error_stream;
         }
     }
 };
@@ -481,10 +590,10 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
 
             if (!evaluated_disable) {
                 evaluated_disable = true;
-                if (bun.getenvZ("BUN_DEBUG_ALL") != null or
-                    bun.getenvZ("BUN_DEBUG_" ++ tagname) != null)
-                {
-                    really_disable = false;
+                if (bun.getenvZ("BUN_DEBUG_" ++ tagname)) |val| {
+                    really_disable = strings.eqlComptime(val, "0");
+                } else if (bun.getenvZ("BUN_DEBUG_ALL")) |val| {
+                    really_disable = strings.eqlComptime(val, "0");
                 } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
                     really_disable = really_disable or !strings.eqlComptime(val, "0");
                 }
@@ -503,7 +612,7 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
             lock.lock();
             defer lock.unlock();
 
-            if (Output.enable_ansi_colors_stdout and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
+            if (Output.enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
                 out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
                     really_disable = true;
                     return;
@@ -822,6 +931,9 @@ pub fn disableScopedDebugWriter() void {
 pub fn enableScopedDebugWriter() void {
     ScopedDebugWriter.disable_inside_log -= 1;
 }
+
+extern "c" fn getpid() c_int;
+
 pub fn initScopedDebugWriterAtStartup() void {
     std.debug.assert(source_set);
 
@@ -832,9 +944,15 @@ pub fn initScopedDebugWriterAtStartup() void {
             }
 
             // do not use libuv through this code path, since it might not be initialized yet.
+            const pid = std.fmt.allocPrint(bun.default_allocator, "{d}", .{getpid()}) catch @panic("failed to allocate path");
+            defer bun.default_allocator.free(pid);
+
+            const path_fmt = std.mem.replaceOwned(u8, bun.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
+            defer bun.default_allocator.free(path_fmt);
+
             const fd = std.os.openat(
                 std.fs.cwd().fd,
-                path,
+                path_fmt,
                 std.os.O.CREAT | std.os.O.WRONLY,
                 // on windows this is u0
                 if (Environment.isWindows) 0 else 0o644,

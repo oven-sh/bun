@@ -1,7 +1,7 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile } from "fs/promises";
-import { isAbsolute } from "path";
+import { readlink, readFile, writeFile } from "fs/promises";
+import { isAbsolute, sep, join } from "path";
 import { openSync, closeSync } from "node:fs";
 
 export const isMacOS = process.platform === "darwin";
@@ -36,6 +36,7 @@ for (let key in bunEnv) {
 }
 
 export function bunExe() {
+  if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
 }
 
@@ -168,8 +169,13 @@ export function bunTest(file: string, env?: Record<string, string>) {
   };
 }
 
-export function bunRunAsScript(dir: string, script: string, env?: Record<string, string>) {
-  const result = Bun.spawnSync([bunExe(), `run`, `${script}`], {
+export function bunRunAsScript(
+  dir: string,
+  script: string,
+  env?: Record<string, string | undefined>,
+  execArgv?: string[],
+) {
+  const result = Bun.spawnSync([bunExe(), ...(execArgv ?? []), `run`, `${script}`], {
     cwd: dir,
     env: {
       ...bunEnv,
@@ -321,9 +327,6 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
 }
 
 export function getMaxFD(): number {
-  if (isWindows) {
-    return 0;
-  }
   const maxFD = openSync("/dev/null", "r");
   closeSync(maxFD);
   return maxFD;
@@ -523,4 +526,121 @@ export function fillRepeating(dstBuffer: NodeJS.TypedArray, start: number, end: 
     p += sLen; // add current length to offset
     sLen <<= 1; // double length for next segment
   }
+}
+
+function makeFlatPropertyMap(opts: object) {
+  // return all properties of opts as paths for nested objects with dot notation
+  // like { a: { b: 1 } } => { "a.b": 1 }
+  // combining names of nested objects with dot notation
+  // infinitely deep
+  const ret: any = {};
+  function recurse(obj: object, path = "") {
+    for (const [key, value] of Object.entries(obj)) {
+      if (value === undefined) continue;
+
+      if (value && typeof value === "object") {
+        recurse(value, path ? `${path}.${key}` : key);
+      } else {
+        ret[path ? `${path}.${key}` : key] = value;
+      }
+    }
+  }
+
+  recurse(opts);
+  return ret;
+}
+
+export function toTOMLString(opts: object) {
+  // return a TOML string of the given options
+  const props = makeFlatPropertyMap(opts);
+  let ret = "";
+  for (const [key, value] of Object.entries(props)) {
+    if (value === undefined) continue;
+    ret += `${key} = ${JSON.stringify(value)}` + "\n";
+  }
+  return ret;
+}
+
+const shebang_posix = (program: string) => `#!/usr/bin/env ${program}
+ `;
+
+const shebang_windows = (program: string) => `0</* :{
+   @echo off
+   ${program} %~f0 %*
+   exit /b %errorlevel%
+ :} */0;
+ `;
+
+export function writeShebangScript(path: string, program: string, data: string) {
+  if (!isWindows) {
+    return writeFile(path, shebang_posix(program) + "\n" + data, { mode: 0o777 });
+  } else {
+    return writeFile(path + ".cmd", shebang_windows(program) + "\n" + data);
+  }
+}
+
+export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
+  var decoder = new (require("string_decoder").StringDecoder)("utf8");
+  var str = "";
+  for await (const chunk of iter) {
+    str += decoder.write(chunk);
+    let i = str.indexOf("\n");
+    while (i >= 0) {
+      yield str.slice(0, i);
+      str = str.slice(i + 1);
+      i = str.indexOf("\n");
+    }
+  }
+
+  str += decoder.end();
+  {
+    let i = str.indexOf("\n");
+    while (i >= 0) {
+      yield str.slice(0, i);
+      str = str.slice(i + 1);
+      i = str.indexOf("\n");
+    }
+  }
+
+  if (str.length > 0) {
+    yield str;
+  }
+}
+
+export function joinP(...paths: string[]) {
+  return join(...paths).replaceAll("\\", "/");
+}
+
+/**
+ * TODO: see if this is the default behavior of node child_process APIs if so,
+ * we need to do case-insensitive stuff within our Bun.spawn implementation
+ *
+ * Windows has case-insensitive environment variables, so sometimes an
+ * object like { Path: "...", PATH: "..." } will be passed. Bun lets
+ * the first one win, but we really want the LAST one to win.
+ *
+ * This is mostly needed if you want to override env vars, such like:
+ *   env: {
+ *     ...bunEnv,
+ *     PATH: "my path override here",
+ *   }
+ * becomes
+ *   env: mergeWindowEnvs([
+ *     bunEnv,
+ *     {
+ *       PATH: "my path override here",
+ *     },
+ *   ])
+ */
+export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
+  const keys: Record<string, string | undefined> = {};
+  const flat: Record<string, string | undefined> = {};
+  for (const env of envs) {
+    for (const key in env) {
+      if (!env[key]) continue;
+      const normalized = keys[key.toUpperCase()] ?? key;
+      flat[normalized] = env[key];
+    }
+  }
+  return flat;
 }

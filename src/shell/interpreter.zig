@@ -3223,8 +3223,6 @@ pub const Interpreter = struct {
                 // We don't do anything here since assigns have no effect in a pipeline
             } else if (child.ptr.is(Subshell)) {
                 // Subshell already deinitializes its shell state so don't need to do anything here
-                const subshell = child.as(Subshell);
-                _ = subshell;
             }
 
             child.deinit();
@@ -3438,7 +3436,7 @@ pub const Interpreter = struct {
         }
 
         pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) void {
-            child_ptr.deinit();
+            defer child_ptr.deinit();
             this.exit_code = exit_code;
             if (child_ptr.ptr.is(Expansion) and exit_code != 0) {
                 if (exit_code != 0) {

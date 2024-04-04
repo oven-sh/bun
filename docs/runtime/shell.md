@@ -461,8 +461,8 @@ Hello World! pwd=/home/demo
 
 Scripts with Bun Shell are cross platform, which means they work on Windows:
 
-```
-PS C:\Users\Demo> bun .\script.sh
+```powershell
+> bun .\script.sh
 Hello World! pwd=C:\Users\Demo
 ```
 

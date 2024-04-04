@@ -266,6 +266,7 @@ pub const RunCommand = struct {
     const log = Output.scoped(.RUN, false);
 
     fn runPackageScriptForeground(
+        ctx: *Command.Context,
         allocator: std.mem.Allocator,
         original_script: string,
         name: string,
@@ -316,7 +317,7 @@ pub const RunCommand = struct {
             }
 
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            const code = bun.shell.Interpreter.initAndRunFromSource(mini, name, combined_script) catch |err| {
+            const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, combined_script) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
@@ -1450,6 +1451,7 @@ pub const RunCommand = struct {
 
                     if (scripts.get(temp_script_buffer[1..])) |prescript| {
                         if (!try runPackageScriptForeground(
+                            &ctx,
                             ctx.allocator,
                             prescript,
                             temp_script_buffer[1..],
@@ -1464,6 +1466,7 @@ pub const RunCommand = struct {
                     }
 
                     if (!try runPackageScriptForeground(
+                        &ctx,
                         ctx.allocator,
                         script_content,
                         script_name_to_search,
@@ -1478,6 +1481,7 @@ pub const RunCommand = struct {
 
                     if (scripts.get(temp_script_buffer)) |postscript| {
                         if (!try runPackageScriptForeground(
+                            &ctx,
                             ctx.allocator,
                             postscript,
                             temp_script_buffer,

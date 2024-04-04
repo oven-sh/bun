@@ -1099,15 +1099,11 @@ pub const SizeFormatter = struct {
         const suffix = mags_si[magnitude];
 
         if (suffix == ' ') {
-            try fmt.formatFloat(new_value / 1000.0, .{ .format = .decimal, .precision = 2 }, writer);
-            return writer.writeAll(" KB");
-        } else {
-            try fmt.formatFloat(new_value, .{
-                .format = .decimal,
-                .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2,
-            }, writer);
+            try writer.print("{d:.2} KB", .{new_value / 1000.0});
+            return;
         }
-        return writer.writeAll(&[_]u8{ ' ', suffix, 'B' });
+        const precision: usize = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2;
+        try fmt.formatType(new_value, "d", .{ .precision = precision }, writer, 0);
     }
 };
 

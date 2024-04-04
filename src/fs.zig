@@ -274,12 +274,13 @@ pub const FileSystem = struct {
         }
 
         pub fn getComptimeQuery(entry: *const DirEntry, comptime query_str: anytype) ?Entry.Lookup {
-            comptime var query: [query_str.len]u8 = undefined;
+            comptime var query_var: [query_str.len]u8 = undefined;
             comptime for (query_str, 0..) |c, i| {
-                query[i] = std.ascii.toLower(c);
+                query_var[i] = std.ascii.toLower(c);
             };
 
-            const query_hashed = comptime std.hash_map.hashString(&query);
+            const query_hashed = comptime std.hash_map.hashString(&query_var);
+            const query = query_var[0..query_str.len].*;
 
             const result = entry.data.getAdapted(
                 @as([]const u8, &query),
@@ -311,10 +312,11 @@ pub const FileSystem = struct {
         }
 
         pub fn hasComptimeQuery(entry: *const DirEntry, comptime query_str: anytype) bool {
-            comptime var query: [query_str.len]u8 = undefined;
+            comptime var query_var: [query_str.len]u8 = undefined;
             comptime for (query_str, 0..) |c, i| {
-                query[i] = std.ascii.toLower(c);
+                query_var[i] = std.ascii.toLower(c);
             };
+            const query = query_var[0..query_str.len].*;
 
             const query_hashed = comptime std.hash_map.hashString(&query);
 
@@ -326,7 +328,7 @@ pub const FileSystem = struct {
                     }
 
                     pub fn eql(_: @This(), _: []const u8, b: []const u8) bool {
-                        return strings.eqlComptime(b, query);
+                        return strings.eqlComptime(b, &query);
                     }
                 }{},
             );

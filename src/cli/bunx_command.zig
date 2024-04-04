@@ -63,7 +63,7 @@ pub const BunxCommand = struct {
     const nanoseconds_cache_valid = seconds_cache_valid * 1000000000;
 
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
-        const target_package_json_fd = try std.posix.openatZ(dir_fd.cast(), subpath_z, bun.O.RDONLY, 0);
+        const target_package_json_fd = try std.posix.openatZ(dir_fd.cast(), subpath_z, .{ .ACCMODE = .RDONLY }, 0);
         const target_package_json = std.fs.File{ .handle = target_package_json_fd };
 
         const is_stale = is_stale: {
@@ -134,7 +134,7 @@ pub const BunxCommand = struct {
         if (expr.asProperty("directories")) |dirs| {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
                 if (bin_prop.expr.asString(bundler.allocator)) |dir_name| {
-                    const bin_dir = try std.posix.openat(dir_fd.cast(), dir_name, bun.O.RDONLY, 0);
+                    const bin_dir = try std.posix.openat(dir_fd.cast(), dir_name, .{ .ACCMODE = .RDONLY }, 0);
                     defer std.posix.close(bin_dir);
                     const dir = std.fs.Dir{ .fd = bin_dir };
                     var iterator = bun.DirIterator.iterate(dir, .u8);

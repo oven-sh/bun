@@ -432,8 +432,8 @@ pub const Loader = struct {
     pub fn loadProcess(this: *Loader) void {
         if (this.did_load_process) return;
 
-        this.map.map.ensureTotalCapacity(std.posix.environ.len) catch unreachable;
-        for (std.posix.environ) |_env| {
+        this.map.map.ensureTotalCapacity(std.os.environ.len) catch unreachable;
+        for (std.os.environ) |_env| {
             var env = bun.span(_env);
             if (strings.indexOfChar(env, '=')) |i| {
                 const key = env[0..i];

@@ -459,7 +459,7 @@ pub const BuildCommand = struct {
                         try writer.writeAll(rel_path);
                         try writer.writeByteNTimes(' ', padding_count);
                         const size = @as(f64, @floatFromInt(f.size)) / 1000.0;
-                        try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
+                        try std.fmt.formatType(size, "d", .{ .precision = 2 }, writer, 1);
                         try writer.writeAll(" KB\n");
                     }
 

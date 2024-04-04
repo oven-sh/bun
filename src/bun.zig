@@ -1188,7 +1188,7 @@ var needs_proc_self_workaround: bool = false;
 // necessary on linux because other platforms don't have an optional
 // /proc/self/fd
 fn getFdPathViaCWD(fd: std.posix.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const prev_fd = try std.posix.openatZ(std.fs.cwd().fd, ".", O.DIRECTORY, 0);
+    const prev_fd = try std.posix.openatZ(std.fs.cwd().fd, ".", .{ .DIRECTORY = true }, 0);
     var needs_chdir = false;
     defer {
         if (needs_chdir) std.posix.fchdir(prev_fd) catch unreachable;
@@ -1805,21 +1805,21 @@ pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocato
 pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
 
-pub fn openFileForPath(path_: [:0]const u8) !std.fs.File {
+pub fn openFileForPath(file_path: [:0]const u8) !std.fs.File {
     const O_PATH = if (comptime Environment.isLinux) O.PATH else O.RDONLY;
     const flags: u32 = O.CLOEXEC | O.NOCTTY | O_PATH;
 
-    const fd = try std.posix.openZ(path_, flags, 0);
+    const fd = try std.posix.openZ(file_path, O.toPacked(flags), 0);
     return std.fs.File{
         .handle = fd,
     };
 }
 
-pub fn openDirForPath(path_: [:0]const u8) !std.fs.Dir {
+pub fn openDirForPath(file_path: [:0]const u8) !std.fs.Dir {
     const O_PATH = if (comptime Environment.isLinux) O.PATH else O.RDONLY;
     const flags: u32 = O.CLOEXEC | O.NOCTTY | O.DIRECTORY | O_PATH;
 
-    const fd = try std.posix.openZ(path_, flags, 0);
+    const fd = try std.posix.openZ(file_path, O.toPacked(flags), 0);
     return std.fs.Dir{
         .fd = fd,
     };
@@ -2245,7 +2245,7 @@ pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field:
 
         pub fn get(self: *@This()) bool {
             if (self.value == .unknown) {
-                const parent: *Parent = @fieldParentPtr(field, self);
+                const parent: *Parent = @alignCast(@fieldParentPtr(field, self));
                 self.value = switch (Getter(parent)) {
                     true => .yes,
                     false => .no,

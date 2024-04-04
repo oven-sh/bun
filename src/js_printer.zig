@@ -738,6 +738,9 @@ fn NewPrinter(
 
         const Printer = @This();
 
+        /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
+        pub const Error = error{};
+
         /// The handling of binary expressions is convoluted because we're using
         /// iteration on the heap instead of recursion on the call stack to avoid
         /// stack overflow for deeply-nested ASTs. See the comments for the similar
@@ -908,7 +911,6 @@ fn NewPrinter(
 
         pub fn writeAll(p: *Printer, bytes: anytype) anyerror!void {
             p.print(bytes);
-            return;
         }
 
         pub fn writeByteNTimes(self: *Printer, byte: u8, n: usize) !void {
@@ -920,6 +922,13 @@ fn NewPrinter(
                 const to_write = @min(remaining, bytes.len);
                 try self.writeAll(bytes[0..to_write]);
                 remaining -= to_write;
+            }
+        }
+
+        pub fn writeBytesNTimes(self: *Printer, bytes: []const u8, n: usize) anyerror!void {
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                try self.writeAll(bytes);
             }
         }
 
@@ -1598,18 +1607,13 @@ fn NewPrinter(
                 return;
             }
 
-            std.fmt.formatFloatDecimal(
-                float,
-                .{},
-                p,
-            ) catch unreachable;
+            @panic("buh TODO");
+            // std.fmt.format(p.writer, "{d}", .{float}) catch {};
         }
 
         pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
             var i: usize = 0;
             const n: usize = text.len;
-
-            // e(text.len) catch unreachable;
 
             outer: while (i < n) {
                 const CodeUnitType = u32;
@@ -1617,7 +1621,6 @@ fn NewPrinter(
                 const c: CodeUnitType = text[i];
                 i += 1;
 
-                // TODO: here
                 switch (c) {
 
                     // Special-case the null character since it may mess with code written in C

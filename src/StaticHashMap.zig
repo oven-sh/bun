@@ -235,11 +235,11 @@ fn HashMapMixin(
             }
         }
 
-        pub fn get(self: *Self, key: K) ?V {
+        pub fn get(self: *const Self, key: K) ?V {
             return self.getContext(key, undefined);
         }
 
-        pub fn getContext(self: *Self, key: K, ctx: Context) ?V {
+        pub fn getContext(self: *const Self, key: K, ctx: Context) ?V {
             const hash = ctx.hash(key);
             assert(hash != Self.empty_hash);
 
@@ -254,11 +254,11 @@ fn HashMapMixin(
             }
         }
 
-        pub fn has(self: *Self, key: K) bool {
+        pub fn has(self: *const Self, key: K) bool {
             return self.hasContext(key, undefined);
         }
 
-        pub fn hasWithHash(self: *Self, key_hash: u64) bool {
+        pub fn hasWithHash(self: *const Self, key_hash: u64) bool {
             assert(key_hash != Self.empty_hash);
 
             for (self.entries[key_hash >> self.shift ..]) |entry| {
@@ -270,7 +270,7 @@ fn HashMapMixin(
             return false;
         }
 
-        pub fn hasContext(self: *Self, key: K, ctx: Context) bool {
+        pub fn hasContext(self: *const Self, key: K, ctx: Context) bool {
             const hash = ctx.hash(key);
             assert(hash != Self.empty_hash);
 

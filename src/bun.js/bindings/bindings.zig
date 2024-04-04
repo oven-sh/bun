@@ -10,7 +10,7 @@ const ErrorableZigString = Exports.ErrorableZigString;
 const ErrorableResolvedSource = Exports.ErrorableResolvedSource;
 const ZigException = Exports.ZigException;
 const ZigStackTrace = Exports.ZigStackTrace;
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = @import("root").bun.JSC;
 const Shimmer = JSC.Shimmer;
@@ -6320,8 +6320,8 @@ extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn (
 pub fn initialize() void {
     JSC.markBinding(@src());
     JSCInitialize(
-        std.posix.environ.ptr,
-        std.posix.environ.len,
+        std.os.environ.ptr,
+        std.os.environ.len,
         struct {
             pub fn callback(name: [*]const u8, len: usize) callconv(.C) void {
                 Output.prettyErrorln(

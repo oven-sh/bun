@@ -1654,7 +1654,7 @@ pub const PackageInstall = struct {
                 },
             }
         } else {
-            const rc = Syscall.system.open(path, @as(u32, 0), @as(u32, 0));
+            const rc = Syscall.system.open(path, .{}, @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
                     _ = Syscall.system.close(rc);

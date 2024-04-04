@@ -573,7 +573,8 @@ pub const AST = struct {
                         len += 1;
                     }
                 }
-                break :brk &ret;
+                const final = ret[0..].*;
+                break :brk &final;
             };
 
             const BINARY_OPS: []const std.builtin.Type.EnumField = brk: {
@@ -595,7 +596,8 @@ pub const AST = struct {
                         len += 1;
                     }
                 }
-                break :brk &ret;
+                const final = ret[0..].*;
+                break :brk &final;
             };
         };
 

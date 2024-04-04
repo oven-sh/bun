@@ -1,4 +1,4 @@
-pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
+pub const is_bindgen = false;
 const bun = @import("root").bun;
 const Api = bun.ApiSchema;
 const std = @import("std");

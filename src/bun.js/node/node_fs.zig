@@ -5670,7 +5670,7 @@ pub const NodeFS = struct {
             // TODO: switch to an implementation which does not use any "unreachable"
             std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
                 const errno: E = switch (err) {
-                    error.InvalidHandle => .BADF,
+                    // error.InvalidHandle => .BADF,
                     error.AccessDenied => .PERM,
                     error.FileTooBig => .FBIG,
                     error.SymLinkLoop => .LOOP,

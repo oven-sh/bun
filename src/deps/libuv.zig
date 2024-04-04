@@ -7,17 +7,17 @@ const std = @import("std");
 const windows = bun.windows;
 const HANDLE = windows.HANDLE;
 const DWORD = windows.DWORD;
-const OVERLAPPED = std.os.windows.OVERLAPPED;
-const ULONG_PTR = std.os.windows.ULONG_PTR;
+const OVERLAPPED = std.posix.windows.OVERLAPPED;
+const ULONG_PTR = std.posix.windows.ULONG_PTR;
 const HMODULE = HANDLE;
 const ULONG = windows.ULONG;
 const WCHAR = windows.WCHAR;
 const SOCKET = *anyopaque;
 const LPFN_ACCEPTEX = *const anyopaque;
-const WIN32_FIND_DATAW = std.os.windows.WIN32_FIND_DATAW;
+const WIN32_FIND_DATAW = std.posix.windows.WIN32_FIND_DATAW;
 const LPFN_CONNECTEX = *const anyopaque;
 const FILE = std.c.FILE;
-const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
+const CRITICAL_SECTION = std.posix.windows.CRITICAL_SECTION;
 const INPUT_RECORD = windows.INPUT_RECORD;
 const sockaddr = std.posix.sockaddr;
 const sockaddr_storage = std.posix.linux.sockaddr_storage;
@@ -213,14 +213,14 @@ pub const O = struct {
 
     pub fn fromStd(c_flags: i32) i32 {
         var flags: i32 = 0;
-        if (c_flags & bun.O.NONBLOCK != 0) flags |= NONBLOCK;
-        if (c_flags & bun.O.CREAT != 0) flags |= CREAT;
-        if (c_flags & bun.O.NOFOLLOW != 0) flags |= NOFOLLOW;
-        if (c_flags & bun.O.WRONLY != 0) flags |= WRONLY;
-        if (c_flags & bun.O.RDONLY != 0) flags |= RDONLY;
-        if (c_flags & bun.O.RDWR != 0) flags |= RDWR;
-        if (c_flags & bun.O.TRUNC != 0) flags |= TRUNC;
-        if (c_flags & bun.O.APPEND != 0) flags |= APPEND;
+        if (c_flags & std.posix.O.NONBLOCK != 0) flags |= NONBLOCK;
+        if (c_flags & std.posix.O.CREAT != 0) flags |= CREAT;
+        if (c_flags & std.posix.O.NOFOLLOW != 0) flags |= NOFOLLOW;
+        if (c_flags & std.posix.O.WRONLY != 0) flags |= WRONLY;
+        if (c_flags & std.posix.O.RDONLY != 0) flags |= RDONLY;
+        if (c_flags & std.posix.O.RDWR != 0) flags |= RDWR;
+        if (c_flags & std.posix.O.TRUNC != 0) flags |= TRUNC;
+        if (c_flags & std.posix.O.APPEND != 0) flags |= APPEND;
 
         return flags;
     }
@@ -240,7 +240,7 @@ const _O_SHORT_LIVED = 0x1000;
 const _O_SEQUENTIAL = 0x0020;
 const _O_RANDOM = 0x0010;
 
-// These **do not** map to bun.O!
+// These **do not** map to std.posix.O!
 pub const UV_FS_O_APPEND = 0x0008;
 pub const UV_FS_O_CREAT = _O_CREAT;
 pub const UV_FS_O_EXCL = 0x0400;
@@ -2784,7 +2784,7 @@ pub const ReturnCodeI64 = enum(i64) {
     }
 };
 
-pub const addrinfo = std.os.windows.ws2_32.addrinfo;
+pub const addrinfo = std.posix.windows.ws2_32.addrinfo;
 
 // https://docs.libuv.org/en/v1.x/stream.html
 fn StreamMixin(comptime Type: type) type {

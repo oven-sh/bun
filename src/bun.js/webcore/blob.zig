@@ -2207,8 +2207,8 @@ pub const Blob = struct {
                 return try CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file);
             }
 
-            const linux = std.posix.linux;
-            const darwin = std.posix.darwin;
+            const linux = std.posix.system;
+            const darwin = std.posix.system;
 
             pub fn deinit(this: *CopyFile) void {
                 if (this.source_file_store.pathlike == .path) {

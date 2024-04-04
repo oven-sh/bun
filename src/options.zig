@@ -542,7 +542,7 @@ pub const Target = enum {
         //
         // This is unfortunate but it's a problem on the side of those packages.
         // They won't work correctly with other popular bundlers (with node as a target) anyway.
-        var list = [_]string{ MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[1] };
+        const list = [_]string{ MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[1] };
         array.set(Target.node, &list);
 
         // Note that this means if a package specifies "main", "module", and
@@ -552,8 +552,8 @@ pub const Target = enum {
         // This is deliberate because the presence of the "browser" field is a
         // good signal that this should be preferred. Some older packages might only use CJS in their "browser"
         // but in such a case they probably don't have any ESM files anyway.
-        var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[3], MAIN_FIELD_NAMES[2] };
-        var listd = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[3] };
+        const listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[3], MAIN_FIELD_NAMES[2] };
+        const listd = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[3] };
 
         array.set(Target.browser, &listc);
         array.set(Target.bun, &listd);

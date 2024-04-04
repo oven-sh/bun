@@ -34,7 +34,7 @@ const Run = @import("../bun_js.zig").Run;
 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const PathString = bun.PathString;
-const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen = false;
 const HTTPThread = @import("root").bun.http.HTTPThread;
 
 const JSC = @import("root").bun.JSC;

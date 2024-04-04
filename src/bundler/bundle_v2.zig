@@ -128,7 +128,7 @@ const debugTreeShake = Output.scoped(.TreeShake, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 
-fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [*:0]const u8) bun.tracy.Ctx {
+fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8) bun.tracy.Ctx {
     return bun.tracy.traceNamed(src, "Bundler." ++ name);
 }
 
@@ -222,7 +222,7 @@ pub const ThreadPool = struct {
 
         pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
             debug("Worker.deinit()", .{});
-            var this: *Worker = @fieldParentPtr("deinit_task", task);
+            var this: *Worker = @alignCast(@fieldParentPtr("deinit_task", task));
             this.deinit();
         }
 

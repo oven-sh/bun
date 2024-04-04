@@ -342,7 +342,14 @@ pub const ArrayBuffer = extern struct {
             return result;
         }
 
-        const result = bun.sys.mmap(null, @intCast(@max(size, 0)), std.posix.PROT.READ | std.posix.PROT.WRITE, std.posix.MAP.SHARED | 0, fd, 0);
+        const result = bun.sys.mmap(
+            null,
+            @intCast(@max(size, 0)),
+            std.posix.PROT.READ | std.posix.PROT.WRITE,
+            .{ .TYPE = .SHARED },
+            fd,
+            0,
+        );
         _ = bun.sys.close(fd);
 
         switch (result) {

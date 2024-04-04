@@ -29,13 +29,18 @@ pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Sysca
 const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
 
-// On Linux AARCh64, zig is missing stat & lstat syscalls
+// On Linux aarch64, Zig is missing stat & lstat syscalls
 const use_libc = !(Environment.isLinux and Environment.isX64);
+
 pub const system = switch (Environment.os) {
     .linux => linux,
     .mac => bun.AsyncIO.system,
     else => @compileError("not implemented"),
 };
+
+fn toPackedO(number: anytype) std.posix.O {
+    return @bitCast(number);
+}
 
 pub const O = switch (Environment.os) {
     .mac => struct {
@@ -65,6 +70,8 @@ pub const O = switch (Environment.os) {
         pub const NOCTTY = 131072;
         pub const POPUP = 2147483648;
         pub const SYNC = 128;
+
+        pub const toPacked = toPackedO;
     },
     .linux, .wasm => switch (Environment.isX86) {
         true => struct {
@@ -92,6 +99,8 @@ pub const O = switch (Environment.os) {
             pub const PATH = 0o10000000;
             pub const TMPFILE = 0o20200000;
             pub const NDELAY = NONBLOCK;
+
+            pub const toPacked = toPackedO;
         },
         false => struct {
             pub const RDONLY = 0x0000;
@@ -118,9 +127,38 @@ pub const O = switch (Environment.os) {
             pub const PATH = 0o10000000;
             pub const TMPFILE = 0o20040000;
             pub const NDELAY = NONBLOCK;
+
+            pub const toPacked = toPackedO;
         },
     },
-    .windows => windows.libuv.O,
+    .windows => struct {
+        pub const RDONLY = 0o0;
+        pub const WRONLY = 0o1;
+        pub const RDWR = 0o2;
+
+        pub const CREAT = 0o100;
+        pub const EXCL = 0o200;
+        pub const NOCTTY = 0o400;
+        pub const TRUNC = 0o1000;
+        pub const APPEND = 0o2000;
+        pub const NONBLOCK = 0o4000;
+        pub const DSYNC = 0o10000;
+        pub const SYNC = 0o4010000;
+        pub const RSYNC = 0o4010000;
+        pub const DIRECTORY = 0o200000;
+        pub const NOFOLLOW = 0o400000;
+        pub const CLOEXEC = 0o2000000;
+
+        pub const ASYNC = 0o20000;
+        pub const DIRECT = 0o40000;
+        pub const LARGEFILE = 0;
+        pub const NOATIME = 0o1000000;
+        pub const PATH = 0o10000000;
+        pub const TMPFILE = 0o20200000;
+        pub const NDELAY = NONBLOCK;
+
+        pub const toPacked = toPackedO;
+    },
 };
 
 pub const S = struct {
@@ -1886,13 +1924,13 @@ pub fn mmap(
     ptr: ?[*]align(mem.page_size) u8,
     length: usize,
     prot: u32,
-    flags: u32,
+    flags: std.posix.MAP,
     fd: bun.FileDescriptor,
     offset: u64,
 ) Maybe([]align(mem.page_size) u8) {
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     const rc = std.c.mmap(ptr, length, prot, flags, fd.cast(), ioffset);
-    const fail = std.c.MAP.FAILED;
+    const fail = std.c.MAP_FAILED;
     if (rc == fail) {
         return Maybe([]align(mem.page_size) u8){
             .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(bun.C.getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))), .syscall = .mmap },
@@ -1902,7 +1940,7 @@ pub fn mmap(
     return Maybe([]align(mem.page_size) u8){ .result = @as([*]align(mem.page_size) u8, @ptrCast(@alignCast(rc)))[0..length] };
 }
 
-pub fn mmapFile(path: [:0]const u8, flags: u32, wanted_size: ?usize, offset: usize) Maybe([]align(mem.page_size) u8) {
+pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(mem.page_size) u8) {
     assertIsValidWindowsPath(u8, path);
     const fd = switch (open(path, bun.O.RDWR, 0)) {
         .result => |fd| fd,

@@ -5869,29 +5869,30 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 
 const max_default_trusted_dependencies = 512;
 
-pub const default_trusted_dependencies_list: []string = brk: {
+// TODO
+pub const default_trusted_dependencies_list: []const []const u8 = brk: {
     // This file contains a list of dependencies that Bun runs `postinstall` on by default.
     const data = @embedFile("./default-trusted-dependencies.txt");
     @setEvalBranchQuota(999999);
-    var buf: [max_default_trusted_dependencies]string = undefined;
+    var buf: [max_default_trusted_dependencies][]const u8 = undefined;
     var i: usize = 0;
     var iter = std.mem.tokenizeAny(u8, data, " \r\n\t");
-    while (iter.next()) |dep| {
-        buf[i] = dep;
+    while (iter.next()) |package_ptr| {
+        const package = package_ptr[0..].*;
+        buf[i] = &package;
         i += 1;
     }
 
     const Sorter = struct {
-        pub fn lessThan(_: void, lhs: string, rhs: string) bool {
+        pub fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
             return std.mem.order(u8, lhs, rhs) == .lt;
         }
     };
 
-    const names = buf[0..i];
-
     // alphabetical so we don't need to sort in `bun pm trusted --default`
-    std.sort.pdq(string, names, {}, Sorter.lessThan);
+    std.sort.pdq([]const u8, buf[0..i], {}, Sorter.lessThan);
 
+    const names = buf[0..i].*;
     break :brk names;
 };
 
@@ -5909,18 +5910,18 @@ const default_trusted_dependencies = brk: {
         }
     };
 
-    var map: StaticHashMap([]const u8, void, StringHashContext, max_default_trusted_dependencies) = .{};
+    const map: StaticHashMap([]const u8, void, StringHashContext, max_default_trusted_dependencies) = .{};
 
-    for (default_trusted_dependencies_list) |dep| {
-        if (map.len == max_default_trusted_dependencies) {
-            @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
-        }
+    // for (default_trusted_dependencies_list) |dep| {
+    //     if (map.len == max_default_trusted_dependencies) {
+    //         @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
+    //     }
 
-        // just in case there's duplicates from truncating
-        if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
+    //     // just in case there's duplicates from truncating
+    //     if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
 
-        map.putAssumeCapacity(dep, {});
-    }
+    //     map.putAssumeCapacity(dep, {});
+    // }
 
     break :brk &map;
 };

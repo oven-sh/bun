@@ -3106,19 +3106,24 @@ pub fn mmapFile(
 
     const buf_z: [:0]const u8 = buf[0..path.len :0];
 
-    const sync_flags: u32 = if (@hasDecl(std.posix.MAP, "SYNC")) std.posix.MAP.SYNC | std.posix.MAP.SHARED_VALIDATE else 0;
-    const file_flags: u32 = if (@hasDecl(std.posix.MAP, "FILE")) std.posix.MAP.FILE else 0;
+    var flags: std.c.MAP = .{ .TYPE = .SHARED };
 
     // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
     var offset: usize = 0;
-    var flags = file_flags;
     var map_size: ?usize = null;
 
     if (args.nextEat()) |opts| {
-        const sync = opts.get(globalThis, "sync") orelse JSC.JSValue.jsBoolean(false);
-        const shared = opts.get(globalThis, "shared") orelse JSC.JSValue.jsBoolean(true);
-        flags |= @as(u32, if (sync.toBoolean()) sync_flags else 0);
-        flags |= @as(u32, if (shared.toBoolean()) std.posix.MAP.SHARED else std.posix.MAP.PRIVATE);
+        flags.TYPE = if ((opts.get(globalThis, "shared") orelse JSValue.true).toBoolean())
+            .SHARED
+        else
+            .PRIVATE;
+
+        if (@hasField(std.c.MAP, "SYNC")) {
+            if ((opts.get(globalThis, "sync") orelse JSValue.false).toBoolean()) {
+                flags.TYPE = .SHARED_VALIDATE;
+                flags.SYNC = true;
+            }
+        }
 
         if (opts.get(globalThis, "size")) |value| {
             map_size = @as(usize, @intCast(value.toInt64()));
@@ -3128,8 +3133,6 @@ pub fn mmapFile(
             offset = @as(usize, @intCast(value.toInt64()));
             offset = std.mem.alignBackwardAnyAlign(offset, std.mem.page_size);
         }
-    } else {
-        flags |= std.posix.MAP.SHARED;
     }
 
     const map = switch (bun.sys.mmapFile(buf_z, flags, map_size, offset)) {

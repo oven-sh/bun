@@ -5152,7 +5152,7 @@ pub const Interpreter = struct {
         }
 
         pub inline fn parentCmdMut(this: *Builtin) *Cmd {
-            const union_ptr: *const Cmd.Exec = @fieldParentPtr("bltn", this);
+            const union_ptr: *Cmd.Exec = @fieldParentPtr("bltn", this);
             return @fieldParentPtr("exec", union_ptr);
         }
 

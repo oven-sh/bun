@@ -424,7 +424,7 @@ pub const ExitHandler = struct {
 
     pub fn dispatchOnExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
-        var vm: *VirtualMachine = @fieldParentPtr("exit_handler", this);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
@@ -433,7 +433,7 @@ pub const ExitHandler = struct {
 
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
-        const vm: *VirtualMachine = @fieldParentPtr("exit_handler", this);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnBeforeExit(vm.global, this.exit_code);
     }
 };

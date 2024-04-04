@@ -826,17 +826,12 @@ pub const DebugTimer = struct {
 
     pub const WriteError = error{};
 
-    pub fn format(self: DebugTimer, comptime _: []const u8, opts: std.fmt.FormatOptions, writer_: anytype) WriteError!void {
+    pub fn format(self: DebugTimer, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) WriteError!void {
         if (comptime Environment.isDebug) {
             var timer = self.timer;
-            var _opts = opts;
-            _opts.precision = 3;
-            std.fmt.formatFloatDecimal(
-                @as(f64, @floatCast(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms)),
-                _opts,
-                writer_,
-            ) catch unreachable;
-            writer_.writeAll("ms") catch {};
+            w.print("{d:.3}ms", .{@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms}) catch unreachable;
+        } else {
+            @compileError("DebugTimer.format() should only be called in debug mode");
         }
     }
 };
@@ -954,7 +949,7 @@ pub fn initScopedDebugWriterAtStartup() void {
             const fd = std.posix.openat(
                 std.fs.cwd().fd,
                 path_fmt,
-                .{ .CREAT = true, .WRONLY = true },
+                .{ .CREAT = true, .ACCMODE = .WRONLY },
                 // on windows this is u0
                 if (Environment.isWindows) 0 else 0o644,
             ) catch |err_| {

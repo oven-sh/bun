@@ -16,7 +16,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #ifndef UWS_ASYNCSOCKET_H
 #define UWS_ASYNCSOCKET_H
 
@@ -255,10 +255,8 @@ public:
         if (asyncSocketData->buffer.length()) {
             /* Write off as much as we can */
             int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), (int) asyncSocketData->buffer.length(), /*nextLength != 0 | */length);
-
             /* On failure return, otherwise continue down the function */
             if ((unsigned int) written < asyncSocketData->buffer.length()) {
-
                 /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
                 asyncSocketData->buffer.erase((unsigned int) written);
 
@@ -268,7 +266,6 @@ public:
                 } else {
                     /* This path is horrible and points towards erroneous usage */
                     asyncSocketData->buffer.append(src, (unsigned int) length);
-
                     return {length, true};
                 }
             }
@@ -310,7 +307,6 @@ public:
                     if (optionally) {
                         return {written, true};
                     }
-
                     /* Fall back to worst possible case (should be very rare for HTTP) */
                     /* At least we can reserve room for next chunk if we know it up front */
                     if (nextLength) {
@@ -344,7 +340,7 @@ public:
                 auto [written, failed] = write(loopData->corkBuffer, (int) loopData->corkOffset, false, length);
                 loopData->corkOffset = 0;
 
-                if (failed) {
+                if (failed && optionally) {
                     /* We do not need to care for buffering here, write does that */
                     return {0, true};
                 }

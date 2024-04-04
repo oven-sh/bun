@@ -1238,6 +1238,16 @@ extern "C"
                          { return handler(res, a, opcional_data); });
     }
   }
+  
+  void uws_res_clear_on_writable(int ssl, uws_res_t *res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->clearOnWritable();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->clearOnWritable();
+    }
+  }
 
   void uws_res_on_aborted(int ssl, uws_res_t *res,
                           void (*handler)(uws_res_t *res, void *opcional_data),

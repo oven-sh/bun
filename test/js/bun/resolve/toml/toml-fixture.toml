@@ -19,6 +19,9 @@ url = "https://registry.mybigcompany.com"
 [bundle.packages]
 "@emotion/react" = true
 
+[install.cache]
+dir = "C:\\Windows\\System32"
+dir2 = "C:\\Windows\\System32\\🏳️‍🌈"
 
 [dev]
 foo = 123

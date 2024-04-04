@@ -2703,7 +2703,7 @@ pub const Resolver = struct {
                         .{ .no_follow = !follow_symlinks, .iterate = true },
                     )
                 else if (comptime Environment.isWindows) open_req: {
-                    const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, true, !follow_symlinks);
+                    const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, .{ .iterable = true, .no_follow = !follow_symlinks, .read_only = true });
                     if (dirfd_result.unwrap()) |result| {
                         break :open_req result.asDir();
                     } else |err| {

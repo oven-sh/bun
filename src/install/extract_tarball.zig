@@ -159,7 +159,7 @@ threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     const tmpdir = this.temp_dir;
-    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
     const name = this.name.slice();
     const basename = brk: {
         var tmp = name;
@@ -183,22 +183,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
 
     var resolved: string = "";
-    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
-    const extract_fd_on_windows = brk: {
-        var extract_destination = switch (Environment.os) {
-            .windows => makeOpenPathAccessMaskW(
-                tmpdir,
-                std.mem.span(tmpname),
-                w.STANDARD_RIGHTS_READ |
-                    w.FILE_READ_ATTRIBUTES |
-                    w.FILE_READ_EA |
-                    w.SYNCHRONIZE |
-                    w.FILE_TRAVERSE |
-                    w.DELETE,
-                false,
-            ),
-            else => tmpdir.makeOpenPath(std.mem.span(tmpname), .{}),
-        } catch |err| {
+    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], std.mem.asBytes(&tmpname_buf), bun.fastRandom());
+    {
+        var extract_destination = bun.MakePath.makeOpenPath(tmpdir, bun.span(tmpname), .{}) catch |err| {
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -209,8 +196,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             return error.InstallFailed;
         };
 
-        errdefer if (Environment.isWindows) extract_destination.close();
-        defer if (!Environment.isWindows) extract_destination.close();
+        defer extract_destination.close();
 
         if (PackageManager.verbose_install) {
             Output.prettyErrorln("[{s}] Start extracting {s}<r>", .{ name, tmpname });
@@ -229,8 +215,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 null,
                 logger.Loc.Empty,
                 this.package_manager.allocator,
-                "{s} decompressing \"{s}\"",
-                .{ @errorName(err), name },
+                "{s} decompressing \"{s}\" to \"{}\"",
+                .{ @errorName(err), name, bun.fmt.fmtPath(u8, std.mem.span(tmpname), .{}) },
             ) catch unreachable;
             return error.InstallFailed;
         };
@@ -291,11 +277,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             Output.prettyErrorln("[{s}] Extracted<r>", .{name});
             Output.flush();
         }
-
-        if (Environment.isWindows) {
-            break :brk bun.toFD(extract_destination.fd);
-        }
-    };
+    }
     const folder_name = switch (this.resolution.tag) {
         .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
         .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved),
@@ -307,29 +289,73 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
-    if (basename.len != name.len and !this.resolution.tag.isGit()) {
-        cache_dir.makePath(std.mem.trim(u8, name[0 .. name.len - basename.len], "/")) catch {};
-    }
+    const create_subdir = basename.len != name.len and !this.resolution.tag.isGit();
 
     // Now that we've extracted the archive, we rename.
     if (comptime Environment.isWindows) {
-        defer _ = bun.sys.close(extract_fd_on_windows);
+        var did_retry = false;
+        var path2_buf: bun.WPathBuffer = undefined;
+        const path2 = bun.strings.toWPathNormalized(&path2_buf, folder_name);
+        var close_target_dir = false;
+        var target_dir = brk: {
+            if (create_subdir) {
+                if (bun.Dirname.dirname(u16, path2)) |folder| {
+                    if (bun.MakePath.makeOpenPath(cache_dir, folder, .{})) |targ| {
+                        close_target_dir = true;
+                        break :brk targ;
+                    } else |_| {}
+                }
+            }
 
-        var folder_name_wbuf: bun.WPathBuffer = undefined;
-        const folder_name_w = bun.strings.toWPathNormalized(&folder_name_wbuf, folder_name);
+            break :brk cache_dir;
+        };
+        defer if (close_target_dir) target_dir.close();
 
-        switch (bun.C.moveOpenedFileAtLoose(extract_fd_on_windows, bun.toFD(cache_dir.fd), folder_name_w, false)) {
-            .err => |err| {
+        while (true) {
+            const dir_to_move = bun.sys.openDirAtWindowsA(bun.toFD(this.temp_dir.fd), bun.span(tmpname), .{ .can_rename_or_delete = true, .create = false, .iterable = false }).unwrap() catch |err| {
+                // i guess we just
                 this.package_manager.log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
                     this.package_manager.allocator,
-                    "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {}",
-                    .{ name, err, tmpname, bun.fmt.utf16(folder_name_w) },
+                    "moving \"{s}\" to cache dir failed\n{}\n From: {s}\n   To: {s}",
+                    .{ name, err, tmpname, folder_name },
                 ) catch unreachable;
                 return error.InstallFailed;
-            },
-            .result => {},
+            };
+
+            switch (bun.C.moveOpenedFileAt(dir_to_move, bun.toFD(target_dir.fd), path2[if (std.mem.lastIndexOfScalar(u16, path2, '\\')) |i| i + 1 else 0..], true)) {
+                .err => |err| {
+                    if (!did_retry) {
+                        switch (err.getErrno()) {
+                            .PERM, .BUSY, .EXIST => {
+                                // before we attempt to delete the destination, let's close the source dir.
+                                _ = bun.sys.close(dir_to_move);
+
+                                // two copies of bun are trying to extract the same package version to the same folder
+                                cache_dir.deleteTree(bun.span(folder_name)) catch {};
+                                did_retry = true;
+                                continue;
+                            },
+                            else => {},
+                        }
+                    }
+                    _ = bun.sys.close(dir_to_move);
+                    this.package_manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.package_manager.allocator,
+                        "moving \"{s}\" to cache dir failed\n{}\n  From: {s}\n    To: {s}",
+                        .{ name, err, tmpname, folder_name },
+                    ) catch unreachable;
+                    return error.InstallFailed;
+                },
+                .result => {
+                    _ = bun.sys.close(dir_to_move);
+                },
+            }
+
+            break;
         }
     } else {
         // Attempt to gracefully handle duplicate concurrent `bun install` calls
@@ -341,6 +367,12 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
         //
         const src = bun.sliceTo(tmpname, 0);
+
+        if (create_subdir) {
+            if (bun.Dirname.dirname(u8, folder_name)) |folder| {
+                bun.MakePath.makePath(u8, cache_dir, folder) catch {};
+            }
+        }
 
         var did_atomically_replace = false;
         if (did_atomically_replace and PackageManager.using_fallback_temp_dir) tmpdir.deleteTree(src) catch {};
@@ -393,7 +425,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
-    var final_dir = cache_dir.openDirZ(folder_name, .{}) catch |err| {
+    var final_dir = bun.openDir(cache_dir, folder_name) catch |err| {
         this.package_manager.log.addErrorFmt(
             null,
             logger.Loc.Empty,
@@ -419,9 +451,46 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         return error.InstallFailed;
     };
 
+    var json_path: []u8 = "";
+    var json_buf: []u8 = "";
+    if (switch (this.resolution.tag) {
+        // TODO remove extracted files not matching any globs under "files"
+        .github, .local_tarball, .remote_tarball => true,
+        else => this.package_manager.lockfile.trusted_dependencies != null and
+            this.package_manager.lockfile.trusted_dependencies.?.contains(@truncate(Semver.String.Builder.stringHash(name))),
+    }) {
+        const json_file, json_buf = bun.sys.File.readFileFrom(
+            bun.toFD(cache_dir.fd),
+            bun.path.joinZ(&[_]string{ folder_name, "package.json" }, .auto),
+            bun.default_allocator,
+        ).unwrap() catch |err| {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "\"package.json\" for \"{s}\" failed to open: {s}",
+                .{ name, @errorName(err) },
+            ) catch unreachable;
+            return error.InstallFailed;
+        };
+        defer json_file.close();
+        json_path = json_file.getPath(
+            &json_path_buf,
+        ).unwrap() catch |err| {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "\"package.json\" for \"{s}\" failed to resolve: {s}",
+                .{ name, @errorName(err) },
+            ) catch unreachable;
+            return error.InstallFailed;
+        };
+    }
+
     // create an index storing each version of a package installed
     if (strings.indexOfChar(basename, '/') == null) create_index: {
-        var index_dir = cache_dir.makeOpenPath(name, .{}) catch break :create_index;
+        var index_dir = bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index;
         defer index_dir.close();
         index_dir.symLink(
             final_path,
@@ -435,45 +504,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         ) catch break :create_index;
     }
 
-    var json_path: []u8 = "";
-    var json_buf: []u8 = "";
-    var json_len: usize = 0;
-    if (switch (this.resolution.tag) {
-        // TODO remove extracted files not matching any globs under "files"
-        .github, .local_tarball, .remote_tarball => true,
-        else => this.package_manager.lockfile.trusted_dependencies != null and
-            this.package_manager.lockfile.trusted_dependencies.?.contains(@truncate(Semver.String.Builder.stringHash(name))),
-    }) {
-        const json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
-            this.package_manager.log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                this.package_manager.allocator,
-                "\"package.json\" for \"{s}\" failed to open: {s}",
-                .{ name, @errorName(err) },
-            ) catch unreachable;
-            return error.InstallFailed;
-        };
-        defer json_file.close();
-        const json_stat_size = try json_file.getEndPos();
-        json_buf = try this.package_manager.allocator.alloc(u8, json_stat_size + 64);
-        json_len = try json_file.preadAll(json_buf, 0);
-
-        json_path = bun.getFdPath(
-            json_file.handle,
-            &json_path_buf,
-        ) catch |err| {
-            this.package_manager.log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                this.package_manager.allocator,
-                "\"package.json\" for \"{s}\" failed to resolve: {s}",
-                .{ name, @errorName(err) },
-            ) catch unreachable;
-            return error.InstallFailed;
-        };
-    }
-
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
     const url = try FileSystem.instance.dirname_store.append(@TypeOf(this.url.slice()), this.url.slice());
 
@@ -482,96 +512,5 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         .resolved = resolved,
         .json_path = ret_json_path,
         .json_buf = json_buf,
-        .json_len = json_len,
     };
-}
-
-// TODO(@paperdave): upstream making this public into zig std
-// there is zero reason this must be copied
-//
-/// Calls makeOpenDirAccessMaskW iteratively to make an entire path
-/// (i.e. creating any parent directories that do not exist).
-/// Opens the dir if the path already exists and is a directory.
-/// This function is not atomic, and if it returns an error, the file system may
-/// have been modified regardless.
-fn makeOpenPathAccessMaskW(self: std.fs.Dir, sub_path: []const u8, access_mask: u32, no_follow: bool) !std.fs.Dir {
-    var it = try std.fs.path.componentIterator(sub_path);
-    // If there are no components in the path, then create a dummy component with the full path.
-    var component = it.last() orelse std.fs.path.NativeUtf8ComponentIterator.Component{
-        .name = "",
-        .path = sub_path,
-    };
-
-    while (true) {
-        const sub_path_w = try w.sliceToPrefixedFileW(self.fd, component.path);
-        const is_last = it.peekNext() == null;
-        var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{
-            .no_follow = no_follow,
-            .create_disposition = if (is_last) w.FILE_OPEN_IF else w.FILE_CREATE,
-        }) catch |err| switch (err) {
-            error.FileNotFound => |e| {
-                component = it.previous() orelse return e;
-                continue;
-            },
-            else => |e| return e,
-        };
-
-        component = it.next() orelse return result;
-        // Don't leak the intermediate file handles
-        result.close();
-    }
-}
-const MakeOpenDirAccessMaskWOptions = struct {
-    no_follow: bool,
-    create_disposition: u32,
-};
-
-fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_mask: u32, flags: MakeOpenDirAccessMaskWOptions) !std.fs.Dir {
-    var result = std.fs.Dir{
-        .fd = undefined,
-    };
-
-    const path_len_bytes = @as(u16, @intCast(std.mem.sliceTo(sub_path_w, 0).len * 2));
-    var nt_name = w.UNICODE_STRING{
-        .Length = path_len_bytes,
-        .MaximumLength = path_len_bytes,
-        .Buffer = @constCast(sub_path_w),
-    };
-    var attr = w.OBJECT_ATTRIBUTES{
-        .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(sub_path_w)) null else self.fd,
-        .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-        .ObjectName = &nt_name,
-        .SecurityDescriptor = null,
-        .SecurityQualityOfService = null,
-    };
-    const open_reparse_point: w.DWORD = if (flags.no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
-    var io: w.IO_STATUS_BLOCK = undefined;
-    const rc = w.ntdll.NtCreateFile(
-        &result.fd,
-        access_mask,
-        &attr,
-        &io,
-        null,
-        w.FILE_ATTRIBUTE_NORMAL,
-        w.FILE_SHARE_READ | w.FILE_SHARE_WRITE,
-        flags.create_disposition,
-        w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
-        null,
-        0,
-    );
-
-    switch (rc) {
-        .SUCCESS => return result,
-        .OBJECT_NAME_INVALID => return error.BadPathName,
-        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
-        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .NOT_A_DIRECTORY => return error.NotDir,
-        // This can happen if the directory has 'List folder contents' permission set to 'Deny'
-        // and the directory is trying to be opened for iteration.
-        .ACCESS_DENIED => return error.AccessDenied,
-        .INVALID_PARAMETER => return error.BadPathName,
-        .SHARING_VIOLATION => return error.SharingViolation,
-        else => return w.unexpectedStatus(rc),
-    }
 }

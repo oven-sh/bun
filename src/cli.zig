@@ -1851,10 +1851,10 @@ pub const Command = struct {
                 try HelpCommand.exec(allocator);
             },
             .ExecCommand => {
-                const ctx = try Command.Context.create(allocator, log, .RunCommand);
+                var ctx = try Command.Context.create(allocator, log, .RunCommand);
 
                 if (ctx.positionals.len > 1) {
-                    try ExecCommand.exec(ctx);
+                    try ExecCommand.exec(&ctx);
                 } else Tag.printHelp(.ExecCommand, true);
             },
         }

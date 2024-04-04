@@ -1476,6 +1476,11 @@ pub const E = struct {
         };
     };
 
+    /// A string which will be printed as JSON by the JSPrinter.
+    pub const UTF8String = struct {
+        data: []const u8,
+    };
+
     pub const Unary = struct {
         op: Op.Code,
         value: ExprNodeIndex,
@@ -3264,9 +3269,17 @@ pub const Expr = struct {
         return ArrayIterator{ .array = array, .index = 0 };
     }
 
-    pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+    pub inline fn asStringLiteral(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
         return expr.data.e_string.string(allocator) catch null;
+    }
+
+    pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+        switch (expr.data) {
+            .e_string => |str| return str.string(allocator) catch null,
+            .e_utf8_string => |str| return str.data,
+            else => return null,
+        }
     }
 
     pub fn asBool(
@@ -3434,6 +3447,18 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_array = brk: {
+                            const item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
+                    },
+                };
+            },
+            E.UTF8String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_utf8_string = brk: {
                             const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
@@ -3851,6 +3876,14 @@ pub const Expr = struct {
         Data.Store.assert();
 
         switch (Type) {
+            E.UTF8String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_utf8_string = Data.Store.append(Type, st),
+                    },
+                };
+            },
             E.Array => {
                 return Expr{
                     .loc = loc,
@@ -4225,6 +4258,9 @@ pub const Expr = struct {
         e_undefined,
         e_new_target,
         e_import_meta,
+
+        /// A string that is UTF-8 encoded without escaping for use in JavaScript.
+        e_utf8_string,
 
         // This should never make it to the printer
         inline_identifier,
@@ -4888,6 +4924,8 @@ pub const Expr = struct {
         e_new_target: E.NewTarget,
         e_import_meta: E.ImportMeta,
 
+        e_utf8_string: *E.UTF8String,
+
         // This type should not exist outside of MacroContext
         // If it ends up in JSParser or JSPrinter, it is a bug.
         inline_identifier: i32,
@@ -5328,6 +5366,7 @@ pub const Expr = struct {
                 .e_array => |e| e.toJS(allocator, globalObject),
                 .e_object => |e| e.toJS(allocator, globalObject),
                 .e_string => |e| e.toJS(allocator, globalObject),
+                .e_utf8_string => |e| JSC.ZigString.fromUTF8(e.data).toValueGC(globalObject),
                 .e_null => JSC.JSValue.null,
                 .e_undefined => JSC.JSValue.undefined,
                 .e_boolean => |boolean| if (boolean.value)

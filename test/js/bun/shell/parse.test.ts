@@ -1026,9 +1026,7 @@ describe("parse shell invalid input", () => {
   });
 
   test("subshell", async () => {
-    await TestBuilder.command`echo (echo foo && echo hi)`
-      .error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.")
-      .run();
+    await TestBuilder.command`echo (echo foo && echo hi)`.error("Unexpected token: `(`").run();
 
     await TestBuilder.command`echo foo >`.error("Redirection with no file").run();
   });

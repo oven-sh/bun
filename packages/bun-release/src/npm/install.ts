@@ -121,16 +121,9 @@ async function downloadBun(platform: Platform, dst: string): Promise<void> {
 }
 
 export function optimizeBun(path: string): void {
-  const installScript =
-    os === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.sh/install | bash";
-  const { npm_config_user_agent } = process.env;
-  if (npm_config_user_agent && /\byarn\//.test(npm_config_user_agent)) {
-    throw new Error(
-      `Yarn does not support bun, because it does not allow linking to binaries. To use bun, install using the following command: ${installScript}`,
-    );
-  }
+  const installScript = os === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.sh/install | bash";
   try {
-    rename(path, join(__dirname, "bin", "bun"));
+    rename(path, join(__dirname, "bin", "bun.exe"));
     return;
   } catch (error) {
     debug("optimizeBun failed", error);

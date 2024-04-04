@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.0")
-set(WEBKIT_TAG 089023cc9078b3aa173869fd6685f3e7bed2a994)
+set(Bun_VERSION "1.1.1")
+set(WEBKIT_TAG 2475726ed0329ab2d2a92daf73e12ee1e485d575)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -314,6 +314,10 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+if(NOT ZIG_LIB_DIR)
+    cmake_path(SET ZIG_LIB_DIR NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/zig/lib")
+endif()
 
 if(USE_VALGRIND)
     # Disable SIMD
@@ -743,11 +747,14 @@ endif()
 # requires all the JS files to be known, but also Bun will use all cores during bundling anyways.
 if(NOT NO_CODEGEN)
     file(GLOB BUN_TS_MODULES ${CONFIGURE_DEPENDS}
-        "${BUN_SRC}/js/builtins/*.js"
-        "${BUN_SRC}/js/builtins/*.ts"
-        "${BUN_SRC}/js/bun/*.js"
+        "${BUN_SRC}/js/node/*.ts"
+        "${BUN_SRC}/js/node/*.js"
         "${BUN_SRC}/js/bun/*.ts"
-        "${BUN_SRC}/js/internal-for-testing.ts"
+        "${BUN_SRC}/js/bun/*.js"
+        "${BUN_SRC}/js/builtins/*.ts"
+        "${BUN_SRC}/js/builtins/*.js"
+        "${BUN_SRC}/js/thirdparty/*.js"
+        "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal/*.js"
         "${BUN_SRC}/js/internal/*.ts"
         "${BUN_SRC}/js/node/*.js"
@@ -849,8 +856,10 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         OUTPUT "${BUN_ZIG_OBJ}"
         COMMAND
         "${ZIG_COMPILER}" "build" "obj"
+        "--zig-lib-dir" "${ZIG_LIB_DIR}"
         "-Doutput-file=${BUN_ZIG_OBJ}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
+        "-freference-trace=10"
         "-Dversion=${Bun_VERSION}"
         "-Dcanary=${CANARY}"
         "-Doptimize=${ZIG_OPTIMIZE}"

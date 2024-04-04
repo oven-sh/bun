@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #ifndef UWS_HTTPRESPONSEDATA_H
 #define UWS_HTTPRESPONSEDATA_H
 
@@ -46,12 +46,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
-    bool callOnWritable(uintmax_t offset) {
+    bool callOnWritable(uint64_t offset) {
         /* Borrow real onWritable */
-        MoveOnlyFunction<bool(uintmax_t)> borrowedOnWritable = std::move(onWritable);
+        MoveOnlyFunction<bool(uint64_t)> borrowedOnWritable = std::move(onWritable);
 
         /* Set onWritable to placeholder */
-        onWritable = [](uintmax_t) {return true;};
+        onWritable = [](uint64_t) {return true;};
 
         /* Run borrowed onWritable */
         bool ret = borrowedOnWritable(offset);
@@ -75,11 +75,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     };
 
     /* Per socket event handlers */
-    MoveOnlyFunction<bool(uintmax_t)> onWritable;
+    MoveOnlyFunction<bool(uint64_t)> onWritable;
     MoveOnlyFunction<void()> onAborted;
     MoveOnlyFunction<void(std::string_view, bool)> inStream; // onData
     /* Outgoing offset */
-    uintmax_t offset = 0;
+    uint64_t offset = 0;
 
     /* Let's track number of bytes since last timeout reset in data handler */
     unsigned int received_bytes_per_timeout = 0;

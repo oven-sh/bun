@@ -109,19 +109,19 @@ pub const ShellErr = union(enum) {
         defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => |err| {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>bunsh: {s}: {}<r>", .{ err.message, err.path });
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: {s}: {}<r>", .{ err.message, err.path });
                 bun.Global.exit(1);
             },
             .custom => |custom| {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>{s}<r>", .{custom});
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>{s}<r>", .{custom});
                 bun.Global.exit(1);
             },
             .invalid_arguments => |invalid_arguments| {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>bunsh: invalid arguments: {s}<r>", .{invalid_arguments.val});
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: invalid arguments: {s}<r>", .{invalid_arguments.val});
                 bun.Global.exit(1);
             },
             .todo => |todo| {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error: <b>TODO: {s}<r>", .{todo});
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>TODO: {s}<r>", .{todo});
                 bun.Global.exit(1);
             },
         }

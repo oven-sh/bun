@@ -142,7 +142,7 @@ static const WTF::String toString(ZigString str)
         return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
-        return WTF::String::fromUTF8(untag(str.ptr), str.len);
+        return WTF::String::fromUTF8(std::span { untag(str.ptr), str.len });
     }
 
     if (UNLIKELY(isTaggedExternalPtr(str.ptr))) {
@@ -174,7 +174,7 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
         return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
-        return WTF::String::fromUTF8ReplacingInvalidSequences(&untag(str.ptr)[ptr.off], ptr.len);
+        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
@@ -189,13 +189,13 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
         return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
-        return WTF::String::fromUTF8ReplacingInvalidSequences(&untag(str.ptr)[ptr.off], ptr.len);
+        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
-        ? WTF::String(WTF::StringImpl::create(&untag(str.ptr)[ptr.off], ptr.len))
+        ? WTF::String(WTF::StringImpl::create(std::span { &untag(str.ptr)[ptr.off], ptr.len }))
         : WTF::String(WTF::StringImpl::create(
-            &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len));
+            std::span { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
 static const WTF::String toStringCopy(ZigString str)
@@ -204,7 +204,7 @@ static const WTF::String toStringCopy(ZigString str)
         return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
-        return WTF::String::fromUTF8ReplacingInvalidSequences(untag(str.ptr), str.len);
+        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
@@ -311,7 +311,7 @@ static ZigString toZigString(JSC::Identifier* str, JSC::JSGlobalObject* global)
 
 static WTF::StringView toStringView(ZigString str)
 {
-    return WTF::StringView(untag(str.ptr), str.len);
+    return WTF::StringView(std::span { untag(str.ptr), str.len });
 }
 
 static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlobalObject* global)
@@ -346,11 +346,11 @@ static const WTF::String toStringStatic(ZigString str)
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
-        return WTF::String(AtomStringImpl::add(reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
+        return WTF::String(AtomStringImpl::add(std::span { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
     }
 
     return WTF::String(AtomStringImpl::add(
-        reinterpret_cast<const LChar*>(untag(str.ptr)), str.len));
+        std::span { reinterpret_cast<const LChar*>(untag(str.ptr)), str.len }));
 }
 
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)

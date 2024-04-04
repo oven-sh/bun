@@ -406,7 +406,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         if (property.utf8name != nullptr) {
             size_t len = strlen(property.utf8name);
             if (len > 0) {
-                return JSC::Identifier::fromString(vm, WTF::String::fromUTF8(property.utf8name, len).isolatedCopy());
+                return JSC::Identifier::fromString(vm, WTF::String::fromUTF8({ property.utf8name, len }).isolatedCopy());
             }
         }
 
@@ -616,7 +616,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     JSC::EnsureStillAliveScope ensureAlive(jsValue);
     JSC::EnsureStillAliveScope ensureAlive2(target);
 
-    auto nameStr = WTF::String::fromUTF8(utf8name, strlen(utf8name));
+    auto nameStr = WTF::String::fromUTF8({ utf8name, strlen(utf8name) });
     auto identifier = JSC::Identifier::fromString(vm, WTFMove(nameStr));
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -668,7 +668,7 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
 // because we can't guarantee the lifetime of it
 #define PROPERTY_NAME_FROM_UTF8(identifierName) \
     size_t utf8Len = strlen(utf8name);          \
-    JSC::PropertyName identifierName = LIKELY(charactersAreAllASCII(reinterpret_cast<const LChar*>(utf8name), utf8Len)) ? JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String(WTF::StringImpl::createWithoutCopying(utf8name, utf8Len)))) : JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8name)));
+    JSC::PropertyName identifierName = LIKELY(charactersAreAllASCII(std::span { reinterpret_cast<const LChar*>(utf8name), utf8Len })) ? JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String(WTF::StringImpl::createWithoutCopying(utf8name, utf8Len)))) : JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8name)));
 
 extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     const char* utf8name,
@@ -985,7 +985,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     auto name = WTF::String();
 
     if (utf8name != nullptr) {
-        name = WTF::String::fromUTF8(utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length);
+        name = WTF::String::fromUTF8({ utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length });
     }
 
     auto method = reinterpret_cast<Zig::FFIFunction>(cb);
@@ -1366,7 +1366,7 @@ extern "C" napi_status node_api_symbol_for(napi_env env,
         return napi_invalid_arg;
     }
 
-    auto description = WTF::String::fromUTF8(utf8description, length == NAPI_AUTO_LENGTH ? strlen(utf8description) : length);
+    auto description = WTF::String::fromUTF8({ utf8description, length == NAPI_AUTO_LENGTH ? strlen(utf8description) : length });
     *result = toNapi(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(description)));
 
     return napi_ok;
@@ -1670,7 +1670,7 @@ NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char
     size_t property_count,
     const napi_property_descriptor* properties)
 {
-    WTF::String name = WTF::String::fromUTF8(utf8name, length).isolatedCopy();
+    WTF::String name = WTF::String::fromUTF8({ utf8name, length }).isolatedCopy();
     NativeExecutable* executable = vm.getHostFunction(NapiClass_ConstructorFunction, ImplementationVisibility::Public, NapiClass_ConstructorFunction, name);
     Structure* structure = globalObject->NapiClassStructure();
     NapiClass* napiClass = new (NotNull, allocateCell<NapiClass>(vm)) NapiClass(vm, executable, globalObject, structure);

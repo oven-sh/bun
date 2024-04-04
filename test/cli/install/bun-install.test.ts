@@ -6042,6 +6042,18 @@ it("should handle --frozen-lockfile", async () => {
     JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
   );
 
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "inherit",
+      stdin: "inherit",
+      stderr: "inherit",
+      env,
+    }).exited,
+  ).toBe(0);
+
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "install", "--frozen-lockfile"],
     cwd: package_dir,
@@ -6062,6 +6074,19 @@ it("should handle frozenLockfile in config file", async () => {
     join(package_dir, "package.json"),
     JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
   );
+
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "inherit",
+      stdin: "inherit",
+      stderr: "inherit",
+      env,
+    }).exited,
+  ).toBe(0);
+
   await writeFile(
     join(package_dir, "bunfig.toml"),
     `

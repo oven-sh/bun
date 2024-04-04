@@ -756,8 +756,8 @@ pub const AST = struct {
             }
 
             pub fn toFlags(this: RedirectFlags) bun.Mode {
-                const read_write_flags: bun.Mode = if (this.stdin) std.os.O.RDONLY else std.os.O.WRONLY | std.os.O.CREAT;
-                const extra: bun.Mode = if (this.append) std.os.O.APPEND else std.os.O.TRUNC;
+                const read_write_flags: bun.Mode = if (this.stdin) bun.O.RDONLY else bun.O.WRONLY | bun.O.CREAT;
+                const extra: bun.Mode = if (this.append) bun.O.APPEND else bun.O.TRUNC;
                 const final_flags: bun.Mode = if (this.stdin) read_write_flags else extra | read_write_flags;
                 return final_flags;
             }

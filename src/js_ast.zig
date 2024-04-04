@@ -197,7 +197,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                     }
                     this.overflow.allocated = 1;
                 }
-                var base_store = @fieldParentPtr(WithBase, "store", this);
+                var base_store: *WithBase = @fieldParentPtr("store", this);
                 if (this.overflow.ptrs[0] == &base_store.head) {
                     allocator.destroy(base_store);
                 }

@@ -382,8 +382,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// # Returns
         /// This function returns a slice of the buffer on success, or null on failure.
         pub fn localAddressText(this: ThisSocket, buf: []u8, is_ipv6: *bool) ?[]const u8 {
-            const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
-            const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
+            const addr_v4_len = @sizeOf(std.meta.FieldType(std.posix.sockaddr.in, .addr));
+            const addr_v6_len = @sizeOf(std.meta.FieldType(std.posix.sockaddr.in6, .addr));
 
             var sa_buf: [addr_v6_len + 1]u8 = undefined;
             const binary = this.localAddressBinary(&sa_buf);
@@ -395,10 +395,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             var ret: ?[*:0]const u8 = null;
             if (addr_len == addr_v4_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+                ret = bun.c_ares.ares_inet_ntop(std.posix.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
                 is_ipv6.* = false;
             } else if (addr_len == addr_v6_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+                ret = bun.c_ares.ares_inet_ntop(std.posix.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
                 is_ipv6.* = true;
             }
 
@@ -952,8 +952,8 @@ pub const PosixLoop = extern struct {
     ready_polls: [1024]EventType align(16),
 
     const EventType = switch (Environment.os) {
-        .linux => std.os.linux.epoll_event,
-        .mac => std.os.system.kevent64_s,
+        .linux => std.posix.linux.epoll_event,
+        .mac => std.posix.system.kevent64_s,
         // TODO:
         .windows => *anyopaque,
         else => @compileError("Unsupported OS"),
@@ -979,13 +979,13 @@ pub const PosixLoop = extern struct {
         this.active += 1;
     }
     pub fn refConcurrently(this: *PosixLoop) void {
-        _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Add, 1, .Monotonic);
-        _ = @atomicRmw(@TypeOf(this.active), &this.active, .Add, 1, .Monotonic);
+        _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Add, 1, .monotonic);
+        _ = @atomicRmw(@TypeOf(this.active), &this.active, .Add, 1, .monotonic);
         log("refConcurrently ({d}, {d})", .{ this.num_polls, this.active });
     }
     pub fn unrefConcurrently(this: *PosixLoop) void {
-        _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Sub, 1, .Monotonic);
-        _ = @atomicRmw(@TypeOf(this.active), &this.active, .Sub, 1, .Monotonic);
+        _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Sub, 1, .monotonic);
+        _ = @atomicRmw(@TypeOf(this.active), &this.active, .Sub, 1, .monotonic);
         log("unrefConcurrently ({d}, {d})", .{ this.num_polls, this.active });
     }
 
@@ -1228,7 +1228,7 @@ pub const Poll = opaque {
         return us_poll_ext(self).?;
     }
 
-    pub fn fd(self: *Poll) std.os.fd_t {
+    pub fn fd(self: *Poll) std.posix.fd_t {
         return us_poll_fd(self);
     }
 
@@ -1250,9 +1250,9 @@ pub const Poll = opaque {
         write: bool = false,
 
         //#define LIBUS_SOCKET_READABLE
-        pub const read_flag = if (Environment.isLinux) std.os.linux.EPOLL.IN else 1;
+        pub const read_flag = if (Environment.isLinux) std.posix.linux.EPOLL.IN else 1;
         // #define LIBUS_SOCKET_WRITABLE
-        pub const write_flag = if (Environment.isLinux) std.os.linux.EPOLL.OUT else 2;
+        pub const write_flag = if (Environment.isLinux) std.posix.linux.EPOLL.OUT else 2;
     };
 
     pub fn deinit(self: *Poll) void {
@@ -1270,7 +1270,7 @@ pub const Poll = opaque {
     extern fn us_poll_stop(p: ?*Poll, loop: ?*Loop) void;
     extern fn us_poll_events(p: ?*Poll) i32;
     extern fn us_poll_ext(p: ?*Poll) ?*anyopaque;
-    extern fn us_poll_fd(p: ?*Poll) std.os.fd_t;
+    extern fn us_poll_fd(p: ?*Poll) std.posix.fd_t;
     extern fn us_poll_resize(p: ?*Poll, loop: ?*Loop, ext_size: c_uint) ?*Poll;
 };
 
@@ -2403,7 +2403,7 @@ pub const LIBUS_RECV_BUFFER_LENGTH = 524288;
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);
 pub const LIBUS_EXT_ALIGNMENT = @as(i32, 16);
-pub const LIBUS_SOCKET_DESCRIPTOR = std.os.socket_t;
+pub const LIBUS_SOCKET_DESCRIPTOR = std.posix.socket_t;
 
 pub const _COMPRESSOR_MASK: i32 = 255;
 pub const _DECOMPRESSOR_MASK: i32 = 3840;

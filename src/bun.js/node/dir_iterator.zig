@@ -7,7 +7,7 @@
 
 const builtin = @import("builtin");
 const std = @import("std");
-const os = std.os;
+const os = std.posix;
 
 const Dir = std.fs.Dir;
 const JSC = @import("root").bun.JSC;

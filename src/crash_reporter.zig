@@ -12,7 +12,7 @@ fn setup_sigactions(act: ?*const os.Sigaction) !void {
 const builtin = @import("builtin");
 const ErrorCallback = *const fn (sig: i32, addr: usize) void;
 pub var on_error: ?ErrorCallback = null;
-noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+noinline fn sigaction_handler(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
     // Prevent recursive calls
     setup_sigactions(null) catch unreachable;
 
@@ -27,7 +27,7 @@ noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*cons
     if (on_error) |handle| handle(sig, addr);
 }
 
-noinline fn sigpipe_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+noinline fn sigpipe_handler(_: i32, _: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
     const bun = @import("root").bun;
     bun.Output.debug("SIGPIPE received\n", .{});
 }
@@ -49,7 +49,7 @@ pub fn reloadHandlers() !void {
     @import("root").bun.spawn.WaiterThread.reloadHandlers();
     bun_ignore_sigpipe();
 }
-const os = std.os;
+const os = std.posix;
 pub fn start() !void {
     var act = os.Sigaction{
         .handler = .{ .sigaction = sigaction_handler },

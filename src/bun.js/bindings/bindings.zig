@@ -4510,7 +4510,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("fromUInt64NoTruncate", .{ globalObject, i });
     }
 
-    /// This always returns a JS BigInt using std.os.timeval from std.os.rusage
+    /// This always returns a JS BigInt using std.posix.timeval from std.posix.rusage
     pub fn fromTimevalNoTruncate(globalObject: *JSGlobalObject, nsec: i64, sec: i64) JSValue {
         return cppFn("fromTimevalNoTruncate", .{ globalObject, nsec, sec });
     }
@@ -6320,8 +6320,8 @@ extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn (
 pub fn initialize() void {
     JSC.markBinding(@src());
     JSCInitialize(
-        std.os.environ.ptr,
-        std.os.environ.len,
+        std.posix.environ.ptr,
+        std.posix.environ.len,
         struct {
             pub fn callback(name: [*]const u8, len: usize) callconv(.C) void {
                 Output.prettyErrorln(

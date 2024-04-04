@@ -170,7 +170,7 @@ pub const BuildCommand = struct {
                 break :brk2 resolve_path.getIfExistsLongestCommonPath(this_bundler.options.entry_points) orelse ".";
             };
 
-            var dir = bun.openDirForPath(&(try std.os.toPosixPath(path))) catch |err| {
+            var dir = bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> opening root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             };

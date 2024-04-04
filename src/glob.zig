@@ -206,7 +206,7 @@ pub fn GlobWalker_(
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
                 const root_path_z = path_buf[0..root_path.len :0];
-                const cwd_fd = switch (Syscall.open(root_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                const cwd_fd = switch (Syscall.open(root_path_z, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                     .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, root_path_z) },
                     .result => |fd| fd,
                 };
@@ -314,7 +314,7 @@ pub fn GlobWalker_(
                 const fd: bun.FileDescriptor = fd: {
                     if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
-                        if (had_dot_dot) break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                        if (had_dot_dot) break :fd switch (Syscall.openat(this.cwd_fd, dir_path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                             .err => |err| return .{
                                 .err = this.walker.handleSysErrWithPath(err, dir_path),
                             },
@@ -328,7 +328,7 @@ pub fn GlobWalker_(
                         break :fd this.cwd_fd;
                     }
 
-                    break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                    break :fd switch (Syscall.openat(this.cwd_fd, dir_path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                         .err => |err| return .{
                             .err = this.walker.handleSysErrWithPath(err, dir_path),
                         },
@@ -378,7 +378,7 @@ pub fn GlobWalker_(
                                     const is_last = component_idx == this.walker.patternComponents.items.len - 1;
 
                                     this.iter_state = .get_next;
-                                    const maybe_dir_fd: ?bun.FileDescriptor = switch (Syscall.openat(this.cwd_fd, symlink_full_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                                    const maybe_dir_fd: ?bun.FileDescriptor = switch (Syscall.openat(this.cwd_fd, symlink_full_path_z, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                                         .err => |err| brk: {
                                             if (@as(usize, @intCast(err.errno)) == @as(usize, @intFromEnum(bun.C.E.NOTDIR))) {
                                                 break :brk null;

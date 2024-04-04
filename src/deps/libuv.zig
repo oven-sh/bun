@@ -19,9 +19,9 @@ const LPFN_CONNECTEX = *const anyopaque;
 const FILE = std.c.FILE;
 const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
 const INPUT_RECORD = windows.INPUT_RECORD;
-const sockaddr = std.os.sockaddr;
-const sockaddr_storage = std.os.linux.sockaddr_storage;
-const sockaddr_un = std.os.linux.sockaddr_un;
+const sockaddr = std.posix.sockaddr;
+const sockaddr_storage = std.posix.linux.sockaddr_storage;
+const sockaddr_un = std.posix.linux.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
 
@@ -213,14 +213,14 @@ pub const O = struct {
 
     pub fn fromStd(c_flags: i32) i32 {
         var flags: i32 = 0;
-        if (c_flags & std.os.O.NONBLOCK != 0) flags |= NONBLOCK;
-        if (c_flags & std.os.O.CREAT != 0) flags |= CREAT;
-        if (c_flags & std.os.O.NOFOLLOW != 0) flags |= NOFOLLOW;
-        if (c_flags & std.os.O.WRONLY != 0) flags |= WRONLY;
-        if (c_flags & std.os.O.RDONLY != 0) flags |= RDONLY;
-        if (c_flags & std.os.O.RDWR != 0) flags |= RDWR;
-        if (c_flags & std.os.O.TRUNC != 0) flags |= TRUNC;
-        if (c_flags & std.os.O.APPEND != 0) flags |= APPEND;
+        if (c_flags & bun.O.NONBLOCK != 0) flags |= NONBLOCK;
+        if (c_flags & bun.O.CREAT != 0) flags |= CREAT;
+        if (c_flags & bun.O.NOFOLLOW != 0) flags |= NOFOLLOW;
+        if (c_flags & bun.O.WRONLY != 0) flags |= WRONLY;
+        if (c_flags & bun.O.RDONLY != 0) flags |= RDONLY;
+        if (c_flags & bun.O.RDWR != 0) flags |= RDWR;
+        if (c_flags & bun.O.TRUNC != 0) flags |= TRUNC;
+        if (c_flags & bun.O.APPEND != 0) flags |= APPEND;
 
         return flags;
     }
@@ -240,7 +240,7 @@ const _O_SHORT_LIVED = 0x1000;
 const _O_SEQUENTIAL = 0x0020;
 const _O_RANDOM = 0x0010;
 
-// These **do not** map to std.os.O!
+// These **do not** map to bun.O!
 pub const UV_FS_O_APPEND = 0x0008;
 pub const UV_FS_O_CREAT = _O_CREAT;
 pub const UV_FS_O_EXCL = 0x0400;
@@ -684,12 +684,12 @@ pub const Loop = extern struct {
 
     pub fn refConcurrently(this: *Loop) void {
         log("refConcurrently", .{});
-        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Add, 1, .Monotonic);
+        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Add, 1, .monotonic);
     }
 
     pub fn unrefConcurrently(this: *Loop) void {
         log("unrefConcurrently", .{});
-        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Sub, 1, .Monotonic);
+        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Sub, 1, .monotonic);
     }
 
     pub fn unrefCount(this: *Loop, count: i32) void {
@@ -1797,7 +1797,7 @@ pub const fs_t = extern struct {
     ///
     /// It is assumed that if UV overwrites the .loop, it probably overwrote the rest of the struct.
     pub const uninitialized: fs_t = if (bun.Environment.allow_assert) value: {
-        comptime var value = std.mem.zeroes(fs_t);
+        var value = std.mem.zeroes(fs_t);
         value.loop = @ptrFromInt(0xAAAAAAAAAAAA0000);
         break :value value;
     } else undefined;
@@ -1882,15 +1882,15 @@ pub const struct_uv_cpu_info_s = extern struct {
 };
 pub const uv_cpu_info_t = struct_uv_cpu_info_s;
 
-const sockaddr_in = std.os.linux.sockaddr.in;
-const sockaddr_in6 = std.os.linux.sockaddr.in6;
+const sockaddr_in = std.posix.linux.sockaddr.in;
+const sockaddr_in6 = std.posix.linux.sockaddr.in6;
 pub const addr_union = extern union {
-    address4: std.os.linux.sockaddr.in,
-    address6: std.os.linux.sockaddr.in6,
+    address4: std.posix.linux.sockaddr.in,
+    address6: std.posix.linux.sockaddr.in6,
 };
 const netmask_union = extern union {
-    netmask4: std.os.linux.sockaddr.in,
-    netmask6: std.os.linux.sockaddr.in6,
+    netmask4: std.posix.linux.sockaddr.in,
+    netmask6: std.posix.linux.sockaddr.in6,
 };
 pub const uv_interface_address_t = extern struct {
     name: [*:0]u8,
@@ -2921,7 +2921,7 @@ pub fn StreamWriterMixin(comptime Type: type, comptime pipe_field_name: std.meta
         }
 
         fn uv_on_write_cb(req: *uv_write_t, status: ReturnCode) callconv(.C) void {
-            var this: *Type = @fieldParentPtr(Type, @tagName(uv_write_t_field_name), req);
+            var this: *Type = @fieldParentPtr(@tagName(uv_write_t_field_name), req);
             this.onWrite(if (status.toError(.send)) |err| .{ .err = err } else .{ .result = @intCast(status.int()) });
         }
 

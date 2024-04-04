@@ -173,7 +173,7 @@ pub const CommandLineReporter = struct {
         var writer = buffered_writer.writer();
         defer buffered_writer.flush() catch unreachable;
 
-        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         writeTestStatusLine(.pass, &writer);
 
@@ -186,7 +186,7 @@ pub const CommandLineReporter = struct {
 
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
-        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // when the tests fail, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
@@ -219,7 +219,7 @@ pub const CommandLineReporter = struct {
 
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
-        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // If you do it.only, don't report the skipped tests because its pretty noisy
         if (jest.Jest.runner != null and !jest.Jest.runner.?.only) {
@@ -244,7 +244,7 @@ pub const CommandLineReporter = struct {
     pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
 
-        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // when the tests skip, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran

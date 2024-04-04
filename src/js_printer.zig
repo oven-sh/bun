@@ -161,8 +161,8 @@ fn ws(comptime str: []const u8) Whitespacer {
                     buf_i += 1;
                 }
             }
-
-            break :brk buf[0..buf_i];
+            const final = buf[0..buf_i].*;
+            break :brk &final;
         };
     };
 
@@ -1505,7 +1505,7 @@ fn NewPrinter(
             const remainder: f64 = (float - floored);
             const is_integer = remainder == 0;
             if (float < std.math.maxInt(u52) and is_integer) {
-                @setFloatMode(.Optimized);
+                @setFloatMode(.optimized);
                 // In JavaScript, numbers are represented as 64 bit floats
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
@@ -5468,14 +5468,14 @@ pub const DirectWriter = struct {
     handle: FileDescriptorType,
 
     pub fn write(writer: *DirectWriter, buf: []const u8) !usize {
-        return try std.os.write(writer.handle, buf);
+        return try std.posix.write(writer.handle, buf);
     }
 
     pub fn writeAll(writer: *DirectWriter, buf: []const u8) !void {
-        _ = try std.os.write(writer.handle, buf);
+        _ = try std.posix.write(writer.handle, buf);
     }
 
-    pub const Error = std.os.WriteError;
+    pub const Error = std.posix.WriteError;
 };
 
 // Unbuffered           653ms
@@ -5568,7 +5568,7 @@ const FileWriterInternal = struct {
                     const remain = first.len + second.len;
                     const third: []const u8 = result[remain..];
 
-                    var vecs = [_]std.os.iovec_const{
+                    var vecs = [_]std.posix.iovec_const{
                         .{
                             .iov_base = first.ptr,
                             .iov_len = first.len,
@@ -5583,7 +5583,7 @@ const FileWriterInternal = struct {
                         },
                     };
 
-                    const written = try std.os.writev(ctx.file.handle, vecs[0..@as(usize, if (third.len > 0) 3 else 2)]);
+                    const written = try std.posix.writev(ctx.file.handle, vecs[0..@as(usize, if (third.len > 0) 3 else 2)]);
                     if (written == 0 or result.len - written == 0) return;
                     result = result[written..];
                 },

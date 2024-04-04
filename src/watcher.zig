@@ -50,24 +50,24 @@ const INotify = struct {
 
     pub fn watchPath(this: *INotify, pathname: [:0]const u8) !EventListIndex {
         std.debug.assert(this.loaded_inotify);
-        const old_count = this.watch_count.fetchAdd(1, .Release);
+        const old_count = this.watch_count.fetchAdd(1, .release);
         defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-        const watch_file_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MODIFY;
-        return std.os.inotify_add_watchZ(this.inotify_fd, pathname, watch_file_mask);
+        const watch_file_mask = std.posix.linux.IN.EXCL_UNLINK | std.posix.linux.IN.MOVE_SELF | std.posix.linux.IN.DELETE_SELF | std.posix.linux.IN.MOVED_TO | std.posix.linux.IN.MODIFY;
+        return std.posix.inotify_add_watchZ(this.inotify_fd, pathname, watch_file_mask);
     }
 
     pub fn watchDir(this: *INotify, pathname: [:0]const u8) !EventListIndex {
         std.debug.assert(this.loaded_inotify);
-        const old_count = this.watch_count.fetchAdd(1, .Release);
+        const old_count = this.watch_count.fetchAdd(1, .release);
         defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-        const watch_dir_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.DELETE | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.CREATE | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.ONLYDIR | std.os.linux.IN.MOVED_TO;
-        return std.os.inotify_add_watchZ(this.inotify_fd, pathname, watch_dir_mask);
+        const watch_dir_mask = std.posix.linux.IN.EXCL_UNLINK | std.posix.linux.IN.DELETE | std.posix.linux.IN.DELETE_SELF | std.posix.linux.IN.CREATE | std.posix.linux.IN.MOVE_SELF | std.posix.linux.IN.ONLYDIR | std.posix.linux.IN.MOVED_TO;
+        return std.posix.inotify_add_watchZ(this.inotify_fd, pathname, watch_dir_mask);
     }
 
     pub fn unwatch(this: *INotify, wd: EventListIndex) void {
         std.debug.assert(this.loaded_inotify);
-        _ = this.watch_count.fetchSub(1, .Release);
-        std.os.inotify_rm_watch(this.inotify_fd, wd);
+        _ = this.watch_count.fetchSub(1, .release);
+        std.posix.inotify_rm_watch(this.inotify_fd, wd);
     }
 
     pub fn init(this: *INotify, _: []const u8) !void {
@@ -78,7 +78,7 @@ const INotify = struct {
             this.coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
         }
 
-        this.inotify_fd = try std.os.inotify_init1(std.os.linux.IN.CLOEXEC);
+        this.inotify_fd = try std.posix.inotify_init1(std.posix.linux.IN.CLOEXEC);
     }
 
     pub fn read(this: *INotify) ![]*const INotifyEvent {
@@ -86,13 +86,13 @@ const INotify = struct {
 
         restart: while (true) {
             Futex.wait(&this.watch_count, 0, null) catch unreachable;
-            const rc = std.os.system.read(
+            const rc = std.posix.system.read(
                 this.inotify_fd,
                 @as([*]u8, @ptrCast(@alignCast(&this.eventlist))),
                 @sizeOf(EventListBuffer),
             );
 
-            switch (std.os.errno(rc)) {
+            switch (std.posix.errno(rc)) {
                 .SUCCESS => {
                     var len = @as(usize, @intCast(rc));
 
@@ -101,20 +101,20 @@ const INotify = struct {
                     // IN_MODIFY is very noisy
                     // we do a 0.1ms sleep to try to coalesce events better
                     if (len < (@sizeOf(EventListBuffer) / 2)) {
-                        var fds = [_]std.os.pollfd{.{
+                        var fds = [_]std.posix.pollfd{.{
                             .fd = this.inotify_fd,
-                            .events = std.os.POLL.IN | std.os.POLL.ERR,
+                            .events = std.posix.POLL.IN | std.posix.POLL.ERR,
                             .revents = 0,
                         }};
-                        var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = this.coalesce_interval };
-                        if ((std.os.ppoll(&fds, &timespec, null) catch 0) > 0) {
+                        var timespec = std.posix.timespec{ .tv_sec = 0, .tv_nsec = this.coalesce_interval };
+                        if ((std.posix.ppoll(&fds, &timespec, null) catch 0) > 0) {
                             while (true) {
-                                const new_rc = std.os.system.read(
+                                const new_rc = std.posix.system.read(
                                     this.inotify_fd,
                                     @as([*]u8, @ptrCast(@alignCast(&this.eventlist))) + len,
                                     @sizeOf(EventListBuffer) - len,
                                 );
-                                switch (std.os.errno(new_rc)) {
+                                switch (std.posix.errno(new_rc)) {
                                     .SUCCESS => {
                                         len += @as(usize, @intCast(new_rc));
                                     },
@@ -185,7 +185,7 @@ const DarwinWatcher = struct {
     fd: i32 = 0,
 
     pub fn init(this: *DarwinWatcher, _: []const u8) !void {
-        this.fd = try std.os.kqueue();
+        this.fd = try std.posix.kqueue();
         if (this.fd == 0) return error.KQueueError;
     }
 
@@ -425,10 +425,10 @@ pub const WatchEvent = struct {
     pub fn fromINotify(this: *WatchEvent, event: INotify.INotifyEvent, index: WatchItemIndex) void {
         this.* = WatchEvent{
             .op = Op{
-                .delete = (event.mask & std.os.linux.IN.DELETE_SELF) > 0 or (event.mask & std.os.linux.IN.DELETE) > 0,
-                .rename = (event.mask & std.os.linux.IN.MOVE_SELF) > 0,
-                .move_to = (event.mask & std.os.linux.IN.MOVED_TO) > 0,
-                .write = (event.mask & std.os.linux.IN.MODIFY) > 0,
+                .delete = (event.mask & std.posix.linux.IN.DELETE_SELF) > 0 or (event.mask & std.posix.linux.IN.DELETE) > 0,
+                .rename = (event.mask & std.posix.linux.IN.MOVE_SELF) > 0,
+                .move_to = (event.mask & std.posix.linux.IN.MOVED_TO) > 0,
+                .write = (event.mask & std.posix.linux.IN.MODIFY) > 0,
             },
             .index = index,
         };
@@ -628,7 +628,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 while (true) {
                     defer Output.flush();
 
-                    var count_ = std.os.system.kevent(
+                    var count_ = std.posix.system.kevent(
                         this.platform.fd,
                         @as([*]KEvent, changelist),
                         0,
@@ -641,8 +641,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     // Give the events more time to coallesce
                     if (count_ < 128 / 2) {
                         const remain = 128 - count_;
-                        var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
-                        const extra = std.os.system.kevent(
+                        var timespec = std.posix.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
+                        const extra = std.posix.system.kevent(
                             this.platform.fd,
                             @as([*]KEvent, changelist[@as(usize, @intCast(count_))..].ptr),
                             0,
@@ -911,7 +911,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // Basically:
                 // - We register the event here.
                 // our while(true) loop above receives notification of changes to any of the events created here.
-                _ = std.os.system.kevent(
+                _ = std.posix.system.kevent(
                     this.platform.fd,
                     @as([]KEvent, events[0..1]).ptr,
                     1,
@@ -1001,7 +1001,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // Basically:
                 // - We register the event here.
                 // our while(true) loop above receives notification of changes to any of the events created here.
-                _ = std.os.system.kevent(
+                _ = std.posix.system.kevent(
                     this.platform.fd,
                     @as([]KEvent, events[0..1]).ptr,
                     1,

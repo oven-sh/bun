@@ -9,7 +9,7 @@ const JSC = @import("root").bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Output = @import("root").bun.Output;
-const os = std.os;
+const os = std.posix;
 const uv = bun.windows.libuv;
 pub const Stdio = union(enum) {
     inherit: void,
@@ -110,11 +110,11 @@ pub const Stdio = union(enum) {
         };
 
         // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
-        const rc = std.os.linux.memfd_create(label, 0);
+        const rc = std.posix.linux.memfd_create(label, 0);
 
         log("memfd_create({s}) = {d}", .{ label, rc });
 
-        switch (std.os.linux.getErrno(rc)) {
+        switch (std.posix.linux.getErrno(rc)) {
             .SUCCESS => {},
             else => |errno| {
                 log("Failed to create memfd: {s}", .{@tagName(errno)});

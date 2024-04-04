@@ -87,7 +87,7 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        _ = @atomicRmw(@TypeOf(vm.pending_unref_counter), &vm.pending_unref_counter, .Add, 1, .Monotonic);
+        _ = @atomicRmw(@TypeOf(vm.pending_unref_counter), &vm.pending_unref_counter, .Add, 1, .monotonic);
     }
 
     /// Allow a poll to keep the process alive.
@@ -227,7 +227,7 @@ pub const FilePoll = struct {
         return .pipe;
     }
 
-    pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.os.system.kevent64_s) void {
+    pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.posix.system.kevent64_s) void {
         poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
         log("onKQueueEvent: {}", .{poll});
 
@@ -237,7 +237,7 @@ pub const FilePoll = struct {
         poll.onUpdate(kqueue_event.data);
     }
 
-    pub fn onEpollEvent(poll: *FilePoll, _: *Loop, epoll_event: *std.os.linux.epoll_event) void {
+    pub fn onEpollEvent(poll: *FilePoll, _: *Loop, epoll_event: *std.posix.linux.epoll_event) void {
         poll.updateFlags(Flags.fromEpollEvent(epoll_event.*));
         poll.onUpdate(0);
     }
@@ -491,38 +491,38 @@ pub const FilePoll = struct {
             }
         }
 
-        pub fn fromKQueueEvent(kqueue_event: std.os.system.kevent64_s) Flags.Set {
+        pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
             var flags = Flags.Set{};
-            if (kqueue_event.filter == std.os.system.EVFILT_READ) {
+            if (kqueue_event.filter == std.posix.system.EVFILT_READ) {
                 flags.insert(Flags.readable);
-                if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                 }
-            } else if (kqueue_event.filter == std.os.system.EVFILT_WRITE) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_WRITE) {
                 flags.insert(Flags.writable);
-                if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                 }
-            } else if (kqueue_event.filter == std.os.system.EVFILT_PROC) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_PROC) {
                 flags.insert(Flags.process);
-            } else if (kqueue_event.filter == std.os.system.EVFILT_MACHPORT) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_MACHPORT) {
                 flags.insert(Flags.machport);
             }
             return flags;
         }
 
-        pub fn fromEpollEvent(epoll: std.os.linux.epoll_event) Flags.Set {
+        pub fn fromEpollEvent(epoll: std.posix.linux.epoll_event) Flags.Set {
             var flags = Flags.Set{};
-            if (epoll.events & std.os.linux.EPOLL.IN != 0) {
+            if (epoll.events & std.posix.linux.EPOLL.IN != 0) {
                 flags.insert(Flags.readable);
             }
-            if (epoll.events & std.os.linux.EPOLL.OUT != 0) {
+            if (epoll.events & std.posix.linux.EPOLL.OUT != 0) {
                 flags.insert(Flags.writable);
             }
-            if (epoll.events & std.os.linux.EPOLL.ERR != 0) {
+            if (epoll.events & std.posix.linux.EPOLL.ERR != 0) {
                 flags.insert(Flags.eof);
             }
-            if (epoll.events & std.os.linux.EPOLL.HUP != 0) {
+            if (epoll.events & std.posix.linux.EPOLL.HUP != 0) {
                 flags.insert(Flags.hup);
             }
             return flags;
@@ -775,9 +775,9 @@ pub const FilePoll = struct {
         @export(onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });
     }
 
-    const timeout = std.mem.zeroes(std.os.timespec);
+    const timeout = std.mem.zeroes(std.posix.timespec);
     const kevent = std.c.kevent;
-    const linux = std.os.linux;
+    const linux = std.posix.linux;
 
     pub const OneShotFlag = enum { dispatch, one_shot, none };
 
@@ -823,7 +823,7 @@ pub const FilePoll = struct {
                 return errno;
             }
         } else if (comptime Environment.isMac) {
-            var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
+            var changelist = std.mem.zeroes([2]std.posix.system.kevent64_s);
             const one_shot_flag: u16 = if (!this.flags.contains(.one_shot))
                 0
             else if (one_shot == .dispatch)
@@ -834,7 +834,7 @@ pub const FilePoll = struct {
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.os.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
@@ -843,7 +843,7 @@ pub const FilePoll = struct {
                 },
                 .writable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.os.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
@@ -852,7 +852,7 @@ pub const FilePoll = struct {
                 },
                 .process => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.os.system.EVFILT_PROC,
+                    .filter = std.posix.system.EVFILT_PROC,
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
@@ -861,7 +861,7 @@ pub const FilePoll = struct {
                 },
                 .machport => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.os.system.EVFILT_MACHPORT,
+                    .filter = std.posix.system.EVFILT_MACHPORT,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
@@ -879,7 +879,7 @@ pub const FilePoll = struct {
             // limit expires, then kevent() returns 0.
             const rc = rc: {
                 while (true) {
-                    const rc = std.os.system.kevent64(
+                    const rc = std.posix.system.kevent64(
                         watcher_fd,
                         &changelist,
                         1,
@@ -892,7 +892,7 @@ pub const FilePoll = struct {
                         &timeout,
                     );
 
-                    if (std.c.getErrno(rc) == .INTR) continue;
+                    if (bun.C.getErrno(rc) == .INTR) continue;
                     break :rc rc;
                 }
             };
@@ -909,7 +909,7 @@ pub const FilePoll = struct {
                 // indicate the error condition.
             }
 
-            const errno = std.c.getErrno(rc);
+            const errno = bun.C.getErrno(rc);
 
             if (errno != .SUCCESS) {
                 this.deactivate(loop);
@@ -993,12 +993,12 @@ pub const FilePoll = struct {
                 return errno;
             }
         } else if (comptime Environment.isMac) {
-            var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
+            var changelist = std.mem.zeroes([2]std.posix.system.kevent64_s);
 
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.os.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
@@ -1007,7 +1007,7 @@ pub const FilePoll = struct {
                 },
                 .machport => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.os.system.EVFILT_MACHPORT,
+                    .filter = std.posix.system.EVFILT_MACHPORT,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
@@ -1016,7 +1016,7 @@ pub const FilePoll = struct {
                 },
                 .writable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.os.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
@@ -1025,7 +1025,7 @@ pub const FilePoll = struct {
                 },
                 .process => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.os.system.EVFILT_PROC,
+                    .filter = std.posix.system.EVFILT_PROC,
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
@@ -1041,7 +1041,7 @@ pub const FilePoll = struct {
             // The kevent() system call returns the number of events placed in
             // the eventlist, up to the value given by nevents.  If the time
             // limit expires, then kevent() returns 0.
-            const rc = std.os.system.kevent64(
+            const rc = std.posix.system.kevent64(
                 watcher_fd,
                 &changelist,
                 1,
@@ -1061,7 +1061,7 @@ pub const FilePoll = struct {
                 // indicate the error condition.
             }
 
-            const errno = std.c.getErrno(rc);
+            const errno = bun.C.getErrno(rc);
             switch (rc) {
                 std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
                 else => {},
@@ -1101,7 +1101,7 @@ pub const Closer = struct {
     }
 
     fn onClose(task: *JSC.WorkPoolTask) void {
-        const closer = @fieldParentPtr(Closer, "task", task);
+        const closer: *Closer = @fieldParentPtr("task", task);
         defer closer.destroy();
         _ = bun.sys.close(closer.fd);
     }

@@ -87,7 +87,7 @@ pub const Signals = struct {
 
     pub fn get(this: Signals, comptime field: std.meta.FieldEnum(Signals)) bool {
         var ptr: *std.atomic.Value(bool) = @field(this, @tagName(field)) orelse return false;
-        return ptr.load(.Monotonic);
+        return ptr.load(.monotonic);
     }
 };
 
@@ -141,10 +141,10 @@ pub const Sendfile = struct {
             const begin = this.offset;
             const val =
                 // this does the syscall directly, without libc
-                std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
+                std.posix.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
             this.offset = @as(u64, @intCast(signed_offset));
 
-            const errcode = std.os.linux.getErrno(val);
+            const errcode = std.posix.linux.getErrno(val);
 
             this.remain -|= @as(u64, @intCast(this.offset -| begin));
 
@@ -156,9 +156,9 @@ pub const Sendfile = struct {
                 return .{ .err = bun.errnoToZigErr(errcode) };
             }
         } else if (Environment.isPosix) {
-            var sbytes: std.os.off_t = adjusted_count;
+            var sbytes: std.posix.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
-            const errcode = std.c.getErrno(std.c.sendfile(
+            const errcode = bun.C.getErrno(std.c.sendfile(
                 this.fd.cast(),
                 socket.fd().cast(),
                 signed_offset,
@@ -706,7 +706,7 @@ pub const HTTPThread = struct {
     const threadlog = Output.scoped(.HTTPThread, true);
 
     pub fn init() !void {
-        if (http_thread_loaded.swap(true, .SeqCst)) {
+        if (http_thread_loaded.swap(true, .seq_cst)) {
             return;
         }
 
@@ -745,7 +745,7 @@ pub const HTTPThread = struct {
         });
 
         if (Environment.isWindows) {
-            _ = std.os.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
+            _ = std.posix.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
                 std.debug.panic("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
             };
         }
@@ -753,7 +753,7 @@ pub const HTTPThread = struct {
         http_thread.loop = loop;
         http_thread.http_context.init() catch @panic("Failed to init http context");
         http_thread.https_context.init() catch @panic("Failed to init https context");
-        http_thread.has_awoken.store(true, .Monotonic);
+        http_thread.has_awoken.store(true, .monotonic);
         http_thread.processEvents();
     }
 
@@ -791,8 +791,8 @@ pub const HTTPThread = struct {
         }
 
         var count: usize = 0;
-        var active = AsyncHTTP.active_requests_count.load(.Monotonic);
-        const max = AsyncHTTP.max_simultaneous_requests.load(.Monotonic);
+        var active = AsyncHTTP.active_requests_count.load(.monotonic);
+        const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
         if (active >= max) return;
         defer {
             if (comptime Environment.allow_assert) {
@@ -850,12 +850,12 @@ pub const HTTPThread = struct {
                 .is_tls = http.client.isHTTPS(),
             }) catch bun.outOfMemory();
         }
-        if (this.has_awoken.load(.Monotonic))
+        if (this.has_awoken.load(.monotonic))
             this.loop.wakeup();
     }
 
     pub fn wakeup(this: *@This()) void {
-        if (this.has_awoken.load(.Monotonic))
+        if (this.has_awoken.load(.monotonic))
             this.loop.wakeup();
     }
 
@@ -866,12 +866,12 @@ pub const HTTPThread = struct {
         {
             var batch_ = batch;
             while (batch_.pop()) |task| {
-                const http: *AsyncHTTP = @fieldParentPtr(AsyncHTTP, "task", task);
+                const http: *AsyncHTTP = @fieldParentPtr("task", task);
                 this.queued_tasks.push(http);
             }
         }
 
-        if (this.has_awoken.load(.Monotonic))
+        if (this.has_awoken.load(.monotonic))
             this.loop.wakeup();
     }
 };
@@ -1567,7 +1567,7 @@ const Stage = enum(u8) {
 
 // threadlocal var resolver_cache
 
-const os = std.os;
+const os = std.posix;
 
 // lowercase hash header names so that we can be sure
 pub fn hashHeaderName(name: string) u64 {
@@ -1659,7 +1659,7 @@ pub const HTTPChannelContext = struct {
     channel: *HTTPChannel,
 
     pub fn callback(data: HTTPCallbackPair) void {
-        var this: *HTTPChannelContext = @fieldParentPtr(HTTPChannelContext, "http", data.@"0");
+        var this: *HTTPChannelContext = @fieldParentPtr("http", data.@"0");
         this.channel.writeItem(data) catch unreachable;
     }
 };
@@ -1724,20 +1724,20 @@ pub const AsyncHTTP = struct {
                 ) catch unreachable;
                 return;
             }
-            AsyncHTTP.max_simultaneous_requests.store(max, .Monotonic);
+            AsyncHTTP.max_simultaneous_requests.store(max, .monotonic);
         }
     }
 
     pub fn signalHeaderProgress(this: *AsyncHTTP) void {
-        @fence(.Release);
+        @fence(.release);
         var progress = this.signals.header_progress orelse return;
-        progress.store(true, .Release);
+        progress.store(true, .release);
     }
 
     pub fn enableBodyStreaming(this: *AsyncHTTP) void {
-        @fence(.Release);
+        @fence(.release);
         var stream = this.signals.body_streaming orelse return;
-        stream.store(true, .Release);
+        stream.store(true, .release);
     }
 
     pub fn clearData(this: *AsyncHTTP) void {
@@ -1794,7 +1794,7 @@ pub const AsyncHTTP = struct {
             .result_callback = callback,
             .http_proxy = options.http_proxy,
             .signals = options.signals orelse .{},
-            .async_http_id = if (options.signals != null and options.signals.?.aborted != null) async_http_id.fetchAdd(1, .Monotonic) else 0,
+            .async_http_id = if (options.signals != null and options.signals.?.aborted != null) async_http_id.fetchAdd(1, .monotonic) else 0,
             .timeout = timeout,
         };
 
@@ -1967,7 +1967,7 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn schedule(this: *AsyncHTTP, _: std.mem.Allocator, batch: *ThreadPool.Batch) void {
-        this.state.store(.scheduled, .Monotonic);
+        this.state.store(.scheduled, .monotonic);
         batch.push(ThreadPool.Batch.from(&this.task));
     }
 
@@ -2011,11 +2011,11 @@ pub const AsyncHTTP = struct {
             if (result.metadata) |metadata| {
                 this.response = metadata.response;
             }
-            this.state.store(.success, .Monotonic);
+            this.state.store(.success, .monotonic);
         } else {
             this.err = result.fail;
             this.response = null;
-            this.state.store(State.fail, .Monotonic);
+            this.state.store(State.fail, .monotonic);
         }
 
         if (result.has_more) {
@@ -2031,24 +2031,24 @@ pub const AsyncHTTP = struct {
                 callback.function(callback.ctx, result);
             }
 
-            const active_requests = AsyncHTTP.active_requests_count.fetchSub(1, .Monotonic);
+            const active_requests = AsyncHTTP.active_requests_count.fetchSub(1, .monotonic);
             std.debug.assert(active_requests > 0);
 
-            if (active_requests >= AsyncHTTP.max_simultaneous_requests.load(.Monotonic)) {
+            if (active_requests >= AsyncHTTP.max_simultaneous_requests.load(.monotonic)) {
                 http_thread.drainEvents();
             }
         }
     }
 
     pub fn startAsyncHTTP(task: *Task) void {
-        var this = @fieldParentPtr(AsyncHTTP, "task", task);
+        var this: *AsyncHTTP = @fieldParentPtr("task", task);
         this.onStart();
     }
 
     pub fn onStart(this: *AsyncHTTP) void {
-        _ = active_requests_count.fetchAdd(1, .Monotonic);
+        _ = active_requests_count.fetchAdd(1, .monotonic);
         this.err = null;
-        this.state.store(.sending, .Monotonic);
+        this.state.store(.sending, .monotonic);
         this.client.result_callback = HTTPClientResult.Callback.New(*AsyncHTTP, onAsyncHTTPCallback).init(
             this,
         );

@@ -66,11 +66,11 @@ pub inline fn getStartTime() i128 {
 
 pub fn setThreadName(name: StringTypes.stringZ) void {
     if (Environment.isLinux) {
-        _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
+        _ = std.posix.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
     } else if (Environment.isWindows) {
-        // _ = std.os.SetThreadDescription(std.os.GetCurrentThread(), name);
+        // _ = std.posix.SetThreadDescription(std.posix.GetCurrentThread(), name);
     }
 }
 
@@ -107,13 +107,13 @@ pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
     Output.flush();
     @import("./crash_reporter.zig").on_error = null;
     if (!Environment.isWindows) {
-        if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
-            const act = std.os.Sigaction{
-                .handler = .{ .sigaction = @ptrCast(@alignCast(std.os.SIG.DFL)) },
-                .mask = std.os.empty_sigset,
+        if (sig >= 1 and sig != std.posix.SIG.STOP and sig != std.posix.SIG.KILL) {
+            const act = std.posix.Sigaction{
+                .handler = .{ .sigaction = @ptrCast(@alignCast(std.posix.SIG.DFL)) },
+                .mask = std.posix.empty_sigset,
                 .flags = 0,
             };
-            std.os.sigaction(@intCast(sig), &act, null) catch {};
+            std.posix.sigaction(@intCast(sig), &act, null) catch {};
         }
     }
 

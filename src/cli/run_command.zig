@@ -45,7 +45,7 @@ const NpmArgs = struct {
     pub const package_version: string = "npm_package_version";
 };
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const yarn_commands: []u64 = @import("./list-of-yarn-commands.zig").all_yarn_commands;
+const yarn_commands: []const u64 = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
 const PosixSpawn = bun.posix.spawn;
@@ -740,7 +740,7 @@ pub const RunCommand = struct {
                 var retried = false;
                 while (true) {
                     inner: {
-                        std.os.symlinkZ(argv0, path) catch |err| {
+                        std.posix.symlinkZ(argv0, path) catch |err| {
                             if (err == error.PathAlreadyExists) break :inner;
                             if (retried)
                                 return;
@@ -808,7 +808,7 @@ pub const RunCommand = struct {
                             {
                                 std.debug.assert(target_path_buffer[dir_slice.len] == '\\');
                                 target_path_buffer[dir_slice.len] = 0;
-                                std.os.mkdirW(target_path_buffer[0..dir_slice.len :0], 0) catch {};
+                                std.posix.mkdirW(target_path_buffer[0..dir_slice.len :0], 0) catch {};
                                 target_path_buffer[dir_slice.len] = '\\';
                             }
 
@@ -1529,7 +1529,7 @@ pub const RunCommand = struct {
 
             const trigger = bun.pathLiteral("/[stdin]");
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-            const cwd = try std.os.getcwd(&entry_point_buf);
+            const cwd = try std.posix.getcwd(&entry_point_buf);
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
@@ -1620,7 +1620,7 @@ pub const RunCommand = struct {
         if (ctx.runtime_options.eval.script.len > 0) {
             const trigger = bun.pathLiteral("/[eval]");
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-            const cwd = try std.os.getcwd(&entry_point_buf);
+            const cwd = try std.posix.getcwd(&entry_point_buf);
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len]);
             return;

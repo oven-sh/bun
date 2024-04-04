@@ -12,7 +12,7 @@ pub usingnamespace PlatformSpecific;
 
 const C = std.c;
 const builtin = @import("builtin");
-const os = std.os;
+const os = std.posix;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
@@ -40,7 +40,7 @@ pub extern "c" fn stat64([*c]const u8, [*c]libc_stat) c_int;
 pub extern "c" fn lchmod(path: [*:0]const u8, mode: mode_t) c_int;
 pub extern "c" fn truncate([*:0]const u8, i64) c_int; // note: truncate64 is not a thing
 
-pub extern "c" fn lutimes(path: [*:0]const u8, times: *const [2]std.os.timeval) c_int;
+pub extern "c" fn lutimes(path: [*:0]const u8, times: *const [2]std.posix.timeval) c_int;
 pub extern "c" fn mkdtemp(template: [*c]u8) ?[*:0]u8;
 
 pub extern "c" fn memcmp(s1: [*c]const u8, s2: [*c]const u8, n: usize) c_int;
@@ -150,7 +150,7 @@ pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDe
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
-    const in_handle = try bun.sys.openat(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
+    const in_handle = try bun.sys.openat(from_dir, filename, bun.O.RDONLY | bun.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
     defer _ = bun.sys.close(in_handle);
     _ = bun.sys.unlinkat(from_dir, filename);
     try copyFileZSlowWithHandle(in_handle, to_dir, destination);
@@ -161,7 +161,7 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
         @panic("TODO windows");
     }
 
-    const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle.cast()) else void{};
+    const stat_ = if (comptime Environment.isPosix) try std.posix.fstat(in_handle.cast()) else void{};
 
     // Attempt to delete incase it already existed.
     // This fixes ETXTBUSY on Linux
@@ -170,13 +170,13 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
     const out_handle = try bun.sys.openat(
         to_dir,
         destination,
-        std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC | std.os.O.TRUNC,
+        bun.O.WRONLY | bun.O.CREAT | bun.O.CLOEXEC | bun.O.TRUNC,
         if (comptime Environment.isPosix) 0o644 else 0,
     ).unwrap();
     defer _ = bun.sys.close(out_handle);
 
     if (comptime Environment.isLinux) {
-        _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
+        _ = std.posix.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
     }
 
     try bun.copyFile(in_handle.cast(), out_handle.cast());
@@ -343,7 +343,7 @@ pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
     if (code == -2) return .SRCH;
     if (code == 0) return .SUCCESS;
 
-    const errcode = std.c.getErrno(code);
+    const errcode = bun.sys.getErrno(code);
     return errcode;
 }
 
@@ -382,7 +382,7 @@ pub fn getRelease(buf: []u8) []const u8 {
 }
 
 pub extern fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
-pub extern fn cfmakeraw(*std.os.termios) void;
+pub extern fn cfmakeraw(*std.posix.termios) void;
 
 const LazyStatus = enum {
     pending,

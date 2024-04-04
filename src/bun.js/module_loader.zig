@@ -242,7 +242,7 @@ pub const RuntimeTranspilerStore = struct {
         } else {
             return;
         }
-        var vm = @fieldParentPtr(JSC.VirtualMachine, "transpiler_store", this);
+        var vm: *JSC.VirtualMachine = @fieldParentPtr("transpiler_store", this);
         const event_loop = vm.eventLoop();
         const global = vm.global;
         const jsc_vm = vm.jsc;
@@ -387,7 +387,7 @@ pub const RuntimeTranspilerStore = struct {
         }
 
         pub fn runFromWorkerThread(work_task: *JSC.WorkPoolTask) void {
-            @fieldParentPtr(TranspilerJob, "work_task", work_task).run();
+            @as(*TranspilerJob, @fieldParentPtr("work_task", work_task)).run();
         }
 
         pub fn run(this: *TranspilerJob) void {
@@ -396,7 +396,7 @@ pub const RuntimeTranspilerStore = struct {
             const allocator = arena.allocator();
 
             defer this.dispatchToMainThread();
-            if (this.generation_number != this.vm.transpiler_store.generation_number.load(.Monotonic)) {
+            if (this.generation_number != this.vm.transpiler_store.generation_number.load(.monotonic)) {
                 this.parse_error = error.TranspilerJobGenerationMismatch;
                 return;
             }
@@ -1029,7 +1029,7 @@ pub const ModuleLoader = struct {
             }
 
             pub fn vm(this: *Queue) *VirtualMachine {
-                return @fieldParentPtr(VirtualMachine, "modules", this);
+                return @alignCast(@fieldParentPtr("modules", this));
             }
         };
 

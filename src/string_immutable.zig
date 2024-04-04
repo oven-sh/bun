@@ -32,68 +32,37 @@ pub inline fn contains(self: string, str: string) bool {
     return indexOf(self, str) != null;
 }
 
-pub inline fn w(comptime str: []const u8) [:0]const u16 {
-    if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
-    comptime var output: [str.len + 1]u16 = undefined;
+// TODO: remove this
+const w = toUTF16Literal;
 
-    for (str, 0..) |c, i| {
-        output[i] = c;
-    }
-    output[str.len] = 0;
-
-    const Static = struct {
-        pub const literal: [:0]const u16 = output[0 .. output.len - 1 :0];
-    };
-    return Static.literal;
-}
-
-pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
+pub fn toUTF16Literal(comptime str: []const u8) [:0]const u16 {
     return comptime literal(u16, str);
 }
 
-pub inline fn literal(comptime T: type, comptime str: string) []const T {
-    if (!@inComptime()) @compileError("strings.literal() should be called in a comptime context");
-    comptime var output: [str.len]T = undefined;
-
-    for (str, 0..) |c, i| {
-        // TODO(dylan-conway): should we check for non-ascii characters like JSC does with operator""_s
-        output[i] = c;
-    }
-
-    const Static = struct {
-        pub const literal: []const T = output[0..];
+pub fn literal(comptime T: type, comptime str: []const u8) *const [literalLength(T, str):0]T {
+    if (!@inComptime()) @compileError("strings.literal() must be called in a comptime context");
+    return comptime switch (T) {
+        u8 => brk: {
+            var data: [str.len:0]u8 = undefined;
+            @memcpy(&data, str);
+            const final = data[0..].*;
+            break :brk &final;
+        },
+        u16 => return std.unicode.utf8ToUtf16LeStringLiteral(str),
+        else => @compileError("unsupported type " ++ @typeName(T) ++ " in strings.literal() call."),
     };
-    return Static.literal;
 }
 
-pub inline fn literalBuf(comptime T: type, comptime str: string) [str.len]T {
-    if (!@inComptime()) @compileError("strings.literalBuf() should be called in a comptime context");
-    comptime var output: [str.len]T = undefined;
-
-    for (str, 0..) |c, i| {
-        // TODO(dylan-conway): should we check for non-ascii characters like JSC does with operator""_s
-        output[i] = c;
-    }
-
-    const Static = struct {
-        pub const literal: [str.len]T = output;
+fn literalLength(comptime T: type, comptime str: string) usize {
+    return comptime switch (T) {
+        u8 => str.len,
+        u16 => std.unicode.calcUtf16LeLen(str) catch unreachable,
+        else => 0, // let other errors report first
     };
-    return Static.literal;
 }
 
-pub inline fn toUTF16LiteralZ(comptime str: []const u8) [:0]const u16 {
-    comptime var output: [str.len + 1]u16 = undefined;
-
-    for (str, 0..) |c, i| {
-        output[i] = c;
-    }
-    output[str.len] = 0;
-
-    const Static = struct {
-        pub const literal: [:0]const u16 = output[0..str.len :0];
-    };
-    return Static.literal;
-}
+// TODO: remove this
+const toUTF16LiteralZ = toUTF16Literal;
 
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
@@ -5206,27 +5175,27 @@ pub fn isIPAddress(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;
     if (input.len > max_ip_address_buffer.len) return false;
 
-    var sockaddr: std.os.sockaddr = undefined;
+    var sockaddr: std.posix.sockaddr = undefined;
     @memset(std.mem.asBytes(&sockaddr), 0);
     @memcpy(max_ip_address_buffer[0..input.len], input);
     max_ip_address_buffer[input.len] = 0;
 
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
 
-    return bun.c_ares.ares_inet_pton(std.os.AF.INET, ip_addr_str.ptr, &sockaddr) != 0 or bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
+    return bun.c_ares.ares_inet_pton(std.posix.AF.INET, ip_addr_str.ptr, &sockaddr) != 0 or bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
 }
 
 pub fn isIPV6Address(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;
     if (input.len > max_ip_address_buffer.len) return false;
 
-    var sockaddr: std.os.sockaddr = undefined;
+    var sockaddr: std.posix.sockaddr = undefined;
     @memset(std.mem.asBytes(&sockaddr), 0);
     @memcpy(max_ip_address_buffer[0..input.len], input);
     max_ip_address_buffer[input.len] = 0;
 
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
-    return bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
+    return bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
 }
 
 pub fn cloneNormalizingSeparators(

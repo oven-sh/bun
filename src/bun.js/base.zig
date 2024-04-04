@@ -342,7 +342,7 @@ pub const ArrayBuffer = extern struct {
             return result;
         }
 
-        const result = bun.sys.mmap(null, @intCast(@max(size, 0)), std.os.PROT.READ | std.os.PROT.WRITE, std.os.MAP.SHARED | 0, fd, 0);
+        const result = bun.sys.mmap(null, @intCast(@max(size, 0)), std.posix.PROT.READ | std.posix.PROT.WRITE, std.posix.MAP.SHARED | 0, fd, 0);
         _ = bun.sys.close(fd);
 
         switch (result) {
@@ -1660,21 +1660,21 @@ pub const MemoryReportingAllocator = struct {
 
     fn alloc(this: *MemoryReportingAllocator, n: usize, log2_ptr_align: u8, return_address: usize) ?[*]u8 {
         const result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
-        _ = this.memory_cost.fetchAdd(n, .Monotonic);
+        _ = this.memory_cost.fetchAdd(n, .monotonic);
         if (comptime Environment.allow_assert)
             log("malloc({d}) = {d}", .{ n, this.memory_cost.raw });
         return result;
     }
 
     pub fn discard(this: *MemoryReportingAllocator, buf: []const u8) void {
-        _ = this.memory_cost.fetchSub(buf.len, .Monotonic);
+        _ = this.memory_cost.fetchSub(buf.len, .monotonic);
         if (comptime Environment.allow_assert)
             log("discard({d}) = {d}", .{ buf.len, this.memory_cost.raw });
     }
 
     fn resize(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
         if (this.child_allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
-            _ = this.memory_cost.fetchAdd(new_len -| buf.len, .Monotonic);
+            _ = this.memory_cost.fetchAdd(new_len -| buf.len, .monotonic);
             if (comptime Environment.allow_assert)
                 log("resize() = {d}", .{this.memory_cost.raw});
             return true;
@@ -1686,11 +1686,11 @@ pub const MemoryReportingAllocator = struct {
     fn free(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, ret_addr: usize) void {
         this.child_allocator.rawFree(buf, buf_align, ret_addr);
 
-        const prev = this.memory_cost.fetchSub(buf.len, .Monotonic);
+        const prev = this.memory_cost.fetchSub(buf.len, .monotonic);
         _ = prev;
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
-            // std.debug.assert(prev > this.memory_cost.load(.Monotonic));
+            // std.debug.assert(prev > this.memory_cost.load(.monotonic));
             log("free({d}) = {d}", .{ buf.len, this.memory_cost.raw });
         }
     }
@@ -1711,7 +1711,7 @@ pub const MemoryReportingAllocator = struct {
     }
 
     pub fn report(this: *MemoryReportingAllocator, vm: *JSC.VM) void {
-        const mem = this.memory_cost.load(.Monotonic);
+        const mem = this.memory_cost.load(.monotonic);
         if (mem > 0) {
             vm.reportExtraMemory(mem);
             if (comptime Environment.allow_assert)
@@ -1724,7 +1724,7 @@ pub const MemoryReportingAllocator = struct {
             return;
         }
 
-        const memory_cost = this.memory_cost.load(.Monotonic);
+        const memory_cost = this.memory_cost.load(.monotonic);
         if (memory_cost > 0) {
             Output.panic("MemoryReportingAllocator still has {d} bytes allocated", .{memory_cost});
         }

@@ -680,7 +680,7 @@ pub const PackageManifest = struct {
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             try writeFile(this, tmp_path, tmpdir);
             const out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
-            try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
+            try std.posix.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
         }
 
         pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {

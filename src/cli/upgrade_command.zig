@@ -830,7 +830,7 @@ pub const UpgradeCommand = struct {
                         target_dirname,
                         target_filename,
                     });
-                    std.os.rename(destination_executable, outdated_filename.?) catch |err| {
+                    std.posix.rename(destination_executable, outdated_filename.?) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to rename current executable {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -843,7 +843,7 @@ pub const UpgradeCommand = struct {
 
                     if (comptime Environment.isWindows) {
                         // Attempt to restore the old executable. If this fails, the user will be left without a working copy of bun.
-                        std.os.rename(outdated_filename.?, destination_executable) catch {
+                        std.posix.rename(outdated_filename.?, destination_executable) catch {
                             Output.errGeneric(
                                 \\Failed to move new version of Bun to {s} due to {s}
                             ,

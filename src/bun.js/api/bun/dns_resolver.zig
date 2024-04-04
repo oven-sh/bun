@@ -113,7 +113,7 @@ const LibInfo = struct {
         );
 
         if (errno != 0) {
-            request.head.promise.reject(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(std.c.getErrno(errno))}));
+            request.head.promise.reject(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.C.getErrno(errno))}));
             if (request.cache.pending_cache) this.pending_host_cache_native.available.set(request.cache.pos_in_pending);
             this.vm.allocator.destroy(request);
 
@@ -260,7 +260,7 @@ pub fn addressToString(
 ) JSC.ZigString {
     const str: []const u8 = brk: {
         switch (address.any.family) {
-            std.os.AF.INET => {
+            std.posix.AF.INET => {
                 var self = address.in;
                 const bytes = @as(*const [4]u8, @ptrCast(&self.sa.addr));
                 break :brk std.fmt.allocPrint(allocator, "{}.{}.{}.{}", .{
@@ -270,14 +270,14 @@ pub fn addressToString(
                     bytes[3],
                 }) catch unreachable;
             },
-            std.os.AF.INET6 => {
+            std.posix.AF.INET6 => {
                 var out = std.fmt.allocPrint(allocator, "{any}", .{address}) catch unreachable;
                 // TODO: this is a hack, fix it
                 // This removes [.*]:port
                 //              ^  ^^^^^^
                 break :brk out[1 .. out.len - 1 - std.fmt.count("{d}", .{address.in6.getPort()}) - 1];
             },
-            std.os.AF.UNIX => {
+            std.posix.AF.UNIX => {
                 if (comptime std.net.has_unix_sockets) {
                     break :brk std.mem.sliceTo(&address.un.path, 0);
                 }
@@ -496,9 +496,9 @@ pub const GetAddrInfo = struct {
         pub fn toLibC(this: Family) i32 {
             return switch (this) {
                 .unspecified => 0,
-                .inet => std.os.AF.INET,
-                .inet6 => std.os.AF.INET6,
-                .unix => std.os.AF.UNIX,
+                .inet => std.posix.AF.INET,
+                .inet6 => std.posix.AF.INET6,
+                .unix => std.posix.AF.UNIX,
             };
         }
     };
@@ -518,8 +518,8 @@ pub const GetAddrInfo = struct {
         pub fn toLibC(this: SocketType) i32 {
             switch (this) {
                 .unspecified => return 0,
-                .stream => return std.os.SOCK.STREAM,
-                .dgram => return std.os.SOCK.DGRAM,
+                .stream => return std.posix.SOCK.STREAM,
+                .dgram => return std.posix.SOCK.DGRAM,
             }
         }
 
@@ -585,8 +585,8 @@ pub const GetAddrInfo = struct {
         pub fn toLibC(this: Protocol) i32 {
             switch (this) {
                 .unspecified => return 0,
-                .tcp => return std.os.IPPROTO.TCP,
-                .udp => return std.os.IPPROTO.UDP,
+                .tcp => return std.posix.IPPROTO.TCP,
+                .udp => return std.posix.IPPROTO.UDP,
             }
         }
     };
@@ -693,8 +693,8 @@ pub const GetAddrInfo = struct {
             const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
             obj.put(globalThis, JSC.ZigString.static("address"), addressToJS(allocator, this.address, globalThis));
             obj.put(globalThis, JSC.ZigString.static("family"), switch (this.address.any.family) {
-                std.os.AF.INET => JSValue.jsNumber(4),
-                std.os.AF.INET6 => JSValue.jsNumber(6),
+                std.posix.AF.INET => JSValue.jsNumber(4),
+                std.posix.AF.INET6 => JSValue.jsNumber(6),
                 else => JSValue.jsNumber(0),
             });
             obj.put(globalThis, JSC.ZigString.static("ttl"), JSValue.jsNumber(this.ttl));
@@ -2748,7 +2748,7 @@ pub const DNSResolver = struct {
             var buf: [INET6_ADDRSTRLEN + 2 + 6 + 1]u8 = undefined;
             const family = current.family;
 
-            const ip = if (family == std.os.AF.INET6) blk: {
+            const ip = if (family == std.posix.AF.INET6) blk: {
                 break :blk c_ares.ares_inet_ntop(family, &current.addr.addr6, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
             } else blk: {
                 break :blk c_ares.ares_inet_ntop(family, &current.addr.addr4, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
@@ -2773,7 +2773,7 @@ pub const DNSResolver = struct {
             if (port == IANA_DNS_PORT) {
                 values.putIndex(globalThis, i, JSC.ZigString.init(buf[1..size]).withEncoding().toValueGC(globalThis));
             } else {
-                if (family == std.os.AF.INET6) {
+                if (family == std.posix.AF.INET6) {
                     buf[0] = '[';
                     buf[size] = ']';
                     const port_slice = std.fmt.bufPrint(buf[size + 1 ..], ":{d}", .{port}) catch unreachable;
@@ -2820,8 +2820,8 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        var sa: std.os.sockaddr.storage = std.mem.zeroes(std.os.sockaddr.storage);
-        if (c_ares.getSockaddr(addr_s, port, @as(*std.os.sockaddr, @ptrCast(&sa))) != 0) {
+        var sa: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
+        if (c_ares.getSockaddr(addr_s, port, @as(*std.posix.sockaddr, @ptrCast(&sa))) != 0) {
             globalThis.throwInvalidArgumentType("lookupService", "address", "invalid address");
             return .zero;
         }
@@ -2868,7 +2868,7 @@ pub const DNSResolver = struct {
 
         const promise = request.tail.promise.value();
         channel.getNameInfo(
-            @as(*std.os.sockaddr, @ptrCast(&sa)),
+            @as(*std.posix.sockaddr, @ptrCast(&sa)),
             GetNameInfoRequest,
             request,
             GetNameInfoRequest.onCaresComplete,

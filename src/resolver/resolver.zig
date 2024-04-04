@@ -768,14 +768,14 @@ pub const Resolver = struct {
                         var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, route_dir };
                         const abs = r.fs.join(&parts);
                         // must end in trailing slash
-                        break :brk (std.os.realpath(abs, &buf) catch continue);
+                        break :brk (std.posix.realpath(abs, &buf) catch continue);
                     }
                     return error.MissingRouteDir;
                 } else {
                     var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, pair.router.dir };
                     const abs = r.fs.join(&parts);
                     // must end in trailing slash
-                    break :brk std.os.realpath(abs, &buf) catch return error.MissingRouteDir;
+                    break :brk std.posix.realpath(abs, &buf) catch return error.MissingRouteDir;
                 }
             };
 

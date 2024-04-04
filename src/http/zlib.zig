@@ -17,7 +17,7 @@ pub fn get(allocator: std.mem.Allocator) *MutableString {
 
 pub fn put(mutable: *MutableString) void {
     mutable.reset();
-    var node = @fieldParentPtr(BufferPool.Node, "data", mutable);
+    var node: BufferPool.Node = @fieldParentPtr("data", mutable);
     node.release();
 }
 

@@ -50,7 +50,7 @@ pub fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}
     // Avoid calling into the OS for no-op waits()
     if (timeout) |timeout_ns| {
         if (timeout_ns == 0) {
-            if (ptr.load(.SeqCst) != expect) return;
+            if (ptr.load(.seq_cst) != expect) return;
             return error.TimedOut;
         }
     }
@@ -129,11 +129,11 @@ const WindowsFutex = struct {
 };
 
 const LinuxFutex = struct {
-    const linux = std.os.linux;
+    const linux = std.posix.linux;
 
     fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
-        var ts: std.os.timespec = undefined;
-        var ts_ptr: ?*std.os.timespec = null;
+        var ts: std.posix.timespec = undefined;
+        var ts_ptr: ?*std.posix.timespec = null;
 
         // Futex timespec timeout is already in relative time.
         if (timeout) |timeout_ns| {
@@ -173,7 +173,7 @@ const LinuxFutex = struct {
 };
 
 const DarwinFutex = struct {
-    const darwin = std.os.darwin;
+    const darwin = std.c;
 
     fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
         // Darwin XNU 7195.50.7.100.1 introduced __ulock_wait2 and migrated code paths (notably pthread_cond_t) towards it:
@@ -208,7 +208,7 @@ const DarwinFutex = struct {
         };
 
         if (status >= 0) return;
-        switch (@as(std.os.E, @enumFromInt(-status))) {
+        switch (@as(std.posix.E, @enumFromInt(-status))) {
             .INTR => {},
             // Address of the futex is paged out. This is unlikely, but possible in theory, and
             // pthread/libdispatch on darwin bother to handle it. In this case we'll return
@@ -230,7 +230,7 @@ const DarwinFutex = struct {
             const status = darwin.__ulock_wake(flags, addr, 0);
 
             if (status >= 0) return;
-            switch (@as(std.os.E, @enumFromInt(-status))) {
+            switch (@as(std.posix.E, @enumFromInt(-status))) {
                 .INTR => continue, // spurious wake()
                 .FAULT => continue, // address of the lock was paged out
                 .NOENT => return, // nothing was woken up
@@ -251,7 +251,7 @@ const PosixFutex = struct {
             assert(std.c.pthread_mutex_lock(&bucket.mutex) == .SUCCESS);
             defer assert(std.c.pthread_mutex_unlock(&bucket.mutex) == .SUCCESS);
 
-            if (ptr.load(.SeqCst) != expect) {
+            if (ptr.load(.seq_cst) != expect) {
                 return;
             }
 
@@ -347,11 +347,11 @@ const PosixFutex = struct {
                 .notified => return,
             }
 
-            var ts: std.os.timespec = undefined;
-            var ts_ptr: ?*const std.os.timespec = null;
+            var ts: std.posix.timespec = undefined;
+            var ts_ptr: ?*const std.posix.timespec = null;
             if (timeout) |timeout_ns| {
                 ts_ptr = &ts;
-                std.os.clock_gettime(std.os.CLOCK_REALTIME, &ts) catch unreachable;
+                std.posix.clock_gettime(std.posix.CLOCK_REALTIME, &ts) catch unreachable;
                 ts.tv_sec += @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
                 ts.tv_nsec += @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
                 if (ts.tv_nsec >= std.time.ns_per_s) {
@@ -429,7 +429,7 @@ test "Futex - Signal" {
             while (iterations > 0) : (iterations -= 1) {
                 var value: u32 = undefined;
                 while (true) {
-                    value = self.value.load(.Acquire);
+                    value = self.value.load(.acquire);
                     if (value != self.current) break;
                     Futex.wait(&self.value, self.current, null) catch unreachable;
                 }
@@ -437,7 +437,7 @@ test "Futex - Signal" {
                 try testing.expectEqual(value, self.current + 1);
                 self.current = value;
 
-                _ = hit_to.value.fetchAdd(1, .Release);
+                _ = hit_to.value.fetchAdd(1, .release);
                 Futex.wake(&hit_to.value, 1);
             }
         }
@@ -452,7 +452,7 @@ test "Futex - Signal" {
     const t2 = try std.Thread.spawn(.{}, Paddle.run, .{ &pong, &ping });
     defer t2.join();
 
-    _ = ping.value.fetchAdd(1, .Release);
+    _ = ping.value.fetchAdd(1, .release);
     Futex.wake(&ping.value, 1);
 }
 
@@ -471,11 +471,11 @@ test "Futex - Broadcast" {
         const BROADCAST_RECEIVED = 2;
 
         fn runSender(self: *@This()) !void {
-            self.broadcast.store(BROADCAST_SENT, .Monotonic);
+            self.broadcast.store(BROADCAST_SENT, .monotonic);
             Futex.wake(&self.broadcast, @as(u32, @intCast(self.threads.len)));
 
             while (true) {
-                const broadcast = self.broadcast.load(.Acquire);
+                const broadcast = self.broadcast.load(.acquire);
                 if (broadcast == BROADCAST_RECEIVED) break;
                 try testing.expectEqual(broadcast, BROADCAST_SENT);
                 Futex.wait(&self.broadcast, broadcast, null) catch unreachable;
@@ -484,15 +484,15 @@ test "Futex - Broadcast" {
 
         fn runReceiver(self: *@This()) void {
             while (true) {
-                const broadcast = self.broadcast.load(.Acquire);
+                const broadcast = self.broadcast.load(.acquire);
                 if (broadcast == BROADCAST_SENT) break;
                 assert(broadcast == BROADCAST_EMPTY);
                 Futex.wait(&self.broadcast, broadcast, null) catch unreachable;
             }
 
-            const notified = self.notified.fetchAdd(1, .Monotonic);
+            const notified = self.notified.fetchAdd(1, .monotonic);
             if (notified + 1 == self.threads.len) {
-                self.broadcast.store(BROADCAST_RECEIVED, .Release);
+                self.broadcast.store(BROADCAST_RECEIVED, .release);
                 Futex.wake(&self.broadcast, 1);
             }
         }
@@ -509,7 +509,7 @@ test "Futex - Broadcast" {
     std.time.sleep(16 * std.time.ns_per_ms);
     try ctx.runSender();
 
-    const notified = ctx.notified.load(.Monotonic);
+    const notified = ctx.notified.load(.monotonic);
     try testing.expectEqual(notified, ctx.threads.len);
 }
 
@@ -523,7 +523,7 @@ test "Futex - Chain" {
 
         fn wait(self: *@This()) void {
             while (true) {
-                const value = self.value.load(.Acquire);
+                const value = self.value.load(.acquire);
                 if (value == 1) break;
                 assert(value == 0);
                 Futex.wait(&self.value, 0, null) catch unreachable;
@@ -531,8 +531,8 @@ test "Futex - Chain" {
         }
 
         fn notify(self: *@This()) void {
-            assert(self.value.load(.Unordered) == 0);
-            self.value.store(1, .Release);
+            assert(self.value.load(.unordered) == 0);
+            self.value.store(1, .release);
             Futex.wake(&self.value, 1);
         }
     };

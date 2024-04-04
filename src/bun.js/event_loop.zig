@@ -59,7 +59,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn runFromThreadPool(task: *WorkPoolTask) void {
-            var this = @fieldParentPtr(This, "task", task);
+            var this: *This = @fieldParentPtr("task", task);
             Context.run(this.ctx);
             this.onFinish();
         }
@@ -122,7 +122,7 @@ pub fn WorkTask(comptime Context: type) type {
 
         pub fn runFromThreadPool(task: *TaskType) void {
             JSC.markBinding(@src());
-            const this = @fieldParentPtr(This, "task", task);
+            const this: *This = @fieldParentPtr("task", task);
             Context.run(this.ctx, this);
         }
 
@@ -536,7 +536,7 @@ pub const GarbageCollectionController = struct {
     }
 
     pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
-        return @fieldParentPtr(VirtualMachine, "gc_controller", this);
+        return @alignCast(@fieldParentPtr("gc_controller", this));
     }
 
     pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {

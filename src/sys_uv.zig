@@ -1,7 +1,7 @@
 //! bun.sys.sys_uv is a polyfill of bun.sys but with libuv.
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
 const std = @import("std");
-const os = std.os;
+const os = std.posix;
 const bun = @import("root").bun;
 
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;

@@ -209,7 +209,7 @@ pub fn ObjectPool(
         }
 
         pub fn releaseValue(value: *Type) void {
-            @fieldParentPtr(LinkedList.Node, "data", value).release();
+            @as(*LinkedList.Node, @fieldParentPtr("data", value)).release();
         }
 
         pub fn release(node: *LinkedList.Node) void {

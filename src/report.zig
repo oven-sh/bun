@@ -76,7 +76,7 @@ pub const CrashReportWriter = struct {
             _ = bun.sys.mkdirA(dirname, 0);
         }
 
-        const call = bun.sys.openA(file_path, std.os.O.CREAT | std.os.O.TRUNC, 0).unwrap() catch return;
+        const call = bun.sys.openA(file_path, bun.O.CREAT | bun.O.TRUNC, 0).unwrap() catch return;
         var file = call.asFile();
         this.file = std.io.bufferedWriter(
             file.writer(),
@@ -292,9 +292,9 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     }
 
     const name = switch (signal) {
-        std.os.SIG.SEGV => error.SegmentationFault,
-        std.os.SIG.ILL => error.InstructionError,
-        std.os.SIG.BUS => error.BusError,
+        std.posix.SIG.SEGV => error.SegmentationFault,
+        std.posix.SIG.ILL => error.InstructionError,
+        std.posix.SIG.BUS => error.BusError,
         else => error.Crash,
     };
 
@@ -321,7 +321,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
 
     if (crash_report_writer.file) |file| {
         // don't handle return codes here
-        _ = std.os.system.close(file.unbuffered_writer.context.handle);
+        _ = std.posix.system.close(file.unbuffered_writer.context.handle);
     }
 
     crash_report_writer.file = null;
@@ -341,7 +341,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
 
     error_return_trace = trace_;
 
-    if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .Monotonic)) {
+    if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .monotonic)) {
         Global.exit(1);
     }
 
@@ -379,7 +379,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
         },
         error.SystemFdQuotaExceeded => {
             if (comptime Environment.isPosix) {
-                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+                const limit = std.posix.getrlimit(.NOFILE) catch std.mem.zeroes(std.posix.rlimit);
                 if (comptime Environment.isMac) {
                     Output.prettyError(
                         \\
@@ -448,7 +448,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
         },
         error.ProcessFdQuotaExceeded => {
             if (comptime Environment.isPosix) {
-                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+                const limit = std.posix.getrlimit(.NOFILE) catch std.mem.zeroes(std.posix.rlimit);
                 if (comptime Environment.isMac) {
                     Output.prettyError(
                         \\
@@ -516,7 +516,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
 
             Global.exit(1);
         },
-        // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
+        // The usage of `unreachable` in Zig's std.posix may cause the file descriptor problem to show up as other errors
         error.NotOpenForReading, error.Unexpected => {
             if (!Environment.isWindows) {
                 if (trace_) |trace| {
@@ -529,7 +529,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
             }
 
             if (comptime Environment.isPosix) {
-                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+                const limit = std.posix.getrlimit(.NOFILE) catch std.mem.zeroes(std.posix.rlimit);
 
                 if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                     Output.prettyError(

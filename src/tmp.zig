@@ -1,7 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const Environment = bun.Environment;
-const O = std.os.O;
+const O = bun.O;
 
 // O_TMPFILE doesn't seem to work very well.
 const allow_tmpfile = false;

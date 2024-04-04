@@ -63,7 +63,7 @@ pub const BunxCommand = struct {
     const nanoseconds_cache_valid = seconds_cache_valid * 1000000000;
 
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
-        const target_package_json_fd = try std.os.openatZ(dir_fd.cast(), subpath_z, std.os.O.RDONLY, 0);
+        const target_package_json_fd = try std.posix.openatZ(dir_fd.cast(), subpath_z, bun.O.RDONLY, 0);
         const target_package_json = std.fs.File{ .handle = target_package_json_fd };
 
         const is_stale = is_stale: {
@@ -81,7 +81,7 @@ pub const BunxCommand = struct {
                     else => break :is_stale true,
                 }
             } else {
-                var stat: std.os.Stat = undefined;
+                var stat: std.posix.Stat = undefined;
                 const rc = std.c.fstat(target_package_json_fd, &stat);
                 if (rc != 0) {
                     break :is_stale true;
@@ -134,8 +134,8 @@ pub const BunxCommand = struct {
         if (expr.asProperty("directories")) |dirs| {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
                 if (bin_prop.expr.asString(bundler.allocator)) |dir_name| {
-                    const bin_dir = try std.os.openat(dir_fd.cast(), dir_name, std.os.O.RDONLY, 0);
-                    defer std.os.close(bin_dir);
+                    const bin_dir = try std.posix.openat(dir_fd.cast(), dir_name, bun.O.RDONLY, 0);
+                    defer std.posix.close(bin_dir);
                     const dir = std.fs.Dir{ .fd = bin_dir };
                     var iterator = bun.DirIterator.iterate(dir, .u8);
                     var entry = iterator.next();
@@ -466,7 +466,7 @@ pub const BunxCommand = struct {
                 if (bun.strings.hasPrefix(out, bunx_cache_dir)) {
                     const is_stale = is_stale: {
                         if (Environment.isWindows) {
-                            const fd = bun.sys.openat(bun.invalid_fd, destination, std.os.O.RDONLY, 0).unwrap() catch {
+                            const fd = bun.sys.openat(bun.invalid_fd, destination, bun.O.RDONLY, 0).unwrap() catch {
                                 // if we cant open this, we probably will just fail when we run it
                                 // and that error message is likely going to be better than the one from `bun add`
                                 break :is_stale false;
@@ -486,7 +486,7 @@ pub const BunxCommand = struct {
                                 else => break :is_stale true,
                             }
                         } else {
-                            var stat: std.os.Stat = undefined;
+                            var stat: std.posix.Stat = undefined;
                             const rc = std.c.stat(destination, &stat);
                             if (rc != 0) {
                                 break :is_stale true;

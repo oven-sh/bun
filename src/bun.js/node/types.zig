@@ -4,10 +4,10 @@ const bun = @import("root").bun;
 const meta = bun.meta;
 const windows = bun.windows;
 const heap_allocator = bun.default_allocator;
-const is_bindgen: bool = meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = false;
 const kernel32 = windows.kernel32;
 const logger = bun.logger;
-const os = std.os;
+const os = std.posix;
 const path_handler = bun.path;
 const strings = bun.strings;
 const string = bun.string;
@@ -93,7 +93,7 @@ pub const Buffer = JSC.MarkedArrayBuffer;
 
 /// On windows, this is what libuv expects
 /// On unix it is what the utimens api expects
-pub const TimeLike = if (Environment.isWindows) f64 else std.os.timespec;
+pub const TimeLike = if (Environment.isWindows) f64 else std.posix.timespec;
 
 pub const Flavor = enum {
     sync,
@@ -535,7 +535,7 @@ pub const StringOrBuffer = union(enum) {
 pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
 
 // We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
-// and various issues with std.os that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
+// and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
 
 /// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
 pub const Encoding = enum(u8) {
@@ -1264,44 +1264,44 @@ pub const PathOrFileDescriptor = union(Tag) {
 
 pub const FileSystemFlags = enum(Mode) {
     /// Open file for appending. The file is created if it does not exist.
-    a = std.os.O.APPEND | std.os.O.WRONLY | std.os.O.CREAT,
+    a = bun.O.APPEND | bun.O.WRONLY | bun.O.CREAT,
     /// Like 'a' but fails if the path exists.
-    // @"ax" = std.os.O.APPEND | std.os.O.EXCL,
+    // @"ax" = bun.O.APPEND | bun.O.EXCL,
     /// Open file for reading and appending. The file is created if it does not exist.
-    // @"a+" = std.os.O.APPEND | std.os.O.RDWR,
+    // @"a+" = bun.O.APPEND | bun.O.RDWR,
     /// Like 'a+' but fails if the path exists.
-    // @"ax+" = std.os.O.APPEND | std.os.O.RDWR | std.os.O.EXCL,
+    // @"ax+" = bun.O.APPEND | bun.O.RDWR | bun.O.EXCL,
     /// Open file for appending in synchronous mode. The file is created if it does not exist.
-    // @"as" = std.os.O.APPEND,
+    // @"as" = bun.O.APPEND,
     /// Open file for reading and appending in synchronous mode. The file is created if it does not exist.
-    // @"as+" = std.os.O.APPEND | std.os.O.RDWR,
+    // @"as+" = bun.O.APPEND | bun.O.RDWR,
     /// Open file for reading. An exception occurs if the file does not exist.
-    r = std.os.O.RDONLY,
+    r = bun.O.RDONLY,
     /// Open file for reading and writing. An exception occurs if the file does not exist.
-    // @"r+" = std.os.O.RDWR,
+    // @"r+" = bun.O.RDWR,
     /// Open file for reading and writing in synchronous mode. Instructs the operating system to bypass the local file system cache.
     /// This is primarily useful for opening files on NFS mounts as it allows skipping the potentially stale local cache. It has a very real impact on I/O performance so using this flag is not recommended unless it is needed.
     /// This doesn't turn fs.open() or fsPromises.open() into a synchronous blocking call. If synchronous operation is desired, something like fs.openSync() should be used.
-    // @"rs+" = std.os.O.RDWR,
+    // @"rs+" = bun.O.RDWR,
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    w = std.os.O.WRONLY | std.os.O.CREAT,
+    w = bun.O.WRONLY | bun.O.CREAT,
     /// Like 'w' but fails if the path exists.
-    // @"wx" = std.os.O.WRONLY | std.os.O.TRUNC,
+    // @"wx" = bun.O.WRONLY | bun.O.TRUNC,
     // ///  Open file for reading and writing. The file is created (if it does not exist) or truncated (if it exists).
-    // @"w+" = std.os.O.RDWR | std.os.O.CREAT,
+    // @"w+" = bun.O.RDWR | bun.O.CREAT,
     // ///  Like 'w+' but fails if the path exists.
-    // @"wx+" = std.os.O.RDWR | std.os.O.EXCL,
+    // @"wx+" = bun.O.RDWR | bun.O.EXCL,
 
     _,
 
-    const O_RDONLY: Mode = std.os.O.RDONLY;
-    const O_RDWR: Mode = std.os.O.RDWR;
-    const O_APPEND: Mode = std.os.O.APPEND;
-    const O_CREAT: Mode = std.os.O.CREAT;
-    const O_WRONLY: Mode = std.os.O.WRONLY;
-    const O_EXCL: Mode = std.os.O.EXCL;
+    const O_RDONLY: Mode = bun.O.RDONLY;
+    const O_RDWR: Mode = bun.O.RDWR;
+    const O_APPEND: Mode = bun.O.APPEND;
+    const O_CREAT: Mode = bun.O.CREAT;
+    const O_WRONLY: Mode = bun.O.WRONLY;
+    const O_EXCL: Mode = bun.O.EXCL;
     const O_SYNC: Mode = 0;
-    const O_TRUNC: Mode = std.os.O.TRUNC;
+    const O_TRUNC: Mode = bun.O.TRUNC;
 
     const map = bun.ComptimeStringMap(Mode, .{
         .{ "r", O_RDONLY },
@@ -1472,7 +1472,7 @@ pub fn StatType(comptime Big: bool) type {
 
         const This = @This();
 
-        const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.os.timespec;
+        const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
 
         inline fn toNanoseconds(ts: StatTimespec) Timestamp {
             const tv_sec: i64 = @intCast(ts.tv_sec);
@@ -4386,12 +4386,12 @@ pub const Path = struct {
                             break :brk u16Buf[0..bufSize :0];
                         }
                     };
-                    // Zig's std.os.getenvW has logic to support keys like `=${resolvedDevice}`:
+                    // Zig's std.posix.getenvW has logic to support keys like `=${resolvedDevice}`:
                     // https://github.com/ziglang/zig/blob/7bd8b35a3dfe61e59ffea39d464e84fbcdead29a/lib/std/os.zig#L2126-L2130
                     //
                     // TODO: Enable test once spawnResult.stdout works on Windows.
                     // test/js/node/path/resolve.test.js
-                    if (std.os.getenvW(key_w)) |r| {
+                    if (std.posix.getenvW(key_w)) |r| {
                         if (T == u16) {
                             bufSize = r.len;
                             @memcpy(buf2[0..bufSize], r);

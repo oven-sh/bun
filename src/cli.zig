@@ -124,7 +124,7 @@ pub const Arguments = struct {
         var paths = [_]string{ cwd, filename };
         const outpath = try std.fs.path.resolve(allocator, &paths);
         defer allocator.free(outpath);
-        var file = try bun.openFileZ(&try std.os.toPosixPath(outpath), std.fs.File.OpenFlags{ .mode = .read_only });
+        var file = try bun.openFileZ(&try std.posix.toPosixPath(outpath), std.fs.File.OpenFlags{ .mode = .read_only });
         defer file.close();
         const size = try file.getEndPos();
         return try file.readToEndAlloc(allocator, size);
@@ -260,7 +260,7 @@ pub const Arguments = struct {
     }
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
+        var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
             .result => |fd| fd.asFile(),
             .err => |err| {
                 if (auto_loaded) return;
@@ -1734,7 +1734,7 @@ pub const Command = struct {
                 if (ctx.runtime_options.eval.script.len > 0) {
                     const trigger = bun.pathLiteral("/[eval]");
                     var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-                    const cwd = try std.os.getcwd(&entry_point_buf);
+                    const cwd = try std.posix.getcwd(&entry_point_buf);
                     @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
                     try BunJS.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len]);
                     return;

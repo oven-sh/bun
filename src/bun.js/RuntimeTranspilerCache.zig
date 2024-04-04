@@ -476,7 +476,7 @@ pub const RuntimeTranspilerCache = struct {
         output_code_allocator: std.mem.Allocator,
     ) !Entry {
         var metadata_bytes_buf: [Metadata.size * 2]u8 = undefined;
-        const cache_fd = try bun.sys.open(cache_file_path.sliceAssumeZ(), std.os.O.RDONLY, 0).unwrap();
+        const cache_fd = try bun.sys.open(cache_file_path.sliceAssumeZ(), bun.O.RDONLY, 0).unwrap();
         defer _ = bun.sys.close(cache_fd);
         errdefer {
             // On any error, we delete the cache file

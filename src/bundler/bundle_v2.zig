@@ -222,7 +222,7 @@ pub const ThreadPool = struct {
 
         pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
             debug("Worker.deinit()", .{});
-            var this = @fieldParentPtr(Worker, "deinit_task", task);
+            var this: *Worker = @fieldParentPtr("deinit_task", task);
             this.deinit();
         }
 
@@ -461,7 +461,7 @@ pub const BundleV2 = struct {
     }
 
     fn isDone(this: *BundleV2) bool {
-        return @atomicLoad(usize, &this.graph.parse_pending, .Monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .Monotonic) == 0;
+        return @atomicLoad(usize, &this.graph.parse_pending, .monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .monotonic) == 0;
     }
 
     pub fn waitForParse(this: *BundleV2) void {
@@ -622,7 +622,7 @@ pub const BundleV2 = struct {
             task.tree_shaking = this.linker.options.tree_shaking;
             task.known_target = import_record.original_target;
 
-            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
 
             // Handle onLoad plugins
             if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -662,7 +662,7 @@ pub const BundleV2 = struct {
         if (entry.found_existing) {
             return null;
         }
-        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
         const source_index = Index.source(this.graph.input_files.len);
 
         if (path.pretty.ptr == path.text.ptr) {
@@ -798,7 +798,7 @@ pub const BundleV2 = struct {
             };
             runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
-            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
             batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
         }
 
@@ -997,7 +997,7 @@ pub const BundleV2 = struct {
                 .use_directive = .@"use client",
             });
 
-            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
             this.graph.entry_points.append(allocator, source_index) catch unreachable;
             this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
             this.graph.shadow_entry_point_range.len += 1;
@@ -1206,14 +1206,14 @@ pub const BundleV2 = struct {
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
         pub fn deref(this: *JSBundleCompletionTask) void {
-            if (this.ref_count.fetchSub(1, .Monotonic) == 1) {
+            if (this.ref_count.fetchSub(1, .monotonic) == 1) {
                 this.config.deinit(bun.default_allocator);
                 bun.default_allocator.destroy(this);
             }
         }
 
         pub fn ref(this: *JSBundleCompletionTask) void {
-            _ = this.ref_count.fetchAdd(1, .Monotonic);
+            _ = this.ref_count.fetchAdd(1, .monotonic);
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -1368,7 +1368,7 @@ pub const BundleV2 = struct {
                 }) catch {};
 
                 // An error ocurred, prevent spinning the event loop forever
-                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
+                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
             },
             .success => |code| {
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
@@ -1387,7 +1387,7 @@ pub const BundleV2 = struct {
                 log.warnings += @as(usize, @intFromBool(err.kind == .warn));
 
                 // An error ocurred, prevent spinning the event loop forever
-                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
+                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
             },
             .pending, .consumed => unreachable,
         }
@@ -1398,7 +1398,7 @@ pub const BundleV2 = struct {
         this: *BundleV2,
     ) void {
         defer resolve.deinit();
-        defer _ = @atomicRmw(usize, &this.graph.resolve_pending, .Sub, 1, .Monotonic);
+        defer _ = @atomicRmw(usize, &this.graph.resolve_pending, .Sub, 1, .monotonic);
         debug("onResolve: ({s}:{s}, {s})", .{ resolve.import_record.namespace, resolve.import_record.specifier, @tagName(resolve.value) });
 
         defer {
@@ -1492,7 +1492,7 @@ pub const BundleV2 = struct {
                         };
                         task.task.node.next = null;
 
-                        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+                        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
 
                         // Handle onLoad plugins
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -1774,7 +1774,7 @@ pub const BundleV2 = struct {
                     import_record.path.namespace,
                     import_record.path.text,
                 });
-                _ = @atomicRmw(usize, &this.graph.resolve_pending, .Add, 1, .Monotonic);
+                _ = @atomicRmw(usize, &this.graph.resolve_pending, .Add, 1, .monotonic);
 
                 resolve.* = JSC.API.JSBundler.Resolve.create(
                     .{
@@ -2079,9 +2079,9 @@ pub const BundleV2 = struct {
 
         defer {
             if (diff > 0)
-                _ = @atomicRmw(usize, &graph.parse_pending, .Add, @as(usize, @intCast(diff)), .Monotonic)
+                _ = @atomicRmw(usize, &graph.parse_pending, .Add, @as(usize, @intCast(diff)), .monotonic)
             else
-                _ = @atomicRmw(usize, &graph.parse_pending, .Sub, @as(usize, @intCast(-diff)), .Monotonic);
+                _ = @atomicRmw(usize, &graph.parse_pending, .Sub, @as(usize, @intCast(-diff)), .monotonic);
         }
 
         var resolve_queue = ResolveQueue.init(this.graph.allocator);
@@ -2931,7 +2931,7 @@ pub const ParseTask = struct {
     }
 
     pub fn callback(this: *ThreadPoolLib.Task) void {
-        run(@fieldParentPtr(ParseTask, "task", this));
+        run(@fieldParentPtr("task", this));
     }
 
     fn run(this: *ParseTask) void {
@@ -3845,23 +3845,23 @@ const LinkerContext = struct {
             thread_task: ThreadPoolLib.Task = .{ .callback = &runLineOffset },
 
             pub fn runLineOffset(thread_task: *ThreadPoolLib.Task) void {
-                var task = @fieldParentPtr(Task, "thread_task", thread_task);
+                var task: *Task = @fieldParentPtr("thread_task", thread_task);
                 defer {
                     task.ctx.markPendingTaskDone();
                     task.ctx.source_maps.line_offset_wait_group.finish();
                 }
 
-                SourceMapData.computeLineOffsets(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
+                SourceMapData.computeLineOffsets(task.ctx, ThreadPool.Worker.get(@fieldParentPtr("linker", task.ctx)).allocator, task.source_index);
             }
 
             pub fn runQuotedSourceContents(thread_task: *ThreadPoolLib.Task) void {
-                var task = @fieldParentPtr(Task, "thread_task", thread_task);
+                var task: *Task = @fieldParentPtr("thread_task", thread_task);
                 defer {
                     task.ctx.markPendingTaskDone();
                     task.ctx.source_maps.quoted_contents_wait_group.finish();
                 }
 
-                SourceMapData.computeQuotedSourceContents(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
+                SourceMapData.computeQuotedSourceContents(task.ctx, ThreadPool.Worker.get(@fieldParentPtr("linker", task.ctx)).allocator, task.source_index);
             }
         };
 
@@ -3990,12 +3990,12 @@ const LinkerContext = struct {
     }
 
     pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
-        _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .Monotonic);
+        _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .monotonic);
         this.parse_graph.pool.pool.schedule(batch);
     }
 
     pub fn markPendingTaskDone(this: *LinkerContext) void {
-        _ = this.pending_task_count.fetchSub(1, .Monotonic);
+        _ = this.pending_task_count.fetchSub(1, .monotonic);
     }
 
     pub noinline fn link(
@@ -5659,7 +5659,7 @@ const LinkerContext = struct {
         const id = source_index;
         if (id > c.graph.meta.len) return;
 
-        var worker: *ThreadPool.Worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", c));
+        var worker: *ThreadPool.Worker = ThreadPool.Worker.get(@fieldParentPtr("linker", c));
         defer worker.unget();
 
         // we must use this allocator here
@@ -6350,7 +6350,7 @@ const LinkerContext = struct {
     };
     fn generateChunkJS(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
         defer ctx.wg.finish();
-        const worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         postProcessJSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
     }
@@ -6611,7 +6611,7 @@ const LinkerContext = struct {
 
     fn generateJSRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
         defer ctx.wg.finish();
-        var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         generateJSRenamer_(ctx, worker, chunk, chunk_index);
     }
@@ -6626,10 +6626,10 @@ const LinkerContext = struct {
     }
 
     fn generateCompileResultForJSChunk(task: *ThreadPoolLib.Task) void {
-        const part_range: *const PendingPartRange = @fieldParentPtr(PendingPartRange, "task", task);
+        const part_range: *const PendingPartRange = @fieldParentPtr("task", task);
         const ctx = part_range.ctx;
         defer ctx.wg.finish();
-        var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForJSChunk_(worker, ctx.c, ctx.chunk, part_range.part_range);
     }

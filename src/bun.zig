@@ -63,7 +63,7 @@ else if (Environment.isWindows)
     // Do not bitcast it to *anyopaque manually, but instead use `fdcast()`
     u64
 else
-    std.os.fd_t;
+    std.posix.fd_t;
 
 pub const FileDescriptor = enum(FileDescriptorInt) {
     /// Zero is used in old filesystem code to indicate "no file descriptor"
@@ -81,7 +81,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
     ///
     /// TODO(@paperdave): remove this API.
-    pub inline fn int(self: FileDescriptor) std.os.fd_t {
+    pub inline fn int(self: FileDescriptor) std.posix.fd_t {
         if (Environment.isWindows)
             @compileError("FileDescriptor.int() is not allowed on Windows.");
         return @intFromEnum(self);
@@ -101,7 +101,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// to Windows' *HANDLE, and casts the types for proper usage.
     ///
     /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
-    pub inline fn cast(fd: FileDescriptor) std.os.fd_t {
+    pub inline fn cast(fd: FileDescriptor) std.posix.fd_t {
         if (!Environment.isWindows) return fd.int();
         // if not having this check, the cast may crash zig compiler?
         if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
@@ -167,12 +167,12 @@ pub const StoredFileDescriptorType = FileDescriptor;
 pub const PlatformIOVec = if (Environment.isWindows)
     windows.libuv.uv_buf_t
 else
-    std.os.iovec;
+    std.posix.iovec;
 
 pub const PlatformIOVecConst = if (Environment.isWindows)
     windows.libuv.uv_buf_t
 else
-    std.os.iovec_const;
+    std.posix.iovec_const;
 
 pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
     if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
@@ -477,13 +477,13 @@ pub const ObjectPool = @import("./pool.zig").ObjectPool;
 
 pub fn assertNonBlocking(fd: anytype) void {
     std.debug.assert(
-        (std.os.fcntl(fd, std.os.F.GETFL, 0) catch unreachable) & std.os.O.NONBLOCK != 0,
+        (std.posix.fcntl(fd, std.posix.F.GETFL, 0) catch unreachable) & O.NONBLOCK != 0,
     );
 }
 
 pub fn ensureNonBlocking(fd: anytype) void {
-    const current = std.os.fcntl(fd, std.os.F.GETFL, 0) catch 0;
-    _ = std.os.fcntl(fd, std.os.F.SETFL, current | std.os.O.NONBLOCK) catch 0;
+    const current = std.posix.fcntl(fd, std.posix.F.GETFL, 0) catch 0;
+    _ = std.posix.fcntl(fd, std.posix.F.SETFL, current | O.NONBLOCK) catch 0;
 }
 
 const global_scope_log = sys.syslog;
@@ -492,16 +492,16 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
         @panic("TODO on Windows");
     }
     std.debug.assert(fd != invalid_fd);
-    var polls = [_]std.os.pollfd{
+    var polls = [_]std.posix.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.IN | std.os.POLL.ERR | std.os.POLL.HUP,
+            .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
             .revents = 0,
         },
     };
 
-    const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    const rc = if (result and polls[0].revents & (std.os.POLL.HUP | std.os.POLL.ERR) != 0)
+    const result = (std.posix.poll(&polls, 0) catch 0) != 0;
+    const rc = if (result and polls[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0)
         PollFlag.hup
     else if (result)
         PollFlag.ready
@@ -511,7 +511,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
         fd,
         result,
         @tagName(rc),
-        if (polls[0].revents & std.os.POLL.ERR != 0) " ERR " else "",
+        if (polls[0].revents & std.posix.POLL.ERR != 0) " ERR " else "",
     });
     return rc;
 }
@@ -522,14 +522,14 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         var polls = [_]std.os.windows.ws2_32.WSAPOLLFD{
             .{
                 .fd = socketcast(fd),
-                .events = std.os.POLL.WRNORM,
+                .events = std.posix.POLL.WRNORM,
                 .revents = 0,
             },
         };
         const rc = std.os.windows.ws2_32.WSAPoll(&polls, 1, 0);
         const result = (if (rc != std.os.windows.ws2_32.SOCKET_ERROR) @as(usize, @intCast(rc)) else 0) != 0;
         global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
-        if (result and polls[0].revents & std.os.POLL.WRNORM != 0) {
+        if (result and polls[0].revents & std.posix.POLL.WRNORM != 0) {
             return .hup;
         } else if (result) {
             return .ready;
@@ -540,16 +540,16 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     }
     std.debug.assert(fd != invalid_fd);
 
-    var polls = [_]std.os.pollfd{
+    var polls = [_]std.posix.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.OUT | std.os.POLL.ERR | std.os.POLL.HUP,
+            .events = std.posix.POLL.OUT | std.posix.POLL.ERR | std.posix.POLL.HUP,
             .revents = 0,
         },
     };
 
-    const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    const rc = if (result and polls[0].revents & (std.os.POLL.HUP | std.os.POLL.ERR) != 0)
+    const result = (std.posix.poll(&polls, 0) catch 0) != 0;
+    const rc = if (result and polls[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0)
         PollFlag.hup
     else if (result)
         PollFlag.ready
@@ -559,7 +559,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         fd,
         result,
         @tagName(rc),
-        if (polls[0].revents & std.os.POLL.ERR != 0) " ERR " else "",
+        if (polls[0].revents & std.posix.POLL.ERR != 0) " ERR " else "",
     });
     return rc;
 }
@@ -664,9 +664,9 @@ pub var start_time: i128 = 0;
 pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
     var flags: Mode = 0;
     switch (open_flags.mode) {
-        .read_only => flags |= std.os.O.RDONLY,
-        .write_only => flags |= std.os.O.WRONLY,
-        .read_write => flags |= std.os.O.RDWR,
+        .read_only => flags |= O.RDONLY,
+        .write_only => flags |= O.WRONLY,
+        .read_write => flags |= O.RDWR,
     }
 
     const res = try sys.open(pathZ, flags, 0).unwrap();
@@ -677,16 +677,16 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
     if (comptime Environment.isWindows) {
         var flags: Mode = 0;
         switch (open_flags.mode) {
-            .read_only => flags |= std.os.O.RDONLY,
-            .write_only => flags |= std.os.O.WRONLY,
-            .read_write => flags |= std.os.O.RDWR,
+            .read_only => flags |= O.RDONLY,
+            .write_only => flags |= O.WRONLY,
+            .read_write => flags |= O.RDWR,
         }
 
         const fd = try sys.openA(path_, flags, 0).unwrap();
         return fd.asFile();
     }
 
-    return try openFileZ(&try std.os.toPosixPath(path_), open_flags);
+    return try openFileZ(&try std.posix.toPosixPath(path_), open_flags);
 }
 
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
@@ -694,7 +694,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openat(toFD(dir.fd), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
         return fd.asDir();
     }
 }
@@ -704,7 +704,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openatA(toFD(dir.fd), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
         return fd.asDir();
     }
 }
@@ -714,7 +714,7 @@ pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(invalid_fd, path_, true, false).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
         return fd.asDir();
     }
 }
@@ -729,7 +729,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
 
     if (comptime Environment.isWindows) {
         // Windows UCRT will fill this in for us
-        for (std.os.environ) |lineZ| {
+        for (std.posix.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
             const key = line[0..key_end];
@@ -1187,19 +1187,19 @@ var needs_proc_self_workaround: bool = false;
 // This is our "polyfill" when /proc/self/fd is not available it's only
 // necessary on linux because other platforms don't have an optional
 // /proc/self/fd
-fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const prev_fd = try std.os.openatZ(std.fs.cwd().fd, ".", std.os.O.DIRECTORY, 0);
+fn getFdPathViaCWD(fd: std.posix.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+    const prev_fd = try std.posix.openatZ(std.fs.cwd().fd, ".", O.DIRECTORY, 0);
     var needs_chdir = false;
     defer {
-        if (needs_chdir) std.os.fchdir(prev_fd) catch unreachable;
-        std.os.close(prev_fd);
+        if (needs_chdir) std.posix.fchdir(prev_fd) catch unreachable;
+        std.posix.close(prev_fd);
     }
-    try std.os.fchdir(fd);
+    try std.posix.fchdir(fd);
     needs_chdir = true;
-    return std.os.getcwd(buf);
+    return std.posix.getcwd(buf);
 }
 
-pub const getcwd = std.os.getcwd;
+pub const getcwd = std.posix.getcwd;
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
     var temp: [MAX_PATH_BYTES]u8 = undefined;
@@ -1481,11 +1481,11 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
     .free = FailingAllocator.free,
 } };
 
-var __reload_in_progress__ = std.atomic.Value(bool).init(false);
-threadlocal var __reload_in_progress__on_current_thread = false;
+var is_reload_in_progress = std.atomic.Value(bool).init(false);
+threadlocal var is_reload_in_progress_on_current_thread = false;
 fn isProcessReloadInProgressOnAnotherThread() bool {
-    @fence(.Acquire);
-    return __reload_in_progress__.load(.Monotonic) and !__reload_in_progress__on_current_thread;
+    @fence(.acquire);
+    return is_reload_in_progress.load(.monotonic) and !is_reload_in_progress_on_current_thread;
 }
 
 pub noinline fn maybeHandlePanicDuringProcessReload() void {
@@ -1505,7 +1505,7 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
             std.atomic.spinLoopHint();
 
             if (comptime Environment.isPosix) {
-                std.os.nanosleep(1, 0);
+                std.posix.nanosleep(1, 0);
             }
         }
     }
@@ -1523,8 +1523,8 @@ pub fn reloadProcess(
     allocator: std.mem.Allocator,
     clear_terminal: bool,
 ) noreturn {
-    __reload_in_progress__.store(true, .Monotonic);
-    __reload_in_progress__on_current_thread = true;
+    is_reload_in_progress.store(true, .monotonic);
+    is_reload_in_progress_on_current_thread = true;
 
     if (clear_terminal) {
         Output.flush();
@@ -1603,7 +1603,7 @@ pub fn reloadProcess(
         }.on_before_reload_process_linux;
 
         on_before_reload_process_linux();
-        const err = std.os.execveZ(
+        const err = std.posix.execveZ(
             exec_path,
             newargv,
             envp,
@@ -1806,20 +1806,20 @@ pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
 
 pub fn openFileForPath(path_: [:0]const u8) !std.fs.File {
-    const O_PATH = if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY;
-    const flags: u32 = std.os.O.CLOEXEC | std.os.O.NOCTTY | O_PATH;
+    const O_PATH = if (comptime Environment.isLinux) O.PATH else O.RDONLY;
+    const flags: u32 = O.CLOEXEC | O.NOCTTY | O_PATH;
 
-    const fd = try std.os.openZ(path_, flags, 0);
+    const fd = try std.posix.openZ(path_, flags, 0);
     return std.fs.File{
         .handle = fd,
     };
 }
 
 pub fn openDirForPath(path_: [:0]const u8) !std.fs.Dir {
-    const O_PATH = if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY;
-    const flags: u32 = std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.DIRECTORY | O_PATH;
+    const O_PATH = if (comptime Environment.isLinux) O.PATH else O.RDONLY;
+    const flags: u32 = O.CLOEXEC | O.NOCTTY | O.DIRECTORY | O_PATH;
 
-    const fd = try std.os.openZ(path_, flags, 0);
+    const fd = try std.posix.openZ(path_, flags, 0);
     return std.fs.Dir{
         .fd = fd,
     };
@@ -1951,7 +1951,7 @@ pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
     }
 }
 
-pub inline fn socketcast(fd: anytype) std.os.socket_t {
+pub inline fn socketcast(fd: anytype) std.posix.socket_t {
     if (Environment.isWindows) {
         return @ptrCast(FDImpl.decode(fd).system());
     } else {
@@ -1965,7 +1965,7 @@ pub const HOST_NAME_MAX = if (Environment.isWindows)
     // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-gethostname
     256
 else
-    std.os.HOST_NAME_MAX;
+    std.posix.HOST_NAME_MAX;
 
 pub const enums = @import("./enums.zig");
 const WindowsStat = extern struct {
@@ -2002,7 +2002,7 @@ const WindowsStat = extern struct {
     }
 };
 
-pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
+pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
 
 var _argv: [][:0]const u8 = &[_][:0]const u8{};
 
@@ -2175,6 +2175,7 @@ pub fn isRegularFile(mode: anytype) bool {
 }
 
 pub const sys = @import("./sys.zig");
+pub const O = sys.O;
 
 pub const Mode = C.Mode;
 
@@ -2241,9 +2242,11 @@ pub const LazyBoolValue = enum {
 pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field: string) type {
     return struct {
         value: LazyBoolValue = .unknown,
+
         pub fn get(self: *@This()) bool {
             if (self.value == .unknown) {
-                self.value = switch (Getter(@fieldParentPtr(Parent, field, self))) {
+                const parent: *Parent = @fieldParentPtr(field, self);
+                self.value = switch (Getter(parent)) {
                     true => .yes,
                     false => .no,
                 };
@@ -2371,7 +2374,7 @@ pub const MakePath = struct {
     }
 
     fn makeDirW(self: std.fs.Dir, sub_path: []const u16) !void {
-        try std.os.mkdiratW(self.fd, sub_path, 0o755);
+        try std.posix.mkdiratW(self.fd, sub_path, 0o755);
     }
 
     fn componentIterator(comptime T: type, path_: []const T) !std.fs.path.ComponentIterator(switch (builtin.target.os.tag) {
@@ -2746,7 +2749,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
     return error.Unexpected;
 }
 
-pub const S = if (Environment.isWindows) C.S else std.os.S;
+pub const S = if (Environment.isWindows) C.S else std.posix.S;
 
 /// Deprecated!
 pub const trait = @import("./trait.zig");

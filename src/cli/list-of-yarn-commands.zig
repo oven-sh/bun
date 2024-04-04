@@ -104,5 +104,6 @@ pub const all_yarn_commands = brk: {
         }
     }
 
-    break :brk array[0..array_i];
+    const final = array[0..array_i].*;
+    break :brk &final;
 };

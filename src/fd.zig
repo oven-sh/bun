@@ -1,5 +1,5 @@
 const std = @import("std");
-const os = std.os;
+const os = std.posix;
 const linux = os.linux;
 
 const bun = @import("root").bun;
@@ -68,7 +68,7 @@ pub const FDImpl = packed struct {
         .value = .{ .as_system = invalid_value },
     };
 
-    pub const System = std.os.fd_t;
+    pub const System = std.posix.fd_t;
 
     pub const SystemAsInt = switch (env.os) {
         .windows => u63,

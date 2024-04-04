@@ -2678,7 +2678,7 @@ pub const Package = extern struct {
                     const json_file_fd = try bun.sys.openat(
                         bun.toFD(node_modules.fd),
                         json_path,
-                        std.os.O.RDONLY,
+                        bun.O.RDONLY,
                         0,
                     ).unwrap();
                     const json_file = json_file_fd.asFile();
@@ -4072,7 +4072,7 @@ pub const Package = extern struct {
                     if (entry.cache.fd == .zero) {
                         entry.cache.fd = bun.toFD(bun.sys.open(
                             entry_path,
-                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.RDONLY,
+                            bun.O.DIRECTORY | bun.O.CLOEXEC | bun.O.NOCTTY | bun.O.RDONLY,
                             0,
                         ).unwrap() catch continue);
                     }

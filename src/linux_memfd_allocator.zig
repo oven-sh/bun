@@ -27,11 +27,11 @@ pub const LinuxMemFdAllocator = struct {
     pub usingnamespace bun.New(LinuxMemFdAllocator);
 
     pub fn ref(this: *LinuxMemFdAllocator) void {
-        _ = this.ref_count.fetchAdd(1, .Monotonic);
+        _ = this.ref_count.fetchAdd(1, .monotonic);
     }
 
     pub fn deref(this: *LinuxMemFdAllocator) void {
-        if (this.ref_count.fetchSub(1, .Monotonic) == 1) {
+        if (this.ref_count.fetchSub(1, .monotonic) == 1) {
             _ = bun.sys.close(this.fd);
             this.destroy();
         }
@@ -91,8 +91,8 @@ pub const LinuxMemFdAllocator = struct {
         switch (bun.sys.mmap(
             null,
             @min(size, this.size),
-            std.os.PROT.READ | std.os.PROT.WRITE,
-            std.os.MAP.SHARED | flags,
+            std.posix.PROT.READ | std.posix.PROT.WRITE,
+            std.posix.MAP.SHARED | flags,
             this.fd,
             offset,
         )) {
@@ -133,16 +133,16 @@ pub const LinuxMemFdAllocator = struct {
 
         const rc = brk: {
             var label_buf: [128]u8 = undefined;
-            const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .Monotonic)}) catch "";
+            const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .monotonic)}) catch "";
 
             // Using huge pages was slower.
-            const code = std.os.linux.memfd_create(label.ptr, std.os.linux.MFD.CLOEXEC | 0);
+            const code = std.posix.linux.memfd_create(label.ptr, std.posix.linux.MFD.CLOEXEC | 0);
 
             bun.sys.syslog("memfd_create({s}) = {d}", .{ label, code });
             break :brk code;
         };
 
-        switch (std.os.linux.getErrno(rc)) {
+        switch (std.posix.linux.getErrno(rc)) {
             .SUCCESS => {},
             else => |errno| {
                 bun.sys.syslog("Failed to create memfd: {s}", .{@tagName(errno)});

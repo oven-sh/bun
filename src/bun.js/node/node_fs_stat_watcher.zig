@@ -51,13 +51,13 @@ pub const StatWatcherScheduler = struct {
         std.debug.assert(watcher.closed == false);
         std.debug.assert(watcher.next == null);
 
-        if (this.head.swap(watcher, .Monotonic)) |head| {
+        if (this.head.swap(watcher, .monotonic)) |head| {
             watcher.next = head;
-            if (!this.is_running.load(.Monotonic)) {
+            if (!this.is_running.load(.monotonic)) {
                 this.timer.?.set(this, timerCallback, 1, 0);
             }
         } else {
-            if (!this.is_running.load(.Monotonic)) {
+            if (!this.is_running.load(.monotonic)) {
                 watcher.last_check = std.time.Instant.now() catch unreachable;
 
                 const vm = watcher.globalThis.bunVM();
@@ -74,16 +74,16 @@ pub const StatWatcherScheduler = struct {
 
     pub fn timerCallback(timer: *uws.Timer) callconv(.C) void {
         var this = timer.ext(StatWatcherScheduler).?;
-        this.is_running.store(true, .Monotonic);
+        this.is_running.store(true, .monotonic);
         JSC.WorkPool.schedule(&this.task);
     }
 
     pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-        var this: *StatWatcherScheduler = @fieldParentPtr(StatWatcherScheduler, "task", task);
+        var this: *StatWatcherScheduler = @fieldParentPtr("task", task);
         // Instant.now will not fail on our target platforms.
         const now = std.time.Instant.now() catch unreachable;
 
-        const head: *StatWatcher = this.head.swap(null, .Monotonic).?;
+        const head: *StatWatcher = this.head.swap(null, .monotonic).?;
 
         var prev = head;
         while (prev.closed) {
@@ -96,7 +96,7 @@ pub const StatWatcherScheduler = struct {
             if (prev.next) |next| {
                 prev = next;
             } else {
-                if (this.head.load(.Monotonic) == null) {
+                if (this.head.load(.monotonic) == null) {
                     this.timer.?.deinit(false);
                     this.timer = null;
                     // The scheduler is not deinit here, but it will get reused.
@@ -129,7 +129,7 @@ pub const StatWatcherScheduler = struct {
             curr = c.next;
         }
 
-        prev.next = this.head.swap(head, .Monotonic);
+        prev.next = this.head.swap(head, .monotonic);
 
         log("I will wait {d} milli", .{min_interval});
 
@@ -327,7 +327,7 @@ pub const StatWatcher = struct {
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-            const initial_stat_task: *InitialStatTask = @fieldParentPtr(InitialStatTask, "task", task);
+            const initial_stat_task: *InitialStatTask = @fieldParentPtr("task", task);
             defer bun.default_allocator.destroy(initial_stat_task);
             const this = initial_stat_task.watcher;
 

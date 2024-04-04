@@ -87,7 +87,7 @@ const SendfileContext = struct {
     has_set_on_writable: bool = false,
     auto_close: bool = false,
 };
-const linux = std.os.linux;
+const linux = std.posix.linux;
 const Async = bun.Async;
 
 const BlobFileContentResult = struct {
@@ -335,7 +335,7 @@ pub const ServerConfig = struct {
                 defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.key_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
-                    if (std.os.system.access(result.key_file_name, std.os.F_OK) != 0) {
+                    if (std.posix.system.access(result.key_file_name, std.posix.F_OK) != 0) {
                         JSC.throwInvalidArguments("Unable to access keyFile path", .{}, global, exception);
                         result.deinit();
 
@@ -429,7 +429,7 @@ pub const ServerConfig = struct {
                 defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.cert_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
-                    if (std.os.system.access(result.cert_file_name, std.os.F_OK) != 0) {
+                    if (std.posix.system.access(result.cert_file_name, std.posix.F_OK) != 0) {
                         JSC.throwInvalidArguments("Unable to access certFile path", .{}, global, exception);
                         result.deinit();
                         return null;
@@ -645,7 +645,7 @@ pub const ServerConfig = struct {
                 defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
-                    if (std.os.system.access(result.ca_file_name, std.os.F_OK) != 0) {
+                    if (std.posix.system.access(result.ca_file_name, std.posix.F_OK) != 0) {
                         JSC.throwInvalidArguments("Invalid caFile path", .{}, global, exception);
                         result.deinit();
                         return null;
@@ -665,7 +665,7 @@ pub const ServerConfig = struct {
                     defer sliced.deinit();
                     if (sliced.len > 0) {
                         result.dh_params_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
-                        if (std.os.system.access(result.dh_params_file_name, std.os.F_OK) != 0) {
+                        if (std.posix.system.access(result.dh_params_file_name, std.posix.F_OK) != 0) {
                             JSC.throwInvalidArguments("Invalid dhParamsFile path", .{}, global, exception);
                             result.deinit();
                             return null;
@@ -1879,7 +1879,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.finalize();
         }
         const separator: string = "\r\n";
-        const separator_iovec = [1]std.os.iovec_const{.{
+        const separator_iovec = [1]std.posix.iovec_const{.{
             .iov_base = separator.ptr,
             .iov_len = separator.len,
         }};
@@ -1914,9 +1914,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     return errcode != .SUCCESS;
                 }
             } else {
-                var sbytes: std.os.off_t = adjusted_count;
+                var sbytes: std.posix.off_t = adjusted_count;
                 const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));
-                const errcode = std.c.getErrno(std.c.sendfile(
+                const errcode = bun.C.getErrno(std.c.sendfile(
                     this.sendfile.fd.cast(),
                     this.sendfile.socket_fd.cast(),
                     signed_offset,
@@ -2013,7 +2013,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const auto_close = file.pathlike != .fd;
             const fd = if (!auto_close)
                 file.pathlike.fd
-            else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+            else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
                 .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(
                     this.server.globalThis,
@@ -2041,7 +2041,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
 
                     var err = bun.sys.Error{
-                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
+                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.posix.E.INVAL))),
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
@@ -2054,13 +2054,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (Environment.isLinux) {
-                if (!(bun.isRegularFile(stat.mode) or std.os.S.ISFIFO(stat.mode) or std.os.S.ISSOCK(stat.mode))) {
+                if (!(bun.isRegularFile(stat.mode) or std.posix.S.ISFIFO(stat.mode) or std.posix.S.ISSOCK(stat.mode))) {
                     if (auto_close) {
                         _ = bun.sys.close(fd);
                     }
 
                     var err = bun.sys.Error{
-                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
+                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.posix.E.INVAL))),
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();

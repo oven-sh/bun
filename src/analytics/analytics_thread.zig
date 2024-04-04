@@ -378,7 +378,7 @@ fn readloop() anyerror!void {
             event_list.flush();
         }
 
-        Futex.wait(&counter, counter.load(.Acquire), null) catch unreachable;
+        Futex.wait(&counter, counter.load(.acquire), null) catch unreachable;
     }
 }
 
@@ -471,7 +471,7 @@ pub const EventList = struct {
                 }
 
                 retry_remaining -= 1;
-                @atomicStore(bool, &is_stuck, true, .Release);
+                @atomicStore(bool, &is_stuck, true, .release);
                 const min_delay = (11 - retry_remaining) * std.time.ns_per_s / 2;
                 Output.flush();
                 std.time.sleep(rand.intRangeAtMost(u64, min_delay, min_delay * 2));
@@ -484,7 +484,7 @@ pub const EventList = struct {
                 }
 
                 retry_remaining -= 1;
-                @atomicStore(bool, &is_stuck, true, .Release);
+                @atomicStore(bool, &is_stuck, true, .release);
                 const min_delay = (11 - retry_remaining) * std.time.ns_per_s / 2;
                 Output.flush();
                 std.time.sleep(rand.intRangeAtMost(u64, min_delay, min_delay * 2));
@@ -494,7 +494,7 @@ pub const EventList = struct {
             break :retry;
         }
 
-        @atomicStore(bool, &is_stuck, retry_remaining == 0, .Release);
+        @atomicStore(bool, &is_stuck, retry_remaining == 0, .release);
         stuck_count += @as(u8, @intCast(@intFromBool(retry_remaining == 0)));
         stuck_count *= @as(u8, @intCast(@intFromBool(retry_remaining == 0)));
         disabled = disabled or stuck_count > 4;

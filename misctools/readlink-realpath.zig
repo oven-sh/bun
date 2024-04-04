@@ -32,7 +32,7 @@ pub fn main() anyerror!void {
 
     var j: usize = 0;
     while (j < 1000) : (j += 1) {
-        path = try std.os.realpathZ(to_resolve, &out_buffer);
+        path = try std.posix.realpathZ(to_resolve, &out_buffer);
     }
 
     Output.print("{s}", .{path});

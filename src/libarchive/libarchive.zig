@@ -16,9 +16,9 @@ const std = @import("std");
 const struct_archive = lib.struct_archive;
 const JSC = @import("root").bun.JSC;
 pub const Seek = enum(c_int) {
-    set = std.os.SEEK_SET,
-    current = std.os.SEEK_CUR,
-    end = std.os.SEEK_END,
+    set = std.posix.SEEK_SET,
+    current = std.posix.SEEK_CUR,
+    end = std.posix.SEEK_END,
 };
 
 pub const Flags = struct {
@@ -567,16 +567,16 @@ pub const Archive = struct {
                                 mode |= 0o1;
 
                             if (comptime Environment.isWindows) {
-                                std.os.mkdiratW(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
+                                std.posix.mkdiratW(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
                                     if (err == error.PathAlreadyExists or err == error.NotDir) break;
                                     try bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return err);
-                                    try std.os.mkdiratW(dir_fd, pathname, 0o777);
+                                    try std.posix.mkdiratW(dir_fd, pathname, 0o777);
                                 };
                             } else {
-                                std.os.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
+                                std.posix.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
                                     if (err == error.PathAlreadyExists or err == error.NotDir) break;
                                     try bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err);
-                                    try std.os.mkdiratZ(dir_fd, pathname, 0o777);
+                                    try std.posix.mkdiratZ(dir_fd, pathname, 0o777);
                                 };
                             }
                         },
@@ -585,11 +585,11 @@ pub const Archive = struct {
                             if (comptime Environment.isWindows) {
                                 @panic("TODO on Windows: Extracting archives containing symbolic links.");
                             }
-                            std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
+                            std.posix.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
                                 switch (err) {
                                     error.AccessDenied, error.FileNotFound => {
                                         dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                        break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
+                                        break :brk try std.posix.symlinkatZ(link_target, dir_fd, pathname);
                                     },
                                     else => {
                                         return err;
@@ -602,7 +602,7 @@ pub const Archive = struct {
 
                             const file_handle_native = brk: {
                                 if (Environment.isWindows) {
-                                    const flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC;
+                                    const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC;
                                     switch (bun.sys.openatWindows(bun.toFD(dir_fd), pathname, flags)) {
                                         .result => |fd| break :brk fd,
                                         .err => |e| switch (e.errno) {

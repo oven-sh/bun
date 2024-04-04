@@ -23,7 +23,7 @@ var stderr_stream: Source.StreamType = undefined;
 var stdout_stream: Source.StreamType = undefined;
 var stdout_stream_set = false;
 const File = bun.sys.File;
-pub var terminal_size: std.os.winsize = .{
+pub var terminal_size: std.posix.winsize = .{
     .ws_row = 0,
     .ws_col = 0,
     .ws_xpixel = 0,
@@ -741,7 +741,8 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         }
     };
 
-    return comptime new_fmt[0..new_fmt_i];
+    const fmt_data = comptime new_fmt[0..new_fmt_i].*;
+    return &fmt_data;
 }
 
 pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Destination) void {
@@ -950,10 +951,10 @@ pub fn initScopedDebugWriterAtStartup() void {
             const path_fmt = std.mem.replaceOwned(u8, bun.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
             defer bun.default_allocator.free(path_fmt);
 
-            const fd = std.os.openat(
+            const fd = std.posix.openat(
                 std.fs.cwd().fd,
                 path_fmt,
-                std.os.O.CREAT | std.os.O.WRONLY,
+                .{ .CREAT = true, .WRONLY = true },
                 // on windows this is u0
                 if (Environment.isWindows) 0 else 0o644,
             ) catch |err_| {

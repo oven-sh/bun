@@ -346,7 +346,7 @@ pub const InitCommand = struct {
                 break :write_package_json;
             };
 
-            std.os.ftruncate(package_json_file.?.handle, written + 1) catch {};
+            std.posix.ftruncate(package_json_file.?.handle, written + 1) catch {};
             package_json_file.?.close();
         }
 

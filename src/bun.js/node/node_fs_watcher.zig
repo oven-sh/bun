@@ -473,18 +473,18 @@ pub const FSWatcher = struct {
         defer this.mutex.unlock();
         // stop new references
         if (this.closed) return false;
-        _ = this.task_count.fetchAdd(1, .Monotonic);
+        _ = this.task_count.fetchAdd(1, .monotonic);
         return true;
     }
 
     pub fn hasPendingActivity(this: *FSWatcher) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.has_pending_activity.load(.Acquire);
+        @fence(.acquire);
+        return this.has_pending_activity.load(.acquire);
     }
     // only called from Main Thread
     pub fn updateHasPendingActivity(this: *FSWatcher) void {
-        @fence(.Release);
-        this.has_pending_activity.store(false, .Release);
+        @fence(.release);
+        this.has_pending_activity.store(false, .release);
     }
 
     // unref is always called on main JS Context Thread
@@ -492,7 +492,7 @@ pub const FSWatcher = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
 
-        const new_count = this.task_count.fetchSub(1, .Monotonic);
+        const new_count = this.task_count.fetchSub(1, .monotonic);
         if (this.closed and new_count == 0) {
             this.updateHasPendingActivity();
         }
@@ -513,7 +513,7 @@ pub const FSWatcher = struct {
             this.detach();
 
             // no need to lock again, because ref checks closed and unref is only called on main thread
-            if (this.task_count.load(.Monotonic) == 0) {
+            if (this.task_count.load(.monotonic) == 0) {
                 this.updateHasPendingActivity();
             }
         } else {

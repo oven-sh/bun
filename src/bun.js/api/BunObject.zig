@@ -828,7 +828,7 @@ pub fn getMain(
                 vm.main,
 
                 // Open with the minimum permissions necessary for resolving the file path.
-                if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY,
+                if (comptime Environment.isLinux) bun.O.PATH else bun.O.RDONLY,
 
                 0,
             ).unwrap() catch break :use_resolved_path;
@@ -1931,7 +1931,7 @@ pub const Crypto = struct {
             }
 
             pub fn run(task: *bun.ThreadPool.Task) void {
-                var this = @fieldParentPtr(HashJob, "task", task);
+                var this: *HashJob = @fieldParentPtr("task", task);
 
                 var result = bun.default_allocator.create(Result) catch @panic("out of memory");
                 result.* = Result{
@@ -2173,7 +2173,7 @@ pub const Crypto = struct {
             }
 
             pub fn run(task: *bun.ThreadPool.Task) void {
-                var this = @fieldParentPtr(VerifyJob, "task", task);
+                var this: *VerifyJob = @fieldParentPtr("task", task);
 
                 var result = bun.default_allocator.create(Result) catch @panic("out of memory");
                 result.* = Result{
@@ -3106,8 +3106,8 @@ pub fn mmapFile(
 
     const buf_z: [:0]const u8 = buf[0..path.len :0];
 
-    const sync_flags: u32 = if (@hasDecl(std.os.MAP, "SYNC")) std.os.MAP.SYNC | std.os.MAP.SHARED_VALIDATE else 0;
-    const file_flags: u32 = if (@hasDecl(std.os.MAP, "FILE")) std.os.MAP.FILE else 0;
+    const sync_flags: u32 = if (@hasDecl(std.posix.MAP, "SYNC")) std.posix.MAP.SYNC | std.posix.MAP.SHARED_VALIDATE else 0;
+    const file_flags: u32 = if (@hasDecl(std.posix.MAP, "FILE")) std.posix.MAP.FILE else 0;
 
     // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
     var offset: usize = 0;
@@ -3118,7 +3118,7 @@ pub fn mmapFile(
         const sync = opts.get(globalThis, "sync") orelse JSC.JSValue.jsBoolean(false);
         const shared = opts.get(globalThis, "shared") orelse JSC.JSValue.jsBoolean(true);
         flags |= @as(u32, if (sync.toBoolean()) sync_flags else 0);
-        flags |= @as(u32, if (shared.toBoolean()) std.os.MAP.SHARED else std.os.MAP.PRIVATE);
+        flags |= @as(u32, if (shared.toBoolean()) std.posix.MAP.SHARED else std.posix.MAP.PRIVATE);
 
         if (opts.get(globalThis, "size")) |value| {
             map_size = @as(usize, @intCast(value.toInt64()));
@@ -3129,7 +3129,7 @@ pub fn mmapFile(
             offset = std.mem.alignBackwardAnyAlign(offset, std.mem.page_size);
         }
     } else {
-        flags |= std.os.MAP.SHARED;
+        flags |= std.posix.MAP.SHARED;
     }
 
     const map = switch (bun.sys.mmapFile(buf_z, flags, map_size, offset)) {
@@ -3840,7 +3840,7 @@ pub const Timer = struct {
             event_loop: *JSC.EventLoop,
             timer: if (Environment.isWindows) uv.uv_timer_t else bun.io.Timer = if (Environment.isWindows) std.mem.zeroes(uv.uv_timer_t) else .{
                 .tag = .TimerReference,
-                .next = std.mem.zeroes(std.os.timespec),
+                .next = std.mem.zeroes(std.posix.timespec),
             },
             request: if (Environment.isWindows) u0 else bun.io.Request = if (Environment.isWindows) 0 else .{
                 .callback = &onRequest,
@@ -3863,7 +3863,7 @@ pub const Timer = struct {
                 if (Environment.isWindows) {
                     @panic("This should not be called on Windows");
                 }
-                var this: *TimerReference = @fieldParentPtr(TimerReference, "request", req);
+                var this: *TimerReference = @fieldParentPtr("request", req);
 
                 if (this.cancelled) {
                     // We must free this on the main thread
@@ -3903,7 +3903,7 @@ pub const Timer = struct {
             pub fn runFromJSThread(this: *TimerReference) void {
                 const timer_id = this.id;
                 const vm = this.event_loop.virtual_machine;
-                _ = this.scheduled_count.fetchSub(1, .Monotonic);
+                _ = this.scheduled_count.fetchSub(1, .monotonic);
 
                 if (this.cancelled) {
                     this.deinit();
@@ -3921,7 +3921,7 @@ pub const Timer = struct {
             }
 
             pub fn deinit(this: *TimerReference) void {
-                if (this.scheduled_count.load(.Monotonic) == 0)
+                if (this.scheduled_count.load(.monotonic) == 0)
                     // Free it if there is no other scheduled job
                     this.event_loop.timerReferencePool().put(this);
             }
@@ -3945,7 +3945,7 @@ pub const Timer = struct {
 
             pub fn schedule(this: *TimerReference, interval: ?i32) void {
                 std.debug.assert(!this.cancelled);
-                _ = this.scheduled_count.fetchAdd(1, .Monotonic);
+                _ = this.scheduled_count.fetchAdd(1, .monotonic);
                 const ms: usize = @max(interval orelse this.interval, 1);
                 if (Environment.isWindows) {
                     // we MUST update the timer so we avoid early firing
@@ -3959,12 +3959,12 @@ pub const Timer = struct {
                 bun.io.Loop.get().schedule(&this.request);
             }
 
-            fn msToTimespec(ms: usize) std.os.timespec {
-                var now: std.os.timespec = undefined;
+            fn msToTimespec(ms: usize) std.posix.timespec {
+                var now: std.posix.timespec = undefined;
                 // std.time.Instant.now uses a different clock on macOS than monotonic
                 bun.io.Loop.updateTimespec(&now);
 
-                var increment = std.os.timespec{
+                var increment = std.posix.timespec{
                     // nanosecond from ms milliseconds
                     .tv_nsec = @intCast((ms % std.time.ms_per_s) *| std.time.ns_per_ms),
                     .tv_sec = @intCast(ms / std.time.ms_per_s),

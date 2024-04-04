@@ -842,7 +842,7 @@ pub const Fetch = struct {
             const globalThis = this.global_this;
             const is_done = !success or !this.result.has_more;
             defer {
-                this.has_schedule_callback.store(false, .Monotonic);
+                this.has_schedule_callback.store(false, .monotonic);
                 this.mutex.unlock();
                 if (is_done) {
                     const vm = globalThis.bunVM();
@@ -1024,7 +1024,7 @@ pub const Fetch = struct {
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
                 ref.strong.deinit();
-                this.has_schedule_callback.store(false, .Monotonic);
+                this.has_schedule_callback.store(false, .monotonic);
                 this.mutex.unlock();
                 poll_ref.unref(vm);
                 this.clearData();
@@ -1051,7 +1051,7 @@ pub const Fetch = struct {
 
                     tracker.didDispatch(globalThis);
                     ref.strong.deinit();
-                    this.has_schedule_callback.store(false, .Monotonic);
+                    this.has_schedule_callback.store(false, .monotonic);
                     this.mutex.unlock();
                     if (this.is_waiting_abort) {
                         return;
@@ -1065,7 +1065,7 @@ pub const Fetch = struct {
                 // everything ok
                 if (this.metadata == null) {
                     log("onProgressUpdate: metadata is null", .{});
-                    this.has_schedule_callback.store(false, .Monotonic);
+                    this.has_schedule_callback.store(false, .monotonic);
                     // cannot continue without metadata
                     this.mutex.unlock();
                     return;
@@ -1080,7 +1080,7 @@ pub const Fetch = struct {
                 log("onProgressUpdate: promise_value is not null", .{});
                 tracker.didDispatch(globalThis);
                 ref.strong.deinit();
-                this.has_schedule_callback.store(false, .Monotonic);
+                this.has_schedule_callback.store(false, .monotonic);
                 this.mutex.unlock();
                 if (!this.is_waiting_body) {
                     poll_ref.unref(vm);
@@ -1167,7 +1167,7 @@ pub const Fetch = struct {
                             check_result.ensureStillAlive();
                             check_result.protect();
                             this.abort_reason = check_result;
-                            this.signal_store.aborted.store(true, .Monotonic);
+                            this.signal_store.aborted.store(true, .monotonic);
                             this.tracker.didCancel(this.global_this);
 
                             // we need to abort the request
@@ -1326,7 +1326,7 @@ pub const Fetch = struct {
             if (this.http) |http_| {
                 http_.enableBodyStreaming();
             }
-            if (this.signal_store.aborted.load(.Monotonic)) {
+            if (this.signal_store.aborted.load(.monotonic)) {
                 return JSC.WebCore.DrainResult{
                     .aborted = {},
                 };
@@ -1491,7 +1491,7 @@ pub const Fetch = struct {
             }
 
             if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
-                fetch_tasklet.signal_store.cert_errors.store(true, .Monotonic);
+                fetch_tasklet.signal_store.cert_errors.store(true, .monotonic);
             } else {
                 fetch_tasklet.signals.cert_errors = null;
                 // we use aborted to signal that we should abort reject_unauthorized after check with check_server_identity
@@ -1536,7 +1536,7 @@ pub const Fetch = struct {
             }
 
             // we want to return after headers are received
-            fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
+            fetch_tasklet.signal_store.header_progress.store(true, .monotonic);
 
             if (fetch_tasklet.request_body == .Sendfile) {
                 std.debug.assert(fetch_options.url.isHTTP());
@@ -1555,7 +1555,7 @@ pub const Fetch = struct {
             reason.ensureStillAlive();
             this.abort_reason = reason;
             reason.protect();
-            this.signal_store.aborted.store(true, .Monotonic);
+            this.signal_store.aborted.store(true, .monotonic);
             this.tracker.didCancel(this.global_this);
 
             if (this.http != null) {
@@ -1631,7 +1631,7 @@ pub const Fetch = struct {
             // reset for reuse
             task.response_buffer.reset();
 
-            if (task.has_schedule_callback.cmpxchgStrong(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
+            if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
                 if (has_schedule_callback) {
                     return;
                 }
@@ -2225,7 +2225,7 @@ pub const Fetch = struct {
                 }
 
                 var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
+                const cwd = if (Environment.isWindows) (std.posix.getcwd(&cwd_buf) catch |err| {
                     globalThis.throwError(err, "Failed to resolve file url");
                     return .zero;
                 }) else globalThis.bunVM().bundler.fs.top_level_dir;
@@ -2311,7 +2311,7 @@ pub const Fetch = struct {
             prepare_body: {
                 const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
                     .fd => |fd| bun.sys.dup(fd),
-                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) std.os.O.RDONLY else std.os.O.RDONLY | std.os.O.NOCTTY, 0),
+                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) bun.O.RDONLY else bun.O.RDONLY | bun.O.NOCTTY, 0),
                 };
 
                 const opened_fd = switch (opened_fd_res) {

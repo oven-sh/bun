@@ -1079,6 +1079,7 @@ pub fn fastDigitCount(x: u64) u64 {
 
 pub const SizeFormatter = struct {
     value: usize = 0,
+
     pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
         const math = std.math;
         const value = self.value;
@@ -1098,10 +1099,13 @@ pub const SizeFormatter = struct {
         const suffix = mags_si[magnitude];
 
         if (suffix == ' ') {
-            try fmt.formatFloatDecimal(new_value / 1000.0, .{ .precision = 2 }, writer);
+            try fmt.formatFloat(new_value / 1000.0, .{ .format = .decimal, .precision = 2 }, writer);
             return writer.writeAll(" KB");
         } else {
-            try fmt.formatFloatDecimal(new_value, .{ .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) @as(usize, 1) else @as(usize, 2) }, writer);
+            try fmt.formatFloat(new_value, .{
+                .format = .decimal,
+                .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2,
+            }, writer);
         }
         return writer.writeAll(&[_]u8{ ' ', suffix, 'B' });
     }
@@ -1112,7 +1116,7 @@ pub fn size(value: anytype) SizeFormatter {
         f64, f32, f128 => SizeFormatter{
             .value = @as(u64, @intFromFloat(value)),
         },
-        else => SizeFormatter{ .value = @as(u64, @intCast(value)) },
+        else => SizeFormatter{ .value = value },
     };
 }
 

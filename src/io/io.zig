@@ -1,7 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const sys = bun.sys;
-const linux = std.os.linux;
+const linux = std.posix.linux;
 const Environment = bun.Environment;
 const heap = @import("./heap.zig");
 const JSC = bun.JSC;
@@ -10,7 +10,7 @@ const log = bun.Output.scoped(.loop, false);
 
 const TimerHeap = heap.Intrusive(Timer, void, Timer.less);
 
-const os = std.os;
+const os = std.posix;
 const assert = std.debug.assert;
 
 pub const Source = @import("./source.zig").Source;
@@ -36,20 +36,20 @@ pub const Loop = struct {
             @panic("Do not use this API on windows");
         }
 
-        if (!@atomicRmw(bool, &has_loaded_loop, std.builtin.AtomicRmwOp.Xchg, true, .Monotonic)) {
+        if (!@atomicRmw(bool, &has_loaded_loop, std.builtin.AtomicRmwOp.Xchg, true, .monotonic)) {
             loop = Loop{
                 .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
             };
             if (comptime Environment.isLinux) {
-                loop.epoll_fd = bun.toFD(std.os.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
+                loop.epoll_fd = bun.toFD(std.posix.epoll_create1(std.posix.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
 
                 {
-                    var epoll = std.mem.zeroes(std.os.linux.epoll_event);
-                    epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
+                    var epoll = std.mem.zeroes(std.posix.linux.epoll_event);
+                    epoll.events = std.posix.linux.EPOLL.IN | std.posix.linux.EPOLL.ERR | std.posix.linux.EPOLL.HUP;
                     epoll.data.ptr = @intFromPtr(&loop);
-                    const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
+                    const rc = std.posix.linux.epoll_ctl(loop.epoll_fd.cast(), std.posix.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
 
-                    switch (std.os.linux.getErrno(rc)) {
+                    switch (std.posix.linux.getErrno(rc)) {
                         .SUCCESS => {},
                         else => |err| bun.Output.panic("Failed to wait on epoll {s}", .{@tagName(err)}),
                     }
@@ -184,7 +184,7 @@ pub const Loop = struct {
                 timeout,
             );
 
-            switch (std.os.linux.getErrno(rc)) {
+            switch (std.posix.linux.getErrno(rc)) {
                 .INTR => continue,
                 .SUCCESS => {},
                 else => |e| bun.Output.panic("epoll_wait: {s}", .{@tagName(e)}),
@@ -192,7 +192,7 @@ pub const Loop = struct {
 
             this.updateNow();
 
-            const current_events: []std.os.linux.epoll_event = events[0..rc];
+            const current_events: []std.posix.linux.epoll_event = events[0..rc];
             if (rc != 0) {
                 log("epoll_wait({}) = {d}", .{ this.pollfd(), rc });
             }
@@ -318,9 +318,9 @@ pub const Loop = struct {
             const change_count = events_list.items.len;
 
             // Determine our next timeout based on the timers
-            const timeout: ?std.os.timespec = timeout: {
+            const timeout: ?std.posix.timespec = timeout: {
                 const t = this.timers.peek() orelse break :timeout null;
-                var out: std.os.timespec = undefined;
+                var out: std.posix.timespec = undefined;
                 out.tv_sec = t.next.tv_sec -| this.cached_now.tv_sec;
                 out.tv_nsec = t.next.tv_nsec -| this.cached_now.tv_nsec;
 
@@ -349,7 +349,7 @@ pub const Loop = struct {
                 if (timeout) |*t| t else null,
             );
 
-            switch (std.c.getErrno(rc)) {
+            switch (bun.C.getErrno(rc)) {
                 .INTR => continue,
                 .SUCCESS => {},
                 else => |e| bun.Output.panic("kevent64 failed: {s}", .{@tagName(e)}),
@@ -358,7 +358,7 @@ pub const Loop = struct {
             this.updateNow();
 
             assert(rc <= events_list.capacity);
-            const current_events: []std.os.darwin.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
+            const current_events: []std.posix.system.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
 
             for (current_events) |event| {
                 Poll.onUpdateKQueue(event);
@@ -420,12 +420,12 @@ pub const Loop = struct {
             timespec.tv_sec = @intCast(tv_sec);
             timespec.tv_nsec = @intCast(tv_nsec);
         } else {
-            std.os.clock_gettime(std.os.CLOCK.MONOTONIC, timespec) catch {};
+            std.posix.clock_gettime(std.posix.CLOCK.MONOTONIC, timespec) catch {};
         }
     }
 };
 
-const EventType = if (Environment.isLinux) linux.epoll_event else std.os.system.kevent64_s;
+const EventType = if (Environment.isLinux) linux.epoll_event else std.posix.system.kevent64_s;
 
 pub const Request = struct {
     next: ?*Request = null,
@@ -581,7 +581,7 @@ pub const Timer = struct {
     }
 
     pub const Arm = union(enum) {
-        rearm: std.os.timespec,
+        rearm: std.posix.timespec,
         disarm,
     };
 
@@ -600,7 +600,7 @@ pub const Timer = struct {
 
         switch (this.tag) {
             inline else => |t| {
-                var container: *t.Type() = @fieldParentPtr(t.Type(), "timer", this);
+                var container: *t.Type() = @fieldParentPtr("timer", this);
                 if (comptime @hasDecl(t.Type(), "callback")) {
                     const concurrent_task = container.concurrent_task.from(container, .manual_deinit);
                     if (event_loop.*) |loop| {
@@ -691,47 +691,47 @@ pub const Poll = struct {
         pub const Set = std.EnumSet(Flags);
         pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);
 
-        pub fn fromKQueueEvent(kqueue_event: std.os.system.kevent64_s) Flags.Set {
+        pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
             var flags = Flags.Set{};
-            if (kqueue_event.filter == std.os.system.EVFILT_READ) {
+            if (kqueue_event.filter == std.posix.system.EVFILT_READ) {
                 flags.insert(Flags.readable);
                 log("readable", .{});
-                if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                     log("hup", .{});
                 }
-            } else if (kqueue_event.filter == std.os.system.EVFILT_WRITE) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_WRITE) {
                 flags.insert(Flags.writable);
                 log("writable", .{});
-                if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                     log("hup", .{});
                 }
-            } else if (kqueue_event.filter == std.os.system.EVFILT_PROC) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_PROC) {
                 log("proc", .{});
                 flags.insert(Flags.process);
-            } else if (kqueue_event.filter == std.os.system.EVFILT_MACHPORT) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_MACHPORT) {
                 log("machport", .{});
                 flags.insert(Flags.machport);
             }
             return flags;
         }
 
-        pub fn fromEpollEvent(epoll: std.os.linux.epoll_event) Flags.Set {
+        pub fn fromEpollEvent(epoll: std.posix.linux.epoll_event) Flags.Set {
             var flags = Flags.Set{};
-            if (epoll.events & std.os.linux.EPOLL.IN != 0) {
+            if (epoll.events & std.posix.linux.EPOLL.IN != 0) {
                 flags.insert(Flags.readable);
                 log("readable", .{});
             }
-            if (epoll.events & std.os.linux.EPOLL.OUT != 0) {
+            if (epoll.events & std.posix.linux.EPOLL.OUT != 0) {
                 flags.insert(Flags.writable);
                 log("writable", .{});
             }
-            if (epoll.events & std.os.linux.EPOLL.ERR != 0) {
+            if (epoll.events & std.posix.linux.EPOLL.ERR != 0) {
                 flags.insert(Flags.eof);
                 log("eof", .{});
             }
-            if (epoll.events & std.os.linux.EPOLL.HUP != 0) {
+            if (epoll.events & std.posix.linux.EPOLL.HUP != 0) {
                 flags.insert(Flags.hup);
                 log("hup", .{});
             }
@@ -743,7 +743,7 @@ pub const Poll = struct {
             tag: Pollable.Tag,
             poll: *Poll,
             fd: bun.FileDescriptor,
-            kqueue_event: *std.os.system.kevent64_s,
+            kqueue_event: *std.posix.system.kevent64_s,
         ) void {
             log("register({s}, {})", .{ @tagName(action), fd });
             defer {
@@ -768,12 +768,12 @@ pub const Poll = struct {
                 }
             }
 
-            const one_shot_flag = std.os.system.EV_ONESHOT;
+            const one_shot_flag = std.posix.system.EV_ONESHOT;
 
             kqueue_event.* = switch (comptime action) {
                 .readable => .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -782,7 +782,7 @@ pub const Poll = struct {
                 },
                 .writable => .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -791,7 +791,7 @@ pub const Poll = struct {
                 },
                 .cancel => if (poll.flags.contains(.poll_readable)) .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -799,7 +799,7 @@ pub const Poll = struct {
                     .ext = .{ poll.generation_number, 0 },
                 } else if (poll.flags.contains(.poll_writable)) .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -824,7 +824,7 @@ pub const Poll = struct {
     }
 
     pub fn onUpdateKQueue(
-        event: std.os.system.kevent64_s,
+        event: std.posix.system.kevent64_s,
     ) void {
         if (event.filter == std.c.EVFILT_MACHPORT)
             return;
@@ -837,7 +837,7 @@ pub const Poll = struct {
             .empty => {},
 
             inline else => |t| {
-                var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
+                var this: *Pollable.Tag.Type(t) = @fieldParentPtr("io_poll", poll);
                 if (event.flags == std.c.EV_ERROR) {
                     log("error({d}) = {d}", .{ event.ident, event.data });
                     this.onIOError(bun.sys.Error.fromCode(@enumFromInt(event.data), .kevent));
@@ -859,9 +859,9 @@ pub const Poll = struct {
             .empty => {},
 
             inline else => |t| {
-                var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
+                var this: *Pollable.Tag.Type(t) = @fieldParentPtr("io_poll", poll);
                 if (event.events & linux.EPOLL.ERR != 0) {
-                    const errno = std.os.linux.getErrno(event.events);
+                    const errno = std.posix.linux.getErrno(event.events);
                     log("error() = {s}", .{@tagName(errno)});
                     this.onIOError(bun.sys.Error.fromCode(errno, .epoll_ctl));
                 } else {

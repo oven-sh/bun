@@ -573,7 +573,7 @@ pub const CreateCommand = struct {
                         };
                         if (comptime Environment.isWindows) try pkg.seekTo(prev_file_pos);
                         // The printer doesn't truncate, so we must do so manually
-                        std.os.ftruncate(pkg.handle, 0) catch {};
+                        std.posix.ftruncate(pkg.handle, 0) catch {};
 
                         initializeStore();
                     }
@@ -599,15 +599,15 @@ pub const CreateCommand = struct {
             if (comptime Environment.isWindows) {
                 try parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{});
             } else {
-                std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
+                std.posix.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
             }
 
-            std.os.unlinkat(
+            std.posix.unlinkat(
                 parent_dir.fd,
                 "gitignore",
                 0,
             ) catch {};
-            std.os.unlinkat(
+            std.posix.unlinkat(
                 parent_dir.fd,
                 ".npmignore",
                 0,
@@ -1227,7 +1227,7 @@ pub const CreateCommand = struct {
                 //         // }
 
                 //         public_index_html_file.pwriteAll(outfile, 0) catch break :bail;
-                //         std.os.ftruncate(public_index_html_file.handle, outfile.len + 1) catch break :bail;
+                //         std.posix.ftruncate(public_index_html_file.handle, outfile.len + 1) catch break :bail;
                 //         bun_bun_for_react_scripts = true;
                 //         is_create_react_app = true;
                 //         Output.prettyln("<r><d>[package.json] Added entry point {s} to public/index.html", .{create_react_app_entry_point_path});
@@ -1365,7 +1365,7 @@ pub const CreateCommand = struct {
                     break :process_package_json;
                 };
 
-                std.os.ftruncate(package_json_file.?.handle, written + 1) catch {};
+                std.posix.ftruncate(package_json_file.?.handle, written + 1) catch {};
 
                 // if (!create_options.skip_install) {
                 //     if (needs.bun_bun_for_nextjs) {
@@ -2240,25 +2240,25 @@ const GitHandler = struct {
         else
             run(destination, PATH, false) catch false;
 
-        @fence(.Acquire);
+        @fence(.acquire);
         success.store(
             if (outcome)
                 1
             else
                 2,
-            .Release,
+            .release,
         );
         Futex.wake(&success, 1);
     }
 
     pub fn wait() bool {
-        @fence(.Release);
+        @fence(.release);
 
-        while (success.load(.Acquire) == 0) {
+        while (success.load(.acquire) == 0) {
             Futex.wait(&success, 0, 1000) catch continue;
         }
 
-        const outcome = success.load(.Acquire) == 1;
+        const outcome = success.load(.acquire) == 1;
         thread.join();
         return outcome;
     }

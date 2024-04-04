@@ -632,7 +632,7 @@ const Task = struct {
         Output.Source.configureThread();
         defer Output.flush();
 
-        var this = @fieldParentPtr(Task, "threadpool_task", task);
+        var this: *Task = @fieldParentPtr("threadpool_task", task);
 
         defer this.package_manager.wake();
 
@@ -1169,7 +1169,7 @@ pub const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .directory => {
-                            std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {};
+                            std.posix.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {};
                         },
                         .file => {
                             bun.copy(u8, &stackpath, entry.path);
@@ -1184,7 +1184,7 @@ pub const PackageInstall = struct {
                                 0,
                             )) {
                                 0 => {},
-                                else => |errno| switch (std.os.errno(errno)) {
+                                else => |errno| switch (std.posix.errno(errno)) {
                                     .XDEV => return error.NotSupported, // not same file system
                                     .OPNOTSUPP => return error.NotSupported,
                                     .NOENT => return error.FileNotFound,
@@ -1244,7 +1244,7 @@ pub const PackageInstall = struct {
             0,
         )) {
             0 => .{ .success = {} },
-            else => |errno| switch (std.os.errno(errno)) {
+            else => |errno| switch (std.posix.errno(errno)) {
                 .XDEV => error.NotSupported, // not same file system
                 .OPNOTSUPP => error.NotSupported,
                 .NOENT => error.FileNotFound,
@@ -1438,7 +1438,7 @@ pub const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .directory => {
-                            const mkdirat = if (comptime Environment.isWindows) std.os.mkdiratW else std.os.mkdirat;
+                            const mkdirat = if (comptime Environment.isWindows) std.posix.mkdiratW else std.posix.mkdirat;
                             mkdirat(destination_dir.fd, entry.path, 0o755) catch {};
                         },
                         .file => {
@@ -1468,13 +1468,13 @@ pub const PackageInstall = struct {
                                     }
                                 }
                             } else {
-                                std.os.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
+                                std.posix.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
                                     if (err != error.PathAlreadyExists) {
                                         return err;
                                     }
 
-                                    std.os.unlinkat(destination_dir.fd, entry.path, 0) catch {};
-                                    try std.os.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0);
+                                    std.posix.unlinkat(destination_dir.fd, entry.path, 0) catch {};
+                                    try std.posix.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0);
                                 };
                             }
 
@@ -1562,7 +1562,7 @@ pub const PackageInstall = struct {
                     switch (entry.kind) {
                         // directories are created
                         .directory => {
-                            std.os.mkdirat(dest_dir_fd.cast(), entry.path, 0o755) catch {};
+                            std.posix.mkdirat(dest_dir_fd.cast(), entry.path, 0o755) catch {};
                         },
                         // but each file in the directory is a symlink
                         .file => {
@@ -1574,7 +1574,7 @@ pub const PackageInstall = struct {
                             dest_remaining[entry.path.len] = 0;
                             const to_path = dest_buf[0 .. dest_dir_offset + entry.path.len :0];
 
-                            try std.os.symlinkZ(from_path, to_path);
+                            try std.posix.symlinkZ(from_path, to_path);
 
                             real_file_count += 1;
                         },
@@ -1635,7 +1635,7 @@ pub const PackageInstall = struct {
 
     pub fn isDanglingSymlink(path: [:0]const u8) bool {
         if (comptime Environment.isLinux) {
-            const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
+            const rc = Syscall.system.open(path, @as(u32, bun.O.PATH | 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
                     _ = Syscall.system.close(@intCast(rc));
@@ -1668,7 +1668,7 @@ pub const PackageInstall = struct {
     pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FileDescriptor, path: []const u16, temp_buffer: []u8) bool {
         const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
         const bin_path = bin_path: {
-            const fd = bun.sys.openatWindows(node_mod_fd, path, std.os.O.RDONLY).unwrap() catch return true;
+            const fd = bun.sys.openatWindows(node_mod_fd, path, bun.O.RDONLY).unwrap() catch return true;
             defer _ = bun.sys.close(fd);
             const size = fd.asFile().readAll(temp_buffer) catch return true;
             const decoded = WinBinLinkingShim.looseDecode(temp_buffer[0..size]) orelse return true;
@@ -1677,7 +1677,7 @@ pub const PackageInstall = struct {
         };
 
         {
-            const fd = bun.sys.openatWindows(node_mod_fd, bin_path, std.os.O.RDONLY).unwrap() catch return true;
+            const fd = bun.sys.openatWindows(node_mod_fd, bin_path, bun.O.RDONLY).unwrap() catch return true;
             _ = bun.sys.close(fd);
         }
 
@@ -1750,7 +1750,7 @@ pub const PackageInstall = struct {
             }
         } else {
             const target = Path.relative(dest_dir_path, to_path);
-            std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
+            std.posix.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
                 .fail = .{
                     .err = err,
                     .step = .linking,
@@ -2191,12 +2191,12 @@ pub const PackageManager = struct {
             this.onWake.getHandler()(ctx, this);
         }
 
-        _ = this.wait_count.fetchAdd(1, .Monotonic);
+        _ = this.wait_count.fetchAdd(1, .monotonic);
         this.event_loop.wakeup();
     }
 
     fn hasNoMorePendingLifecycleScripts(this: *PackageManager) bool {
-        return this.pending_lifecycle_script_tasks.load(.Monotonic) == 0;
+        return this.pending_lifecycle_script_tasks.load(.monotonic) == 0;
     }
 
     pub fn tickLifecycleScripts(this: *PackageManager) void {
@@ -2556,7 +2556,7 @@ pub const PackageManager = struct {
                 Global.crash();
             };
 
-            std.os.renameatZ(tempdir.fd, tmpname, cache_directory.fd, tmpname) catch |err| {
+            std.posix.renameatZ(tempdir.fd, tmpname, cache_directory.fd, tmpname) catch |err| {
                 if (!tried_dot_tmp) {
                     tried_dot_tmp = true;
                     tempdir = cache_directory.makeOpenPath(".tmp", .{}) catch |err2| {
@@ -2896,7 +2896,7 @@ pub const PackageManager = struct {
         ) catch |err| {
             // if we run into an error, delete the symlink
             // so that we don't repeatedly try to read it
-            std.os.unlinkat(this.getCacheDirectory().fd, subpath, 0) catch {};
+            std.posix.unlinkat(this.getCacheDirectory().fd, subpath, 0) catch {};
             return err;
         };
     }
@@ -4748,9 +4748,9 @@ pub const PackageManager = struct {
                             if (!has_network_error) {
                                 has_network_error = true;
                                 const min = manager.options.min_simultaneous_requests;
-                                const max = AsyncHTTP.max_simultaneous_requests.load(.Monotonic);
+                                const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
                                 if (max > min) {
-                                    AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .Monotonic);
+                                    AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
                                 }
                             }
                             manager.enqueueNetworkTask(task);
@@ -4937,9 +4937,9 @@ pub const PackageManager = struct {
                             if (!has_network_error) {
                                 has_network_error = true;
                                 const min = manager.options.min_simultaneous_requests;
-                                const max = AsyncHTTP.max_simultaneous_requests.load(.Monotonic);
+                                const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
                                 if (max > min) {
-                                    AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .Monotonic);
+                                    AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
                                 }
                             }
                             manager.enqueueNetworkTask(task);
@@ -8101,7 +8101,7 @@ pub const PackageManager = struct {
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
             try manager.root_package_json_file.pwriteAll(new_package_json_source, 0);
-            std.os.ftruncate(manager.root_package_json_file.handle, new_package_json_source.len) catch {};
+            std.posix.ftruncate(manager.root_package_json_file.handle, new_package_json_source.len) catch {};
             manager.root_package_json_file.close();
 
             if (op == .remove) {
@@ -8310,9 +8310,9 @@ pub const PackageManager = struct {
         pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.package_name;
-                while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
+                while (LifecycleScriptSubprocess.alive_count.load(.monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
                     if (PackageManager.verbose_install) {
-                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.Monotonic)});
+                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.monotonic)});
                     }
 
                     PackageManager.instance.sleep();
@@ -8344,9 +8344,9 @@ pub const PackageManager = struct {
                 };
             }
 
-            while (this.manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+            while (this.manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                 if (PackageManager.verbose_install) {
-                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.Monotonic)});
+                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.monotonic)});
                 }
 
                 if (comptime log_level.showProgress()) {
@@ -8365,7 +8365,7 @@ pub const PackageManager = struct {
             const deps = this.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id);
             return (deps.subsetOf(this.completed_trees) or
                 deps.eql(this.completed_trees)) and
-                LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
+                LifecycleScriptSubprocess.alive_count.load(.monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
         }
 
         pub fn printTreeDeps(this: *PackageInstaller) void {
@@ -9499,7 +9499,7 @@ pub const PackageManager = struct {
                 this.tickLifecycleScripts();
             }
 
-            this.finished_installing.store(true, .Monotonic);
+            this.finished_installing.store(true, .monotonic);
             if (comptime log_level.showProgress()) {
                 scripts_node.activate();
             }
@@ -9510,9 +9510,9 @@ pub const PackageManager = struct {
 
             installer.completeRemainingScripts(log_level);
 
-            while (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+            while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                 if (PackageManager.verbose_install) {
-                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{this.pending_lifecycle_script_tasks.load(.Monotonic)});
+                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{this.pending_lifecycle_script_tasks.load(.monotonic)});
                 }
 
                 this.sleep();
@@ -10170,9 +10170,9 @@ pub const PackageManager = struct {
                 const output_in_foreground = true;
                 try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, output_in_foreground);
 
-                while (manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+                while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                     if (PackageManager.verbose_install) {
-                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{manager.pending_lifecycle_script_tasks.load(.Monotonic)});
+                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{manager.pending_lifecycle_script_tasks.load(.monotonic)});
                     }
 
                     manager.sleep();

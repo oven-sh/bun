@@ -5,7 +5,7 @@ pub usingnamespace @import("./bun.js/bindings/exports.zig");
 pub usingnamespace @import("./bun.js/event_loop.zig");
 pub usingnamespace @import("./bun.js/javascript.zig");
 pub usingnamespace @import("./bun.js/module_loader.zig");
-pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
+pub const is_bindgen = false;
 pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");
 pub const RareData = @import("./bun.js/rare_data.zig");

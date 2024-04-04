@@ -996,12 +996,12 @@ pub const napi_async_work = struct {
     }
 
     pub fn runFromThreadPool(task: *WorkPoolTask) void {
-        var this = @fieldParentPtr(napi_async_work, "task", task);
+        var this: *napi_async_work = @fieldParentPtr("task", task);
 
         this.run();
     }
     pub fn run(this: *napi_async_work) void {
-        if (this.status.cmpxchgStrong(@intFromEnum(Status.pending), @intFromEnum(Status.started), .SeqCst, .SeqCst)) |state| {
+        if (this.status.cmpxchgStrong(@intFromEnum(Status.pending), @intFromEnum(Status.started), .seq_cst, .seq_cst)) |state| {
             if (state == @intFromEnum(Status.cancelled)) {
                 if (this.wait_for_deinit) {
                     // this might cause a segfault due to Task using a linked list!
@@ -1011,7 +1011,7 @@ pub const napi_async_work = struct {
             return;
         }
         this.execute.?(this.global, this.ctx);
-        this.status.store(@intFromEnum(Status.completed), .SeqCst);
+        this.status.store(@intFromEnum(Status.completed), .seq_cst);
 
         this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
     }
@@ -1025,7 +1025,7 @@ pub const napi_async_work = struct {
 
     pub fn cancel(this: *napi_async_work) bool {
         this.ref.unref(this.global.bunVM());
-        return this.status.cmpxchgStrong(@intFromEnum(Status.cancelled), @intFromEnum(Status.pending), .SeqCst, .SeqCst) != null;
+        return this.status.cmpxchgStrong(@intFromEnum(Status.cancelled), @intFromEnum(Status.pending), .seq_cst, .seq_cst) != null;
     }
 
     pub fn deinit(this: *napi_async_work) void {
@@ -1041,7 +1041,7 @@ pub const napi_async_work = struct {
     pub fn runFromJS(this: *napi_async_work) void {
         this.complete.?(
             this.global,
-            if (this.status.load(.SeqCst) == @intFromEnum(Status.cancelled))
+            if (this.status.load(.seq_cst) == @intFromEnum(Status.cancelled))
                 napi_status.cancelled
             else
                 napi_status.ok,
@@ -1311,7 +1311,7 @@ pub const ThreadSafeFunction = struct {
                     .sized => &this.sized.is_closed,
                     .unsized => &this.unsized.is_closed,
                 },
-                .SeqCst,
+                .seq_cst,
             );
         }
 

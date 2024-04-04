@@ -500,7 +500,6 @@ pub const ExternalStringFinalizer = *const fn (finalize_ptr: ?*anyopaque, ref: J
 pub extern fn JSStringCreate(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateStatic(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateExternal(string: UTF8Ptr, length: usize, finalize_ptr: ?*anyopaque, finalizer: ExternalStringFinalizer) JSStringRef;
-pub extern fn JSStringIsEqualToString(a: JSStringRef, string: UTF8Ptr, length: usize) bool;
 pub extern fn JSStringEncoding(string: JSStringRef) Encoding;
 pub extern fn JSStringGetCharacters8Ptr(string: JSStringRef) UTF8Ptr;
 pub extern fn JSCellType(cell: JSCellValue) CellType;

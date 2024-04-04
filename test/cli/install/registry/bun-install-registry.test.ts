@@ -288,6 +288,49 @@ test("hardlinks on windows dont fail with long paths", async () => {
   expect(await exited).toBe(0);
 });
 
+test("it should be able to extract and install symlinks", async () => {
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      dependencies: {
+        "missing-symlink": "github:dylan-conway/install-test#missing-symlink",
+        "symlink-exists": "github:dylan-conway/install-test#symlink-exists",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + missing-symlink@github:dylan-conway/install-test#41b028c",
+    " + symlink-exists@github:dylan-conway/install-test#2740530",
+    "",
+    expect.stringContaining("2 packages installed"),
+    "",
+    " Blocked 2 postinstalls. Run `bun pm untrusted` for details.",
+    "",
+  ]);
+  expect(await exited).toBe(0);
+
+  expect(await exists(join(packageDir, "node_modules", "symlink-exists", "foo"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "missing-symlink", "foo"))).toBeTrue();
+});
+
 test("basic 1", async () => {
   await writeFile(
     join(packageDir, "package.json"),

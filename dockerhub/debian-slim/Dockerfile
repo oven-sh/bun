@@ -3,7 +3,6 @@ FROM debian:bullseye-slim AS build
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
 
-# We add python3 for node-gyp, see https://github.com/oven-sh/bun/issues/9807
 RUN apt-get update -qq \
     && apt-get install -qq --no-install-recommends \
       ca-certificates \
@@ -12,7 +11,6 @@ RUN apt-get update -qq \
       gpg \
       gpg-agent \
       unzip \
-      python3 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && arch="$(dpkg --print-architecture)" \

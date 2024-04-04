@@ -233,7 +233,7 @@ $ rm -rf ~/.bun # for macOS, Linux, and WSL
 powershell -c ~\.bun\uninstall.ps1
 ```
 
-```powershell#Windows
+```powershell#Scoop
 scoop uninstall bun
 ```
 

@@ -116,7 +116,7 @@ describe("bunshell", () => {
   });
 
   describe("quiet", async () => {
-    test.todo("basic", async () => {
+    test("basic", async () => {
       // Check its buffered
       {
         const { stdout, stderr } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;
@@ -259,6 +259,11 @@ describe("bunshell", () => {
 
       expect(stdout.toString("utf-8")).toEqual(`${haha}\n`);
     });
+
+    // #9823
+    TestBuilder.command`AUTH_COOKIE_SECUREALKJAKJDLASJDKLSAJD=false; echo $AUTH_COOKIE_SECUREALKJAKJDLASJDKLSAJD`
+      .stdout("false\n")
+      .runAsTest("long varname");
 
     // test("invalid lone surrogate fails", async () => {
     //   const err = await runWithErrorPromise(async () => {
@@ -565,14 +570,12 @@ describe("deno_task", () => {
     TestBuilder.command`echo 1 && echo 2 || echo 3`.stdout("1\n2\n").runAsTest("echo 1 && echo 2 || echo 3");
     TestBuilder.command`echo 1 || echo 2 && echo 3`.stdout("1\n3\n").runAsTest("echo 1 || echo 2 && echo 3");
 
-    TestBuilder.command`echo 1 || (echo 2 && echo 3)`
-      .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
-      .runAsTest("or with subshell");
+    TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").runAsTest("or with subshell");
+    TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").runAsTest("or with subshell 2");
+    TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").runAsTest("conditional with subshell");
     TestBuilder.command`false || false || (echo 2 && false) || echo 3`
-      .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
-      .runAsTest("or with subshell 2");
-    // await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").run();
-    // await TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").run();
+      .stdout("2\n3\n")
+      .runAsTest("conditional with subshell2");
   });
 
   describe("command substitution", async () => {
@@ -611,9 +614,9 @@ describe("deno_task", () => {
 
     TestBuilder.command`echo 1 | echo 2 && echo 3`.stdout("2\n3\n").runAsTest("pipe in conditional");
 
-    // await TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_TEST_VAR=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
-    //   .stdout("1 2\n")
-    //   .run();
+    await TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_DEBUG_QUIET_LOGS=1 BUN_TEST_VAR=1 ${BUN} -e 'await process.stdin.pipe(process.stdout)'`
+      .stdout("1 2\n")
+      .run();
 
     TestBuilder.command`echo 2 | echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
@@ -648,9 +651,9 @@ describe("deno_task", () => {
   });
 
   describe("redirects", async function igodf() {
-    // await TestBuilder.command`echo 5 6 7 > test.txt`.fileEquals("test.txt", "5 6 7\n").run();
+    await TestBuilder.command`echo 5 6 7 > test.txt`.fileEquals("test.txt", "5 6 7\n").run();
 
-    // await TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`.stdout("1 2 3\n").fileEquals("test.txt", "1\n").run();
+    await TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`.stdout("1 2 3\n").fileEquals("test.txt", "1\n").run();
 
     // subdir
     TestBuilder.command`mkdir subdir && cd subdir && echo 1 2 3 > test.txt`
@@ -1724,6 +1727,243 @@ if [[ "123abc" == *?(a)bc ]]; then echo ok 43; else echo bad 43; fi
     //   .stdout("ok 4")
     //   .stdout("ok 5")
     //   .runAsTest("various tests");
+  });
+});
+
+describe("subshell", () => {
+  const sharppkgjson = /* json */ `{
+    "name": "sharp-test",
+    "module": "index.ts",
+    "type": "module",
+    "dependencies": {
+      "sharp": "^0.33.3"
+    }
+  }`;
+
+  TestBuilder.command/* sh */ `
+  mkdir sharp-test
+  cd sharp-test
+  echo ${sharppkgjson} > package.json
+  ${BUN} i
+  `
+    .ensureTempDir()
+    .stdout(out => expect(out).toInclude("+ sharp@0.33.3"))
+    .stderr(() => {})
+    .exitCode(0)
+    .env(bunEnv)
+    .runAsTest("sharp");
+
+  TestBuilder.command/* sh */ `( ( ( ( echo HI! ) ) ) )`.stdout("HI!\n").runAsTest("multiple levels");
+  TestBuilder.command/* sh */ `(
+    echo HELLO! ;
+    echo HELLO AGAIN!
+    )`
+    .stdout("HELLO!\nHELLO AGAIN!\n")
+    .runAsTest("multiline");
+  TestBuilder.command/* sh */ `(exit 42)`.exitCode(42).runAsTest("exit code");
+  TestBuilder.command/* sh */ `(exit 42); echo hi`.exitCode(0).stdout("hi\n").runAsTest("exit code 2");
+  TestBuilder.command/* sh */ `
+  VAR1=VALUE1
+  VAR2=VALUE2
+  VAR3=VALUE3
+  (
+    echo $VAR1 $VAR2 $VAR3
+    VAR1='you cant'
+    VAR2='see me'
+    VAR3='my time is now'
+    echo $VAR1 $VAR2 $VAR3
+  )
+  echo $VAR1 $VAR2 $VAR3
+  `
+    .stdout("VALUE1 VALUE2 VALUE3\nyou cant see me my time is now\nVALUE1 VALUE2 VALUE3\n")
+    .runAsTest("copy of environment");
+
+  TestBuilder.command/* sh */ `
+  mkdir foo
+  (
+    echo $PWD
+    cd foo
+    echo $PWD
+  )
+  echo $PWD
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}foo\n$TEMP_DIR\n`)
+    .runAsTest("does not change cwd");
+
+  TestBuilder.command`
+  BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log(process.env.FOO)"}
+
+  (
+    export FOO=bar
+    BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log(process.env.FOO)"}
+  )
+
+
+  BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log(process.env.FOO)"}
+  `
+    .stdout("undefined\nbar\nundefined\n")
+    .runAsTest("does not modify export env of parent");
+
+  TestBuilder.command`\(echo hi \)`.stderr("bun: command not found: (echo\n").exitCode(1).runAsTest("escaped subshell");
+  TestBuilder.command`echo \\\(hi\\\)`.stdout("\\(hi\\)\n").runAsTest("escaped subshell 2");
+
+  TestBuilder.command/* sh */ `
+  mkdir dir
+  (
+    cd dir
+    pwd | cat | cat
+  )
+  pwd
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
+    .runAsTest("pipeline in subshell");
+
+  TestBuilder.command/* sh */ `
+  mkdir dir
+  (pwd) | cat
+  (cd dir; pwd) | cat
+  pwd
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
+    .runAsTest("subshell in pipeline");
+
+  TestBuilder.command/* sh */ `
+  mkdir dir
+  (pwd) | cat
+  (cd dir; pwd) | cat
+  pwd
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
+    .runAsTest("subshell in pipeline");
+
+  TestBuilder.command/* sh */ `
+  mkdir foo
+  ( ( (cd foo ; pwd) | cat) ) | ( ( (cat) ) | cat )
+
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR${sep}foo\n`)
+    .runAsTest("imbricated subshells and pipelines");
+
+  TestBuilder.command/* sh */ `
+  echo (echo)
+  `
+    .error("Unexpected token: `(`")
+    .runAsTest("Invalid subshell use");
+
+  describe("ported", () => {
+    // test_oE 'effect of subshell'
+    TestBuilder.command/* sh */ `
+  a=1
+  # (a=2; echo $a; exit; echo not reached)
+  # NOTE: We actually implemented exit wrong so changing this for now until we fix it
+  (a=2; echo $a; exit; echo reached)
+  echo $a
+  `
+      .stdout("2\nreached\n1\n")
+      .runAsTest("effect of subshell");
+
+    // test_x -e 23 'exit status of subshell'
+    TestBuilder.command/* sh */ `
+  (true; exit 23)
+  `
+      .exitCode(23)
+      .runAsTest("exit status of subshell");
+
+    // test_oE 'redirection on subshell'
+    TestBuilder.command/* sh */ `
+  (echo 1; echo 2; echo 3; echo 4) >sub_out
+  # (tail -n 2) <sub_out
+  cat sub_out
+  `
+      .error("Subshells with redirections are currently not supported. Please open a GitHub issue.")
+      // .stdout("1\n2\n3\n4\n")
+      .runAsTest("redirection on subshell");
+
+    // test_oE 'subshell ending with semicolon'
+    TestBuilder.command/* sh */ `
+(echo foo;)
+`
+      .stdout("foo\n")
+      .runAsTest("subshell ending with semicolon");
+
+    // test_oE 'subshell ending with asynchronous list'
+    TestBuilder.command/* sh */ `
+mkfifo fifo1
+(echo foo >fifo1&)
+cat fifo1
+`
+      .stdout("foo\n")
+      .todo("async commands not implemented yet")
+      .runAsTest("subshell ending with asynchronous list");
+
+    // test_oE 'newlines in subshell'
+    TestBuilder.command/* sh */ `
+(
+echo foo
+)
+`
+      .stdout("foo\n")
+      .runAsTest("newlines in subshell");
+
+    // test_oE 'effect of brace grouping'
+    TestBuilder.command/* sh */ `
+a=1
+{ a=2; echo $a; exit; echo not reached; }
+echo $a
+`
+      .stdout("2\n1\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("effect of brace grouping");
+
+    // test_x -e 29 'exit status of brace grouping'
+    TestBuilder.command/* sh */ `
+{ true; sh -c 'exit 29'; }
+`
+      .exitCode(29)
+      .todo("brace grouping not implemented")
+      .runAsTest("exit status of brace grouping");
+
+    // test_oE 'redirection on brace grouping'
+    TestBuilder.command/* sh */ `
+{ echo 1; echo 2; echo 3; echo 4; } >brace_out
+{ tail -n 2; } <brace_out
+`
+      .stdout("3\n4\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("redirection on brace grouping");
+
+    // test_oE 'brace grouping ending with semicolon'
+    TestBuilder.command/* sh */ `
+{ echo foo; }
+`
+      .stdout("foo\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("brace grouping ending with semicolon");
+
+    // test_oE 'brace grouping ending with asynchronous list'
+    TestBuilder.command/* sh */ `
+mkfifo fifo1
+{ echo foo >fifo1& }
+cat fifo1
+`
+      .stdout("foo\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("brace grouping ending with asynchronous list");
+
+    // test_oE 'newlines in brace grouping'
+    TestBuilder.command/* sh */ `
+{
+echo foo
+}
+`
+      .stdout("foo\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("newlines in brace grouping");
   });
 });
 

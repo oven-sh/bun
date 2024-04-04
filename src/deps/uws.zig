@@ -2038,12 +2038,7 @@ pub fn NewApp(comptime ssl: bool) type {
             }
 
             pub fn clearOnWritable(res: *Response) void {
-                const Dummy = struct {
-                    pub fn handle(_: *uws_res, _: u64, _: ?*anyopaque) callconv(.C) bool {
-                        return true;
-                    }
-                };
-                uws_res_on_writable(ssl_flag, res.downcast(), Dummy.handle, null);
+                uws_res_clear_on_writable(ssl_flag, res.downcast());
             }
             pub inline fn markNeedsMore(res: *Response) void {
                 if (!ssl) {
@@ -2387,6 +2382,7 @@ extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;
 extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;
 extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, u64, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
+extern fn uws_res_clear_on_writable(ssl: i32, res: *uws_res) void;
 extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
 extern fn uws_res_on_data(
     ssl: i32,

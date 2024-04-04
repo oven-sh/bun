@@ -491,6 +491,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
 class ${prototypeName} final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     static ${prototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
@@ -524,6 +525,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(${prototypeName}, ${prototypeName}::Base);
 class ${controllerPrototypeName} final : public JSC::JSNonFinalObject {
     public:
         using Base = JSC::JSNonFinalObject;
+        static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
     
         static ${controllerPrototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
         {

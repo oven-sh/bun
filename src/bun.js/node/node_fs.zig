@@ -4814,7 +4814,7 @@ pub const NodeFS = struct {
         const fd = switch (switch (Environment.os) {
             else => Syscall.openat(atfd, basename, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
-            .windows => bun.sys.openDirAtWindowsA(atfd, basename, .{ .no_follow = true, .iterable = true }),
+            .windows => bun.sys.openDirAtWindowsA(atfd, basename, .{ .no_follow = true, .iterable = true, .read_only = true }),
         }) {
             .err => |err| {
                 if (comptime !is_root) {
@@ -5108,7 +5108,7 @@ pub const NodeFS = struct {
         const fd = switch (switch (Environment.os) {
             else => Syscall.open(path, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
-            .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, .{ .iterable = true }),
+            .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, .{ .iterable = true, .read_only = true }),
         }) {
             .err => |err| return .{
                 .err = err.withPath(args.path.slice()),

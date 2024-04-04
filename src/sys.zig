@@ -1738,7 +1738,30 @@ pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe
         }
     }
 
-    return sys_uv.symlinkUV(sym, target, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
+    return sys_uv.symlinkUV(target, sym, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
+}
+
+pub fn symlinkOrJunctionOnWindowsW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
+    if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
+        switch (symlinkW(sym, target, options)) {
+            .result => {
+                return Maybe(void).success;
+            },
+            .err => {},
+        }
+    }
+
+    var sym_buf: bun.PathBuffer = undefined;
+    const _sym_u8 = bun.strings.convertUTF16toUTF8InBuffer(&sym_buf, sym) catch unreachable;
+    sym_buf[_sym_u8.len] = 0;
+    const sym_u8 = sym_buf[0.._sym_u8.len :0];
+
+    var target_buf: bun.PathBuffer = undefined;
+    const _target_u8 = bun.strings.convertUTF16toUTF8InBuffer(&target_buf, target) catch unreachable;
+    target_buf[_target_u8.len] = 0;
+    const target_u8 = target_buf[0.._target_u8.len :0];
+
+    return sys_uv.symlinkUV(target_u8, sym_u8, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
 }
 
 pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {

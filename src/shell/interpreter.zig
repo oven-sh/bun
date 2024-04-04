@@ -4896,6 +4896,7 @@ pub const Interpreter = struct {
             yes: Yes,
             seq: Seq,
             dirname: Dirname,
+            basename: Basename,
         };
 
         const Result = @import("../result.zig").Result;
@@ -4919,6 +4920,7 @@ pub const Interpreter = struct {
             yes,
             seq,
             dirname,
+            basename,
 
             pub fn parentType(this: Kind) type {
                 _ = this;
@@ -4943,6 +4945,7 @@ pub const Interpreter = struct {
                     .yes => "usage: yes [expletive]\n",
                     .seq => "usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n",
                     .dirname => "usage: dirname string\n",
+                    .basename => "usage: basename string\n",
                 };
             }
 
@@ -5103,6 +5106,7 @@ pub const Interpreter = struct {
                 .yes => this.callImplWithType(Yes, Ret, "yes", field, args_),
                 .seq => this.callImplWithType(Seq, Ret, "seq", field, args_),
                 .dirname => this.callImplWithType(Dirname, Ret, "dirname", field, args_),
+                .basename => this.callImplWithType(Basename, Ret, "basename", field, args_),
             };
         }
 
@@ -9959,6 +9963,72 @@ pub const Interpreter = struct {
                 }
             }
         };
+
+        pub const Basename = struct {
+            bltn: *Builtin,
+            state: enum { idle, waiting_io, err, done } = .idle,
+            buf: std.ArrayListUnmanaged(u8) = .{},
+
+            pub fn start(this: *@This()) Maybe(void) {
+                const args = this.bltn.argsSlice();
+                var iter = bun.SliceIterator([*:0]const u8).init(args);
+
+                if (args.len == 0) return this.fail(Builtin.Kind.usageString(.basename));
+
+                while (iter.next()) |item| {
+                    const arg = bun.sliceTo(item, 0);
+                    _ = this.print(bun.path.basename(arg));
+                    _ = this.print("\n");
+                }
+
+                this.state = .done;
+                if (this.bltn.stdout.needsIO()) {
+                    this.bltn.stdout.enqueue(this, this.buf.items);
+                }
+                return Maybe(void).success;
+            }
+
+            pub fn deinit(this: *@This()) void {
+                this.buf.deinit(bun.default_allocator);
+                //basename
+            }
+
+            fn fail(this: *@This(), msg: string) Maybe(void) {
+                if (this.bltn.stderr.needsIO()) {
+                    this.state = .err;
+                    this.bltn.stderr.enqueue(this, msg);
+                    return Maybe(void).success;
+                }
+                _ = this.bltn.writeNoIO(.stderr, msg);
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            fn print(this: *@This(), msg: string) Maybe(void) {
+                if (this.bltn.stdout.needsIO()) {
+                    this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+                    return Maybe(void).success;
+                }
+                const res = this.bltn.writeNoIO(.stdout, msg);
+                if (res == .err) return Maybe(void).initErr(res.err);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
+                if (maybe_e) |e| {
+                    defer e.deref();
+                    this.state = .err;
+                    this.bltn.done(1);
+                    return;
+                }
+                if (this.state == .done) {
+                    this.bltn.done(0);
+                }
+                if (this.state == .err) {
+                    this.bltn.done(1);
+                }
+            }
+        };
     };
 
     /// This type is reference counted, but deinitialization is queued onto the event loop
@@ -11006,6 +11076,7 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.Yes,
         Interpreter.Builtin.Seq,
         Interpreter.Builtin.Dirname,
+        Interpreter.Builtin.Basename,
         shell.subproc.PipeReader.CapturedWriter,
     });
 

@@ -1986,6 +1986,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         fn hasBackpressure(this: *const @This()) bool {
             return this.has_backpressure;
         }
+        fn hasBackpressureAndIsTryEnd(this: *const @This()) bool {
+            return this.has_backpressure and this.end_len > 0;
+        }
         fn sendWithoutAutoFlusher(this: *@This(), buf: []const u8) bool {
             std.debug.assert(!this.done);
             defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
@@ -1999,10 +2002,10 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 }
                 return success;
             }
+            // clean this so we know when its relevant or not
+            this.end_len = 0;
             // we clear the onWritable handler so uWS can handle the backpressure for us
             this.res.clearOnWritable();
-            // let uWS handle backpressure
-            this.has_backpressure = false;
             this.handleFirstWriteIfNecessary();
             // uWebSockets lacks a tryWrite() function
             // This means that backpressure will be handled by appending to an "infinite" memory buffer
@@ -2011,8 +2014,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // and report success
             if (this.requested_end) {
                 this.res.end(buf, false);
+                this.has_backpressure = false;
             } else {
-                _ = this.res.write(buf);
+                this.has_backpressure = !this.res.write(buf);
             }
 
             return true;
@@ -2135,7 +2139,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn flushFromJSNoWait(this: *@This()) JSC.Maybe(JSValue) {
             log("flushFromJSNoWait", .{});
-            if (this.hasBackpressure() or this.done) {
+            if (this.hasBackpressureAndIsTryEnd() or this.done) {
                 return .{ .result = JSValue.jsNumberFromInt32(0) };
             }
 
@@ -2169,7 +2173,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumberFromInt32(0)) };
             }
 
-            if (!this.hasBackpressure()) {
+            if (!this.hasBackpressureAndIsTryEnd()) {
                 const slice = this.readableSlice();
                 assert(slice.len > 0);
                 const success = this.send(slice);
@@ -2212,7 +2216,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             const len = @as(Blob.SizeType, @truncate(bytes.len));
             log("write({d})", .{bytes.len});
 
-            if (this.hasBackpressure()) {
+            if (this.hasBackpressureAndIsTryEnd()) {
                 // queue the data send in onWritable
                 _ = this.buffer.write(this.allocator, bytes) catch {
                     return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
@@ -2241,7 +2245,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     return .{ .owned = len };
                 }
             } else {
-                // queue the data wait until highWaterMark is reached
+                // queue the data wait until highWaterMark is reached or the auto flusher kicks in
                 _ = this.buffer.write(this.allocator, bytes) catch {
                     return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };
@@ -2335,8 +2339,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             };
 
             const readable = this.readableSlice();
-
-            if (readable.len >= this.highWaterMark) {
+            if (readable.len >= this.highWaterMark or this.hasBackpressure()) {
                 if (this.send(readable)) {
                     this.handleWrote(readable.len);
                     return .{ .owned = @as(Blob.SizeType, @intCast(written)) };
@@ -2457,7 +2460,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             const readable = this.readableSlice();
 
-            if (this.hasBackpressure() or readable.len == 0) {
+            if ((this.hasBackpressureAndIsTryEnd()) or readable.len == 0) {
                 this.auto_flusher.registered = false;
                 return false;
             }

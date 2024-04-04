@@ -5,7 +5,7 @@ import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {
-"packages": {
+  "packages": {
     "pkga": {
       "index.js": "console.log('pkga');",
       "package.json": JSON.stringify({

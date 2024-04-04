@@ -11161,12 +11161,12 @@ const ShellSyscall = struct {
                         .result => |p| p,
                         .err => |e| return .{ .err = e },
                     };
-                    return switch (Syscall.openDirAtWindowsA(dir, p, true, flags & os.O.NOFOLLOW != 0)) {
+                    return switch (Syscall.openDirAtWindowsA(dir, p, .{ .iterable = true, .no_follow = flags & os.O.NOFOLLOW != 0 })) {
                         .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
                         .err => |e| .{ .err = e.withPath(path) },
                     };
                 }
-                return switch (Syscall.openDirAtWindowsA(dir, path, true, flags & os.O.NOFOLLOW != 0)) {
+                return switch (Syscall.openDirAtWindowsA(dir, path, .{ .iterable = true, .no_follow = flags & os.O.NOFOLLOW != 0 })) {
                     .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
                     .err => |e| .{ .err = e.withPath(path) },
                 };

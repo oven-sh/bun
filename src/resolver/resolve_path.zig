@@ -886,6 +886,7 @@ pub const Platform = enum {
     loose,
     windows,
     posix,
+    nt,
 
     pub fn isAbsolute(comptime platform: Platform, path: []const u8) bool {
         return isAbsoluteT(platform, u8, path);
@@ -896,6 +897,7 @@ pub const Platform = enum {
         return switch (comptime platform) {
             .auto => (comptime platform.resolve()).isAbsoluteT(T, path),
             .posix => path.len > 0 and path[0] == '/',
+            .nt,
             .windows,
             .loose,
             => if (T == u8)
@@ -909,7 +911,7 @@ pub const Platform = enum {
         return comptime switch (platform) {
             .auto => platform.resolve().separator(),
             .loose, .posix => std.fs.path.sep_posix,
-            .windows => std.fs.path.sep_windows,
+            .nt, .windows => std.fs.path.sep_windows,
         };
     }
 
@@ -917,7 +919,7 @@ pub const Platform = enum {
         return comptime switch (platform) {
             .auto => platform.resolve().separatorString(),
             .loose, .posix => std.fs.path.sep_str_posix,
-            .windows => std.fs.path.sep_str_windows,
+            .nt, .windows => std.fs.path.sep_str_windows,
         };
     }
 
@@ -932,7 +934,7 @@ pub const Platform = enum {
             .loose => {
                 return isSepAny;
             },
-            .windows => {
+            .nt, .windows => {
                 return isSepAny;
             },
             .posix => {
@@ -947,7 +949,7 @@ pub const Platform = enum {
             .loose => {
                 return isSepAnyT;
             },
-            .windows => {
+            .nt, .windows => {
                 return isSepAnyT;
             },
             .posix => {
@@ -962,7 +964,7 @@ pub const Platform = enum {
             .loose => {
                 return lastIndexOfSeparatorLoose;
             },
-            .windows => {
+            .nt, .windows => {
                 return lastIndexOfSeparatorWindows;
             },
             .posix => {
@@ -977,7 +979,7 @@ pub const Platform = enum {
             .loose => {
                 return lastIndexOfSeparatorLooseT;
             },
-            .windows => {
+            .nt, .windows => {
                 return lastIndexOfSeparatorWindowsT;
             },
             .posix => {
@@ -996,7 +998,7 @@ pub const Platform = enum {
             .loose => {
                 return isSepAnyT(T, char);
             },
-            .windows => {
+            .nt, .windows => {
                 return isSepAnyT(T, char);
             },
             .posix => {
@@ -1008,14 +1010,14 @@ pub const Platform = enum {
     pub fn trailingSeparator(comptime _platform: Platform) [2]u8 {
         return comptime switch (_platform) {
             .auto => _platform.resolve().trailingSeparator(),
-            .windows => ".\\".*,
+            .nt, .windows => ".\\".*,
             .posix, .loose => "./".*,
         };
     }
 
     pub fn leadingSeparatorIndex(comptime _platform: Platform, path: anytype) ?usize {
         switch (comptime _platform.resolve()) {
-            .windows => {
+            .nt, .windows => {
                 if (path.len < 1)
                     return null;
 
@@ -1118,7 +1120,7 @@ pub fn normalizeStringBufT(
     comptime preserve_trailing_slash: bool,
 ) []T {
     switch (comptime platform.resolve()) {
-        .auto => @compileError("unreachable"),
+        .nt, .auto => @compileError("unreachable"),
 
         .windows => {
             return normalizeStringWindowsT(
@@ -1259,6 +1261,14 @@ pub fn joinAbsStringBufZ(cwd: []const u8, buf: []u8, _parts: anytype, comptime _
     return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
 }
 
+pub fn joinAbsStringBufZNT(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    if ((_platform == .auto or _platform == .loose or _platform == .windows) and bun.Environment.isWindows) {
+        return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, .nt);
+    }
+
+    return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
+}
+
 pub fn joinAbsStringBufZTrailingSlash(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
     const out = _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
     if (out.len + 2 < buf.len and out.len > 0 and out[out.len - 1] != _platform.separator()) {
@@ -1275,6 +1285,16 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         (bun.Environment.os == .windows and platform == .loose))
     {
         return _joinAbsStringBufWindows(is_sentinel, ReturnType, _cwd, buf, _parts);
+    }
+
+    if (comptime platform.resolve() == .nt) {
+        const end_path = _joinAbsStringBufWindows(is_sentinel, ReturnType, _cwd, buf[4..], _parts);
+        buf[0..4].* = "\\\\?\\".*;
+        if (comptime is_sentinel) {
+            buf[end_path.len + 4] = 0;
+            return buf[0 .. end_path.len + 4 :0];
+        }
+        return buf[0 .. end_path.len + 4];
     }
 
     var parts: []const []const u8 = _parts;
@@ -2227,7 +2247,7 @@ pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
     }
 }
 
-pub fn pathToPosixInPlace(comptime T: type, path: []T) void {
+pub fn dangerouslyConvertPathToPosixInPlace(comptime T: type, path: []T) void {
     var idx: usize = 0;
     while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_windows)) |index| : (idx = index + 1) {
         path[index] = '/';

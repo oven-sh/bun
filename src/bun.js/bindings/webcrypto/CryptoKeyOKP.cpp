@@ -95,7 +95,7 @@ CryptoKeyOKP::CryptoKeyOKP(CryptoAlgorithmIdentifier identifier, NamedCurve curv
     : CryptoKey(identifier, type, extractable, usages)
     , m_curve(curve)
     , m_data(data)
-    , m_exportKey(curve == NamedCurve::Ed25519 && type == CryptoKeyType::Private ? std::optional<Vector<uint8_t>>(Vector<uint8_t>(data.data(), 32)) : std::nullopt)
+    , m_exportKey(curve == NamedCurve::Ed25519 && type == CryptoKeyType::Private ? std::optional<Vector<uint8_t>>(Vector<uint8_t>(std::span { data.data(), 32 })) : std::nullopt)
 {
 }
 

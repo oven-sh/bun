@@ -391,7 +391,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
     };
 }
 
-const PathType = enum { u8, u16 };
+pub const PathType = enum { u8, u16 };
 
 pub fn NewWrappedIterator(comptime path_type: PathType) type {
     const IteratorType = if (path_type == .u16) IteratorW else Iterator;

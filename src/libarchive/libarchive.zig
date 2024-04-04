@@ -567,11 +567,7 @@ pub const Archive = struct {
                                 mode |= 0o1;
 
                             if (comptime Environment.isWindows) {
-                                std.posix.mkdiratW(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
-                                    if (err == error.PathAlreadyExists or err == error.NotDir) break;
-                                    try bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return err);
-                                    try std.posix.mkdiratW(dir_fd, pathname, 0o777);
-                                };
+                                try bun.MakePath.makePath(u16, dir, pathname);
                             } else {
                                 std.posix.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
                                     if (err == error.PathAlreadyExists or err == error.NotDir) break;

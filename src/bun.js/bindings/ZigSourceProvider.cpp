@@ -28,22 +28,22 @@ using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
-SourceOrigin toSourceOrigin(const String& specifier, bool isBuiltin)
+SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 {
 
-    ASSERT_WITH_MESSAGE(!specifier.startsWith("file://"_s), "specifier should not already be a file URL");
+    ASSERT_WITH_MESSAGE(!sourceURL.startsWith("file://"_s), "specifier should not already be a file URL");
 
     if (isBuiltin) {
-        if (specifier.startsWith("node:"_s)) {
-            return SourceOrigin(WTF::URL(makeString("builtin://node/", specifier.substring(5))));
-        } else if (specifier.startsWith("bun:"_s)) {
-            return SourceOrigin(WTF::URL(makeString("builtin://bun/", specifier.substring(4))));
+        if (sourceURL.startsWith("node:"_s)) {
+            return SourceOrigin(WTF::URL(makeString("builtin://node/", sourceURL.substring(5))));
+        } else if (sourceURL.startsWith("bun:"_s)) {
+            return SourceOrigin(WTF::URL(makeString("builtin://bun/", sourceURL.substring(4))));
         } else {
-            return SourceOrigin(WTF::URL(makeString("builtin://", specifier)));
+            return SourceOrigin(WTF::URL(makeString("builtin://", sourceURL)));
         }
     }
 
-    return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(specifier));
+    return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
 extern "C" int ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL);

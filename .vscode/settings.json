@@ -102,6 +102,11 @@
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
 
+  // Docker
+  "[dockerfile]": {
+    "editor.formatOnSave": false
+  },
+
   // Files
   "files.exclude": {
     "**/.git": true,

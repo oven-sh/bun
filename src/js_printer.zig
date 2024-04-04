@@ -195,6 +195,11 @@ pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize
 
 pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
     var bytes = output_;
+    try quoteForJSONBuffer(text, &bytes, ascii_only);
+    return bytes;
+}
+
+pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     try bytes.growIfNeeded(estimateLengthForJSON(text, ascii_only));
     try bytes.appendChar('"');
     var i: usize = 0;
@@ -300,7 +305,6 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
         }
     }
     bytes.appendChar('"') catch unreachable;
-    return bytes;
 }
 
 const JSONFormatter = struct {
@@ -2815,6 +2819,10 @@ fn NewPrinter(
                     p.print(c);
                     p.printStringContent(e, c);
                     p.print(c);
+                },
+                .e_utf8_string => |e| {
+                    p.addSourceMapping(expr.loc);
+                    quoteForJSONBuffer(e.data, p.writer.getMutableBuffer(), ascii_only) catch bun.outOfMemory();
                 },
                 .e_template => |e| {
                     if (e.tag) |tag| {
@@ -5384,6 +5392,10 @@ pub fn NewWriter(
             );
         }
 
+        pub fn getMutableBuffer(this: *Self) *MutableString {
+            return this.ctx.getMutableBuffer();
+        }
+
         pub fn slice(this: *Self) string {
             return this.ctx.slice();
         }
@@ -5493,6 +5505,10 @@ const FileWriterInternal = struct {
 
     pub fn getBuffer() *MutableString {
         buffer.reset();
+        return &buffer;
+    }
+
+    pub fn getMutableBuffer(_: *FileWriterInternal) *MutableString {
         return &buffer;
     }
 
@@ -5607,6 +5623,10 @@ pub const BufferWriter = struct {
     append_newline: bool = false,
     approximate_newline_count: usize = 0,
     last_bytes: [2]u8 = [_]u8{ 0, 0 },
+
+    pub fn getMutableBuffer(this: *BufferWriter) *MutableString {
+        return &this.buffer;
+    }
 
     pub fn getWritten(this: *BufferWriter) []u8 {
         return this.buffer.list.items;

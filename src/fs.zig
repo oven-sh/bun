@@ -712,11 +712,7 @@ pub const FileSystem = struct {
 
                 const flags = bun.O.CREAT | bun.O.WRONLY | bun.O.CLOEXEC;
 
-                this.fd = brk: {
-                    const fd = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
-                    errdefer _ = bun.sys.close(fd);
-                    break :brk try bun.toLibUVOwnedFD(fd);
-                };
+                this.fd = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
                 this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
@@ -942,7 +938,7 @@ pub const FileSystem = struct {
 
         pub fn openDir(_: *RealFS, unsafe_dir_string: string) !std.fs.Dir {
             const dirfd = if (Environment.isWindows)
-                bun.sys.openDirAtWindowsA(bun.invalid_fd, unsafe_dir_string, true, true)
+                bun.sys.openDirAtWindowsA(bun.invalid_fd, unsafe_dir_string, .{ .iterable = true, .no_follow = false })
             else
                 bun.sys.openA(
                     unsafe_dir_string,

@@ -1320,7 +1320,7 @@ pub const RunCommand = struct {
             try Run.boot(ctx_, entry_path);
             return ExecResult.ok;
         }
-    }	    
+    }
 
     const ExecResult = union(enum) {
         code: u8,

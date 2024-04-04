@@ -106,6 +106,15 @@ function isRosetta2(): boolean {
 }
 
 function isWindowsAVX2(): boolean {
-  // TODO: Implement AVX2 detection on Windows
-  return false;
+  try {
+    return (
+      spawn("powershell", [
+        "-c",
+        `(Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' -Name 'Kernel32' -Namespace 'Win32' -PassThru)::IsProcessorFeaturePresent(40);`,
+      ]).stdout == "True"
+    );
+  } catch (error) {
+    debug("isWindowsAVX2 failed", error);
+    return false;
+  }
 }

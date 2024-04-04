@@ -9,7 +9,7 @@
   },
   "devDependencies": {
     "@octokit/types": "^8.1.1",
-    "bun-types": "^0.4.0",
+    "bun-types": "^1.1.0",
     "prettier": "^2.8.2"
   },
   "scripts": {

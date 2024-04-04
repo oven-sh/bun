@@ -1,4 +1,4 @@
-import { importBun } from "../src/npm/install";
+import { importBun, optimizeBun } from "../src/npm/install";
 import { execFileSync } from "child_process";
 
 importBun()

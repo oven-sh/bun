@@ -2465,6 +2465,13 @@ pub const File = struct {
     // "handle" matches std.fs.File
     handle: bun.FileDescriptor,
 
+    pub fn openat(other: anytype, path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+        return switch (This.openat(bun.toFD(other), path, flags, mode)) {
+            .result => |fd| .{ .result = .{ .handle = fd } },
+            .err => |err| .{ .err = err },
+        };
+    }
+
     pub fn from(other: anytype) File {
         const T = @TypeOf(other);
 

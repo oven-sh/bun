@@ -13,7 +13,7 @@ const std = @import("std");
 const uws = @import("../deps/uws.zig");
 const JSC = bun.JSC;
 const DirInfo = @import("../resolver/dir_info.zig");
-
+const File = bun.sys.File;
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
 
@@ -1017,14 +1017,6 @@ pub const PackageInstall = struct {
         var total: usize = 0;
         var read: usize = 0;
 
-        bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ "package.json");
-        this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len] = 0;
-        const package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
-        defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
-
-        var package_json_file = this.destination_dir.openFileZ(package_json_path, .{ .mode = .read_only }) catch return false;
-        defer package_json_file.close();
-
         var body_pool = Npm.Registry.BodyPool.get(allocator);
         var mutable: MutableString = body_pool.data;
         defer {
@@ -1032,34 +1024,49 @@ pub const PackageInstall = struct {
             Npm.Registry.BodyPool.release(body_pool);
         }
 
-        mutable.reset();
-        mutable.list.expandToCapacity();
-
-        // Heuristic: most package.jsons will be less than 2048 bytes.
-        read = package_json_file.read(mutable.list.items[total..]) catch return false;
-        var remain = mutable.list.items[@min(total, read)..];
-        if (read > 0 and remain.len < 1024) {
-            mutable.growBy(4096) catch return false;
+        // Read the file
+        // Return false on any error.
+        // Don't keep it open while we're parsing the JSON.
+        // The longer the file stays open, the more likely it causes issues for
+        // other processes on Windows.
+        const source = brk: {
+            mutable.reset();
             mutable.list.expandToCapacity();
-        }
+            bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ "package.json");
+            this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len] = 0;
+            const package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
+            defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
 
-        while (read > 0) : (read = package_json_file.read(remain) catch return false) {
-            total += read;
+            var package_json_file = File.openat(this.destination_dir, package_json_path, std.os.O.RDONLY, 0).unwrap() catch return false;
+            defer package_json_file.close();
 
-            mutable.list.expandToCapacity();
-            remain = mutable.list.items[total..];
-
-            if (remain.len < 1024) {
+            // Heuristic: most package.jsons will be less than 2048 bytes.
+            read = package_json_file.read(mutable.list.items[total..]).unwrap() catch return false;
+            var remain = mutable.list.items[@min(total, read)..];
+            if (read > 0 and remain.len < 1024) {
                 mutable.growBy(4096) catch return false;
+                mutable.list.expandToCapacity();
             }
-            mutable.list.expandToCapacity();
-            remain = mutable.list.items[total..];
-        }
 
-        // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
-        if (total < "{\"name\":\"\",\"version\":\"\"}".len + this.package_name.len + this.package_version.len) return false;
+            while (read > 0) : (read = package_json_file.read(remain).unwrap() catch return false) {
+                total += read;
 
-        const source = logger.Source.initPathString(bun.span(package_json_path), mutable.list.items[0..total]);
+                mutable.list.expandToCapacity();
+                remain = mutable.list.items[total..];
+
+                if (remain.len < 1024) {
+                    mutable.growBy(4096) catch return false;
+                }
+                mutable.list.expandToCapacity();
+                remain = mutable.list.items[total..];
+            }
+
+            // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
+            if (total < "{\"name\":\"\",\"version\":\"\"}".len + this.package_name.len + this.package_version.len) return false;
+
+            break :brk logger.Source.initPathString(bun.span(package_json_path), mutable.list.items[0..total]);
+        };
+
         var log = logger.Log.init(allocator);
         defer log.deinit();
 
@@ -9418,7 +9425,7 @@ pub const PackageManager = struct {
         const cwd = std.fs.cwd();
         const node_modules_folder = brk: {
             // Attempt to open the existing node_modules folder
-            switch (bun.sys.openatOSPath(bun.toFD(cwd), bun.OSPathLiteral("node_modules"), std.os.O.DIRECTORY | std.os.O.RDWR, 0o755)) {
+            switch (bun.sys.openatOSPath(bun.toFD(cwd), bun.OSPathLiteral("node_modules"), std.os.O.DIRECTORY | std.os.O.RDONLY, 0o755)) {
                 .result => |fd| break :brk std.fs.Dir{ .fd = fd.cast() },
                 .err => {},
             }

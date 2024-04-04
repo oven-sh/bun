@@ -159,6 +159,7 @@ pub const ShellError = error{ Init, Process, GlobalThisThrown, Spawn };
 pub const ParseError = error{
     Unsupported,
     Expected,
+    Unexpected,
     Unknown,
     Lex,
 };
@@ -348,7 +349,7 @@ pub const AST = struct {
         binary: *Binary,
         pipeline: *Pipeline,
         cmd: *Cmd,
-        subshell: Script,
+        subshell: *Subshell,
         @"if": *If,
         condexpr: *CondExpr,
         /// Valid async (`&`) expressions:
@@ -608,6 +609,12 @@ pub const AST = struct {
         }
     };
 
+    pub const Subshell = struct {
+        script: Script,
+        redirect: ?Redirect = null,
+        redirect_flags: RedirectFlags = .{},
+    };
+
     /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
     pub const If = struct {
         cond: SmolList(Stmt, 1) = SmolList(Stmt, 1).zeroes,
@@ -648,7 +655,7 @@ pub const AST = struct {
     pub const PipelineItem = union(enum) {
         cmd: *Cmd,
         assigns: []Assign,
-        subshell: Script,
+        subshell: *Subshell,
         @"if": *If,
         condexpr: *CondExpr,
     };
@@ -717,86 +724,90 @@ pub const AST = struct {
         name_and_args: []Atom,
         redirect: RedirectFlags = .{},
         redirect_file: ?Redirect = null,
+    };
 
-        /// Bit flags for redirects:
-        /// -  `>`  = Redirect.Stdout
-        /// -  `1>` = Redirect.Stdout
-        /// -  `2>` = Redirect.Stderr
-        /// -  `&>` = Redirect.Stdout | Redirect.Stderr
-        /// -  `>>` = Redirect.Append | Redirect.Stdout
-        /// - `1>>` = Redirect.Append | Redirect.Stdout
-        /// - `2>>` = Redirect.Append | Redirect.Stderr
-        /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
-        ///
-        /// Multiple redirects and redirecting stdin is not supported yet.
-        pub const RedirectFlags = packed struct(u8) {
-            stdin: bool = false,
-            stdout: bool = false,
-            stderr: bool = false,
-            append: bool = false,
-            /// 1>&2 === stdout=true and duplicate_out=true
-            /// 2>&1 === stderr=true and duplicate_out=true
-            duplicate_out: bool = false,
-            __unused: u3 = 0,
+    /// Bit flags for redirects:
+    /// -  `>`  = Redirect.Stdout
+    /// -  `1>` = Redirect.Stdout
+    /// -  `2>` = Redirect.Stderr
+    /// -  `&>` = Redirect.Stdout | Redirect.Stderr
+    /// -  `>>` = Redirect.Append | Redirect.Stdout
+    /// - `1>>` = Redirect.Append | Redirect.Stdout
+    /// - `2>>` = Redirect.Append | Redirect.Stderr
+    /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
+    ///
+    /// Multiple redirects and redirecting stdin is not supported yet.
+    pub const RedirectFlags = packed struct(u8) {
+        stdin: bool = false,
+        stdout: bool = false,
+        stderr: bool = false,
+        append: bool = false,
+        /// 1>&2 === stdout=true and duplicate_out=true
+        /// 2>&1 === stderr=true and duplicate_out=true
+        duplicate_out: bool = false,
+        __unused: u3 = 0,
 
-            pub fn redirectsElsewhere(this: RedirectFlags, io_kind: enum { stdin, stdout, stderr }) bool {
-                return switch (io_kind) {
-                    .stdin => this.stdin,
-                    .stdout => if (this.duplicate_out) !this.stdout else this.stdout,
-                    .stderr => if (this.duplicate_out) !this.stderr else this.stderr,
-                };
-            }
+        pub inline fn isEmpty(this: RedirectFlags) bool {
+            return @as(u8, @bitCast(this)) == 0;
+        }
 
-            pub fn @"2>&1"() RedirectFlags {
-                return .{ .stderr = true, .duplicate = true };
-            }
+        pub fn redirectsElsewhere(this: RedirectFlags, io_kind: enum { stdin, stdout, stderr }) bool {
+            return switch (io_kind) {
+                .stdin => this.stdin,
+                .stdout => if (this.duplicate_out) !this.stdout else this.stdout,
+                .stderr => if (this.duplicate_out) !this.stderr else this.stderr,
+            };
+        }
 
-            pub fn @"1>&2"() RedirectFlags {
-                return .{ .stdout = true, .duplicate = true };
-            }
+        pub fn @"2>&1"() RedirectFlags {
+            return .{ .stderr = true, .duplicate = true };
+        }
 
-            pub fn toFlags(this: RedirectFlags) bun.Mode {
-                const read_write_flags: bun.Mode = if (this.stdin) std.os.O.RDONLY else std.os.O.WRONLY | std.os.O.CREAT;
-                const extra: bun.Mode = if (this.append) std.os.O.APPEND else std.os.O.TRUNC;
-                const final_flags: bun.Mode = if (this.stdin) read_write_flags else extra | read_write_flags;
-                return final_flags;
-            }
+        pub fn @"1>&2"() RedirectFlags {
+            return .{ .stdout = true, .duplicate = true };
+        }
 
-            pub fn @"<"() RedirectFlags {
-                return .{ .stdin = true };
-            }
+        pub fn toFlags(this: RedirectFlags) bun.Mode {
+            const read_write_flags: bun.Mode = if (this.stdin) std.os.O.RDONLY else std.os.O.WRONLY | std.os.O.CREAT;
+            const extra: bun.Mode = if (this.append) std.os.O.APPEND else std.os.O.TRUNC;
+            const final_flags: bun.Mode = if (this.stdin) read_write_flags else extra | read_write_flags;
+            return final_flags;
+        }
 
-            pub fn @"<<"() RedirectFlags {
-                return .{ .stdin = true, .append = true };
-            }
+        pub fn @"<"() RedirectFlags {
+            return .{ .stdin = true };
+        }
 
-            pub fn @">"() RedirectFlags {
-                return .{ .stdout = true };
-            }
+        pub fn @"<<"() RedirectFlags {
+            return .{ .stdin = true, .append = true };
+        }
 
-            pub fn @">>"() RedirectFlags {
-                return .{ .append = true, .stdout = true };
-            }
+        pub fn @">"() RedirectFlags {
+            return .{ .stdout = true };
+        }
 
-            pub fn @"&>"() RedirectFlags {
-                return .{ .stdout = true, .stderr = true };
-            }
+        pub fn @">>"() RedirectFlags {
+            return .{ .append = true, .stdout = true };
+        }
 
-            pub fn @"&>>"() RedirectFlags {
-                return .{ .append = true, .stdout = true, .stderr = true };
-            }
+        pub fn @"&>"() RedirectFlags {
+            return .{ .stdout = true, .stderr = true };
+        }
 
-            pub fn merge(a: RedirectFlags, b: RedirectFlags) RedirectFlags {
-                const anum: u8 = @bitCast(a);
-                const bnum: u8 = @bitCast(b);
-                return @bitCast(anum | bnum);
-            }
-        };
+        pub fn @"&>>"() RedirectFlags {
+            return .{ .append = true, .stdout = true, .stderr = true };
+        }
 
-        pub const Redirect = union(enum) {
-            atom: Atom,
-            jsbuf: JSBuf,
-        };
+        pub fn merge(a: RedirectFlags, b: RedirectFlags) RedirectFlags {
+            const anum: u8 = @bitCast(a);
+            const bnum: u8 = @bitCast(b);
+            return @bitCast(anum | bnum);
+        }
+    };
+
+    pub const Redirect = union(enum) {
+        atom: Atom,
+        jsbuf: JSBuf,
     };
 
     pub const Atom = union(Atom.Tag) {
@@ -915,6 +926,9 @@ pub const Parser = struct {
         };
     }
 
+    /// __WARNING__:
+    /// If you make a subparser and call some fallible functions on it, you need to catch the errors and call `.continue_from_subparser()`, otherwise errors
+    /// will not propagate upwards to the parent.
     pub fn make_subparser(this: *Parser, kind: SubshellKind) Parser {
         const subparser = .{
             .strpool = this.strpool,
@@ -941,21 +955,6 @@ pub const Parser = struct {
     ///
     /// Loosely based on the shell gramar documented in the spec: https://pubs.opengroup.org/onlinepubs/009604499/utilities/xcu_chap02.html#tag_02_10
     pub fn parse(self: *Parser) !AST.Script {
-        // Check for subshell syntax which is not supported rn
-        for (self.tokens) |tok| {
-            switch (tok) {
-                .OpenParen => {
-                    try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
-                    return ParseError.Expected;
-                },
-                .CloseParen => {
-                    try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
-                    return ParseError.Expected;
-                },
-                else => {},
-            }
-        }
-
         return try self.parse_impl();
     }
 
@@ -1025,6 +1024,16 @@ pub const Parser = struct {
                 // break;
             }
             try exprs.append(expr);
+
+            // This might be necessary, so leaving it here in case it is
+            // switch (self.peek()) {
+            //     .Eof, .Newline, .Semicolon => {},
+            //     else => |t| {
+            //         if (self.inside_subshell == null or self.inside_subshell.?.closing_tok() != t) {
+            //             @panic("Oh no!");
+            //         }
+            //     },
+            // }
         }
 
         return .{
@@ -1119,15 +1128,23 @@ pub const Parser = struct {
         return bun.strings.eqlComptime(self.text(range), tagname);
     }
 
+    fn skip_newlines(self: *Parser) void {
+        while (self.match(.Newline)) {}
+    }
+
     fn parse_compound_cmd(self: *Parser) anyerror!AST.Expr {
         // Placeholder for when we fully support subshells
-        // if (self.peek() == .OpenParen) {
-        //     _ = self.expect(.OpenParen);
-        //     const script = try self.parse_impl(true);
-        //     _ = self.expect(.CloseParen);
-        //     return .{ .subshell = script };
-        // }
-        // return (try self.parse_cmd_or_assigns()).to_expr(self.alloc);
+        if (self.peek() == .OpenParen) {
+            const subshell = try self.parse_subshell();
+            if (!subshell.redirect_flags.isEmpty()) {
+                try self.add_error("Subshells with redirections are currently not supported. Please open a GitHub issue.", .{});
+                return ParseError.Unsupported;
+            }
+
+            return .{
+                .subshell = try self.allocate(AST.Subshell, subshell),
+            };
+        }
 
         if (self.isIfClauseTextToken(.@"if")) return (try self.parse_if_clause()).to_expr(self.alloc);
 
@@ -1139,8 +1156,21 @@ pub const Parser = struct {
         return (try self.parse_simple_cmd()).to_expr(self.alloc);
     }
 
-    fn skip_newlines(self: *Parser) void {
-        while (self.match(.Newline)) {}
+    fn parse_subshell(self: *Parser) !AST.Subshell {
+        _ = self.expect(.OpenParen);
+        var subparser = self.make_subparser(.normal);
+        const script = subparser.parse_impl() catch |e| {
+            self.continue_from_subparser(&subparser);
+            return e;
+        };
+        self.continue_from_subparser(&subparser);
+        const parsed_redirect = try self.parse_redirect();
+
+        return .{
+            .script = script,
+            .redirect = parsed_redirect.redirect,
+            .redirect_flags = parsed_redirect.flags,
+        };
     }
 
     fn parse_cond_expr(self: *Parser) !AST.CondExpr {
@@ -1412,11 +1442,20 @@ pub const Parser = struct {
         while (try self.parse_atom()) |arg| {
             try name_and_args.append(arg);
         }
+        const parsed_redirect = try self.parse_redirect();
 
-        // TODO Parse redirects (need to update lexer to have tokens for different parts e.g. &>>)
+        return .{ .cmd = .{
+            .assigns = assigns.items[0..],
+            .name_and_args = name_and_args.items[0..],
+            .redirect_file = parsed_redirect.redirect,
+            .redirect = parsed_redirect.flags,
+        } };
+    }
+
+    fn parse_redirect(self: *Parser) !ParsedRedirect {
         const has_redirect = self.match(.Redirect);
-        const redirect = if (has_redirect) self.prev().Redirect else AST.Cmd.RedirectFlags{};
-        const redirect_file: ?AST.Cmd.Redirect = redirect_file: {
+        const redirect = if (has_redirect) self.prev().Redirect else AST.RedirectFlags{};
+        const redirect_file: ?AST.Redirect = redirect_file: {
             if (has_redirect) {
                 if (self.match(.JSObjRef)) {
                     const obj_ref = self.prev().JSObjRef;
@@ -1433,16 +1472,13 @@ pub const Parser = struct {
             break :redirect_file null;
         };
         // TODO check for multiple redirects and error
-
-        return .{ .cmd = .{
-            .assigns = assigns.items[0..],
-            .name_and_args = name_and_args.items[0..],
-            .redirect = redirect,
-            .redirect_file = redirect_file,
-        } };
+        return .{ .flags = redirect, .redirect = redirect_file };
     }
 
-    const ParsedRedirect = struct { flags: AST.Cmd.RedirectFlags, redirect: AST.Cmd.Redirect };
+    const ParsedRedirect = struct {
+        flags: AST.RedirectFlags = .{},
+        redirect: ?AST.Redirect = null,
+    };
 
     /// Try to parse an assignment. If no assignment could be parsed then return
     /// null and backtrack the parser state
@@ -1577,7 +1613,10 @@ pub const Parser = struct {
                         _ = self.expect(.CmdSubstBegin);
                         const is_quoted = self.match(.CmdSubstQuoted);
                         var subparser = self.make_subparser(.cmd_subst);
-                        const script = try subparser.parse_impl();
+                        const script = subparser.parse_impl() catch |e| {
+                            self.continue_from_subparser(&subparser);
+                            return e;
+                        };
                         try atoms.append(.{ .cmd_subst = .{
                             .script = script,
                             .quoted = is_quoted,
@@ -1616,7 +1655,7 @@ pub const Parser = struct {
                     },
                     .OpenParen, .CloseParen => {
                         try self.add_error("Unexpected token: `{s}`", .{if (peeked == .OpenParen) "(" else ")"});
-                        return null;
+                        return ParseError.Unexpected;
                     },
                     .Pipe => return null,
                     .DoublePipe => return null,
@@ -1910,7 +1949,7 @@ pub const Token = union(TokenTag) {
     /// &&
     DoubleAmpersand,
 
-    Redirect: AST.Cmd.RedirectFlags,
+    Redirect: AST.RedirectFlags,
 
     /// $
     Dollar,
@@ -2400,9 +2439,19 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             }
 
                             try self.break_word(true);
-                            if (self.last_tok_tag()) |toktag| {
-                                if (toktag != .Delimit) try self.tokens.append(.Delimit);
+                            // Command substitution can be put in a word so need
+                            // to add delimiter
+                            if (self.in_subshell == .dollar) {
+                                if (self.last_tok_tag()) |toktag| {
+                                    switch (toktag) {
+                                        .Delimit, .Semicolon, .Eof, .Newline => {},
+                                        else => {
+                                            try self.tokens.append(.Delimit);
+                                        },
+                                    }
+                                }
                             }
+
                             if (self.in_subshell == .dollar) {
                                 try self.tokens.append(.CmdSubstEnd);
                             } else if (self.in_subshell == .normal) {
@@ -2470,9 +2519,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             if (next.char == '>' and !next.escaped) {
                                 _ = self.eat();
                                 const inner = if (self.eat_simple_redirect_operator(.out))
-                                    AST.Cmd.RedirectFlags.@"&>>"()
+                                    AST.RedirectFlags.@"&>>"()
                                 else
-                                    AST.Cmd.RedirectFlags.@"&>"();
+                                    AST.RedirectFlags.@"&>"();
                                 try self.tokens.append(.{ .Redirect = inner });
                             } else if (next.escaped or next.char != '&') {
                                 try self.tokens.append(.Ampersand);
@@ -2632,19 +2681,19 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         const RedirectDirection = enum { out, in };
 
-        fn eat_simple_redirect(self: *@This(), dir: RedirectDirection) AST.Cmd.RedirectFlags {
+        fn eat_simple_redirect(self: *@This(), dir: RedirectDirection) AST.RedirectFlags {
             const is_double = self.eat_simple_redirect_operator(dir);
 
             if (is_double) {
                 return switch (dir) {
-                    .out => AST.Cmd.RedirectFlags.@">>"(),
-                    .in => AST.Cmd.RedirectFlags.@"<<"(),
+                    .out => AST.RedirectFlags.@">>"(),
+                    .in => AST.RedirectFlags.@"<<"(),
                 };
             }
 
             return switch (dir) {
-                .out => AST.Cmd.RedirectFlags.@">"(),
-                .in => AST.Cmd.RedirectFlags.@"<"(),
+                .out => AST.RedirectFlags.@">"(),
+                .in => AST.RedirectFlags.@"<"(),
             };
         }
 
@@ -2675,8 +2724,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         // TODO Arbitrary file descriptor redirect
-        fn eat_redirect(self: *@This(), first: InputChar) ?AST.Cmd.RedirectFlags {
-            var flags: AST.Cmd.RedirectFlags = .{};
+        fn eat_redirect(self: *@This(), first: InputChar) ?AST.RedirectFlags {
+            var flags: AST.RedirectFlags = .{};
             switch (first.char) {
                 '0' => flags.stdin = true,
                 '1' => flags.stdout = true,
@@ -2732,8 +2781,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             } else return null;
         }
 
-        fn eat_redirect_old(self: *@This(), first: InputChar) ?AST.Cmd.RedirectFlags {
-            var flags: AST.Cmd.RedirectFlags = .{};
+        fn eat_redirect_old(self: *@This(), first: InputChar) ?AST.RedirectFlags {
+            var flags: AST.RedirectFlags = .{};
             if (self.matchesAsciiLiteral("2>&1")) {} else if (self.matchesAsciiLiteral("1>&2")) {} else switch (first.char) {
                 '0'...'9' => {
                     // Codepoint int casts are safe here because the digits are in the ASCII range
@@ -3378,40 +3427,11 @@ fn isValidVarNameAscii(var_name: []const u8) bool {
         '=', '0'...'9' => {
             return false;
         },
-        'a'...'z', 'A'...'Z', '_' => {},
+        'a'...'z', 'A'...'Z', '_' => {
+            if (var_name.len == 1) return true;
+        },
         else => return false,
     }
-
-    if (var_name.len - 1 < 16)
-        return isValidVarNameSlowAscii(var_name);
-
-    const upper_a: @Vector(16, u8) = @splat('A');
-    const upper_z: @Vector(16, u8) = @splat('Z');
-    const lower_a: @Vector(16, u8) = @splat('a');
-    const lower_z: @Vector(16, u8) = @splat('z');
-    const zero: @Vector(16, u8) = @splat(0);
-    const nine: @Vector(16, u8) = @splat(9);
-    const underscore: @Vector(16, u8) = @splat('_');
-
-    const BoolVec = @Vector(16, u1);
-
-    var i: usize = 0;
-    while (i + 16 <= var_name.len) : (i += 16) {
-        const chars: @Vector(16, u8) = var_name[i..][0..16].*;
-
-        const in_upper = @as(BoolVec, @bitCast(chars > upper_a)) & @as(BoolVec, @bitCast(chars < upper_z));
-        const in_lower = @as(BoolVec, @bitCast(chars > lower_a)) & @as(BoolVec, @bitCast(chars < lower_z));
-        const in_digit = @as(BoolVec, @bitCast(chars > zero)) & @as(BoolVec, @bitCast(chars < nine));
-        const is_underscore = @as(BoolVec, @bitCast(chars == underscore));
-
-        const merged = @as(@Vector(16, bool), @bitCast(in_upper | in_lower | in_digit | is_underscore));
-        if (std.simd.countTrues(merged) != 16) return false;
-    }
-
-    return isValidVarNameSlowAscii(var_name[i..]);
-}
-
-fn isValidVarNameSlowAscii(var_name: []const u8) bool {
     for (var_name) |c| {
         switch (c) {
             '0'...'9', 'a'...'z', 'A'...'Z', '_' => {},
@@ -3525,7 +3545,7 @@ pub const Test = struct {
         DoubleAmpersand,
 
         // >
-        Redirect: AST.Cmd.RedirectFlags,
+        Redirect: AST.RedirectFlags,
 
         // $
         Dollar,

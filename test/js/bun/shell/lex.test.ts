@@ -722,14 +722,10 @@ describe("lex shell", () => {
         .run();
     });
 
-    test("Unexpected ')'", async () => {
-      await TestBuilder.command`echo )`.error("Unexpected ')'").run();
-      await TestBuilder.command`echo (echo hi)`
-        .error(
-          "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.",
-        )
-        .run();
-      await TestBuilder.command`echo "()"`.stdout("()\n").run();
+    describe("Unexpected ')'", async () => {
+      TestBuilder.command`echo )`.error("Unexpected ')'").runAsTest("lone closing paren");
+      TestBuilder.command`echo (echo hi)`.error("Unexpected token: `(`").runAsTest("subshell in invalid position");
+      TestBuilder.command`echo "()"`.stdout("()\n").runAsTest("quoted parens");
     });
 
     test("Unexpected EOF", async () => {
@@ -753,11 +749,6 @@ describe("lex shell", () => {
         .run();
 
       await TestBuilder.command`echo hi && (echo uh oh`.error("Unclosed subshell").run();
-      await TestBuilder.command`echo hi && (echo uh oh)`
-        .error(
-          "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.",
-        )
-        .run();
     });
   });
 });

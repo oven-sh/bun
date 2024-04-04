@@ -4365,7 +4365,9 @@ pub const NodeFS = struct {
     ) Maybe(Return.Mkdir) {
         const VTable = struct {
             pub fn onCreateDir(c: Ctx, dirpath: bun.OSPathSliceZ) void {
-                c.onCreateDir(dirpath);
+                if (Ctx != void) {
+                    c.onCreateDir(dirpath);
+                }
                 return;
             }
         };
@@ -4812,7 +4814,7 @@ pub const NodeFS = struct {
         const fd = switch (switch (Environment.os) {
             else => Syscall.openat(atfd, basename, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
-            .windows => bun.sys.openDirAtWindowsA(atfd, basename, true, false),
+            .windows => bun.sys.openDirAtWindowsA(atfd, basename, .{ .no_follow = true, .iterable = true }),
         }) {
             .err => |err| {
                 if (comptime !is_root) {
@@ -5106,7 +5108,7 @@ pub const NodeFS = struct {
         const fd = switch (switch (Environment.os) {
             else => Syscall.open(path, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
-            .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, true, false),
+            .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, .{ .iterable = true }),
         }) {
             .err => |err| return .{
                 .err = err.withPath(args.path.slice()),
@@ -5360,7 +5362,7 @@ pub const NodeFS = struct {
                         const dirfd_path = buffer[0..dirfd_path_len];
                         const parent_path = bun.Dirname.dirname(u16, dirfd_path).?;
                         if (std.mem.startsWith(u16, parent_path, &bun.windows.nt_maxpath_prefix)) @constCast(parent_path)[1] = '?';
-                        const newdirfd = switch (bun.sys.openDirAtWindows(bun.invalid_fd, parent_path, false, true)) {
+                        const newdirfd = switch (bun.sys.openDirAtWindows(bun.invalid_fd, parent_path, .{ .no_follow = true })) {
                             .result => |fd| fd,
                             .err => |err| {
                                 return .{ .err = err.withPath(path) };

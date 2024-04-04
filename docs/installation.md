@@ -47,7 +47,11 @@ To install, paste this into a terminal:
 {% codetabs %}
 
 ```powershell#PowerShell/cmd.exe
-powershell -c "irm bun.sh/install.ps1|iex"
+> powershell -c "irm bun.sh/install.ps1|iex"
+```
+
+```powershell#npm
+> npm install -g bun # the last `npm` command you'll ever need
 ```
 
 {% /codetabs %}
@@ -224,10 +228,10 @@ $ rm -rf ~/.bun # for macOS, Linux, and WSL
 ```
 
 ```powershell#Windows
-powershell -c ~\.bun\uninstall.ps1
+> powershell -c ~\.bun\uninstall.ps1
 ```
 
-```bash#NPM
+```bash#npm
 $ npm uninstall -g bun
 ```
 

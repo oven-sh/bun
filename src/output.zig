@@ -189,6 +189,7 @@ pub const Source = struct {
             console_codepage = w.kernel32.GetConsoleOutputCP();
             _ = SetConsoleCP(CP_UTF8);
 
+            const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
             const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
             const ENABLE_PROCESSED_OUTPUT = 0x0001;
 
@@ -196,11 +197,8 @@ pub const Source = struct {
             if (w.kernel32.GetConsoleMode(stdin, &mode) != 0) {
                 console_mode[0] = mode;
                 bun_stdio_tty[0] = 1;
+                _ = SetConsoleMode(stdin, mode | ENABLE_VIRTUAL_TERMINAL_INPUT);
             }
-
-            // ENABLE_VIRTUAL_TERMINAL_PROCESSING to enable ansi escape sequences
-            // ENABLE_PROCESSED_OUTUPT is enabled because ENABLE_VIRTUAL_TERMINAL_PROCESSING is enabled
-            // ENABLE_WRAP_AT_EOL_OUPTUT will prevent output from being cut off at the end of the line
 
             if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
                 console_mode[1] = mode;

@@ -2061,7 +2061,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     return false;
                 }
                 this.handleWrote(@as(Blob.SizeType, @truncate(chunk.len)));
-                total_written += chunk.len;
+                total_written = chunk.len;
 
                 if (this.requested_end) {
                     this.res.clearOnWritable();

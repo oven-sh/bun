@@ -6,7 +6,7 @@ describe("seq", async () => {
   TestBuilder.command`seq`
     .exitCode(1)
     .stdout("")
-    .stderr("seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n")
+    .stderr("usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n")
     .runAsTest("prints usage");
 
   TestBuilder.command`seq -s`

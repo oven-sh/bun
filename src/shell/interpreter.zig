@@ -4938,8 +4938,8 @@ pub const Interpreter = struct {
                     .exit => "usage: exit [n]\n",
                     .true => "",
                     .false => "",
-                    .yes => "yes [expletive]\n",
-                    .seq => "seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n",
+                    .yes => "usage: yes [expletive]\n",
+                    .seq => "usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n",
                 };
             }
 

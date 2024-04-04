@@ -232,18 +232,28 @@ pub const InitCommand = struct {
                 Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
                 Output.flush();
 
-                fields.name = try normalizePackageName(alloc, try prompt(
+                const name = prompt(
                     alloc,
                     "<r><cyan>package name<r> ",
                     fields.name,
                     Output.enable_ansi_colors_stdout,
-                ));
-                fields.entry_point = try prompt(
+                ) catch |err| {
+                    if (err == error.EndOfStream) return;
+                    return err;
+                };
+
+                fields.name = try normalizePackageName(alloc, name);
+
+                fields.entry_point = prompt(
                     alloc,
                     "<r><cyan>entry point<r> ",
                     fields.entry_point,
                     Output.enable_ansi_colors_stdout,
-                );
+                ) catch |err| {
+                    if (err == error.EndOfStream) return;
+                    return err;
+                };
+
                 try Output.writer().writeAll("\n");
                 Output.flush();
             } else {

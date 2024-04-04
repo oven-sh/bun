@@ -782,12 +782,14 @@ fn openDirAtWindowsNtPath(
     const iterable = options.iterable;
     const no_follow = options.no_follow;
     const can_rename_or_delete = options.can_rename_or_delete;
+    const read_only = options.read_only;
     assertIsValidWindowsPath(u16, path);
     const base_flags = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA |
-        w.SYNCHRONIZE | w.FILE_TRAVERSE | w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY;
+        w.SYNCHRONIZE | w.FILE_TRAVERSE;
     const iterable_flag: u32 = if (iterable) w.FILE_LIST_DIRECTORY else 0;
     const rename_flag: u32 = if (can_rename_or_delete) w.DELETE else 0;
-    const flags: u32 = iterable_flag | base_flags | rename_flag;
+    const read_only_flag: u32 = if (read_only) 0 else w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY;
+    const flags: u32 = iterable_flag | base_flags | rename_flag | read_only_flag;
 
     const path_len_bytes: u16 = @truncate(path.len * 2);
     var nt_name = w.UNICODE_STRING{
@@ -872,6 +874,7 @@ pub const WindowsOpenDirOptions = packed struct {
     no_follow: bool = false,
     can_rename_or_delete: bool = false,
     create: bool = false,
+    read_only: bool = false,
 };
 
 fn openDirAtWindowsT(

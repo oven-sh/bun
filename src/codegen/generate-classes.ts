@@ -187,6 +187,7 @@ function propRow(
     configurable = false,
     value,
     builtin,
+    writable = false,
   } = (defaultPropertyAttributes ? Object.assign({}, defaultPropertyAttributes, prop) : prop) as any;
 
   var extraPropertyAttributes = "";
@@ -209,7 +210,7 @@ function propRow(
     if (getter) {
       getter = symbol + "GetterWrap";
     }
-    if (setter) {
+    if (setter || writable) {
       setter = symbol + "SetterWrap";
     }
     if (fn) {
@@ -219,7 +220,7 @@ function propRow(
     if (getter) {
       getter = symbolName(typeName, getter);
     }
-    if (setter) {
+    if (setter || writable) {
       setter = symbolName(typeName, setter);
     }
     if (fn) {
@@ -252,8 +253,11 @@ function propRow(
 { "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
 `.trim();
   } else if (defaultValue) {
-  } else if (getter && !supportsObjectCreate) {
+  } else if (getter && !supportsObjectCreate && !writable) {
     return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, 0 } }
+`.trim();
+  } else if (getter && !supportsObjectCreate && writable) {
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } } 
 `.trim();
   } else if (getter && supportsObjectCreate) {
     setter = getter.replace("Get", "Set");
@@ -745,6 +749,7 @@ function renderDecls(symbolName, typeName, proto, supportsObjectCreate = false) 
         } JSC::JSGlobalObject* lexicalGlobalObject);`,
         `
     JSC_DECLARE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap);
+    ${proto[name].writable ? `JSC_DECLARE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap);` : ""}
     `.trim(),
         "\n",
       );
@@ -903,6 +908,18 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     thisObject->${cacheName}.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }`);
+          if (proto[name].writable) {
+            rows.push(`
+            JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+            {
+                auto& vm = lexicalGlobalObject->vm();
+                auto throwScope = DECLARE_THROW_SCOPE(vm);
+                ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+                JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+                thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(encodedValue));
+                RELEASE_AND_RETURN(throwScope, true);
+            }`);
+          }
         } else {
           rows.push(`
           JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObject * globalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))

@@ -10,7 +10,15 @@ interface PropertyAttribute {
 }
 
 export type Field =
-  | ({ getter: string; cache?: true | string; this?: boolean } & PropertyAttribute)
+  | ({
+      getter: string;
+      cache?: true | string;
+      /**
+       * Allow overriding the value of the property
+       */
+      writable?: boolean;
+      this?: boolean;
+    } & PropertyAttribute)
   | { value: string }
   | ({ setter: string; this?: boolean } & PropertyAttribute)
   | ({

@@ -429,6 +429,7 @@ RUN mkdir -p build \
   -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
   -DCANARY="${CANARY}" \
   -DZIG_COMPILER=system \
+  -DZIG_LIB_DIR=$BUN_DIR/src/deps/zig/lib \
   && ONLY_ZIG=1 ninja "/tmp/bun-zig.o" -v
 
 FROM scratch as build_release_obj

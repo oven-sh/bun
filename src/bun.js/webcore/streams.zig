@@ -2221,7 +2221,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 _ = this.buffer.write(this.allocator, bytes) catch {
                     return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };
-            } else if (this.buffer.len == 0 and len >= this.highWaterMark) {
+                return .{ .owned = len };
+            }
+            if (this.buffer.len == 0 and len >= this.highWaterMark) {
                 // fast path:
                 // - large-ish chunk
                 // - no backpressure

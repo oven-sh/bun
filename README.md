@@ -54,7 +54,10 @@ Bun supports Linux (x64 & arm64), macOS (x64 & Apple Silicon) and Windows (x64).
 curl -fsSL https://bun.sh/install | bash
 
 # on windows
+# using PowerShell
 powershell -c "irm bun.sh/install.ps1 | iex"
+# or using winget
+winget install Oven-sh.Bun
 
 # with npm
 npm install -g bun

@@ -1281,12 +1281,183 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    pub fn bootMaybeSubprocess(ctx_: Command.Context, entry_path: string, comptime subprocess: bool) !ExecResult {
+        if (comptime subprocess) {
+            const pid = std.c.fork();
+            if (pid == 0) {
+                // child
+                Run.boot(ctx_, entry_path) catch {
+                    Global.exit(1);
+                };
+                Global.exit(0);
+            } else {
+                // parent
+                var cstatus: c_int = 0;
+                switch (std.c.getErrno(std.c.waitpid(pid, &cstatus, 0))) {
+                    .SUCCESS => {
+                        const status: u32 = @intCast(cstatus);
+                        const os = std.os;
+                        if (os.W.IFEXITED(status)) {
+                            const code = os.W.EXITSTATUS(status);
+                            return ExecResult.withCode(@intCast(code));
+                            // Term{ .Exited = os.W.EXITSTATUS(status) };
+                        } else if (os.W.IFSIGNALED(status)) {
+                            const code = os.W.TERMSIG(status);
+                            Global.exit(128 + @as(u8, @as(u7, @truncate(code))));
+                        } else if (os.W.IFSTOPPED(status)) {
+                            const code = os.W.STOPSIG(status);
+                            Global.exit(128 + @as(u8, @as(u7, @truncate(code))));
+                        } else {
+                            // shouldn't be possible, but in case we get an invalid status code just ignore it
+                            return ExecResult.ok;
+                        }
+                    },
+                    // if the waitpid call failed, we can't get the exit code
+                    else => return ExecResult.failure,
+                }
+            }
+        } else {
+            try Run.boot(ctx_, entry_path);
+            return ExecResult.ok;
+        }
+    }	    
+
+    const ExecResult = union(enum) {
+        code: u8,
+        failure,
+        ok,
+
+        pub fn withCode(code: u8) ExecResult {
+            return ExecResult{ .code = code };
+        }
+
+        pub fn notFailure(self: ExecResult) bool {
+            return switch (self) {
+                .ok => true,
+                .failure => false,
+                .code => |code| code == 0,
+            };
+        }
+    };
+
+    pub fn execAll(ctx: Command.Context, comptime bin_dirs_only: bool) !void {
+        // without filters just behave like normal exec
+        if (ctx.filters.len == 0) {
+            switch (try exec(ctx, bin_dirs_only, true, false)) {
+                .ok => return,
+                .failure => Global.exit(1),
+                .code => |code| Global.exit(code),
+            }
+            return;
+        }
+
+        const fsinstance = try bun.fs.FileSystem.init(null);
+        const olddir = fsinstance.top_level_dir;
+        defer {
+            // change back to the original directory once we're done
+            fsinstance.top_level_dir = olddir;
+            switch (bun.sys.chdir(olddir)) {
+                .err => |err| {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s} due to error {}<r>", .{ olddir, err });
+                    Global.crash();
+                },
+                .result => {},
+            }
+        }
+
+        var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, olddir);
+        defer filter_instance.deinit();
+
+        var patterns = std.ArrayList([]u8).init(ctx.allocator);
+        defer {
+            for (patterns.items) |path| {
+                ctx.allocator.free(path);
+            }
+            patterns.deinit();
+        }
+
+        var root_buf: bun.PathBuffer = undefined;
+        const resolve_root = try FilterArg.getCandidatePackagePatterns(ctx.allocator, ctx.log, &patterns, olddir, &root_buf);
+
+        var package_json_iter = try FilterArg.PackageFilterIterator.init(ctx.allocator, patterns.items, resolve_root);
+        defer package_json_iter.deinit();
+
+        var arena = std.heap.ArenaAllocator.init(ctx.allocator);
+        var arena_alloc = arena.allocator();
+
+        var ok = true;
+        var any_match = false;
+        while (try package_json_iter.next()) |package_json_path| {
+            const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
+            const path = strings.withoutTrailingSlash(dirpath);
+            const matches = matches: {
+                if (filter_instance.has_name_filters) {
+                    // TODO load name from package.json
+
+                    const json_file = try std.fs.cwd().openFile(
+                        package_json_path,
+                        .{ .mode = .read_only },
+                    );
+                    defer json_file.close();
+
+                    const json_stat_size = try json_file.getEndPos();
+                    const json_buf = try arena_alloc.alloc(u8, json_stat_size + 64);
+                    defer _ = arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
+
+                    const json_len = try json_file.preadAll(json_buf, 0);
+                    const json_source = bun.logger.Source.initPathString(path, json_buf[0..json_len]);
+
+                    var parser = try json_parser.PackageJSONVersionChecker.init(arena_alloc, &json_source, ctx.log);
+                    _ = try parser.parseExpr();
+                    if (!parser.has_found_name) {
+                        // TODO warn of malformed package
+                        continue;
+                    }
+                    break :matches filter_instance.matchesPathName(path, parser.found_name);
+                } else {
+                    break :matches filter_instance.matchesPath(path);
+                }
+            };
+
+            if (!matches) continue;
+            any_match = true;
+            Output.prettyErrorln("<d><b>In <r><yellow><d>{s}<r>:", .{path});
+            // flush outputs to ensure that stdout and stderr are in the correct order for each of the paths
+            Output.flush();
+            switch (bun.sys.chdir(path)) {
+                .err => |err| {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s} due to error {}<r>", .{ path, err });
+                    Global.crash();
+                },
+                .result => {},
+            }
+            fsinstance.top_level_dir = path;
+
+            // TODO is this necessary? which assignment is correct here?
+            fsinstance.fs.cwd = path;
+            const res = exec(ctx, bin_dirs_only, true, true) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
+                continue;
+            };
+            ok = ok and res.notFailure();
+        }
+
+        if (!any_match) {
+            Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+            Global.exit(1);
+        }
+
+        if (!ok) {
+            Global.exit(1);
+        }
+    }
+
     pub fn exec(
         ctx_: Command.Context,
         comptime bin_dirs_only: bool,
         comptime log_errors: bool,
         comptime did_try_open_with_bun_js: bool,
-    ) !bool {
+    ) !ExecResult {
         var ctx = ctx_;
 
         // Step 1. Figure out what we're trying to run
@@ -1320,7 +1491,7 @@ pub const RunCommand = struct {
                 }
                 return ExecResult.failure;
             };
-            // return ExecResult.ok;
+            return ExecResult.ok;
         }
 
         if (!did_try_open_with_bun_js and (log_errors or force_using_bun)) {
@@ -1482,7 +1653,7 @@ pub const RunCommand = struct {
                         passthrough,
                         ctx.debug.silent,
                         ctx.debug.use_system_shell,
-                    )) return false;
+                    )) return ExecResult.failure;
 
                     temp_script_buffer[0.."post".len].* = "post".*;
 
@@ -1502,7 +1673,7 @@ pub const RunCommand = struct {
                         }
                     }
 
-                    return true;
+                    return ExecResult.ok;
                 }
             }
         }
@@ -1521,7 +1692,8 @@ pub const RunCommand = struct {
                 if (@errorReturnTrace()) |trace| {
                     std.debug.dumpStackTrace(trace.*);
                 }
-                Global.exit(1);
+                // Global.exit(1);
+                return ExecResult.failure;
             };
         }
 
@@ -1531,7 +1703,7 @@ pub const RunCommand = struct {
             var list = std.ArrayList(u8).init(stack_fallback.get());
             errdefer list.deinit();
 
-            std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
+            std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return ExecResult.failure;
             ctx.runtime_options.eval.script = list.items;
 
             const trigger = bun.pathLiteral("/[stdin]");
@@ -1540,7 +1712,7 @@ pub const RunCommand = struct {
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
-            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
+            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return ExecResult.failure) catch |err| {
                 ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
@@ -1550,9 +1722,11 @@ pub const RunCommand = struct {
                 if (@errorReturnTrace()) |trace| {
                     std.debug.dumpStackTrace(trace.*);
                 }
-                Global.exit(1);
+                // Global.exit(1);
+                return ExecResult.failure;
             };
-            return true;
+            // return true;
+            return ExecResult.ok;
         }
 
         if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path) try_bunx_file: {

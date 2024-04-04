@@ -135,7 +135,7 @@ pub const Run = struct {
         );
         try bundle.runEnvLoader(false);
         const mini = JSC.MiniEventLoop.initGlobal(bundle.env);
-        mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
+        mini.top_level_dir = ctx.args.cwd_override orelse "";
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
 

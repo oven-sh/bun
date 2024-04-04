@@ -364,9 +364,7 @@ pub fn GlobWalker_(
                 const root_path = this.walker.cwd;
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
-                const root_path_z = path_buf[0..root_path.len :0];
-                const cwd_fd = switch (Syscall.open(root_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
-                    .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, root_path_z) },
+                // const root_path_z = path_buf[0..root_path.len :0];
                 const cwd_fd = switch (try Accessor.open(path_buf[0..root_path.len :0])) {
                     .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
                     .result => |fd| fd,
@@ -415,10 +413,10 @@ pub fn GlobWalker_(
                 if (comptime count_fds) this.fds_open -= 1;
             }
 
-            pub fn closeDisallowingCwd(this: *Iterator, fd: bun.FileDescriptor) void {
-                if (fd == this.cwd_fd or fd == bun.invalid_fd) return;
-                _ = Syscall.close(fd);
-                if (bun.Environment.allow_assert) this.fds_open -= 1;
+            pub fn closeDisallowingCwd(this: *Iterator, fd: Accessor.Handle) void {
+                if (fd.isZero() or fd.eql(this.cwd_fd)) return;
+                _ = Accessor.close(fd);
+                if (comptime count_fds) this.fds_open -= 1;
             }
 
             pub fn bumpOpenFds(this: *Iterator) void {
@@ -470,7 +468,7 @@ pub fn GlobWalker_(
                 this.iter_state.directory.next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
                 this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
                 this.iter_state.directory.at_cwd = false;
-                this.iter_state.directory.fd = bun.invalid_fd;
+                this.iter_state.directory.fd = Accessor.Handle.zero;
 
                 const fd: Accessor.Handle = fd: {
                     if (work_item.fd) |fd| break :fd fd;

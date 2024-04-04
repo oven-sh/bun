@@ -61,8 +61,6 @@ Bun.stdout;
 Bun.stderr;
 ```
 
-
-
 ## Writing files (`Bun.write()`)
 
 `Bun.write(destination, data): Promise<number>`

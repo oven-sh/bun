@@ -5872,8 +5872,10 @@ pub const default_trusted_dependencies_list: []const []const u8 = brk: {
     // alphabetical so we don't need to sort in `bun pm trusted --default`
     std.sort.pdq([]const u8, buf[0..i], {}, Sorter.lessThan);
 
-    const names = buf[0..i].*;
-    break :brk names;
+    var names: [i][]const u8 = undefined;
+    @memcpy(names[0..i], buf[0..i]);
+    const final = names;
+    break :brk &final;
 };
 
 /// The default list of trusted dependencies is a static hashmap
@@ -5890,20 +5892,21 @@ const default_trusted_dependencies = brk: {
         }
     };
 
-    const map: StaticHashMap([]const u8, void, StringHashContext, max_default_trusted_dependencies) = .{};
+    var map: StaticHashMap([]const u8, void, StringHashContext, max_default_trusted_dependencies) = .{};
 
-    // for (default_trusted_dependencies_list) |dep| {
-    //     if (map.len == max_default_trusted_dependencies) {
-    //         @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
-    //     }
+    for (default_trusted_dependencies_list) |dep| {
+        if (map.len == max_default_trusted_dependencies) {
+            @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
+        }
 
-    //     // just in case there's duplicates from truncating
-    //     if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
+        // just in case there's duplicates from truncating
+        if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
 
-    //     map.putAssumeCapacity(dep, {});
-    // }
+        map.putAssumeCapacity(dep, {});
+    }
 
-    break :brk &map;
+    const final = map;
+    break :brk &final;
 };
 
 pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {

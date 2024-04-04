@@ -63,7 +63,7 @@ pub const BunxCommand = struct {
     const nanoseconds_cache_valid = seconds_cache_valid * 1000000000;
 
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
-        const target_package_json_fd = try bun.sys.openat(dir_fd, subpath_z, std.os.O.RDONLY, 0).unwrap();
+        const target_package_json_fd = try bun.sys.openat(dir_fd, subpath_z, bun.O.RDONLY, 0).unwrap();
         const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
 
         defer target_package_json.close();
@@ -110,7 +110,7 @@ pub const BunxCommand = struct {
         if (expr.asProperty("directories")) |dirs| {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
                 if (bin_prop.expr.asString(bundler.allocator)) |dir_name| {
-                    const bin_dir = try bun.sys.openatA(dir_fd, dir_name, std.os.O.RDONLY | std.os.O.DIRECTORY, 0).unwrap();
+                    const bin_dir = try bun.sys.openatA(dir_fd, dir_name, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap();
                     defer _ = bun.sys.close(bin_dir);
                     const dir = std.fs.Dir{ .fd = bin_dir.cast() };
                     var iterator = bun.DirIterator.iterate(dir, .u8);
@@ -147,7 +147,7 @@ pub const BunxCommand = struct {
                 bun.pathLiteral("{s}/package.json"),
                 .{tempdir_name},
             ) catch unreachable;
-            const target_package_json_fd = bun.sys.openat(bun.toFD(std.fs.cwd().fd), subpath_z, std.os.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
+            const target_package_json_fd = bun.sys.openat(bun.toFD(std.fs.cwd().fd), subpath_z, bun.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
             const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
 
             const is_stale = is_stale: {

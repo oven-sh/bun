@@ -1037,7 +1037,7 @@ pub const PackageInstall = struct {
             const package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
             defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
 
-            var package_json_file = File.openat(this.destination_dir, package_json_path, std.os.O.RDONLY, 0).unwrap() catch return false;
+            var package_json_file = File.openat(this.destination_dir, package_json_path, bun.O.RDONLY, 0).unwrap() catch return false;
             defer package_json_file.close();
 
             // Heuristic: most package.jsons will be less than 2048 bytes.
@@ -1525,7 +1525,7 @@ pub const PackageInstall = struct {
                                 bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
                             },
                             .file => {
-                                std.os.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
+                                std.posix.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
                                     if (err != error.PathAlreadyExists) {
                                         return err;
                                     }
@@ -1661,13 +1661,13 @@ pub const PackageInstall = struct {
                                 head2[entry.path.len + (head2.len - to_copy_into2.len)] = 0;
                                 const target: [:0]u8 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
 
-                                std.os.symlinkat(target, destination_dir.fd, entry.path) catch |err| {
+                                std.posix.symlinkat(target, destination_dir.fd, entry.path) catch |err| {
                                     if (err != error.PathAlreadyExists) {
                                         return err;
                                     }
 
-                                    std.os.unlinkat(destination_dir.fd, entry.path, 0) catch {};
-                                    try std.os.symlinkat(entry.basename, destination_dir.fd, entry.path);
+                                    std.posix.unlinkat(destination_dir.fd, entry.path, 0) catch {};
+                                    try std.posix.symlinkat(entry.basename, destination_dir.fd, entry.path);
                                 };
 
                                 real_file_count += 1;
@@ -9425,7 +9425,7 @@ pub const PackageManager = struct {
         const cwd = std.fs.cwd();
         const node_modules_folder = brk: {
             // Attempt to open the existing node_modules folder
-            switch (bun.sys.openatOSPath(bun.toFD(cwd), bun.OSPathLiteral("node_modules"), std.os.O.DIRECTORY | std.os.O.RDONLY, 0o755)) {
+            switch (bun.sys.openatOSPath(bun.toFD(cwd), bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
                 .result => |fd| break :brk std.fs.Dir{ .fd = fd.cast() },
                 .err => {},
             }

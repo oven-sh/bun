@@ -426,7 +426,7 @@ RUN mkdir -p build \
   -DWEBKIT_DIR="omit" \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DNO_CODEGEN=1 \
-  -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="/tmp" \
   -DCANARY="${CANARY}" \
   -DZIG_COMPILER=system \
   -DZIG_LIB_DIR=$BUN_DIR/src/deps/zig/lib \
@@ -477,7 +477,7 @@ RUN cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
-  -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="${BUN_DIR}/build" \
   -DUSE_LTO=ON \
   -DUSE_DEBUG_JSC=${ASSERTIONS} \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
@@ -534,7 +534,7 @@ RUN cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
-  -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="${BUN_DIR}/build" \
   -DUSE_DEBUG_JSC=ON \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \

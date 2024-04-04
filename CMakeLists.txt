@@ -839,11 +839,13 @@ file(GLOB ZIG_FILES
     "${BUN_SRC}/*/*/*/*/*.zig"
 )
 
-if(NOT BUN_ZIG_OBJ)
-    set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun-zig.o")
+if(NOT BUN_ZIG_OBJ_DIR)
+    set(BUN_ZIG_OBJ_DIR "${BUN_WORKDIR}/CMakeFiles")
 endif()
 
-get_filename_component(BUN_ZIG_OBJ "${BUN_ZIG_OBJ}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+get_filename_component(BUN_ZIG_OBJ_DIR "${BUN_ZIG_OBJ_DIR}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+
+set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.o")
 
 set(USES_TERMINAL_NOT_IN_CI "")
 
@@ -857,7 +859,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         COMMAND
         "${ZIG_COMPILER}" "build" "obj"
         "--zig-lib-dir" "${ZIG_LIB_DIR}"
-        "-Doutput-file=${BUN_ZIG_OBJ}"
+        "-prefix" "${BUN_ZIG_OBJ_DIR}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-freference-trace=10"
         "-Dversion=${Bun_VERSION}"

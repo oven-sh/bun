@@ -466,17 +466,17 @@ pub fn fastRandom() u64 {
             pub fn get() u64 {
                 // This is slightly racy but its fine because this memoization is done as a performance optimization
                 // and we only need to do it once per process
-                var value = seed_value.load(.Monotonic);
-                while (value == 0) : (value = seed_value.load(.Monotonic)) {
+                var value = seed_value.load(.monotonic);
+                while (value == 0) : (value = seed_value.load(.monotonic)) {
                     if (comptime Environment.isDebug) outer: {
                         if (getenvZ("BUN_DEBUG_HASH_RANDOM_SEED")) |env| {
                             value = std.fmt.parseInt(u64, env, 10) catch break :outer;
-                            seed_value.store(value, .Monotonic);
+                            seed_value.store(value, .monotonic);
                             return value;
                         }
                     }
                     rand(std.mem.asBytes(&value));
-                    seed_value.store(value, .Monotonic);
+                    seed_value.store(value, .monotonic);
                 }
 
                 return value;
@@ -2541,7 +2541,7 @@ pub const MakePath = struct {
             component = it.next() orelse return;
         }
     }
-    
+
     fn componentIterator(comptime T: type, path_: []const T) !std.fs.path.ComponentIterator(switch (builtin.target.os.tag) {
         .windows => .windows,
         .uefi => .uefi,

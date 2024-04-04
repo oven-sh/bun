@@ -140,6 +140,8 @@ $ bun upgrade
 {% callout %}
 **Homebrew users** — To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
 
+**Scoop users** — To avoid conflicts with Scoop, use `scoop upgrade bun` instead.
+
 **proto users** - Use `proto install bun --pin` instead.
 {% /callout %}
 
@@ -229,6 +231,10 @@ $ rm -rf ~/.bun # for macOS, Linux, and WSL
 
 ```powershell#Windows
 powershell -c ~\.bun\uninstall.ps1
+```
+
+```powershell#Windows
+scoop uninstall bun
 ```
 
 ```bash#NPM

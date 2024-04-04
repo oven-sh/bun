@@ -3,7 +3,8 @@ FROM debian:bullseye-slim AS build
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
 
-# We add python3 for node-gyp, see https://github.com/oven-sh/bun/issues/9807
+# Node.js includes python3 for node-gyp, see https://github.com/oven-sh/bun/issues/9807
+# Though, not on slim and alpine images.
 RUN apt-get update -qq \
     && apt-get install -qq --no-install-recommends \
       ca-certificates \

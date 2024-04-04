@@ -35,6 +35,7 @@ beforeEach(async () => {
 
   env.TEMP = current_tmpdir;
   env.BUN_TMPDIR = env.TMPDIR = current_tmpdir;
+  env.TMPDIR = current_tmpdir;
   env.BUN_INSTALL_CACHE_DIR = install_cache_dir;
 
   await Promise.all(waiting);
@@ -83,12 +84,11 @@ it("should choose the tagged versions instead of the PATH versions when a tag is
     });
   });
 
-  const [results, stdouts] = await Promise.all([
-    Promise.all(processes.map(p => p.exited)),
-    Promise.all(processes.map(p => new Response(p.stdout).text())),
-  ]);
+  const results = await Promise.all(processes.map(p => p.exited));
   expect(results).toEqual(semverVersions.map(() => 0));
-  const outputs = stdouts.map(a => a.substring(0, a.indexOf("\n")));
+  const outputs = (await Promise.all(processes.map(p => new Response(p.stdout).text()))).map(a =>
+    a.substring(0, a.indexOf("\n")),
+  );
   expect(outputs).toEqual(semverVersions.map(v => "SemVer " + v));
 });
 

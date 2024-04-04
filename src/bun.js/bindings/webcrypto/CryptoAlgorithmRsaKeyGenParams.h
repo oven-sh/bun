@@ -45,9 +45,10 @@ public:
         if (!m_publicExponentVector.isEmpty() || !publicExponent->byteLength())
             return m_publicExponentVector;
 
-        m_publicExponentVector.append(publicExponent->data(), publicExponent->byteLength());
+        m_publicExponentVector.append(std::span { publicExponent->data(), publicExponent->byteLength() });
         return m_publicExponentVector;
     }
+
 private:
     mutable Vector<uint8_t> m_publicExponentVector;
 };

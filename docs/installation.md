@@ -52,9 +52,6 @@ powershell -c "irm bun.sh/install.ps1|iex"
 
 ```powershell#Scoop
 scoop install bun
-# Or if your CPU does not support the AVX2 instruction set. You can check by running this command:
-# (Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);'-Name 'Kernel32'-Namespace 'Win32'-PassThru)::IsProcessorFeaturePresent(40)
-scoop install bun-baseline
 ```
 
 {% /codetabs %}

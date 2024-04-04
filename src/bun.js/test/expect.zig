@@ -40,6 +40,9 @@ const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
 });
 
 pub var active_test_expectation_counter: Counter = .{};
+pub var is_expecting_assertions: bool = false;
+pub var is_expecting_assertions_count: bool = false;
+pub var expected_assertions_number: u32 = 0;
 
 const log = bun.Output.scoped(.expect, false);
 
@@ -184,11 +187,13 @@ pub const Expect = struct {
                     promise.setHandled(vm);
 
                     const now = std.time.Instant.now() catch unreachable;
-                    const elapsed = if (Jest.runner.?.pending_test) |pending_test| @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms) else 0;
-                    const remaining = @as(u32, @truncate(Jest.runner.?.last_test_timeout_timer_duration -| elapsed));
+                    const remaining = if (Jest.runner) |runner| remaining: {
+                        const elapsed = if (runner.pending_test) |pending_test| @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms) else 0;
+                        break :remaining @as(u32, @truncate(runner.last_test_timeout_timer_duration -| elapsed));
+                    } else std.math.maxInt(u32);
 
                     if (!globalThis.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
-                        if (Jest.runner.?.pending_test) |pending_test|
+                        if (Jest.runner) |runner| if (runner.pending_test) |pending_test|
                             pending_test.timeout();
                         return null;
                     }
@@ -402,11 +407,7 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("pass", "", true);
             const fmt = signature ++ "\n\n{s}\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{msg.slice()});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{msg.slice()});
+            globalObject.throwPretty(fmt, .{msg.slice()});
             return .zero;
         }
 
@@ -453,11 +454,7 @@ pub const Expect = struct {
 
         const signature = comptime getSignature("fail", "", true);
         const fmt = signature ++ "\n\n{s}\n";
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{msg.slice()});
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, false), .{msg.slice()});
+        globalObject.throwPretty(fmt, .{msg.slice()});
         return .zero;
     }
 
@@ -493,11 +490,7 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("toBe", "<green>expected<r>", true);
             const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{right.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{right.toFmt(globalObject, &formatter)});
+            globalObject.throwPretty(fmt, .{right.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
@@ -507,11 +500,7 @@ pub const Expect = struct {
                 "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" ++
                 "\n\nExpected: <green>{any}<r>\n" ++
                 "Received: serializes to the same string\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{right.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{right.toFmt(globalObject, &formatter)});
+            globalObject.throwPretty(fmt, .{right.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
@@ -523,23 +512,12 @@ pub const Expect = struct {
                 .not = not,
             };
             const fmt = comptime signature ++ "\n\n{any}\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(comptime Output.prettyFmt(fmt, true), .{diff_format});
-                return .zero;
-            }
-            globalObject.throw(comptime Output.prettyFmt(fmt, false), .{diff_format});
+            globalObject.throwPretty(fmt, .{diff_format});
             return .zero;
         }
 
         const fmt = signature ++ "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n";
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{
-                right.toFmt(globalObject, &formatter),
-                left.toFmt(globalObject, &formatter),
-            });
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, false), .{
+        globalObject.throwPretty(fmt, .{
             right.toFmt(globalObject, &formatter),
             left.toFmt(globalObject, &formatter),
         });
@@ -610,12 +588,7 @@ pub const Expect = struct {
         if (not) {
             const expected_line = "Expected length: not <green>{d}<r>\n";
             const fmt = comptime getSignature("toHaveLength", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_length});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_length});
+            globalObject.throwPretty(fmt, .{expected_length});
             return .zero;
         }
 
@@ -623,12 +596,94 @@ pub const Expect = struct {
         const received_line = "Received length: <red>{d}<r>\n";
         const fmt = comptime getSignature("toHaveLength", "<green>expected<r>", false) ++ "\n\n" ++
             expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_length, actual_length });
+
+        globalObject.throwPretty(fmt, .{ expected_length, actual_length });
+        return .zero;
+    }
+
+    pub fn toBeOneOf(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toBeOneOf() takes 1 argument", .{});
             return .zero;
         }
 
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_length, actual_length });
+        incrementExpectCallCounter();
+
+        const expected = this.getValue(globalObject, thisValue, "toBeOneOf", "<green>expected<r>") orelse return .zero;
+        const list_value: JSValue = arguments[0];
+
+        const not = this.flags.not;
+        var pass = false;
+
+        const ExpectedEntry = struct {
+            globalObject: *JSC.JSGlobalObject,
+            expected: JSValue,
+            pass: *bool,
+        };
+
+        if (list_value.jsTypeLoose().isArrayLike()) {
+            var itr = list_value.arrayIterator(globalObject);
+            while (itr.next()) |item| {
+                // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
+                if (item.jestDeepEquals(expected, globalObject)) {
+                    pass = true;
+                    break;
+                }
+            }
+        } else if (list_value.isIterable(globalObject)) {
+            var expected_entry = ExpectedEntry{
+                .globalObject = globalObject,
+                .expected = expected,
+                .pass = &pass,
+            };
+            list_value.forEach(globalObject, &expected_entry, struct {
+                pub fn sameValueIterator(
+                    _: *JSC.VM,
+                    _: *JSGlobalObject,
+                    entry_: ?*anyopaque,
+                    item: JSValue,
+                ) callconv(.C) void {
+                    const entry = bun.cast(*ExpectedEntry, entry_.?);
+                    // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
+                    if (item.jestDeepEquals(entry.expected, entry.globalObject)) {
+                        entry.pass.* = true;
+                        // TODO(perf): break out of the `forEach` when a match is found
+                    }
+                }
+            }.sameValueIterator);
+        } else {
+            globalObject.throw("Received value must be an array type, or both received and expected values must be strings.", .{});
+            return .zero;
+        }
+
+        if (not) pass = !pass;
+        if (pass) return .undefined;
+
+        // handle failure
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = list_value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = list_value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not be one of: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toBeOneOf", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            globalObject.throwPretty(fmt, .{ received_fmt, expected_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to be one of: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toBeOneOf", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalObject.throwPretty(fmt, .{ value_fmt, expected_fmt });
         return .zero;
     }
 
@@ -671,9 +726,9 @@ pub const Expect = struct {
                 }
             }
         } else if (value.isStringLiteral() and expected.isStringLiteral()) {
-            const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator);
+            const value_string = value.toSlice(globalObject, default_allocator);
             defer value_string.deinit();
-            const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator);
+            const expected_string = expected.toSlice(globalObject, default_allocator);
             defer expected_string.deinit();
 
             if (expected_string.len == 0) { // edge case empty string is always contained
@@ -717,7 +772,7 @@ pub const Expect = struct {
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
-            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContain", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
@@ -726,12 +781,7 @@ pub const Expect = struct {
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContain", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -757,7 +807,7 @@ pub const Expect = struct {
         const value: JSValue = this.getValue(globalObject, thisValue, "toContainKey", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
-        var pass = value.hasOwnProperty(globalObject, expected.toString(globalObject).getZigString(globalObject));
+        var pass = value.hasOwnPropertyValue(globalObject, expected);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -768,7 +818,7 @@ pub const Expect = struct {
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
-            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContainKey", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
@@ -777,12 +827,7 @@ pub const Expect = struct {
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContainKey", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -813,20 +858,25 @@ pub const Expect = struct {
         }
 
         const not = this.flags.not;
-        var pass = true;
+        var pass = brk: {
+            const count = expected.getLength(globalObject);
 
-        const count = expected.getLength(globalObject);
+            // jest-extended checks for truthiness before calling hasOwnProperty
+            // https://github.com/jest-community/jest-extended/blob/711fdcc54d68c2b2c1992c7cfbdf0d0bd6be0f4d/src/matchers/toContainKeys.js#L1-L6
+            if (!value.coerce(bool, globalObject)) break :brk count == 0;
 
-        var i: u32 = 0;
+            var i: u32 = 0;
 
-        while (i < count) : (i += 1) {
-            const key = expected.getIndex(globalObject, i);
+            while (i < count) : (i += 1) {
+                const key = expected.getIndex(globalObject, i);
 
-            if (!value.hasOwnProperty(globalObject, key.toString(globalObject).getZigString(globalObject))) {
-                pass = false;
-                break;
+                if (!value.hasOwnPropertyValue(globalObject, key)) {
+                    break :brk false;
+                }
             }
-        }
+
+            break :brk true;
+        };
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -837,7 +887,7 @@ pub const Expect = struct {
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
-            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContainKeys", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
@@ -846,12 +896,7 @@ pub const Expect = struct {
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContainKeys", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -891,7 +936,7 @@ pub const Expect = struct {
         while (i < count) : (i += 1) {
             const key = expected.getIndex(globalObject, i);
 
-            if (value.hasOwnProperty(globalObject, key.toString(globalObject).getZigString(globalObject))) {
+            if (value.hasOwnPropertyValue(globalObject, key)) {
                 pass = true;
                 break;
             }
@@ -906,7 +951,7 @@ pub const Expect = struct {
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
-            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContainAnyKeys", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
@@ -915,12 +960,7 @@ pub const Expect = struct {
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContainAnyKeys", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -967,9 +1007,9 @@ pub const Expect = struct {
             }
         } else if (value_type.isStringLike() and expected_type.isStringLike()) {
             if (expected_type.isStringObjectLike() and value_type.isString()) pass = false else {
-                const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator);
+                const value_string = value.toSliceOrNull(globalObject) orelse return .zero;
                 defer value_string.deinit();
-                const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator);
+                const expected_string = expected.toSliceOrNull(globalObject) orelse return .zero;
                 defer expected_string.deinit();
 
                 // jest does not have a `typeof === "string"` check for `toContainEqual`.
@@ -1052,23 +1092,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeTruthy", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeTruthy", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1092,23 +1122,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeUndefined", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeUndefined", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1136,23 +1156,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeNaN", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeNaN", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1175,23 +1185,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeNull", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeNull", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1214,23 +1214,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeDefined", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeDefined", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1258,23 +1248,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeFalsy", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeFalsy", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1351,21 +1331,13 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("toStrictEqual", "<green>expected<r>", true);
             const fmt = signature ++ "\n\n{any}\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{diff_formatter});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{diff_formatter});
+            globalObject.throwPretty(fmt, .{diff_formatter});
             return .zero;
         }
 
         const signature = comptime getSignature("toStrictEqual", "<green>expected<r>", false);
         const fmt = signature ++ "\n\n{any}\n";
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{diff_formatter});
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, false), .{diff_formatter});
+        globalObject.throwPretty(fmt, .{diff_formatter});
         return .zero;
     }
 
@@ -1421,14 +1393,7 @@ pub const Expect = struct {
                 const signature = comptime getSignature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
                 if (!received_property.isEmpty()) {
                     const fmt = signature ++ "\n\nExpected path: <green>{any}<r>\n\nExpected value: not <green>{any}<r>\n";
-                    if (Output.enable_ansi_colors) {
-                        globalObject.throw(Output.prettyFmt(fmt, true), .{
-                            expected_property_path.toFmt(globalObject, &formatter),
-                            expected_property.?.toFmt(globalObject, &formatter),
-                        });
-                        return .zero;
-                    }
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{
+                    globalObject.throwPretty(fmt, .{
                         expected_property_path.toFmt(globalObject, &formatter),
                         expected_property.?.toFmt(globalObject, &formatter),
                     });
@@ -1438,14 +1403,7 @@ pub const Expect = struct {
 
             const signature = comptime getSignature("toHaveProperty", "<green>path<r>", true);
             const fmt = signature ++ "\n\nExpected path: not <green>{any}<r>\n\nReceived value: <red>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{
-                    expected_property_path.toFmt(globalObject, &formatter),
-                    received_property.toFmt(globalObject, &formatter),
-                });
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{
+            globalObject.throwPretty(fmt, .{
                 expected_property_path.toFmt(globalObject, &formatter),
                 received_property.toFmt(globalObject, &formatter),
             });
@@ -1463,24 +1421,13 @@ pub const Expect = struct {
                     .globalObject = globalObject,
                 };
 
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{diff_format});
-                    return .zero;
-                }
-                globalObject.throw(Output.prettyFmt(fmt, false), .{diff_format});
+                globalObject.throwPretty(fmt, .{diff_format});
                 return .zero;
             }
 
             const fmt = signature ++ "\n\nExpected path: <green>{any}<r>\n\nExpected value: <green>{any}<r>\n\n" ++
                 "Unable to find property\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{
-                    expected_property_path.toFmt(globalObject, &formatter),
-                    expected_property.?.toFmt(globalObject, &formatter),
-                });
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{
+            globalObject.throwPretty(fmt, .{
                 expected_property_path.toFmt(globalObject, &formatter),
                 expected_property.?.toFmt(globalObject, &formatter),
             });
@@ -1489,11 +1436,7 @@ pub const Expect = struct {
 
         const signature = comptime getSignature("toHaveProperty", "<green>path<r>", false);
         const fmt = signature ++ "\n\nExpected path: <green>{any}<r>\n\nUnable to find property\n";
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{expected_property_path.toFmt(globalObject, &formatter)});
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, false), .{expected_property_path.toFmt(globalObject, &formatter)});
+        globalObject.throwPretty(fmt, .{expected_property_path.toFmt(globalObject, &formatter)});
         return .zero;
     }
 
@@ -1541,23 +1484,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeEven", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeEven", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1613,12 +1546,8 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\> <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeGreaterThan", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
 
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 
@@ -1626,12 +1555,8 @@ pub const Expect = struct {
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeGreaterThan", "<green>expected<r>", false) ++ "\n\n" ++
             expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
 
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1687,22 +1612,14 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\>= <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeGreaterThanOrEqual", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 
         const expected_line = "Expected: \\>= <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeGreaterThanOrEqual", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1758,22 +1675,14 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\< <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeLessThan", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 
         const expected_line = "Expected: \\< <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeLessThan", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1829,22 +1738,14 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\<= <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeLessThanOrEqual", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 
         const expected_line = "Expected: \\<= <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeLessThanOrEqual", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1922,23 +1823,13 @@ pub const Expect = struct {
 
         if (not) {
             const fmt = comptime getSignature("toBeCloseTo", "<green>expected<r>, precision", true) ++ suffix_fmt;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
+            globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
             return .zero;
         }
 
         const fmt = comptime getSignature("toBeCloseTo", "<green>expected<r>, precision", false) ++ suffix_fmt;
 
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
+        globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
         return .zero;
     }
 
@@ -1984,23 +1875,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeOdd", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeOdd", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -2170,11 +2051,7 @@ pub const Expect = struct {
             expected_value.getClassName(globalObject, &expected_class);
             const received_message = result.getIfPropertyExistsImpl(globalObject, "message", 7);
             const fmt = signature ++ "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_class, received_message.toFmt(globalObject, &formatter) });
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_class, received_message.toFmt(globalObject, &formatter) });
+            globalObject.throwPretty(fmt, .{ expected_class, received_message.toFmt(globalObject, &formatter) });
             return .zero;
         }
 
@@ -2317,47 +2194,28 @@ pub const Expect = struct {
 
         if (expected_value.isEmpty() or expected_value.isUndefined()) {
             const fmt = comptime getSignature("toThrow", "", false) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{});
+            globalObject.throwPretty(fmt, .{});
             return .zero;
         }
 
         if (expected_value.isString()) {
             const expected_fmt = "\n\nExpected substring: <green>{any}<r>\n\n" ++ received_line;
             const fmt = signature ++ expected_fmt;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_value.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_value.toFmt(globalObject, &formatter)});
+            globalObject.throwPretty(fmt, .{expected_value.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
         if (expected_value.isRegExp()) {
             const expected_fmt = "\n\nExpected pattern: <green>{any}<r>\n\n" ++ received_line;
             const fmt = signature ++ expected_fmt;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_value.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_value.toFmt(globalObject, &formatter)});
+            globalObject.throwPretty(fmt, .{expected_value.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
         if (expected_value.get(globalObject, "message")) |expected_message| {
             const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
             const fmt = signature ++ expected_fmt;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_message.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_message.toFmt(globalObject, &formatter)});
+            globalObject.throwPretty(fmt, .{expected_message.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
@@ -2365,11 +2223,7 @@ pub const Expect = struct {
         var expected_class = ZigString.Empty;
         expected_value.getClassName(globalObject, &expected_class);
         const fmt = signature ++ expected_fmt;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{expected_class});
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, true), .{expected_class});
+        globalObject.throwPretty(fmt, .{expected_class});
         return .zero;
     }
 
@@ -2740,18 +2594,19 @@ pub const Expect = struct {
         const expected = arguments[0];
         expected.ensureStillAlive();
 
-        const expectedAsStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-        incrementExpectCallCounter();
-
         if (!expected.isString()) {
             globalThis.throwInvalidArguments("toBeTypeOf() requires a string argument", .{});
             return .zero;
         }
 
-        if (!JSTypeOfMap.has(expectedAsStr)) {
+        const expected_type = expected.toBunString(globalThis);
+        defer expected_type.deref();
+        incrementExpectCallCounter();
+
+        const typeof = expected_type.inMap(JSTypeOfMap) orelse {
             globalThis.throwInvalidArguments("toBeTypeOf() requires a valid type string argument ('function', 'object', 'bigint', 'boolean', 'number', 'string', 'symbol', 'undefined')", .{});
             return .zero;
-        }
+        };
 
         const not = this.flags.not;
         var pass = false;
@@ -2779,7 +2634,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        pass = strings.eql(expectedAsStr, whatIsTheType);
+        pass = strings.eql(typeof, whatIsTheType);
 
         if (not) pass = !pass;
         if (pass) return .undefined;
@@ -3122,19 +2977,24 @@ pub const Expect = struct {
         var pass = value.isString() and expected.isString();
 
         if (pass) {
-            const valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            const expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const value_slice = value.toSlice(globalThis, default_allocator);
+            defer value_slice.deinit();
+            const expected_slice = expected.toSlice(globalThis, default_allocator);
+            defer expected_slice.deinit();
+
+            const value_utf8 = value_slice.slice();
+            const expected_utf8 = expected_slice.slice();
 
             var left: usize = 0;
             var right: usize = 0;
 
             // Skip leading whitespaces
-            while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
-            while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+            while (left < value_utf8.len and std.ascii.isWhitespace(value_utf8[left])) left += 1;
+            while (right < expected_utf8.len and std.ascii.isWhitespace(expected_utf8[right])) right += 1;
 
-            while (left < valueStr.len and right < expectedStr.len) {
-                const left_char = valueStr[left];
-                const right_char = expectedStr[right];
+            while (left < value_utf8.len and right < expected_utf8.len) {
+                const left_char = value_utf8[left];
+                const right_char = expected_utf8[right];
 
                 if (left_char != right_char) {
                     pass = false;
@@ -3145,11 +3005,11 @@ pub const Expect = struct {
                 right += 1;
 
                 // Skip trailing whitespaces
-                while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
-                while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+                while (left < value_utf8.len and std.ascii.isWhitespace(value_utf8[left])) left += 1;
+                while (right < expected_utf8.len and std.ascii.isWhitespace(expected_utf8[right])) right += 1;
             }
 
-            if (left < valueStr.len or right < expectedStr.len) {
+            if (left < value_utf8.len or right < expected_utf8.len) {
                 pass = false;
             }
         }
@@ -3335,9 +3195,11 @@ pub const Expect = struct {
 
         var pass = value.isString();
         if (pass) {
-            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            pass = strings.contains(value_string, expected_string) or expected_string.len == 0;
+            const value_string = value.toSliceOrNull(globalThis) orelse return .zero;
+            defer value_string.deinit();
+            const expected_string = expected.toSliceOrNull(globalThis) orelse return .zero;
+            defer expected_string.deinit();
+            pass = strings.contains(value_string.slice(), expected_string.slice()) or expected_string.len == 0;
         }
 
         const not = this.flags.not;
@@ -3526,11 +3388,7 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("toSatisfy", "<green>expected<r>", true);
             const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalThis.throw(Output.prettyFmt(fmt, true), .{predicate.toFmt(globalThis, &formatter)});
-                return .zero;
-            }
-            globalThis.throw(Output.prettyFmt(fmt, false), .{predicate.toFmt(globalThis, &formatter)});
+            globalThis.throwPretty(fmt, .{predicate.toFmt(globalThis, &formatter)});
             return .zero;
         }
 
@@ -3538,15 +3396,7 @@ pub const Expect = struct {
 
         const fmt = signature ++ "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n";
 
-        if (Output.enable_ansi_colors) {
-            globalThis.throw(Output.prettyFmt(fmt, true), .{
-                predicate.toFmt(globalThis, &formatter),
-                value.toFmt(globalThis, &formatter),
-            });
-            return .zero;
-        }
-
-        globalThis.throw(Output.prettyFmt(fmt, false), .{
+        globalThis.throwPretty(fmt, .{
             predicate.toFmt(globalThis, &formatter),
             value.toFmt(globalThis, &formatter),
         });
@@ -3580,9 +3430,11 @@ pub const Expect = struct {
 
         var pass = value.isString();
         if (pass) {
-            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            pass = strings.startsWith(value_string, expected_string) or expected_string.len == 0;
+            const value_string = value.toSliceOrNull(globalThis) orelse return .zero;
+            defer value_string.deinit();
+            const expected_string = expected.toSliceOrNull(globalThis) orelse return .zero;
+            defer expected_string.deinit();
+            pass = strings.startsWith(value_string.slice(), expected_string.slice()) or expected_string.len == 0;
         }
 
         const not = this.flags.not;
@@ -3635,9 +3487,11 @@ pub const Expect = struct {
 
         var pass = value.isString();
         if (pass) {
-            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            pass = strings.endsWith(value_string, expected_string) or expected_string.len == 0;
+            const value_string = value.toSliceOrNull(globalThis) orelse return .zero;
+            defer value_string.deinit();
+            const expected_string = expected.toSliceOrNull(globalThis) orelse return .zero;
+            defer expected_string.deinit();
+            pass = strings.endsWith(value_string.slice(), expected_string.slice()) or expected_string.len == 0;
         }
 
         const not = this.flags.not;
@@ -3700,12 +3554,7 @@ pub const Expect = struct {
             const expected_line = "Expected constructor: not <green>{any}<r>\n";
             const received_line = "Received value: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeInstanceOf", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 
@@ -4348,7 +4197,8 @@ pub const Expect = struct {
         const is_valid = valid: {
             if (result.isObject()) {
                 if (result.get(globalObject, "pass")) |pass_value| {
-                    pass = pass_value.toBoolean();
+                    pass = pass_value.toBooleanSlow(globalObject);
+                    if (globalObject.hasException()) return false;
 
                     if (result.get(globalObject, "message")) |message_value| {
                         if (!message_value.isString() and !message_value.isCallable(globalObject.vm())) {
@@ -4379,16 +4229,28 @@ pub const Expect = struct {
             message_text = bun.String.static("No message was specified for this matcher.");
         } else if (message.isString()) {
             message_text = message.toBunString(globalObject);
-        } else { // callable
+        } else {
+            if (comptime Environment.allow_assert)
+                std.debug.assert(message.isCallable(globalObject.vm())); // checked above
+
             var message_result = message.callWithGlobalThis(globalObject, &[_]JSValue{});
             std.debug.assert(!message_result.isEmpty());
             if (message_result.toError()) |err| {
                 globalObject.throwValue(err);
                 return false;
             }
-            if (message_result.toStringOrNull(globalObject)) |str| {
-                message_text = bun.String.init(str.getZigString(globalObject));
+            if (bun.String.tryFromJS(message_result, globalObject)) |str| {
+                message_text = str;
             } else {
+                if (globalObject.hasException()) return false;
+                var formatter = JSC.ConsoleObject.Formatter{
+                    .globalThis = globalObject,
+                    .quote_strings = true,
+                };
+                globalObject.throw(
+                    "Expected custom matcher message to return a string, but got: {}",
+                    .{message_result.toFmt(globalObject, &formatter)},
+                );
                 return false;
             }
         }
@@ -4462,9 +4324,50 @@ pub const Expect = struct {
         return thisValue;
     }
 
-    pub const assertions = notImplementedStaticFn;
-    pub const hasAssertions = notImplementedStaticFn;
     pub const addSnapshotSerializer = notImplementedStaticFn;
+
+    pub fn hasAssertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        _ = callFrame;
+        defer globalObject.bunVM().autoGarbageCollect();
+
+        is_expecting_assertions = true;
+
+        return .undefined;
+    }
+
+    pub fn assertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer globalObject.bunVM().autoGarbageCollect();
+
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("expect.assertions() takes 1 argument", .{});
+            return .zero;
+        }
+
+        const expected: JSValue = arguments[0];
+
+        if (!expected.isNumber()) {
+            var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+
+        const expected_assertions: f64 = expected.asNumber();
+        if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0) {
+            var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+
+        const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
+
+        is_expecting_assertions_count = true;
+        expected_assertions_number = unsigned_expected_assertions;
+
+        return .undefined;
+    }
 
     pub fn notImplementedJSCFn(_: *Expect, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         globalObject.throw("Not implemented", .{});
@@ -5124,7 +5027,7 @@ pub const ExpectMatcherUtils = struct {
 
         try buffered_writer.flush();
 
-        return bun.String.create(mutable_string.toOwnedSlice()).toJS(globalObject);
+        return bun.String.createUTF8(mutable_string.toOwnedSlice()).toJS(globalObject);
     }
 
     inline fn printValueCatched(globalObject: *JSC.JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) JSValue {
@@ -5159,7 +5062,8 @@ pub const ExpectMatcherUtils = struct {
             globalObject.throw("matcherHint: the first argument (matcher name) must be a string", .{});
             return .zero;
         }
-        const matcher_name = bun.String.init(arguments[0].toString(globalObject).getZigString(globalObject));
+        const matcher_name = arguments[0].toBunString(globalObject);
+        defer matcher_name.deref();
 
         const received = if (arguments.len > 1) arguments[1] else bun.String.static("received").toJS(globalObject);
         const expected = if (arguments.len > 2) arguments[2] else bun.String.static("expected").toJS(globalObject);
@@ -5180,7 +5084,7 @@ pub const ExpectMatcherUtils = struct {
                 return .zero;
             }
             if (options.get(globalObject, "isNot")) |val| {
-                is_not = val.toBoolean();
+                is_not = val.coerce(bool, globalObject);
             }
             if (options.get(globalObject, "comment")) |val| {
                 comment = val.toStringOrNull(globalObject);

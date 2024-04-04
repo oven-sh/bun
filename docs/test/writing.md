@@ -109,7 +109,7 @@ $ bun test --todo
 
 ## `test.only`
 
-To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --only` will only execute tests/suites that have been marked with `.only()`.
+To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --only` will only execute tests/suites that have been marked with `.only()`. Running `bun test` without the `--only` option with `test.only()` declared will result in all tests in the given suite being executed _up to_ the test with `.only()`. `describe.only()` functions the same in both execution scenarios.
 
 ```ts
 import { test, describe } from "bun:test";
@@ -135,6 +135,12 @@ The following command will only execute tests #2 and #3.
 $ bun test --only
 ```
 
+The following command will only execute tests #1, #2 and #3.
+
+```sh
+$ bun test
+```
+
 ## `test.if`
 
 To run a test conditionally, use `test.if()`. The test will run if the condition is truthy. This is particularly useful for tests that should only run on specific architectures or operating systems.
@@ -150,6 +156,8 @@ test.if(macOS)("runs on macOS", () => {
 });
 ```
 
+## `test.skipIf`
+
 To instead skip a test based on some condition, use `test.skipIf()` or `describe.skipIf()`.
 
 ```ts
@@ -160,16 +168,32 @@ test.skipIf(macOS)("runs on non-macOS", () => {
 });
 ```
 
+## `test.todoIf`
+
+If instead you want to mark the test as TODO, use `test.todoIf()` or `describe.todoIf()`. Carefully choosing `skipIf` or `todoIf` can show a difference between, for example, intent of "invalid for this target" and "planned but not implemented yet."
+
+```ts
+const macOS = process.arch === "darwin";
+
+// TODO: we've only implemented this for Linux so far.
+test.todoIf(macOS)("runs on posix", () => {
+  // runs if *not* macOS
+});
+```
+
 ## `test.each`
 
 To return a function for multiple cases in a table of tests, use `test.each`.
 
 ```ts
-const cases = [[1, 2, 3], [3, 4, 5]];
+const cases = [
+  [1, 2, 3],
+  [3, 4, 5],
+];
 
 test.each(cases)("%p + %p should be %p", (a, b, expected) => {
-    // runs once for each test case provided
-})
+  // runs once for each test case provided
+});
 ```
 
 There are a number of options available for formatting the case label depending on its type.
@@ -301,7 +325,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.extend`](https://jestjs.io/docs/expect#expectextendmatchers)
 
 ---
@@ -321,7 +345,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.assertions()`](https://jestjs.io/docs/expect#expectassertionsnumber)
 
 ---
@@ -331,7 +355,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.hasAssertions()`](https://jestjs.io/docs/expect#expecthasassertions)
 
 ---

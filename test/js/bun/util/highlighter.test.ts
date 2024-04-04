@@ -1,7 +1,5 @@
 import { test, expect } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
-// @ts-expect-error
-const highlighter: (code: string) => string = globalThis[Symbol.for("Bun.lazy")]("unstable_syntaxHighlight");
+import { quickAndDirtyJavaScriptSyntaxHighlighter as highlighter } from "bun:internal-for-testing";
 
 test("highlighter", () => {
   expect(highlighter("`can do ${123} ${'123'} ${`123`}`").length).toBeLessThan(150);

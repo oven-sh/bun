@@ -17,6 +17,7 @@ const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
+const w = std.os.windows;
 
 const ExtractTarball = @This();
 
@@ -157,22 +158,34 @@ threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
-    var tmpdir = this.temp_dir;
-    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    const tmpdir = this.temp_dir;
+    var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
     const name = this.name.slice();
     const basename = brk: {
-        if (name[0] == '@') {
-            if (strings.indexOfChar(name, '/')) |i| {
-                break :brk name[i + 1 ..];
+        var tmp = name;
+        if (tmp[0] == '@') {
+            if (strings.indexOfChar(tmp, '/')) |i| {
+                tmp = tmp[i + 1 ..];
             }
         }
-        break :brk name;
+
+        if (comptime Environment.isWindows) {
+            if (strings.lastIndexOfChar(tmp, ':')) |i| {
+                tmp = tmp[i + 1 ..];
+            }
+        }
+
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(tmp.len > 0);
+        }
+
+        break :brk tmp;
     };
 
     var resolved: string = "";
-    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
+    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], std.mem.asBytes(&tmpname_buf), bun.fastRandom());
     {
-        var extract_destination = tmpdir.makeOpenPath(std.mem.span(tmpname), .{}) catch |err| {
+        var extract_destination = bun.MakePath.makeOpenPath(tmpdir, bun.span(tmpname), .{}) catch |err| {
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -202,8 +215,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 null,
                 logger.Loc.Empty,
                 this.package_manager.allocator,
-                "{s} decompressing \"{s}\"",
-                .{ @errorName(err), name },
+                "{s} decompressing \"{s}\" to \"{}\"",
+                .{ @errorName(err), name, bun.fmt.fmtPath(u8, std.mem.span(tmpname), .{}) },
             ) catch unreachable;
             return error.InstallFailed;
         };
@@ -273,63 +286,146 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
     var cache_dir = this.cache_dir;
-    cache_dir.deleteTree(folder_name) catch {};
 
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
-    if (basename.len != name.len) {
-        cache_dir.makeDir(std.mem.trim(u8, name[0 .. name.len - basename.len], "/")) catch {};
-    }
+    const create_subdir = basename.len != name.len and !this.resolution.tag.isGit();
 
     // Now that we've extracted the archive, we rename.
     if (comptime Environment.isWindows) {
-        // TODO(dylan-conway) make this less painful
-        var from_buf: bun.PathBuffer = undefined;
-        const tmpdir_path = try bun.getFdPath(tmpdir.fd, &from_buf);
-        const from_path = Path.joinAbsStringZ(tmpdir_path, &.{bun.sliceTo(tmpname, 0)}, .auto);
+        var did_retry = false;
+        var path2_buf: bun.WPathBuffer = undefined;
+        const path2 = bun.strings.toWPathNormalized(&path2_buf, folder_name);
+        var close_target_dir = false;
+        var target_dir = brk: {
+            if (create_subdir) {
+                if (bun.Dirname.dirname(u16, path2)) |folder| {
+                    if (bun.MakePath.makeOpenPath(cache_dir, folder, .{})) |targ| {
+                        close_target_dir = true;
+                        break :brk targ;
+                    } else |_| {}
+                }
+            }
 
-        var to_buf: bun.PathBuffer = undefined;
-        const cache_dir_path = try bun.getFdPath(cache_dir.fd, &to_buf);
-        const to_path = Path.joinAbsStringBufZ(cache_dir_path, &to_buf, &.{folder_name}, .auto);
+            break :brk cache_dir;
+        };
+        defer if (close_target_dir) target_dir.close();
 
-        var from_path_buf_w: bun.WPathBuffer = undefined;
-        const from_path_w = bun.strings.toWPath(&from_path_buf_w, from_path);
-        var to_path_buf_w: bun.WPathBuffer = undefined;
-        const to_path_w = bun.strings.toWPath(&to_path_buf_w, to_path);
-
-        if (bun.windows.MoveFileExW(
-            from_path_w,
-            to_path_w,
-            bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH,
-        ) == bun.windows.FALSE) {
-            this.package_manager.log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                this.package_manager.allocator,
-                "moving \"{s}\" to cache dir failed:  From: {s}\n    To: {s}",
-                .{ name, tmpname, folder_name },
-            ) catch unreachable;
-            return error.InstallFailed;
-        }
-    } else {
-        switch (bun.sys.renameat(bun.toFD(tmpdir.fd), bun.sliceTo(tmpname, 0), bun.toFD(cache_dir.fd), folder_name)) {
-            .err => |err| {
+        while (true) {
+            const dir_to_move = bun.sys.openDirAtWindowsA(bun.toFD(this.temp_dir.fd), bun.span(tmpname), .{ .can_rename_or_delete = true, .create = false, .iterable = false }).unwrap() catch |err| {
+                // i guess we just
                 this.package_manager.log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
                     this.package_manager.allocator,
-                    "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                    "moving \"{s}\" to cache dir failed\n{}\n From: {s}\n   To: {s}",
                     .{ name, err, tmpname, folder_name },
                 ) catch unreachable;
                 return error.InstallFailed;
-            },
-            .result => {},
+            };
+
+            switch (bun.C.moveOpenedFileAt(dir_to_move, bun.toFD(target_dir.fd), path2[if (std.mem.lastIndexOfScalar(u16, path2, '\\')) |i| i + 1 else 0..], true)) {
+                .err => |err| {
+                    if (!did_retry) {
+                        switch (err.getErrno()) {
+                            .PERM, .BUSY, .EXIST => {
+                                // before we attempt to delete the destination, let's close the source dir.
+                                _ = bun.sys.close(dir_to_move);
+
+                                // two copies of bun are trying to extract the same package version to the same folder
+                                cache_dir.deleteTree(bun.span(folder_name)) catch {};
+                                did_retry = true;
+                                continue;
+                            },
+                            else => {},
+                        }
+                    }
+                    _ = bun.sys.close(dir_to_move);
+                    this.package_manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.package_manager.allocator,
+                        "moving \"{s}\" to cache dir failed\n{}\n  From: {s}\n    To: {s}",
+                        .{ name, err, tmpname, folder_name },
+                    ) catch unreachable;
+                    return error.InstallFailed;
+                },
+                .result => {
+                    _ = bun.sys.close(dir_to_move);
+                },
+            }
+
+            break;
+        }
+    } else {
+        // Attempt to gracefully handle duplicate concurrent `bun install` calls
+        //
+        // By:
+        // 1. Rename from temporary directory to cache directory and fail if it already exists
+        // 2a. If the rename fails, swap the cache directory with the temporary directory version
+        // 2b. Delete the temporary directory version ONLY if we're not using a provided temporary directory
+        // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
+        //
+        const src = bun.sliceTo(tmpname, 0);
+
+        if (create_subdir) {
+            if (bun.Dirname.dirname(u8, folder_name)) |folder| {
+                bun.MakePath.makePath(u8, cache_dir, folder) catch {};
+            }
+        }
+
+        var did_atomically_replace = false;
+        if (did_atomically_replace and PackageManager.using_fallback_temp_dir) tmpdir.deleteTree(src) catch {};
+
+        attempt_atomic_rename_and_fallback_to_racy_delete: {
+            {
+                // Happy path: the folder doesn't exist in the cache dir, so we can
+                // just rename it. We don't need to delete anything.
+                var err = switch (bun.sys.renameat2(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name, .{
+                    .exclude = true,
+                })) {
+                    .err => |err| err,
+                    .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
+                };
+
+                // Fallback path: the folder exists in the cache dir, it might be in a strange state
+                // let's attempt to atomically replace it with the temporary folder's version
+                if (switch (err.getErrno()) {
+                    .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
+                    else => false,
+                }) {
+                    did_atomically_replace = true;
+                    switch (bun.sys.renameat2(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name, .{
+                        .exchange = true,
+                    })) {
+                        .err => {},
+                        .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
+                    }
+                    did_atomically_replace = false;
+                }
+            }
+
+            //  sad path: let's try to delete the folder and then rename it
+            cache_dir.deleteTree(src) catch {};
+            switch (bun.sys.renameat(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name)) {
+                .err => |err| {
+                    this.package_manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.package_manager.allocator,
+                        "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                        .{ name, err, tmpname, folder_name },
+                    ) catch unreachable;
+                    return error.InstallFailed;
+                },
+                .result => {},
+            }
         }
     }
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
-    var final_dir = cache_dir.openDirZ(folder_name, .{}) catch |err| {
+    var final_dir = bun.openDir(cache_dir, folder_name) catch |err| {
         this.package_manager.log.addErrorFmt(
             null,
             logger.Loc.Empty,
@@ -339,7 +435,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         ) catch unreachable;
         return error.InstallFailed;
     };
-
     defer final_dir.close();
     // and get the fd path
     const final_path = bun.getFdPath(
@@ -356,31 +451,19 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         return error.InstallFailed;
     };
 
-    // create an index storing each version of a package installed
-    if (strings.indexOfChar(basename, '/') == null) create_index: {
-        var index_dir = cache_dir.makeOpenPath(name, .{}) catch break :create_index;
-        defer index_dir.close();
-        index_dir.symLink(
-            final_path,
-            switch (this.resolution.tag) {
-                .github => folder_name["@GH@".len..],
-                // trim "name@" from the prefix
-                .npm => folder_name[name.len + 1 ..],
-                else => folder_name,
-            },
-            .{},
-        ) catch break :create_index;
-    }
-
     var json_path: []u8 = "";
     var json_buf: []u8 = "";
-    var json_len: usize = 0;
     if (switch (this.resolution.tag) {
         // TODO remove extracted files not matching any globs under "files"
         .github, .local_tarball, .remote_tarball => true,
-        else => this.package_manager.lockfile.trusted_dependencies.contains(@as(u32, @truncate(Semver.String.Builder.stringHash(name)))),
+        else => this.package_manager.lockfile.trusted_dependencies != null and
+            this.package_manager.lockfile.trusted_dependencies.?.contains(@truncate(Semver.String.Builder.stringHash(name))),
     }) {
-        const json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
+        const json_file, json_buf = bun.sys.File.readFileFrom(
+            bun.toFD(cache_dir.fd),
+            bun.path.joinZ(&[_]string{ folder_name, "package.json" }, .auto),
+            bun.default_allocator,
+        ).unwrap() catch |err| {
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -391,14 +474,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             return error.InstallFailed;
         };
         defer json_file.close();
-        const json_stat_size = try json_file.getEndPos();
-        json_buf = try this.package_manager.allocator.alloc(u8, json_stat_size + 64);
-        json_len = try json_file.preadAll(json_buf, 0);
-
-        json_path = bun.getFdPath(
-            json_file.handle,
+        json_path = json_file.getPath(
             &json_path_buf,
-        ) catch |err| {
+        ).unwrap() catch |err| {
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -410,6 +488,22 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         };
     }
 
+    // create an index storing each version of a package installed
+    if (strings.indexOfChar(basename, '/') == null) create_index: {
+        var index_dir = bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index;
+        defer index_dir.close();
+        index_dir.symLink(
+            final_path,
+            switch (this.resolution.tag) {
+                .github => folder_name["@GH@".len..],
+                // trim "name@" from the prefix
+                .npm => folder_name[name.len + 1 ..],
+                else => folder_name,
+            },
+            .{ .is_directory = true },
+        ) catch break :create_index;
+    }
+
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
     const url = try FileSystem.instance.dirname_store.append(@TypeOf(this.url.slice()), this.url.slice());
 
@@ -418,6 +512,5 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         .resolved = resolved,
         .json_path = ret_json_path,
         .json_buf = json_buf,
-        .json_len = json_len,
     };
 }

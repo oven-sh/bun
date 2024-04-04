@@ -24,6 +24,7 @@
 "use strict";
 
 const { URL, URLSearchParams } = globalThis;
+const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 
 function Url() {
   this.protocol = null;
@@ -822,9 +823,6 @@ function urlToHttpOptions(url) {
   return options;
 }
 
-const pathToFileURL = $lazy("pathToFileURL");
-const fileURLToPath = $lazy("fileURLToPath");
-
 export default {
   parse: urlParse,
   resolve: urlResolve,
@@ -833,7 +831,9 @@ export default {
   Url,
   URLSearchParams,
   URL,
-  pathToFileURL,
-  fileURLToPath,
+  pathToFileURL: Bun.pathToFileURL,
+  fileURLToPath: Bun.fileURLToPath,
   urlToHttpOptions,
+  domainToASCII,
+  domainToUnicode,
 };

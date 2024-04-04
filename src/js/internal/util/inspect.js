@@ -1761,7 +1761,7 @@ function formatError(err, constructor, tag, ctx, keys) {
           if (workingDirectory !== undefined) {
             let newLine = markCwd(ctx, line, workingDirectory);
             if (newLine === line) {
-              esmWorkingDirectory ??= pathToFileURL(workingDirectory);
+              esmWorkingDirectory ??= pathToFileURL(workingDirectory).href;
               newLine = markCwd(ctx, line, esmWorkingDirectory);
             }
             line = newLine;
@@ -2570,7 +2570,7 @@ function formatWithOptionsInternal(inspectOptions, args) {
   return str;
 }
 
-var internalGetStringWidth = $lazy("getStringWidth");
+const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
  */

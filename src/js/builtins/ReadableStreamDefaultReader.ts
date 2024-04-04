@@ -51,7 +51,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
   if (!stream) throw new TypeError("readMany() called on a reader owned by no readable stream");
 
   const state = $getByIdDirectPrivate(stream, "state");
-  $putByIdDirectPrivate(stream, "disturbed", true);
+  stream.$disturbed = true;
   if (state === $streamClosed) return { value: [], size: 0, done: true };
   else if (state === $streamErrored) {
     throw $getByIdDirectPrivate(stream, "storedError");
@@ -99,12 +99,11 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
         $putByValDirect(outValues, i, values[i].value);
       }
     }
-
     $resetQueue($getByIdDirectPrivate(controller, "queue"));
 
-    if ($getByIdDirectPrivate(controller, "closeRequested"))
-      $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
-    else if ($isReadableStreamDefaultController(controller)) {
+    if ($getByIdDirectPrivate(controller, "closeRequested")) {
+      $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
+    } else if ($isReadableStreamDefaultController(controller)) {
       $readableStreamDefaultControllerCallPullIfNeeded(controller);
     } else if ($isReadableByteStreamController(controller)) {
       $readableByteStreamControllerCallPullIfNeeded(controller);
@@ -141,7 +140,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
     $resetQueue(queue);
 
     if ($getByIdDirectPrivate(controller, "closeRequested")) {
-      $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
+      $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
     } else if ($isReadableStreamDefaultController(controller)) {
       $readableStreamDefaultControllerCallPullIfNeeded(controller);
     } else if ($isReadableByteStreamController(controller)) {

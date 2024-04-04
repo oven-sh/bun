@@ -1,3 +1,4 @@
+// clang-format off
 /*
  * Authored by Alex Hultman, 2018-2020.
  * Intellectual property of third-party.
@@ -134,6 +135,8 @@ private:
 
         /* Handle HTTP data streams */
         us_socket_context_on_data(SSL, getSocketContext(), [](us_socket_t *s, char *data, int length) {
+            // ref the socket to make sure we process it entirely before it is closed
+            us_socket_ref(s);
 
             // total overhead is about 210k down to 180k
             // ~210k req/sec is the original perf with write in data
@@ -293,6 +296,10 @@ private:
 
             /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
             if (returnedSocket != nullptr) {
+                us_socket_t* returnedSocketPtr = (us_socket_t*) returnedSocket; 
+                /* We don't want open sockets to keep the event loop alive between HTTP requests */
+                us_socket_unref(returnedSocketPtr);
+
                 /* Timeout on uncork failure */
                 auto [written, failed] = ((AsyncSocket<SSL> *) returnedSocket)->uncork();
                 if (failed) {
@@ -312,8 +319,7 @@ private:
                         }
                     }
                 }
-
-                return (us_socket_t *) returnedSocket;
+                return returnedSocketPtr;
             }
 
             /* If we upgraded, check here (differ between nullptr close and nullptr upgrade) */
@@ -368,9 +374,7 @@ private:
                     return s;
                 }
 
-                /* We don't want to fall through since we don't want to mess with timeout.
-                 * It makes little sense to drain any backpressure when the user has registered onWritable. */
-                return s;
+                /* We need to drain any remaining buffered data if success == true*/    
             }
 
             /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
@@ -492,12 +496,23 @@ public:
 
     /* Listen to port using this HttpContext */
     us_listen_socket_t *listen(const char *host, int port, int options) {
-        return us_socket_context_listen(SSL, getSocketContext(), host, port, options, sizeof(HttpResponseData<SSL>));
+        auto socket = us_socket_context_listen(SSL, getSocketContext(), host, port, options, sizeof(HttpResponseData<SSL>));
+        // we dont depend on libuv ref for keeping it alive
+        if (socket) {
+          us_socket_unref(&socket->s);
+        } 
+        return socket;
     }
 
     /* Listen to unix domain socket using this HttpContext */
-    us_listen_socket_t *listen(const char *path, int options) {
-        return us_socket_context_listen_unix(SSL, getSocketContext(), path, options, sizeof(HttpResponseData<SSL>));
+    us_listen_socket_t *listen_unix(const char *path, size_t pathlen, int options) {
+        auto* socket =  us_socket_context_listen_unix(SSL, getSocketContext(), path, pathlen, options, sizeof(HttpResponseData<SSL>));
+        // we dont depend on libuv ref for keeping it alive
+        if (socket) {
+            us_socket_unref(&socket->s);
+        }
+
+        return socket;
     }
 };
 

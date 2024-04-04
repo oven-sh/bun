@@ -45,7 +45,7 @@ public:
         if (!m_counterVector.isEmpty() || !counter.length())
             return m_counterVector;
 
-        m_counterVector.append(counter.data(), counter.length());
+        m_counterVector.append(std::span { counter.data(), counter.length() });
         return m_counterVector;
     }
 

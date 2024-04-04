@@ -27,7 +27,6 @@ pub const darwin = @import("./darwin_c.zig");
 pub const linux = @import("./linux_c.zig");
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
 pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;
-pub extern "c" fn umask(mode_t) mode_t;
 pub extern "c" fn fchmodat(c_int, [*c]const u8, mode_t, c_int) c_int;
 pub extern "c" fn fchown(std.c.fd_t, std.c.uid_t, std.c.gid_t) c_int;
 pub extern "c" fn lchown(path: [*:0]const u8, std.c.uid_t, std.c.gid_t) c_int;
@@ -354,7 +353,14 @@ pub fn getVersion(buf: []u8) []const u8 {
     } else if (comptime Environment.isMac) {
         return darwin.get_version(buf);
     } else {
-        return bun.todo(@src(), "unknown");
+        var info: bun.windows.libuv.uv_utsname_s = undefined;
+        const err = bun.windows.libuv.uv_os_uname(&info);
+        if (err != 0) {
+            return "unknown";
+        }
+        const slice = bun.sliceTo(&info.version, 0);
+        @memcpy(buf[0..slice.len], slice);
+        return buf[0..slice.len];
     }
 }
 
@@ -364,7 +370,14 @@ pub fn getRelease(buf: []u8) []const u8 {
     } else if (comptime Environment.isMac) {
         return darwin.get_release(buf);
     } else {
-        return bun.todo(@src(), "unknown");
+        var info: bun.windows.libuv.uv_utsname_s = undefined;
+        const err = bun.windows.libuv.uv_os_uname(&info);
+        if (err != 0) {
+            return "unknown";
+        }
+        const release = bun.sliceTo(&info.release, 0);
+        @memcpy(buf[0..release.len], release);
+        return buf[0..release.len];
     }
 }
 
@@ -398,7 +411,7 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
     };
 
     if (Wrapper.loaded == .pending) {
-        const result = _dlsym(@call(.always_inline, handle_getter, .{}), name);
+        const result = _dlsym(@call(bun.callmod_inline, handle_getter, .{}), name);
 
         if (result) |ptr| {
             Wrapper.function = bun.cast(Type, ptr);
@@ -449,3 +462,9 @@ pub fn dlopen(filename: [:0]const u8, flags: i32) ?*anyopaque {
 
     return std.c.dlopen(filename, flags);
 }
+
+pub extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+
+pub extern "C" fn bun_initialize_process() void;
+pub extern "C" fn bun_restore_stdio() void;
+pub extern "C" fn open_as_nonblocking_tty(i32, i32) i32;

@@ -1,7 +1,7 @@
-// @known-failing-on-windows: 1 failing
-import { test as bunTest, expect, describe } from "bun:test";
-import { generateClient } from "./helper.ts";
+import { test as bunTest, it as bunIt, expect, describe } from "bun:test";
+import { generate, generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
+import { createCanvas } from "@napi-rs/canvas";
 
 function* TestIDGenerator(): Generator<number> {
   while (true) {
@@ -49,6 +49,31 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
   }
 
   describe(`prisma ${type}`, () => {
+    if (type === "postgres") {
+      // https://github.com/oven-sh/bun/issues/7864
+      test("memory issue reproduction issue #7864", async (client, testId) => {
+        async function causeError() {
+          // 1. Some DB query
+          const tx = client.$executeRaw`SELECT pg_sleep(0.001)`;
+          // 2. Some napi-based operation
+          createCanvas(10, 10);
+          // 3. Wait for the DB query to finish
+          await tx;
+        }
+
+        for (let i = 0; i < 20; i++) {
+          try {
+            await causeError();
+          } catch (e) {
+            console.log(`Encountered error after ${i + 1} iterations`);
+            throw e;
+          }
+        }
+
+        expect().pass();
+      });
+    }
+
     test(
       "CRUD basics",
       async (prisma: PrismaClient, testId: number) => {
@@ -139,24 +164,38 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
     test(
       "Should execute multiple commands at the same time",
       async (prisma: PrismaClient, testId: number) => {
-        const users = await Promise.all(
+        function user(i: number) {
+          return {
+            testId,
+            name: `Test${i}`,
+            email: `test${i}@oven.sh`,
+          };
+        }
+        const createdUsers = await Promise.all(
           new Array(10).fill(0).map((_, i) =>
             prisma.user.create({
-              data: {
-                testId,
-                name: `Test${i}`,
-                email: `test${i}@oven.sh`,
-              },
+              data: user(i),
             }),
           ),
         );
+        expect(createdUsers.length).toBe(10);
 
-        expect(users.length).toBe(10);
-
-        users.forEach((user, i) => {
+        createdUsers.forEach((user, i) => {
           expect(user?.name).toBe(`Test${i}`);
           expect(user?.email).toBe(`test${i}@oven.sh`);
         });
+
+        createdUsers.sort((a, b) => a.id - b.id);
+
+        for (let i = 0; i < 10; i++) {
+          const loadAllUsers10Times = await Promise.all(
+            new Array(10).fill(0).map(() => prisma.user.findMany({ where: { testId }, orderBy: { id: "asc" } })),
+          );
+          for (const users of loadAllUsers10Times) {
+            expect(users).toEqual(createdUsers);
+          }
+          Bun.gc(true);
+        }
 
         const deletedUser = await prisma.user.deleteMany({ where: { testId } });
 
@@ -164,5 +203,14 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
       },
       20000,
     );
+
+    bunIt("generates client successfully", async () => {
+      try {
+        generate(type);
+      } catch (err: any) {
+        // already generated from previous test, ignore error
+        if (err.message.indexOf("EPERM: operation not permitted, unlink") === -1) throw err;
+      }
+    });
   });
 });

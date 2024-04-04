@@ -2,6 +2,7 @@
 
 #if OS(LINUX)
 
+#include <fcntl.h>
 #include <cstring>
 #include <signal.h>
 #include <unistd.h>
@@ -12,12 +13,13 @@
 #include <sys/syscall.h>
 #include <sys/resource.h>
 
-static int close_range(unsigned int first)
-{
-    return syscall(__NR_close_range, first, ~0U, 0);
-}
-
 extern char** environ;
+
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 
 enum FileActionType : uint8_t {
     None,
@@ -47,30 +49,23 @@ typedef struct bun_spawn_request_t {
 
 extern "C" ssize_t posix_spawn_bun(
     int* pid,
+    const char* path,
     const bun_spawn_request_t* request,
     char* const argv[],
     char* const envp[])
 {
     volatile int status = 0;
     sigset_t blockall, oldmask;
-    int res = 0, cs = 0, e = errno;
+    int res = 0, cs = 0;
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
-    const char* path = argv[0];
     pid_t child = vfork();
-
-    const auto parentFailed = [&]() -> ssize_t {
-        sigprocmask(SIG_SETMASK, &oldmask, 0);
-        pthread_setcancelstate(cs, 0);
-        errno = e;
-        return res;
-    };
 
     const auto childFailed = [&]() -> ssize_t {
         res = errno;
         status = res;
-        close_range(0);
+        bun_close_range(0, ~0U, 0);
         _exit(127);
 
         // should never be reached
@@ -110,10 +105,29 @@ extern "C" ssize_t posix_spawn_bun(
                 break;
             }
             case FileActionType::Dup2: {
-                // Even if the file descrtiptors are the same, we still need to
-                // call dup2() because it will reset the close-on-exec flag.
-                if (dup2(action.fds[0], action.fds[1]) == -1) {
-                    return childFailed();
+                // Note: If oldfd is a valid file descriptor, and newfd has the same
+                // value as oldfd, then dup2() does nothing, and returns newfd.
+                if (action.fds[0] == action.fds[1]) {
+                    int prevErrno = errno;
+                    errno = 0;
+
+                    // Remove the O_CLOEXEC flag
+                    // If we don't do this, then the process will have an already-closed file descriptor
+                    int mask = fcntl(action.fds[0], F_GETFD, 0);
+                    mask &= ~FD_CLOEXEC;
+                    fcntl(action.fds[0], F_SETFD, mask);
+
+                    if (errno != 0) {
+                        return childFailed();
+                    }
+
+                    // Restore errno
+                    errno = prevErrno;
+                } else {
+                    // dup2 creates a new file descriptor without O_CLOEXEC set
+                    if (dup2(action.fds[0], action.fds[1]) == -1) {
+                        return childFailed();
+                    }
                 }
 
                 current_max_fd = std::max(current_max_fd, action.fds[1]);
@@ -151,8 +165,12 @@ extern "C" ssize_t posix_spawn_bun(
         if (!envp)
             envp = environ;
 
-        close_range(current_max_fd + 1);
-        execve(path, argv, envp);
+        if (bun_close_range(current_max_fd + 1, ~0U, CLOSE_RANGE_CLOEXEC) != 0) {
+            bun_close_range(current_max_fd + 1, ~0U, 0);
+        }
+        if (execve(path, argv, envp) == -1) {
+            return childFailed();
+        }
         _exit(127);
 
         // should never be reached.

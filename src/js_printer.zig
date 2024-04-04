@@ -195,6 +195,11 @@ pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize
 
 pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
     var bytes = output_;
+    try quoteForJSONBuffer(text, &bytes, ascii_only);
+    return bytes;
+}
+
+pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     try bytes.growIfNeeded(estimateLengthForJSON(text, ascii_only));
     try bytes.appendChar('"');
     var i: usize = 0;
@@ -300,7 +305,6 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
         }
     }
     bytes.appendChar('"') catch unreachable;
-    return bytes;
 }
 
 const JSONFormatter = struct {
@@ -2478,7 +2482,7 @@ fn NewPrinter(
                     if (e.optional_chain == null) {
                         flags.insert(.has_non_optional_chain_parent);
                     } else {
-                        if (flags.contains(.has_non_optional_chain_parent) and e.optional_chain.? == .ccontinue) {
+                        if (flags.contains(.has_non_optional_chain_parent)) {
                             wrap = true;
                             p.print("(");
                         }
@@ -2812,6 +2816,10 @@ fn NewPrinter(
                     p.print(c);
                     p.printStringContent(e, c);
                     p.print(c);
+                },
+                .e_utf8_string => |e| {
+                    p.addSourceMapping(expr.loc);
+                    quoteForJSONBuffer(e.data, p.writer.getMutableBuffer(), ascii_only) catch bun.outOfMemory();
                 },
                 .e_template => |e| {
                     if (e.tag) |tag| {
@@ -4950,7 +4958,7 @@ fn NewPrinter(
                 return;
             }
 
-            @call(.always_inline, printModuleId, .{ p, p.importRecord(import_record_index).module_id });
+            @call(bun.callmod_inline, printModuleId, .{ p, p.importRecord(import_record_index).module_id });
         }
 
         pub fn printCallModuleID(p: *Printer, module_id: u32) void {
@@ -5381,6 +5389,10 @@ pub fn NewWriter(
             );
         }
 
+        pub fn getMutableBuffer(this: *Self) *MutableString {
+            return this.ctx.getMutableBuffer();
+        }
+
         pub fn slice(this: *Self) string {
             return this.ctx.slice();
         }
@@ -5396,11 +5408,11 @@ pub fn NewWriter(
         }
 
         pub inline fn prevChar(writer: *const Self) u8 {
-            return @call(.always_inline, getLastByte, .{&writer.ctx});
+            return @call(bun.callmod_inline, getLastByte, .{&writer.ctx});
         }
 
         pub inline fn prevPrevChar(writer: *const Self) u8 {
-            return @call(.always_inline, getLastLastByte, .{&writer.ctx});
+            return @call(bun.callmod_inline, getLastLastByte, .{&writer.ctx});
         }
 
         pub fn reserve(writer: *Self, count: u32) anyerror![*]u8 {
@@ -5490,6 +5502,10 @@ const FileWriterInternal = struct {
 
     pub fn getBuffer() *MutableString {
         buffer.reset();
+        return &buffer;
+    }
+
+    pub fn getMutableBuffer(_: *FileWriterInternal) *MutableString {
         return &buffer;
     }
 
@@ -5604,6 +5620,10 @@ pub const BufferWriter = struct {
     append_newline: bool = false,
     approximate_newline_count: usize = 0,
     last_bytes: [2]u8 = [_]u8{ 0, 0 },
+
+    pub fn getMutableBuffer(this: *BufferWriter) *MutableString {
+        return &this.buffer;
+    }
 
     pub fn getWritten(this: *BufferWriter) []u8 {
         return this.buffer.list.items;
@@ -6036,7 +6056,8 @@ pub fn printWithWriterAndPlatform(
     comptime generate_source_maps: bool,
 ) PrintResult {
     const PrinterType = NewPrinter(
-        false,
+        // if it's bun, it is also ascii_only
+        is_bun_platform,
         Writer,
         false,
         is_bun_platform,

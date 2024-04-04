@@ -397,7 +397,7 @@ pub const Binding = struct {
                         if (b.has_spread and i == exprs.len - 1) {
                             break :convert Expr.init(E.Spread, E.Spread{ .value = expr }, expr.loc);
                         } else if (item.default_value) |default| {
-                            break :convert Expr.assign(expr, default, wrapper.allocator);
+                            break :convert Expr.assign(expr, default);
                         } else {
                             break :convert expr;
                         }
@@ -1458,6 +1458,27 @@ pub const E = struct {
 
             return array;
         }
+
+        /// Assumes each item in the array is a string
+        pub fn alphabetizeStrings(this: *Array) void {
+            if (comptime Environment.allow_assert) {
+                for (this.items.slice()) |item| {
+                    std.debug.assert(item.data == .e_string);
+                }
+            }
+            std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
+        }
+
+        const Sorter = struct {
+            pub fn isLessThan(ctx: void, lhs: Expr, rhs: Expr) bool {
+                return strings.cmpStringsAsc(ctx, lhs.data.e_string.data, rhs.data.e_string.data);
+            }
+        };
+    };
+
+    /// A string which will be printed as JSON by the JSPrinter.
+    pub const UTF8String = struct {
+        data: []const u8,
     };
 
     pub const Unary = struct {
@@ -2070,7 +2091,13 @@ pub const E = struct {
             return null;
         }
 
+        /// Assumes each key in the property is a string
         pub fn alphabetizeProperties(this: *Object) void {
+            if (comptime Environment.allow_assert) {
+                for (this.properties.slice()) |prop| {
+                    std.debug.assert(prop.key.?.data == .e_string);
+                }
+            }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 
@@ -2266,11 +2293,11 @@ pub const E = struct {
 
             if (s.isUTF8()) {
                 if (comptime !Environment.isNative) {
-                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false) catch return 0) orelse return s.data.len;
+                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false, false) catch return 0) orelse return s.data.len;
                     defer bun.default_allocator.free(allocated);
                     return @as(u32, @truncate(allocated.len));
                 }
-                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8.le(s.data)));
+                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8(s.data)));
             }
 
             return @as(u32, @truncate(s.slice16().len));
@@ -2654,11 +2681,11 @@ pub const Stmt = struct {
 
     pub const Batcher = bun.Batcher(Stmt);
 
-    pub fn assign(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
+    pub fn assign(a: Expr, b: Expr) Stmt {
         return Stmt.alloc(
             S.SExpr,
             S.SExpr{
-                .value = Expr.assign(a, b, allocator),
+                .value = Expr.assign(a, b),
             },
             a.loc,
         );
@@ -3038,6 +3065,8 @@ pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
 
+    pub const empty = Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = logger.Loc.Empty };
+
     pub fn isAnonymousNamed(expr: Expr) bool {
         return switch (expr.data) {
             .e_arrow => true,
@@ -3240,9 +3269,17 @@ pub const Expr = struct {
         return ArrayIterator{ .array = array, .index = 0 };
     }
 
-    pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+    pub inline fn asStringLiteral(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
         return expr.data.e_string.string(allocator) catch null;
+    }
+
+    pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+        switch (expr.data) {
+            .e_string => |str| return str.string(allocator) catch null,
+            .e_utf8_string => |str| return str.data,
+            else => return null,
+        }
     }
 
     pub fn asBool(
@@ -3410,6 +3447,18 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_array = brk: {
+                            const item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
+                    },
+                };
+            },
+            E.UTF8String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_utf8_string = brk: {
                             const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
@@ -3827,6 +3876,14 @@ pub const Expr = struct {
         Data.Store.assert();
 
         switch (Type) {
+            E.UTF8String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_utf8_string = Data.Store.append(Type, st),
+                    },
+                };
+            },
             E.Array => {
                 return Expr{
                     .loc = loc,
@@ -4201,6 +4258,9 @@ pub const Expr = struct {
         e_undefined,
         e_new_target,
         e_import_meta,
+
+        /// A string that is UTF-8 encoded without escaping for use in JavaScript.
+        e_utf8_string,
 
         // This should never make it to the printer
         inline_identifier,
@@ -4656,7 +4716,7 @@ pub const Expr = struct {
         return false;
     }
 
-    pub fn assign(a: Expr, b: Expr, _: std.mem.Allocator) Expr {
+    pub fn assign(a: Expr, b: Expr) Expr {
         return init(E.Binary, E.Binary{
             .op = .bin_assign,
             .left = a,
@@ -4863,6 +4923,8 @@ pub const Expr = struct {
         e_undefined: E.Undefined,
         e_new_target: E.NewTarget,
         e_import_meta: E.ImportMeta,
+
+        e_utf8_string: *E.UTF8String,
 
         // This type should not exist outside of MacroContext
         // If it ends up in JSParser or JSPrinter, it is a bug.
@@ -5304,6 +5366,7 @@ pub const Expr = struct {
                 .e_array => |e| e.toJS(allocator, globalObject),
                 .e_object => |e| e.toJS(allocator, globalObject),
                 .e_string => |e| e.toJS(allocator, globalObject),
+                .e_utf8_string => |e| JSC.ZigString.fromUTF8(e.data).toValueGC(globalObject),
                 .e_null => JSC.JSValue.null,
                 .e_undefined => JSC.JSValue.undefined,
                 .e_boolean => |boolean| if (boolean.value)
@@ -6399,7 +6462,7 @@ pub const DeclaredSymbol = struct {
         // TODO: SIMD
         for (is_top_level, refs) |top, ref| {
             if (top) {
-                @call(.always_inline, Fn, .{ ctx, ref });
+                @call(bun.callmod_inline, Fn, .{ ctx, ref });
             }
         }
     }
@@ -6607,7 +6670,7 @@ pub const Scope = struct {
         loc: logger.Loc,
 
         pub fn eql(a: Member, b: Member) bool {
-            return @call(.always_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
+            return @call(bun.callmod_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
         }
     };
 
@@ -6819,7 +6882,7 @@ pub const Macro = struct {
                                 source,
                                 import_range,
                                 log.msgs.allocator,
-                                "Macro \"{any}\" not found",
+                                "Macro \"{s}\" not found",
                                 .{import_record_path},
                                 .stmt,
                                 err,
@@ -7049,8 +7112,8 @@ pub const Macro = struct {
                             this.source,
                             this.caller.loc,
                             this.allocator,
-                            "cannot coerce {s} to Bun's AST. Please return a simpler type",
-                            .{@tagName(value.jsType())},
+                            "cannot coerce {s} ({s}) to Bun's AST. Please return a simpler type",
+                            .{ value.getClassInfoName() orelse "unknown", @tagName(value.jsType()) },
                         ) catch unreachable;
                         break :brk error.MacroFailed;
                     },

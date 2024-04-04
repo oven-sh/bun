@@ -96,6 +96,16 @@ static void enableFastMallocForSQLite()
 #endif
 }
 
+class AutoDestructingSQLiteStatement {
+public:
+    sqlite3_stmt* stmt { nullptr };
+
+    ~AutoDestructingSQLiteStatement()
+    {
+        sqlite3_finalize(stmt);
+    }
+};
+
 static void initializeSQLite()
 {
     static std::once_flag onceFlag;
@@ -442,7 +452,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 break;
             }
 
-            columnNames->add(Identifier::fromString(vm, WTF::String::fromUTF8(name, len)));
+            columnNames->add(Identifier::fromString(vm, WTF::String::fromUTF8({ name, len })));
         }
 
         if (LIKELY(!anyHoles)) {
@@ -484,7 +494,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         if (len == 0)
             break;
 
-        auto wtfString = WTF::String::fromUTF8(name, len);
+        auto wtfString = WTF::String::fromUTF8({ name, len });
         auto str = JSValue(jsString(vm, wtfString));
         auto key = str.toPropertyKey(lexicalGlobalObject);
         JSC::JSValue primitive = JSC::jsUndefined();
@@ -899,6 +909,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }
 
+static bool isSkippedInSQLiteQuery(const char c)
+{
+    return c == ' ' || c == ';' || (c >= '\t' && c <= '\r');
+}
+
 // This runs a query one-off
 // without the overhead of a long-lived statement object
 // does not return anything
@@ -945,65 +960,92 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    // TODO: trim whitespace & newlines before sending
-    // we don't because webkit doesn't expose a function that makes this super
-    // easy without using unicode whitespace definition the
-    // StringPrototype.trim() implementation GC allocates a new JSString* and
-    // potentially re-allocates the string (not 100% sure if reallocates) so we
-    // can't use that here
-    sqlite3_stmt* statement = nullptr;
+    CString utf8;
 
-    int rc = SQLITE_OK;
+    const char* sqlStringHead;
+    const char* end;
+    bool didSetBindings = false;
+
     if (
         // fast path: ascii latin1 string is utf8
         sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length())) {
-        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), 0, &statement, nullptr);
+
+        sqlStringHead = reinterpret_cast<const char*>(sqlString.characters8());
+        end = sqlStringHead + sqlString.length();
     } else {
         // slow path: utf16 or latin1 string with supplemental characters
-        CString utf8 = sqlString.utf8();
-        rc = sqlite3_prepare_v3(db, utf8.data(), utf8.length(), 0, &statement, nullptr);
+        utf8 = sqlString.utf8();
+        sqlStringHead = utf8.data();
+        end = sqlStringHead + utf8.length();
     }
 
-    if (UNLIKELY(rc != SQLITE_OK || statement == nullptr)) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, rc == SQLITE_OK ? "Query contained no valid SQL statement; likely empty query."_s : WTF::String::fromUTF8(sqlite3_errmsg(db))));
-        // sqlite3 handles when the pointer is null
-        sqlite3_finalize(statement);
-        return JSValue::encode(JSC::jsUndefined());
-    }
+    bool didExecuteAny = false;
 
-    if (!bindingsAliveScope.value().isUndefinedOrNull()) {
-        if (bindingsAliveScope.value().isObject()) {
-            JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, statement, false);
-            if (UNLIKELY(!reb.isNumber())) {
-                sqlite3_finalize(statement);
-                return JSValue::encode(reb); /* this means an error */
-            }
-        } else {
-            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Expected bindings to be an object or array"_s));
-            sqlite3_finalize(statement);
-            return JSValue::encode(jsUndefined());
+    int rc = SQLITE_OK;
+
+#if ASSERT_ENABLED
+    int maxSqlStringBytes = end - sqlStringHead;
+#endif
+
+    while (sqlStringHead && sqlStringHead < end) {
+        if (UNLIKELY(isSkippedInSQLiteQuery(*sqlStringHead))) {
+            sqlStringHead++;
+
+            while (sqlStringHead < end && isSkippedInSQLiteQuery(*sqlStringHead))
+                sqlStringHead++;
         }
+
+        AutoDestructingSQLiteStatement sql;
+        const char* tail = nullptr;
+
+        // Bounds checks
+        ASSERT(end >= sqlStringHead);
+        ASSERT(end - sqlStringHead >= 0);
+        ASSERT(end - sqlStringHead <= maxSqlStringBytes);
+
+        rc = sqlite3_prepare_v3(db, sqlStringHead, end - sqlStringHead, 0, &sql.stmt, &tail);
+
+        if (rc != SQLITE_OK)
+            break;
+
+        if (!sql.stmt) {
+            // this happens for an empty statement
+            sqlStringHead = tail;
+            continue;
+        }
+
+        // First statement gets the bindings.
+        if (!didSetBindings && !bindingsAliveScope.value().isUndefinedOrNull()) {
+            if (bindingsAliveScope.value().isObject()) {
+                JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, sql.stmt, false);
+                if (UNLIKELY(!reb.isNumber())) {
+                    return JSValue::encode(reb); /* this means an error */
+                }
+            } else {
+                throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Expected bindings to be an object or array"_s));
+                return JSValue::encode(jsUndefined());
+            }
+            didSetBindings = true;
+        }
+
+        do {
+            rc = sqlite3_step(sql.stmt);
+        } while (rc == SQLITE_ROW);
+
+        didExecuteAny = true;
+        sqlStringHead = tail;
     }
 
-    rc = sqlite3_step(statement);
-    if (!sqlite3_stmt_readonly(statement)) {
-        databases()[handle]->version++;
-    }
-
-    while (rc == SQLITE_ROW) {
-        rc = sqlite3_step(statement);
-    }
-
-    if (UNLIKELY(rc != SQLITE_DONE && rc != SQLITE_OK)) {
+    if (UNLIKELY(rc != SQLITE_OK && rc != SQLITE_DONE)) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
-        // we finalize after just incase something about error messages in
-        // sqlite depends on the existence of the most recent statement i don't
-        // think that's actually how this works - just being cautious
-        sqlite3_finalize(statement);
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    sqlite3_finalize(statement);
+    if (!didExecuteAny) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Query contained no valid SQL statement; likely empty query."_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
     return JSValue::encode(jsUndefined());
 }
 
@@ -1329,7 +1371,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
                     value = JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject));
                     break;
                 } else {
-                    value = jsString(vm, WTF::String::fromUTF8(text, len));
+                    value = jsString(vm, WTF::String::fromUTF8({ text, len }));
                     break;
                 }
             }
@@ -1386,7 +1428,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
                     continue;
                 }
 
-                result->putDirect(vm, name, jsString(vm, WTF::String::fromUTF8(text, len)), 0);
+                result->putDirect(vm, name, jsString(vm, WTF::String::fromUTF8({ text, len })), 0);
                 break;
             }
             case SQLITE_BLOB: {
@@ -1411,7 +1453,6 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     return JSValue(result);
 }
 
-static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext);
 static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext)
 {
     int count = castedThis->columnNames->size();
@@ -1443,7 +1484,7 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
                 result->putDirectIndex(lexicalGlobalObject, i, jsEmptyString(vm));
                 continue;
             }
-            result->putDirectIndex(lexicalGlobalObject, i, len < 64 ? jsString(vm, WTF::String::fromUTF8(text, len)) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
+            result->putDirectIndex(lexicalGlobalObject, i, len < 64 ? jsString(vm, WTF::String::fromUTF8({ text, len })) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
             break;
         }
         case SQLITE_BLOB: {
@@ -1466,11 +1507,6 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
     }
 
     return result;
-}
-
-static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope)
-{
-    return constructResultRow(lexicalGlobalObject, castedThis, scope, nullptr);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1773,7 +1809,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementToStringFunction, (JSC::JSGlobalObject * 
         RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
     size_t length = strlen(string);
-    JSString* jsString = JSC::jsString(vm, WTF::String::fromUTF8(string, length));
+    JSString* jsString = JSC::jsString(vm, WTF::String::fromUTF8({ string, length }));
     sqlite3_free(string);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString));
@@ -1926,4 +1962,14 @@ void JSSQLStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 
 template void JSSQLStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
 template void JSSQLStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
+
+JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    return JSSQLStatementConstructor::create(
+        vm,
+        globalObject,
+        JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get()));
 }
+
+} // namespace WebCore

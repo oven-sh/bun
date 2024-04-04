@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 // Running this file in jest/vitest does not work as expected. Jest & Vitest
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.

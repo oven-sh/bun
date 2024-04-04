@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 // @ts-nocheck
 import { test, expect, describe } from "bun:test";
 import DecoratedClass from "./decorator-export-default-class-fixture";

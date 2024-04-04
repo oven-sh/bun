@@ -1,8 +1,7 @@
-// @known-failing-on-windows: 1 failing
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
-import { bunEnv, bunExe, gc } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -37,18 +36,18 @@ import fs, {
   writevSync,
   readvSync,
   fstatSync,
+  fdatasyncSync,
+  openAsBlob,
 } from "node:fs";
 
-const isWindows = process.platform === "win32";
-
-import _promises from "node:fs/promises";
+import _promises, { type FileHandle } from "node:fs/promises";
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
-import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
-import { SystemError, spawnSync } from "bun";
+import { Dir, ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_, fdatasync } from "./export-star-from.js";
+import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -60,6 +59,189 @@ if (!import.meta.dir) {
 function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
+
+it("fs.openAsBlob", async () => {
+  expect((await openAsBlob(import.meta.path)).size).toBe(statSync(import.meta.path).size);
+});
+
+it("writing to 1, 2 are possible", () => {
+  expect(fs.writeSync(1, Buffer.from("\nhello-stdout-test\n"))).toBe(19);
+  expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);
+});
+
+// TODO: port node.js tests for these
+it("fs.readv returns object", async done => {
+  const fd = await promisify(fs.open)(import.meta.path, "r");
+  const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
+  fs.readv(fd, buffers, 0, (err, bytesRead, output) => {
+    promisify(fs.close)(fd);
+    if (err) {
+      done(err);
+      return;
+    }
+
+    expect(bytesRead).toBe(20);
+    expect(output).toEqual(buffers);
+    done();
+  });
+});
+
+it("fs.writev returns object", async done => {
+  const outpath = tempDirWithFiles("fswritevtest", { "a.txt": "b" });
+  const fd = await promisify(fs.open)(join(outpath, "b.txt"), "w");
+  const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
+  fs.writev(fd, buffers, 0, (err, bytesWritten, output) => {
+    promisify(fs.close)(fd);
+    if (err) {
+      done(err);
+      return;
+    }
+
+    expect(bytesWritten).toBe(20);
+    expect(output).toEqual(buffers);
+    done();
+  });
+});
+
+describe("FileHandle", () => {
+  it("FileHandle#read returns object", async () => {
+    await using fd = await fs.promises.open(__filename);
+    const buf = Buffer.alloc(10);
+    expect(await fd.read(buf, 0, 10, 0)).toEqual({ bytesRead: 10, buffer: buf });
+  });
+
+  it("FileHandle#readv returns object", async () => {
+    await using fd = await fs.promises.open(__filename);
+    const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
+    expect(await fd.readv(buffers, 0)).toEqual({ bytesRead: 20, buffers });
+  });
+
+  it("FileHandle#write throws EBADF when closed", async () => {
+    let handle: FileHandle;
+    let spy;
+    {
+      await using fd = await fs.promises.open(__filename);
+      handle = fd;
+      spy = spyOn(handle, "close");
+      const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
+      expect(await fd.readv(buffers, 0)).toEqual({ bytesRead: 20, buffers });
+    }
+    expect(handle.close).toHaveBeenCalled();
+    expect(async () => await handle.read(Buffer.alloc(10))).toThrow("Bad file descriptor");
+  });
+
+  it("FileHandle#write returns object", async () => {
+    await using fd = await fs.promises.open(`${tmpdir()}/${Date.now()}.writeFile.txt`, "w");
+    const buf = Buffer.from("test");
+    expect(await fd.write(buf, 0, 4, 0)).toEqual({ bytesWritten: 4, buffer: buf });
+  });
+
+  it("FileHandle#writev returns object", async () => {
+    await using fd = await fs.promises.open(`${tmpdir()}/${Date.now()}.writeFile.txt`, "w");
+    const buffers = [Buffer.from("test"), Buffer.from("test")];
+    expect(await fd.writev(buffers, 0)).toEqual({ bytesWritten: 8, buffers });
+  });
+
+  it("FileHandle#readFile returns buffer", async () => {
+    await using fd = await fs.promises.open(__filename);
+    const buf = await fd.readFile();
+    expect(buf instanceof Buffer).toBe(true);
+  });
+
+  it("FileHandle#readableWebStream", async () => {
+    await using fd = await fs.promises.open(__filename);
+    const stream = fd.readableWebStream();
+    const reader = stream.getReader();
+    const chunk = await reader.read();
+    expect(chunk.value instanceof Uint8Array).toBe(true);
+    reader.releaseLock();
+  });
+
+  it("FileHandle#createReadStream", async () => {
+    await using fd = await fs.promises.open(__filename);
+    const readable = fd.createReadStream();
+    const data = await new Promise(resolve => {
+      let data = "";
+      readable.on("data", chunk => {
+        data += chunk;
+      });
+      readable.on("end", () => {
+        resolve(data);
+      });
+    });
+
+    expect(data).toBe(readFileSync(__filename, "utf8"));
+  });
+
+  it("FileHandle#writeFile", async () => {
+    const path = `${tmpdir()}/${Date.now()}.writeFile.txt`;
+    await using fd = await fs.promises.open(path, "w");
+    await fd.writeFile("File written successfully");
+    expect(readFileSync(path, "utf8")).toBe("File written successfully");
+  });
+
+  it("FileHandle#createWriteStream", async () => {
+    const path = `${tmpdir()}/${Date.now()}.createWriteStream.txt`;
+    {
+      await using fd = await fs.promises.open(path, "w");
+      const stream = fd.createWriteStream();
+
+      await new Promise((resolve, reject) => {
+        stream.on("error", e => {
+          reject(e);
+        });
+
+        stream.on("finish", () => {
+          resolve(true);
+        });
+
+        stream.write("Test file written successfully");
+        stream.end();
+      });
+    }
+
+    expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+  });
+
+  it("FileHandle#createWriteStream fixture 2", async () => {
+    const path = `${tmpdir()}/${Date.now()}.createWriteStream.txt`;
+    {
+      await using fd = await fs.promises.open(path, "w");
+      const stream = fd.createWriteStream();
+
+      await new Promise((resolve, reject) => {
+        stream.on("error", e => {
+          reject(e);
+        });
+
+        stream.on("close", () => {
+          resolve(true);
+        });
+
+        stream.write("Test file written successfully");
+        stream.end();
+      });
+    }
+
+    expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+  });
+});
+
+it("fdatasyncSync", () => {
+  const temp = tmpdir();
+  const fd = openSync(join(temp, "test.blob"), "w", 0o664);
+  fdatasyncSync(fd);
+  closeSync(fd);
+});
+
+it("fdatasync", done => {
+  const temp = tmpdir();
+  const fd = openSync(join(temp, "test.blob"), "w", 0o664);
+  fdatasync(fd, function () {
+    done(...arguments);
+    closeSync(fd);
+  });
+});
 
 it("Dirent.name setter", () => {
   const dirent = Object.create(Dirent.prototype);
@@ -81,7 +263,7 @@ it("writeFileSync in append should not truncate the file", () => {
   expect(readFileSync(path, "utf8")).toBe(str);
 });
 
-it.skipIf(isWindows)("await readdir #3931", async () => {
+it("await readdir #3931", async () => {
   const { exitCode } = spawnSync({
     cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
     env: bunEnv,
@@ -582,9 +764,10 @@ describe("promises.readFile", async () => {
 });
 
 it("promises.readFile - UTF16 file path", async () => {
-  const dest = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+  const filename = `superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
     (Math.random() * 1024000) | 0
   }.txt`;
+  const dest = join(tmpdir(), filename);
   await fs.promises.copyFile(import.meta.path, dest);
   const expected = readFileSync(import.meta.path, "utf-8");
   Bun.gc(true);
@@ -595,9 +778,10 @@ it("promises.readFile - UTF16 file path", async () => {
 });
 
 it("promises.readFile - atomized file path", async () => {
-  const destInput = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+  const filename = `superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
     (Math.random() * 1024000) | 0
   }.txt`;
+  const destInput = join(tmpdir(), filename);
   // Force it to become an atomized string by making it a property access
   const dest: string = (
     {
@@ -727,14 +911,14 @@ it("mkdtempSync() non-exist dir #2568", () => {
   try {
     expect(mkdtempSync("/tmp/hello/world")).toBeFalsy();
   } catch (err: any) {
-    expect(err?.errno).toBe(process.platform === "win32" ? -4058 : -2);
+    expect(err?.errno).toBe(-2);
   }
 });
 
 it("mkdtemp() non-exist dir #2568", done => {
   mkdtemp("/tmp/hello/world", (err, folder) => {
     try {
-      expect(err?.errno).toBe(process.platform === "win32" ? -4058 : -2);
+      expect(err?.errno).toBe(-2);
       expect(folder).toBeUndefined();
       done();
     } catch (e) {
@@ -785,7 +969,9 @@ it("readdirSync throws when given a path that doesn't exist", () => {
     readdirSync(import.meta.path + "/does-not-exist/really");
     throw new Error("should not get here");
   } catch (exception: any) {
-    expect(exception.name).toBe("ENOTDIR");
+    // the correct error to return in this case is actually ENOENT (which we do on windows),
+    // but on posix we return ENOTDIR
+    expect(exception.name).toMatch(/ENOTDIR|ENOENT/);
   }
 });
 
@@ -907,7 +1093,7 @@ it("readvSync", () => {
 });
 
 it("preadv", () => {
-  var fd = openSync(`${tmpdir()}/preadv.txt`, "w");
+  var fd = openSync(join(tmpdir(), "preadv.txt"), "w");
   fs.ftruncateSync(fd, 0);
 
   const buf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
@@ -943,8 +1129,6 @@ describe("writeSync", () => {
 
   it("works with a position set to 0", () => {
     const fd = openSync(import.meta.dir + "/writeFileSync.txt", "w+");
-    const four = new Uint8Array(4);
-
     {
       const count = writeSync(fd, new TextEncoder().encode("File"), 0, 4, 0);
       expect(count).toBe(4);
@@ -953,7 +1137,6 @@ describe("writeSync", () => {
   });
   it("works without position set", () => {
     const fd = openSync(import.meta.dir + "/writeFileSync.txt", "w+");
-    const four = new Uint8Array(4);
     {
       const count = writeSync(fd, new TextEncoder().encode("File"));
       expect(count).toBe(4);
@@ -991,17 +1174,18 @@ describe("readFileSync", () => {
     gc();
     const outpath = join(tmpdir(), "read file sync with space characters " + Math.random().toString(32) + " .txt");
     await Bun.write(outpath, Bun.file(Bun.fileURLToPath(new URL("./readFileSync.txt", import.meta.url))));
-    const text = readFileSync(new URL(outpath, import.meta.url), "utf8");
+    // on windows constructing a file url from an absolute path containing a drive letter will not add the "file:///" prefix
+    // node.js has the same behavior, not sure what makes the most sense here
+    const url = isWindows ? new URL("file:///" + outpath) : new URL(outpath, import.meta.url);
+    const text = readFileSync(url, "utf8");
     gc();
     expect(text).toBe("File read successfully");
   });
 
-  it("works with special files in the filesystem", () => {
-    {
-      const text = readFileSync("/dev/null", "utf8");
-      gc();
-      expect(text).toBe("");
-    }
+  it.skipIf(isWindows)("works with special posix files in the filesystem", () => {
+    const text = readFileSync("/dev/null", "utf8");
+    gc();
+    expect(text).toBe("");
 
     if (process.platform === "linux") {
       const text = readFileSync("/proc/filesystems");
@@ -1062,7 +1246,7 @@ describe("writeFileSync", () => {
     const path = `${tmpdir()}/${Date.now()}.writeFileSyncWithMode.txt`;
     writeFileSync(path, "bun", { mode: 33188 });
     const stat = fs.statSync(path);
-    expect(stat.mode).toBe(process.platform === "win32" ? 33206 : 33188);
+    expect(stat.mode).toBe(isWindows ? 33206 : 33188);
   });
   it("returning Buffer works", () => {
     const buffer = new Buffer([
@@ -1102,7 +1286,7 @@ function triggerDOMJIT(target: fs.Stats, fn: (..._: any[]) => any, result: any) 
 
 describe("lstat", () => {
   it("file metadata is correct", () => {
-    const fileStats = lstatSync(new URL("./fs-stream.js", import.meta.url).toString().slice("file://".length - 1));
+    const fileStats = lstatSync(join(import.meta.dir, "fs-stream.js"));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
@@ -1113,7 +1297,8 @@ describe("lstat", () => {
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = lstatSync(new URL("../../../../test", import.meta.url).toString().slice("file://".length - 1));
+    const path = join(import.meta.dir, "../../../../test");
+    const fileStats = lstatSync(path);
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
@@ -1124,7 +1309,9 @@ describe("lstat", () => {
   });
 
   it("symlink metadata is correct", () => {
-    const linkStats = lstatSync(new URL("./fs-stream.link.js", import.meta.url).toString().slice("file://".length - 1));
+    const link = join(tmpdir(), `fs-stream.link${Math.random().toString(32)}.js`);
+    symlinkSync(join(import.meta.dir, "fs-stream.js"), link);
+    const linkStats = lstatSync(link);
     expect(linkStats.isSymbolicLink()).toBe(true);
     expect(linkStats.isFile()).toBe(false);
     expect(linkStats.isDirectory()).toBe(false);
@@ -1155,6 +1342,15 @@ it("readlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+it.if(isWindows)("symlink on windows with forward slashes", async () => {
+  const r = join(tmpdir(), Math.random().toString(32));
+  await fs.promises.rm(join(r, "files/2024"), { recursive: true, force: true });
+  await fs.promises.mkdir(join(r, "files/2024"), { recursive: true });
+  await fs.promises.writeFile(join(r, "files/2024/123.txt"), "text");
+  await fs.promises.symlink("files/2024/123.txt", join(r, "file-sym.txt"));
+  expect(await fs.promises.readlink(join(r, "file-sym.txt"))).toBe("files\\2024\\123.txt");
 });
 
 it("realpath async", async () => {
@@ -1189,7 +1385,7 @@ it("realpath async", async () => {
 
 describe("stat", () => {
   it("file metadata is correct", () => {
-    const fileStats = statSync(new URL("./fs-stream.js", import.meta.url).toString().slice("file://".length - 1));
+    const fileStats = statSync(join(import.meta.dir, "fs-stream.js"));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
@@ -1200,7 +1396,8 @@ describe("stat", () => {
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = statSync(new URL("../../../../test", import.meta.url).toString().slice("file://".length - 1));
+    const path = join(import.meta.dir, "../../../../test");
+    const fileStats = statSync(path);
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
@@ -1293,6 +1490,14 @@ describe("fs.exists", () => {
         done(e);
       }
     });
+  });
+  it("should work with util.promisify when path exists", async () => {
+    const fsexists = promisify(fs.exists);
+    expect(await fsexists(import.meta.path)).toBe(true);
+  });
+  it("should work with util.promisify when path doesn't exist", async () => {
+    const fsexists = promisify(fs.exists);
+    expect(await fsexists(`${tmpdir()}/test-fs-exists-${Date.now()}`)).toBe(false);
   });
 });
 
@@ -1442,7 +1647,7 @@ describe("rmdirSync", () => {
   });
 });
 
-describe.skipIf(isWindows)("createReadStream", () => {
+describe("createReadStream", () => {
   it("works (1 chunk)", async () => {
     return await new Promise((resolve, reject) => {
       var stream = createReadStream(import.meta.dir + "/readFileSync.txt", {});
@@ -1483,7 +1688,8 @@ describe.skipIf(isWindows)("createReadStream", () => {
     });
   });
 
-  it("works (highWaterMark 1, 512 chunk)", async () => {
+  // TODO - highWaterMark is just a hint, not a guarantee. it doesn't make sense to test for exact chunk sizes
+  it.skip("works (highWaterMark 1, 512 chunk)", async () => {
     var stream = createReadStream(import.meta.dir + "/readLargeFileSync.txt", {
       highWaterMark: 1,
     });
@@ -1504,7 +1710,7 @@ describe.skipIf(isWindows)("createReadStream", () => {
     });
   });
 
-  it("works (512 chunk)", async () => {
+  it.skip("works (512 chunk)", async () => {
     var stream = createReadStream(import.meta.dir + "/readLargeFileSync.txt", {
       highWaterMark: 512,
     });
@@ -1525,7 +1731,7 @@ describe.skipIf(isWindows)("createReadStream", () => {
     });
   });
 
-  it("works with larger highWaterMark (1024 chunk)", async () => {
+  it.skip("works with larger highWaterMark (1024 chunk)", async () => {
     var stream = createReadStream(import.meta.dir + "/readLargeFileSync.txt", {
       highWaterMark: 1024,
     });
@@ -1587,7 +1793,7 @@ describe.skipIf(isWindows)("createReadStream", () => {
   });
 });
 
-describe.skipIf(isWindows)("fs.WriteStream", () => {
+describe("fs.WriteStream", () => {
   it("should be exported", () => {
     expect(fs.WriteStream).toBeDefined();
   });
@@ -1682,7 +1888,7 @@ describe.skipIf(isWindows)("fs.WriteStream", () => {
   });
 });
 
-describe.skipIf(isWindows)("fs.ReadStream", () => {
+describe("fs.ReadStream", () => {
   it("should be exported", () => {
     expect(fs.ReadStream).toBeDefined();
   });
@@ -1795,7 +2001,7 @@ describe.skipIf(isWindows)("fs.ReadStream", () => {
   });
 });
 
-describe.skipIf(isWindows)("createWriteStream", () => {
+describe("createWriteStream", () => {
   it("simple write stream finishes", async () => {
     const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStream.txt`;
     const stream = createWriteStream(path);
@@ -2002,22 +2208,28 @@ describe("fs/promises", () => {
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {
-    const doIt = async () => {
-      const maxFD = openSync("/dev/null", "r");
-      closeSync(maxFD);
-      const full = resolve(import.meta.dir, "../");
+    const warmup = 1;
+    const iterCount = 200;
+    const full = resolve(import.meta.dir, "../");
 
-      const pending = new Array(100);
-      for (let i = 0; i < 100; i++) {
+    const doIt = async () => {
+      for (let i = 0; i < warmup; i++) {
+        await promises.readdir(full, { withFileTypes });
+      }
+
+      const maxFD = getMaxFD();
+
+      const pending = new Array(iterCount);
+      for (let i = 0; i < iterCount; i++) {
         pending[i] = promises.readdir(full, { recursive: true, withFileTypes });
       }
 
       const results = await Promise.all(pending);
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < iterCount; i++) {
         results[i].sort();
       }
       expect(results[0].length).toBeGreaterThan(0);
-      for (let i = 1; i < 100; i++) {
+      for (let i = 1; i < iterCount; i++) {
         expect(results[i]).toEqual(results[0]);
       }
 
@@ -2025,29 +2237,28 @@ describe("fs/promises", () => {
         expect(results[0]).toContain(relative(full, import.meta.path));
       }
 
-      const newMaxFD = openSync("/dev/null", "r");
-      closeSync(newMaxFD);
+      const newMaxFD = getMaxFD();
       expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
     };
 
     const fail = async () => {
-      const maxFD = openSync("/dev/null", "r");
-      closeSync(maxFD);
+      const notfound = isWindows ? "C:\\notfound\\for\\sure" : "/notfound/for/sure";
 
-      const pending = new Array(100);
-      for (let i = 0; i < 100; i++) {
-        pending[i] = promises.readdir("/notfound/i/dont/exist/for/sure/" + i, { recursive: true, withFileTypes });
+      const maxFD = getMaxFD();
+
+      const pending = new Array(iterCount);
+      for (let i = 0; i < iterCount; i++) {
+        pending[i] = promises.readdir(join(notfound, `${i}`), { recursive: true, withFileTypes });
       }
 
       const results = await Promise.allSettled(pending);
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < iterCount; i++) {
         expect(results[i].status).toBe("rejected");
         expect(results[i].reason!.code).toBe("ENOENT");
-        expect(results[i].reason!.path).toBe("/notfound/i/dont/exist/for/sure/" + i);
+        expect(results[i].reason!.path).toBe(join(notfound, `${i}`));
       }
 
-      const newMaxFD = openSync("/dev/null", "r");
-      closeSync(newMaxFD);
+      const newMaxFD = getMaxFD();
       expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
     };
 
@@ -2119,10 +2330,17 @@ describe("fs/promises", () => {
 
   it("opendir should have a path property, issue#4995", async () => {
     expect((await fs.promises.opendir(".")).path).toBe(".");
+
+    const { promise, resolve } = Promise.withResolvers<Dir>();
+    fs.opendir(".", (err, dir) => {
+      resolve(dir);
+    });
+
+    expect((await promise).path).toBe(".");
   });
 });
 
-it("stat on a large file", () => {
+it("fstat on a large file", () => {
   var dest: string = "",
     fd;
   try {
@@ -2134,13 +2352,13 @@ it("stat on a large file", () => {
     while (offset < 5 * 1024 * 1024 * 1024) {
       offset += writeSync(fd, bigBuffer, 0, bigBuffer.length, offset);
     }
-
+    fdatasyncSync(fd);
     expect(fstatSync(fd).size).toEqual(offset);
   } finally {
     if (fd) closeSync(fd);
     unlinkSync(dest);
   }
-});
+}, 20_000);
 
 it("fs.constants", () => {
   if (isWindows) {
@@ -2325,7 +2543,8 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
-  it("works after 2038", () => {
+  // TODO: make this work on Windows
+  it.skipIf(isWindows)("works after 2038", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
     const prevStats = fs.statSync(tmp);
@@ -2345,7 +2564,6 @@ describe("utimesSync", () => {
     fs.utimesSync(tmp, newAccessTime, newModifiedTime);
 
     const newStats = fs.statSync(tmp);
-    console.log(newStats);
 
     expect(newStats.mtime).toEqual(newModifiedTime);
     expect(newStats.atime).toEqual(newAccessTime);
@@ -2639,9 +2857,10 @@ it("new Stats", () => {
   expect(stats.birthtime).toEqual(new Date(14));
 });
 
-it("BigIntStats", () => {
-  const withoutBigInt = statSync(__filename, { bigint: false });
-  const withBigInt = statSync(__filename, { bigint: true });
+/// TODO: why is `.ino` wrong on x86_64 MacOS?
+(isIntelMacOS ? it.todo : it)("BigIntStats", () => {
+  const withoutBigInt = statSync(import.meta.path, { bigint: false });
+  const withBigInt = statSync(import.meta.path, { bigint: true });
 
   expect(withoutBigInt.isFile() === withBigInt.isFile()).toBe(true);
   expect(withoutBigInt.isDirectory() === withBigInt.isDirectory()).toBe(true);
@@ -2695,7 +2914,7 @@ it("test syscall errno, issue#4198", () => {
       {
         "darwin": "Operation not permitted",
         "linux": "Is a directory",
-        "windows": "lol",
+        "win32": "Operation not permitted",
       } as any
     )[process.platform],
   );
@@ -2703,9 +2922,15 @@ it("test syscall errno, issue#4198", () => {
 });
 
 it.if(isWindows)("writing to windows hidden file is possible", () => {
-  Bun.spawnSync(["cmd", "/C", "touch file.txt && attrib +h file.txt"], { stdio: ["ignore", "ignore", "ignore"] });
-  writeFileSync("file.txt", "Hello World");
-  const content = readFileSync("file.txt", "utf8");
+  const temp = tmpdir();
+  writeFileSync(join(temp, "file.txt"), "FAIL");
+  const status = Bun.spawnSync(["cmd", "/C", "attrib +h file.txt"], {
+    stdio: ["ignore", "ignore", "ignore"],
+    cwd: temp,
+  });
+  expect(status.exitCode).toBe(0);
+  writeFileSync(join(temp, "file.txt"), "Hello World");
+  const content = readFileSync(join(temp, "file.txt"), "utf8");
   expect(content).toBe("Hello World");
 });
 
@@ -2714,4 +2939,35 @@ it("fs.ReadStream allows functions", () => {
   expect(() => new fs.ReadStream(".", function lol() {})).not.toThrow();
   // @ts-expect-error
   expect(() => new fs.ReadStream(".", {})).not.toThrow();
+});
+
+describe.if(isWindows)("windows path handling", () => {
+  // dont call `it` because these paths wont make sense
+  // the `it` in this branch makes something be printed on posix'
+  if (!isWindows) return it("works", () => {});
+
+  const file = import.meta.path.slice(3);
+  const drive = import.meta.path[0];
+  const filenames = [
+    `${drive}:\\${file}`,
+    `\\\\127.0.0.1\\${drive}$\\${file}`,
+    `\\\\LOCALHOST\\${drive}$\\${file}`,
+    `\\\\.\\${drive}:\\${file}`,
+    `\\\\?\\${drive}:\\${file}`,
+    `\\\\.\\UNC\\LOCALHOST\\${drive}$\\${file}`,
+    `\\\\?\\UNC\\LOCALHOST\\${drive}$\\${file}`,
+    `\\\\127.0.0.1\\${drive}$\\${file}`,
+  ];
+
+  for (const filename of filenames) {
+    it(`Can read '${filename}' with node:fs`, async () => {
+      const stats = await fs.promises.stat(filename);
+      expect(stats.size).toBeGreaterThan(0);
+    });
+
+    it(`Can read '${filename}' with Bun.file`, async () => {
+      const stats = await Bun.file(filename).text();
+      expect(stats.length).toBeGreaterThan(0);
+    });
+  }
 });

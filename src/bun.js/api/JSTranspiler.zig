@@ -86,7 +86,7 @@ const TranspilerOptions = struct {
 // This is going to be hard to not leak
 pub const TransformTask = struct {
     input_code: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer{ .buffer = .{} },
-    output_code: ZigString = ZigString.init(""),
+    output_code: bun.String = bun.String.empty,
     bundler: Bundler.Bundler = undefined,
     log: logger.Log,
     err: ?anyerror = null,
@@ -96,12 +96,13 @@ pub const TransformTask = struct {
     global: *JSGlobalObject,
     replace_exports: Runtime.Features.ReplaceableExport.Map = .{},
 
+    pub usingnamespace bun.New(@This());
+
     pub const AsyncTransformTask = JSC.ConcurrentPromiseTask(TransformTask);
     pub const AsyncTransformEventLoopTask = AsyncTransformTask.EventLoopTask;
 
     pub fn create(transpiler: *Transpiler, input_code: bun.JSC.Node.StringOrBuffer, globalThis: *JSGlobalObject, loader: Loader) !*AsyncTransformTask {
-        var transform_task = try bun.default_allocator.create(TransformTask);
-        transform_task.* = .{
+        var transform_task = TransformTask.new(.{
             .input_code = input_code,
             .bundler = undefined,
             .global = globalThis,
@@ -110,7 +111,7 @@ pub const TransformTask = struct {
             .log = logger.Log.init(bun.default_allocator),
             .loader = loader,
             .replace_exports = transpiler.transpiler_options.runtime.replace_exports,
-        };
+        });
         transform_task.log.level = transpiler.transpiler_options.log.level;
         transform_task.bundler = transpiler.bundler;
         transform_task.bundler.linker.resolver = &transform_task.bundler.resolver;
@@ -124,21 +125,36 @@ pub const TransformTask = struct {
         const name = this.loader.stdinName();
         const source = logger.Source.initPathString(name, this.input_code.slice());
 
-        JSAst.Stmt.Data.Store.create(bun.default_allocator);
-        JSAst.Expr.Data.Store.create(bun.default_allocator);
+        const prev_memory_allocators = .{ JSAst.Stmt.Data.Store.memory_allocator, JSAst.Expr.Data.Store.memory_allocator };
+        defer {
+            JSAst.Stmt.Data.Store.memory_allocator = prev_memory_allocators[0];
+            JSAst.Expr.Data.Store.memory_allocator = prev_memory_allocators[1];
+        }
 
         var arena = Mimalloc.Arena.init() catch unreachable;
 
         const allocator = arena.allocator();
 
+        var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();
+        ast_memory_allocator.* = .{
+            .allocator = allocator,
+        };
+        ast_memory_allocator.reset();
+        JSAst.Stmt.Data.Store.memory_allocator = ast_memory_allocator;
+        JSAst.Expr.Data.Store.memory_allocator = ast_memory_allocator;
+        JSAst.Stmt.Data.Store.create(bun.default_allocator);
+        JSAst.Expr.Data.Store.create(bun.default_allocator);
+
         defer {
-            this.input_code.deinitAndUnprotect();
             JSAst.Stmt.Data.Store.reset();
             JSAst.Expr.Data.Store.reset();
             arena.deinit();
         }
 
         this.bundler.setAllocator(allocator);
+        this.bundler.setLog(&this.log);
+        this.log.msgs.allocator = bun.default_allocator;
+
         const jsx = if (this.tsconfig != null)
             this.tsconfig.?.mergeJSX(this.bundler.options.jsx)
         else
@@ -163,16 +179,15 @@ pub const TransformTask = struct {
         };
 
         if (parse_result.empty) {
-            this.output_code = ZigString.init("");
+            this.output_code = bun.String.empty;
             return;
         }
 
-        const global_allocator = arena.backingAllocator();
-        var buffer_writer = JSPrinter.BufferWriter.init(global_allocator) catch |err| {
+        var buffer_writer = JSPrinter.BufferWriter.init(allocator) catch |err| {
             this.err = err;
             return;
         };
-        buffer_writer.buffer.list.ensureTotalCapacity(global_allocator, 512) catch unreachable;
+        buffer_writer.buffer.list.ensureTotalCapacity(allocator, 512) catch unreachable;
         buffer_writer.reset();
 
         // defer {
@@ -188,12 +203,9 @@ pub const TransformTask = struct {
         if (printed > 0) {
             buffer_writer = printer.ctx;
             buffer_writer.buffer.list.items = buffer_writer.written;
-
-            var output = JSC.ZigString.init(buffer_writer.written);
-            output.mark();
-            this.output_code = output;
+            this.output_code = bun.String.createLatin1(buffer_writer.written);
         } else {
-            this.output_code = ZigString.init("");
+            this.output_code = bun.String.empty;
         }
     }
 
@@ -219,28 +231,25 @@ pub const TransformTask = struct {
             return;
         }
 
-        finish(this.output_code, this.global, promise);
-
+        const global = this.global;
+        const code = this.output_code;
+        this.output_code = bun.String.empty;
         this.deinit();
+
+        finish(code, global, promise);
     }
 
-    noinline fn finish(code: ZigString, global: *JSGlobalObject, promise: *JSC.JSPromise) void {
-        promise.resolve(global, code.toValueGC(global));
+    noinline fn finish(code: bun.String, global: *JSGlobalObject, promise: *JSC.JSPromise) void {
+        promise.resolve(global, code.toJS(global));
+        code.deref();
     }
 
     pub fn deinit(this: *TransformTask) void {
-        var should_cleanup = false;
-        defer if (should_cleanup) bun.Global.mimalloc_cleanup(false);
-
         this.log.deinit();
         this.input_code.deinitAndUnprotect();
+        this.output_code.deref();
 
-        if (this.output_code.isGloballyAllocated()) {
-            should_cleanup = this.output_code.len > 512_000;
-            this.output_code.deinitGlobal();
-        }
-
-        bun.default_allocator.destroy(this);
+        this.destroy();
     }
 };
 
@@ -1008,7 +1017,7 @@ pub fn transform(
         return .zero;
     };
 
-    var code = JSC.Node.StringOrBuffer.fromJS(globalThis, this.arena.allocator(), code_arg) orelse {
+    var code = JSC.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.default_allocator, code_arg, .utf8, true) orelse {
         globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
         return .zero;
     };
@@ -1024,17 +1033,23 @@ pub fn transform(
     };
 
     if (exception.* != null) {
+        code.deinit();
         globalThis.throwValue(JSC.JSValue.c(exception.*));
         return .zero;
     }
 
-    code.toThreadSafe();
+    if (code == .buffer) {
+        code_arg.protect();
+    }
     var task = TransformTask.create(
         this,
         code,
         globalThis,
         loader orelse this.transpiler_options.default_loader,
     ) catch {
+        if (code == .buffer) {
+            code_arg.unprotect();
+        }
         globalThis.throw("Out of memory", .{});
         return .zero;
     };
@@ -1196,7 +1211,7 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     });
     var i: usize = 0;
     while (named_exports_iter.next()) |entry| {
-        names[i] = bun.String.create(entry.key_ptr.*);
+        names[i] = bun.String.createUTF8(entry.key_ptr.*);
         i += 1;
     }
     return bun.String.toJSArray(global, names);

@@ -1,17 +1,21 @@
 import { $ } from "bun";
 import { TestBuilder, redirect } from "./util";
+import { shellInternals } from "bun:internal-for-testing";
+const { lex } = shellInternals;
 
 const BUN = process.argv0;
+
+$.nothrow();
 
 describe("lex shell", () => {
   test("basic", () => {
     const expected = [{ "Text": "next" }, { "Delimit": {} }, { "Text": "dev" }, { "Delimit": {} }, { "Eof": {} }];
-    const result = JSON.parse($.lex`next dev`);
+    const result = JSON.parse(lex`next dev`);
     expect(result).toEqual(expected);
   });
 
   test("var edgecase", () => {
-    expect(JSON.parse($.lex`$PWD/test.txt`)).toEqual([
+    expect(JSON.parse(lex`$PWD/test.txt`)).toEqual([
       { "Var": "PWD" },
       { "Text": "/test.txt" },
       { "Delimit": {} },
@@ -28,7 +32,7 @@ describe("lex shell", () => {
       { "Var": "PORT" },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`next dev $PORT`);
+    const result = JSON.parse(lex`next dev $PORT`);
     expect(result).toEqual(expected);
   });
 
@@ -41,7 +45,7 @@ describe("lex shell", () => {
       { "Var": "PORT" },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`next dev "$PORT"`);
+    const result = JSON.parse(lex`next dev "$PORT"`);
     expect(result).toEqual(expected);
   });
 
@@ -55,7 +59,7 @@ describe("lex shell", () => {
       { "Var": "PORT" },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`next dev foo"$PORT"`);
+    const result = JSON.parse(lex`next dev foo"$PORT"`);
     expect(result).toEqual(expected);
   });
 
@@ -66,10 +70,10 @@ describe("lex shell", () => {
       { "Text": "foo" },
       { "Var": "NICE" },
       { "Text": "good" },
-      { "Text": "NICE" },
+      { "DoubleQuotedText": "NICE" },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`echo foo"$NICE"good"NICE"`);
+    const result = JSON.parse(lex`echo foo"$NICE"good"NICE"`);
     expect(result).toEqual(expected);
   });
 
@@ -87,10 +91,10 @@ describe("lex shell", () => {
       { "Semicolon": {} },
       { "Text": "echo" },
       { "Delimit": {} },
-      { "Text": "NICE;" },
+      { "DoubleQuotedText": "NICE;" },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`echo foo; bar baz; echo "NICE;"`);
+    const result = JSON.parse(lex`echo foo; bar baz; echo "NICE;"`);
     expect(result).toEqual(expected);
   });
 
@@ -104,7 +108,7 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`next dev 'hello how is it going'`);
+    const result = JSON.parse(lex`next dev 'hello how is it going'`);
     expect(result).toEqual(expected);
   });
 
@@ -114,7 +118,7 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Text": "FULLNAME=" },
       { "Var": "NAME" },
-      { "Text": " radisic" },
+      { "DoubleQuotedText": " radisic" },
       { "Delimit": {} },
       { "Text": "LOL=" },
       { "Delimit": {} },
@@ -124,7 +128,7 @@ describe("lex shell", () => {
       { "Var": "FULLNAME" },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`NAME=zack FULLNAME="$NAME radisic" LOL= ; echo $FULLNAME`);
+    const result = JSON.parse(lex`NAME=zack FULLNAME="$NAME radisic" LOL= ; echo $FULLNAME`);
     expect(result).toEqual(expected);
   });
 
@@ -156,7 +160,7 @@ describe("lex shell", () => {
         Eof: {},
       },
     ];
-    const result = JSON.parse($.lex`NAME=zack foo=$bar echo $NAME`);
+    const result = JSON.parse(lex`NAME=zack foo=$bar echo $NAME`);
     expect(result).toEqual(expected);
   });
 
@@ -196,7 +200,7 @@ describe("lex shell", () => {
         Eof: {},
       },
     ];
-    const result = JSON.parse($.lex`export NAME=zack FOO=bar export NICE=lmao`);
+    const result = JSON.parse(lex`export NAME=zack FOO=bar export NICE=lmao`);
     // console.log(result);
     expect(result).toEqual(expected);
   });
@@ -216,7 +220,7 @@ describe("lex shell", () => {
       { "BraceEnd": {} },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`echo {ts,tsx,js,jsx}`);
+    const result = JSON.parse(lex`echo {ts,tsx,js,jsx}`);
     expect(result).toEqual(expected);
   });
 
@@ -233,7 +237,7 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`echo foo && echo bar`);
+    const result = JSON.parse(lex`echo foo && echo bar`);
     expect(result).toEqual(expected);
   });
 
@@ -250,7 +254,7 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`echo foo || echo bar`);
+    const result = JSON.parse(lex`echo foo || echo bar`);
     expect(result).toEqual(expected);
   });
 
@@ -267,7 +271,7 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`echo foo | echo bar`);
+    const result = JSON.parse(lex`echo foo | echo bar`);
     expect(result).toEqual(expected);
   });
 
@@ -284,7 +288,7 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`echo foo & echo bar`);
+    const result = JSON.parse(lex`echo foo & echo bar`);
     expect(result).toEqual(expected);
   });
 
@@ -303,84 +307,147 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    let result = JSON.parse($.lex`echo foo > cat secrets.txt`);
+    let result = JSON.parse(lex`echo foo > cat secrets.txt`);
     expect(result).toEqual(expected);
 
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": true, "stdout": false, "stderr": false, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": true,
+          "stdout": false,
+          "stderr": false,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    result = $.lex`cmd1 0> file.txt`;
+    result = lex`cmd1 0> file.txt`;
     expect(JSON.parse(result)).toEqual(expected);
 
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": false,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    result = $.lex`cmd1 1> file.txt`;
+    result = lex`cmd1 1> file.txt`;
     expect(JSON.parse(result)).toEqual(expected);
 
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": false, "stderr": true, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": false,
+          "stderr": true,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    result = $.lex`cmd1 2> file.txt`;
+    result = lex`cmd1 2> file.txt`;
     expect(JSON.parse(result)).toEqual(expected);
 
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": true, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": true,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    result = $.lex`cmd1 &> file.txt`;
+    result = lex`cmd1 &> file.txt`;
     expect(JSON.parse(result)).toEqual(expected);
 
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": true, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": false,
+          "append": true,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    result = $.lex`cmd1 1>> file.txt`;
+    result = lex`cmd1 1>> file.txt`;
     expect(JSON.parse(result)).toEqual(expected);
 
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": false, "stderr": true, "append": true, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": false,
+          "stderr": true,
+          "append": true,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    result = $.lex`cmd1 2>> file.txt`;
+    result = lex`cmd1 2>> file.txt`;
     expect(JSON.parse(result)).toEqual(expected);
 
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": true, "append": true, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": true,
+          "append": true,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    result = $.lex`cmd1 &>> file.txt`;
+    result = lex`cmd1 &>> file.txt`;
     expect(JSON.parse(result)).toEqual(expected);
   });
 
@@ -431,7 +498,7 @@ describe("lex shell", () => {
     ];
     const buffer = new Uint8Array(1 << 20);
     const buffer2 = new Uint8Array(1 << 20);
-    const result = JSON.parse($.lex`echo foo > ${buffer} && echo lmao > ${buffer2}`);
+    const result = JSON.parse(lex`echo foo > ${buffer} && echo lmao > ${buffer2}`);
     expect(result).toEqual(expected);
   });
 
@@ -466,7 +533,7 @@ describe("lex shell", () => {
       },
     ];
 
-    const result = $.lex`echo foo $(ls)`;
+    const result = lex`echo foo $(ls)`;
 
     expect(JSON.parse(result)).toEqual(expected);
   });
@@ -532,7 +599,7 @@ describe("lex shell", () => {
       },
     ];
 
-    const result = $.lex`echo foo $(ls $(ls) $(ls))`;
+    const result = lex`echo foo $(ls $(ls) $(ls))`;
     // console.log(JSON.parse(result));
     expect(JSON.parse(result)).toEqual(expected);
   });
@@ -568,7 +635,7 @@ describe("lex shell", () => {
       },
     ];
 
-    const result = $.lex`echo $(FOO=bar $FOO)`;
+    const result = lex`echo $(FOO=bar $FOO)`;
 
     expect(JSON.parse(result)).toEqual(expected);
   });
@@ -604,7 +671,7 @@ describe("lex shell", () => {
       },
     ];
 
-    const result = $.lex`echo $(FOO=bar $FOO)NICE`;
+    const result = lex`echo $(FOO=bar $FOO)NICE`;
 
     expect(JSON.parse(result)).toEqual(expected);
   });
@@ -640,7 +707,7 @@ describe("lex shell", () => {
       },
     ];
 
-    const result = $.lex`echo foo \`ls\``;
+    const result = lex`echo foo \`ls\``;
 
     expect(JSON.parse(result)).toEqual(expected);
   });
@@ -655,19 +722,15 @@ describe("lex shell", () => {
         .run();
     });
 
-    test("Unexpected ')'", async () => {
-      await TestBuilder.command`echo )`.error("Unexpected ')'").run();
-      await TestBuilder.command`echo (echo hi)`
-        .error(
-          "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.",
-        )
-        .run();
-      await TestBuilder.command`echo "()"`.stdout("()\n").run();
+    describe("Unexpected ')'", async () => {
+      TestBuilder.command`echo )`.error("Unexpected ')'").runAsTest("lone closing paren");
+      TestBuilder.command`echo (echo hi)`.error("Unexpected token: `(`").runAsTest("subshell in invalid position");
+      TestBuilder.command`echo "()"`.stdout("()\n").runAsTest("quoted parens");
     });
 
     test("Unexpected EOF", async () => {
       await TestBuilder.command`echo hi |`.error("Unexpected EOF").run();
-      await TestBuilder.command`echo hi &`.error("Unexpected EOF").run();
+      await TestBuilder.command`echo hi &`.error('Background commands "&" are not supported yet.').run();
     });
 
     test("Unclosed subshell", async () => {
@@ -678,19 +741,14 @@ describe("lex shell", () => {
         .exitCode(1)
         .run();
 
-      await TestBuilder.command`echo hi && \`echo uh oh`.error("Unclosed command substitution").run();
-      await TestBuilder.command`echo hi && \`echo uh oh\``
+      await TestBuilder.command`echo hi && ${{ raw: "`echo uh oh" }}`.error("Unclosed command substitution").run();
+      await TestBuilder.command`echo hi && ${{ raw: "`echo uh oh`" }}`
         .stdout("hi\n")
         .stderr("bun: command not found: uh\n")
         .exitCode(1)
         .run();
 
       await TestBuilder.command`echo hi && (echo uh oh`.error("Unclosed subshell").run();
-      await TestBuilder.command`echo hi && (echo uh oh)`
-        .error(
-          "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.",
-        )
-        .run();
     });
   });
 });

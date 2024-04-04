@@ -15,6 +15,7 @@ const std = @import("std");
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const GitSHA = String;
+const Path = bun.path;
 
 threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -103,14 +104,26 @@ pub const Repository = extern struct {
         }
     };
 
-    fn exec(allocator: std.mem.Allocator, env: *DotEnv.Loader, cwd_dir: std.fs.Dir, argv: []const string) !string {
-        const buf_map = try env.map.cloneToEnvMap(allocator);
-        const result = try std.ChildProcess.run(.{
-            .allocator = allocator,
-            .argv = argv,
-            .cwd_dir = cwd_dir,
-            .env_map = &buf_map,
-        });
+    fn exec(
+        allocator: std.mem.Allocator,
+        env: *DotEnv.Loader,
+        argv: []const string,
+    ) !string {
+        var std_map = try env.map.stdEnvMap(allocator);
+        defer std_map.deinit();
+
+        const result = if (comptime Environment.isWindows)
+            try std.process.Child.run(.{
+                .allocator = allocator,
+                .argv = argv,
+                .env_map = std_map.get(),
+            })
+        else
+            try std.process.Child.run(.{
+                .allocator = allocator,
+                .argv = argv,
+                .env_map = std_map.get(),
+            });
 
         switch (result.term) {
             .Exited => |sig| if (sig == 0) return result.stdout,
@@ -160,12 +173,19 @@ pub const Repository = extern struct {
         name: string,
         url: string,
     ) !std.fs.Dir {
+        bun.Analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),
         });
 
         return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
-            _ = exec(allocator, env, dir, &[_]string{ "git", "fetch", "--quiet" }) catch |err| {
+            const path = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+
+            _ = exec(
+                allocator,
+                env,
+                &[_]string{ "git", "-C", path, "fetch", "--quiet" },
+            ) catch |err| {
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
@@ -179,13 +199,15 @@ pub const Repository = extern struct {
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
 
-            _ = exec(allocator, env, cache_dir, &[_]string{
+            const target = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+
+            _ = exec(allocator, env, &[_]string{
                 "git",
                 "clone",
                 "--quiet",
                 "--bare",
                 url,
-                folder_name,
+                target,
             }) catch |err| {
                 log.addErrorFmt(
                     null,
@@ -207,15 +229,21 @@ pub const Repository = extern struct {
         repo_dir: std.fs.Dir,
         name: string,
         committish: string,
+        task_id: u64,
     ) !string {
+        const path = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
+            bun.fmt.hexIntLower(task_id),
+        })}, .auto);
+
+        _ = repo_dir;
+
         return std.mem.trim(u8, exec(
             allocator,
             env,
-            repo_dir,
             if (committish.len > 0)
-                &[_]string{ "git", "log", "--format=%H", "-1", committish }
+                &[_]string{ "git", "-C", path, "log", "--format=%H", "-1", committish }
             else
-                &[_]string{ "git", "log", "--format=%H", "-1" },
+                &[_]string{ "git", "-C", path, "log", "--format=%H", "-1" },
         ) catch |err| {
             log.addErrorFmt(
                 null,
@@ -238,18 +266,21 @@ pub const Repository = extern struct {
         url: string,
         resolved: string,
     ) !ExtractData {
+        bun.Analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved);
 
-        var package_dir = cache_dir.openDirZ(folder_name, .{}) catch |not_found| brk: {
-            if (not_found != error.FileNotFound) return not_found;
+        var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
+            if (not_found != error.ENOENT) return not_found;
 
-            _ = exec(allocator, env, cache_dir, &[_]string{
+            const target = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+
+            _ = exec(allocator, env, &[_]string{
                 "git",
                 "clone",
                 "--quiet",
                 "--no-checkout",
                 try bun.getFdPath(repo_dir.fd, &final_path_buf),
-                folder_name,
+                target,
             }) catch |err| {
                 log.addErrorFmt(
                     null,
@@ -261,9 +292,9 @@ pub const Repository = extern struct {
                 return err;
             };
 
-            var dir = try cache_dir.openDirZ(folder_name, .{});
+            const folder = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(allocator, env, dir, &[_]string{ "git", "checkout", "--quiet", resolved }) catch |err| {
+            _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
@@ -273,6 +304,7 @@ pub const Repository = extern struct {
                 ) catch unreachable;
                 return err;
             };
+            var dir = try bun.openDir(cache_dir, folder_name);
             dir.deleteTree(".git") catch {};
 
             if (resolved.len > 0) insert_tag: {
@@ -287,7 +319,7 @@ pub const Repository = extern struct {
         };
         defer package_dir.close();
 
-        const json_file = package_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
+        const json_file, const json_buf = bun.sys.File.readFileFrom(package_dir, "package.json", allocator).unwrap() catch |err| {
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -298,14 +330,10 @@ pub const Repository = extern struct {
             return error.InstallFailed;
         };
         defer json_file.close();
-        const size = try json_file.getEndPos();
-        const json_buf = try allocator.alloc(u8, size + 64);
-        const json_len = try json_file.preadAll(json_buf, 0);
 
-        const json_path = bun.getFdPath(
-            json_file.handle,
+        const json_path = json_file.getPath(
             &json_path_buf,
-        ) catch |err| {
+        ).unwrap() catch |err| {
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -322,7 +350,6 @@ pub const Repository = extern struct {
             .resolved = resolved,
             .json_path = ret_json_path,
             .json_buf = json_buf,
-            .json_len = json_len,
         };
     }
 };

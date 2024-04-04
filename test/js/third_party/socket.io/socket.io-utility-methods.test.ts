@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { createServer } from "http";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { io as ioc, Socket as ClientSocket } from "socket.io-client";

@@ -4,8 +4,16 @@ const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const bun = @import("root").bun;
-pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
-    return (@intFromPtr(&buffer) <= @intFromPtr(slice.ptr) and (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer) + buffer.len));
+
+pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
+    return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
+        (@intFromPtr(slice.ptr) + slice.len * @sizeOf(T)) <= (@intFromPtr(buffer.ptr) + buffer.len * @sizeOf(T)));
+}
+
+/// Checks if a slice's pointer is contained within another slice.
+/// If you need to make this generic, use isSliceInBufferT.
+pub fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
+    return isSliceInBufferT(u8, slice, buffer);
 }
 
 pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
@@ -305,8 +313,8 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return instance.slice_buf_used >= @as(u16, count);
         }
 
-        pub fn exists(_: *const Self, value: ValueType) bool {
-            return isSliceInBuffer(value, &instance.backing_buf);
+        pub fn exists(self: *const Self, value: ValueType) bool {
+            return isSliceInBuffer(value, &self.backing_buf);
         }
 
         pub fn editableSlice(slice: []const u8) []u8 {
@@ -314,7 +322,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) ![]u8 {
-            const appended = try @call(.always_inline, append, .{ self, AppendType, _value });
+            const appended = try @call(bun.callmod_inline, append, .{ self, AppendType, _value });
             return @constCast(appended);
         }
 
@@ -566,14 +574,18 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             }
         }
 
-        pub fn remove(self: *Self, denormalized_key: []const u8) void {
+        /// Returns true if the entry was removed
+        pub fn remove(self: *Self, denormalized_key: []const u8) bool {
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+            const key = if (comptime remove_trailing_slashes)
+                std.mem.trimRight(u8, denormalized_key, "/")
+            else
+                denormalized_key;
 
             const _key = bun.hash(key);
-            _ = self.index.remove(_key);
+            return self.index.remove(_key);
             // const index = self.index.get(_key) orelse return;
             // switch (index) {
             //     Unassigned.index, NotFound.index => {
@@ -630,11 +642,11 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             return try self.map.getOrPut(key);
         }
         pub fn get(self: *Self, key: []const u8) ?*ValueType {
-            return @call(.always_inline, BSSMapType.get, .{ self.map, key });
+            return @call(bun.callmod_inline, BSSMapType.get, .{ self.map, key });
         }
 
         pub fn atIndex(self: *Self, index: IndexType) ?*ValueType {
-            return @call(.always_inline, BSSMapType.atIndex, .{ self.map, index });
+            return @call(bun.callmod_inline, BSSMapType.atIndex, .{ self.map, index });
         }
 
         pub fn keyAtIndex(_: *Self, index: IndexType) ?[]const u8 {
@@ -706,8 +718,9 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             self.map.markNotFound(result);
         }
 
-        // For now, don't free the keys.
-        pub fn remove(self: *Self, key: []const u8) void {
+        /// This does not free the keys.
+        /// Returns `true` if an entry had previously existed.
+        pub fn remove(self: *Self, key: []const u8) bool {
             return self.map.remove(key);
         }
     };

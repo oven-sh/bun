@@ -11,6 +11,16 @@ import { expect, mock, spyOn, test, describe } from "bun:test";
 import { fn, iCallFn, variable, default as defaultValue, rexported, rexportedAs } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
+test("mock.module async", async () => {
+  mock.module("i-am-async-and-mocked", async () => {
+    await 42;
+    await Bun.sleep(0);
+    return { a: 123 };
+  });
+
+  expect((await import("i-am-async-and-mocked")).a).toBe(123);
+});
+
 test("mock.restore", () => {
   const original = spyFixture.iSpy;
   spyOn(spyFixture, "iSpy");
@@ -57,7 +67,7 @@ test("mocking a non-existant relative file with a file URL", async () => {
 
   expect(require("./hey-hey-you-you2.ts").bar).toBe(42);
   expect(require.resolve("./hey-hey-you-you2.ts")).toBe(import.meta.resolveSync("./hey-hey-you-you2.ts"));
-  expect(require.resolve("./hey-hey-you-you2.ts")).toBe(await import.meta.resolve("./hey-hey-you-you2.ts"));
+  expect(require.resolve("./hey-hey-you-you2.ts")).toBe(require.resolve("./hey-hey-you-you2.ts"));
 });
 
 test("mocking a non-existant relative file", async () => {
@@ -74,7 +84,7 @@ test("mocking a non-existant relative file", async () => {
 
   expect(require("./hey-hey-you-you.ts").bar).toBe(42);
   expect(require.resolve("./hey-hey-you-you.ts")).toBe(import.meta.resolveSync("./hey-hey-you-you.ts"));
-  expect(require.resolve("./hey-hey-you-you.ts")).toBe(await import.meta.resolve("./hey-hey-you-you.ts"));
+  expect(require.resolve("./hey-hey-you-you.ts")).toBe(require.resolve("./hey-hey-you-you.ts"));
 });
 
 test("mocking a local file", async () => {

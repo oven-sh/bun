@@ -8,9 +8,6 @@ const uv = bun.windows.libuv;
 pub const Loop = uv.Loop;
 
 pub const KeepAlive = struct {
-    // handle.init zeroes the memory
-    handle: uv.uv_async_t = undefined,
-
     status: Status = .inactive,
 
     const log = Output.scoped(.KeepAlive, false);
@@ -18,11 +15,6 @@ pub const KeepAlive = struct {
     const Status = enum { active, inactive, done };
 
     pub inline fn isActive(this: KeepAlive) bool {
-        if (comptime Environment.allow_assert) {
-            if (this.status == .active) {
-                std.debug.assert(this.handle.isActive());
-            }
-        }
         return this.status == .active;
     }
 
@@ -30,7 +22,6 @@ pub const KeepAlive = struct {
     pub fn disable(this: *KeepAlive) void {
         if (this.status == .active) {
             this.unref(JSC.VirtualMachine.get());
-            this.handle.close(null);
         }
 
         this.status = .done;
@@ -38,12 +29,11 @@ pub const KeepAlive = struct {
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *KeepAlive, loop: *Loop) void {
-        _ = loop;
         if (this.status != .active)
             return;
 
         this.status = .inactive;
-        this.handle.close(null);
+        loop.dec();
     }
 
     /// Only intended to be used from EventLoop.Pollable
@@ -52,7 +42,7 @@ pub const KeepAlive = struct {
             return;
 
         this.status = .active;
-        this.handle.init(loop, null);
+        loop.inc();
     }
 
     pub fn init() KeepAlive {
@@ -61,52 +51,57 @@ pub const KeepAlive = struct {
 
     /// Prevent a poll from keeping the process alive.
     pub fn unref(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        _ = event_loop_ctx_;
-        // const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
         if (this.status != .active)
             return;
         this.status = .inactive;
-        this.handle.unref();
+        if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
+            event_loop_ctx_.loop().subActive(1);
+            return;
+        }
+        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        event_loop_ctx.platformEventLoop().subActive(1);
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
     pub fn unrefConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
-        _ = vm;
+        // _ = vm;
         if (this.status != .active)
             return;
         this.status = .inactive;
 
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        this.handle.unref();
+        vm.event_loop_handle.?.dec();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
     pub fn unrefOnNextTick(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
-        _ = vm;
         if (this.status != .active)
             return;
         this.status = .inactive;
-        this.handle.unref();
+        vm.event_loop_handle.?.dec();
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
     pub fn unrefOnNextTickConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
-        _ = vm;
         if (this.status != .active)
             return;
         this.status = .inactive;
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        this.handle.unref();
+        vm.event_loop_handle.?.dec();
     }
 
     /// Allow a poll to keep the process alive.
     pub fn ref(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
         if (this.status != .inactive)
             return;
         this.status = .active;
-        this.handle.init(event_loop_ctx.platformEventLoop(), null);
-        this.handle.ref();
+        const EventLoopContext = @TypeOf(event_loop_ctx_);
+        if (comptime EventLoopContext == JSC.EventLoopHandle) {
+            event_loop_ctx_.ref();
+            return;
+        }
+        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        event_loop_ctx.platformEventLoop().ref();
     }
 
     /// Allow a poll to keep the process alive.
@@ -115,8 +110,7 @@ pub const KeepAlive = struct {
             return;
         this.status = .active;
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        this.handle.init(vm.event_loop_handle.?, null);
-        this.handle.ref();
+        vm.event_loop_handle.?.inc();
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {
@@ -183,20 +177,6 @@ pub const FilePoll = struct {
         return poll;
     }
 
-    pub fn initWithPackageManager(m: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: anytype) *FilePoll {
-        return initWithPackageManagerWithOwner(m, fd, flags, Owner.init(owner));
-    }
-
-    pub fn initWithPackageManagerWithOwner(manager: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
-        var poll = manager.file_poll_store.get();
-        poll.fd = fd;
-        poll.flags = Flags.Set.init(flags);
-        poll.owner = owner;
-        poll.next_to_free = null;
-
-        return poll;
-    }
-
     pub fn deinit(this: *FilePoll) void {
         const vm = JSC.VirtualMachine.get();
         this.deinitWithVM(vm);
@@ -210,7 +190,10 @@ pub const FilePoll = struct {
 
     pub fn unregister(this: *FilePoll, loop: *Loop) bool {
         _ = loop;
-        uv.uv_unref(@ptrFromInt(this.fd.int()));
+        // TODO(@paperdave): This cast is extremely suspicious. At best, `fd` is
+        // the wrong type (it should be a uv handle), at worst this code is a
+        // crash due to invalid memory access.
+        uv.uv_unref(@ptrFromInt(@intFromEnum(this.fd)));
         return true;
     }
 
@@ -276,12 +259,14 @@ pub const FilePoll = struct {
     pub fn deactivate(this: *FilePoll, loop: *Loop) void {
         std.debug.assert(this.flags.contains(.has_incremented_poll_count));
         loop.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        log("deactivate - {d}", .{loop.active_handles});
         this.flags.remove(.has_incremented_poll_count);
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(this: *FilePoll, loop: *Loop) void {
         loop.active_handles += @as(u32, @intFromBool(!this.flags.contains(.closed) and !this.flags.contains(.has_incremented_poll_count)));
+        log("activate - {d}", .{loop.active_handles});
         this.flags.insert(.has_incremented_poll_count);
     }
 
@@ -384,19 +369,17 @@ pub const FilePoll = struct {
 };
 
 pub const Waker = struct {
-    loop: *bun.uws.UVLoop,
+    loop: *bun.uws.WindowsLoop,
 
-    pub fn init(_: std.mem.Allocator) !Waker {
-        return .{ .loop = bun.uws.UVLoop.init() };
+    pub fn init() !Waker {
+        return .{ .loop = bun.uws.WindowsLoop.get() };
     }
 
-    pub fn getFd(this: *const Waker) bun.FileDescriptor {
-        _ = this;
-
+    pub fn getFd(_: *const Waker) bun.FileDescriptor {
         @compileError("Waker.getFd is unsupported on Windows");
     }
 
-    pub fn initWithFileDescriptor(_: std.mem.Allocator, _: bun.FileDescriptor) Waker {
+    pub fn initWithFileDescriptor(_: bun.FileDescriptor) Waker {
         @compileError("Waker.initWithFileDescriptor is unsupported on Windows");
     }
 
@@ -406,5 +389,36 @@ pub const Waker = struct {
 
     pub fn wake(this: *const Waker) void {
         this.loop.wakeup();
+    }
+};
+
+pub const Closer = struct {
+    io_request: uv.fs_t = std.mem.zeroes(uv.fs_t),
+    pub usingnamespace bun.New(@This());
+
+    pub fn close(fd: uv.uv_file, loop: *uv.Loop) void {
+        var closer = Closer.new(.{});
+        // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
+        closer.io_request.data = closer;
+        if (uv.uv_fs_close(loop, &closer.io_request, fd, onClose).errEnum()) |err| {
+            Output.debugWarn("libuv close() failed = {}", .{err});
+            closer.destroy();
+            return;
+        }
+    }
+
+    fn onClose(req: *uv.fs_t) callconv(.C) void {
+        var closer = @fieldParentPtr(Closer, "io_request", req);
+        std.debug.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
+        bun.sys.syslog("uv_fs_close({}) = {}", .{ bun.toFD(req.file.fd), req.result });
+
+        if (comptime Environment.allow_assert) {
+            if (closer.io_request.result.errEnum()) |err| {
+                Output.debugWarn("libuv close() failed = {}", .{err});
+            }
+        }
+
+        req.deinit();
+        closer.destroy();
     }
 };

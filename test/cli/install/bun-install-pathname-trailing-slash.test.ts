@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "fs";
 import { bunEnv, bunExe } from "harness";
@@ -10,10 +9,6 @@ let package_dir: string;
 
 beforeEach(() => {
   package_dir = tmpdirSync("bun-install-path");
-});
-
-afterEach(() => {
-  rmSync(package_dir, { recursive: true, force: true });
 });
 
 // https://github.com/oven-sh/bun/issues/2462

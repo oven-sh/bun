@@ -1,5 +1,5 @@
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
-import { ShellOutput } from "bun";
+import { ShellError, ShellOutput } from "bun";
 import { ShellPromise } from "bun";
 // import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
@@ -11,12 +11,17 @@ export class TestBuilder {
   private _testName: string | undefined = undefined;
 
   private expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
-  private expected_stderr: string = "";
+  private expected_stderr: string | ((stderr: string, tempdir: string) => void) = "";
   private expected_exit_code: number = 0;
-  private expected_error: string | boolean | undefined = undefined;
+  private expected_error: ShellError | string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
+  private _doesNotExist: string[] = [];
+  private _timeout: number | undefined = undefined;
 
   private tempdir: string | undefined = undefined;
+  private _env: { [key: string]: string } | undefined = undefined;
+
+  private __todo: boolean | string = false;
 
   static UNEXPECTED_SUBSHELL_ERROR_OPEN =
     "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
@@ -28,10 +33,20 @@ export class TestBuilder {
     this.promise = promise;
   }
 
+  /**
+   * Start the test builder with a command:
+   *
+   * @example
+   * ```ts
+   * await TestBuilder.command`echo hi!`.stdout('hi!\n').run()
+
+   * TestBuilder.command`echo hi!`.stdout('hi!\n').runAsTest('echo works')
+   * ```
+   */
   static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
     try {
       if (process.env.BUN_DEBUG_SHELL_LOG_CMD === "1") console.info("[ShellTestBuilder] Cmd", strings.join(""));
-      const promise = Bun.$(strings, ...expressions);
+      const promise = Bun.$(strings, ...expressions).nothrow();
       const This = new this({ type: "ok", val: promise });
       This._testName = strings.join("");
       return This;
@@ -46,9 +61,33 @@ export class TestBuilder {
     return this;
   }
 
+  doesNotExist(path: string): this {
+    this._doesNotExist.push(path);
+    return this;
+  }
+
+  /**
+   * Create a file in a temp directory
+   * @param path Path to the new file, this will be inside the TestBuilder's temp directory
+   * @param contents Contents of the new file
+   * @returns
+   *
+   * @example
+   * ```ts
+   * TestBuilder.command`ls .`
+   *   .file('hi.txt', 'hi!')
+   *   .file('hello.txt', 'hello!')
+   *   .runAsTest('List files')
+   * ```
+   */
   file(path: string, contents: string): this {
     const tempdir = this.getTempDir();
     fs.writeFileSync(join(tempdir, path), contents);
+    return this;
+  }
+
+  env(env: { [key: string]: string }): this {
+    this._env = env;
     return this;
   }
 
@@ -64,22 +103,33 @@ export class TestBuilder {
     return this;
   }
 
+  /**
+   * Expect output from stdout
+   *
+   * @param expected - can either be a string or a function which itself calls `expect()`
+   */
   stdout(expected: string | ((stdout: string, tempDir: string) => void)): this {
     this.expected_stdout = expected;
     return this;
   }
 
-  stderr(expected: string): this {
+  stderr(expected: string | ((stderr: string, tempDir: string) => void)): this {
     this.expected_stderr = expected;
     return this;
   }
 
+  /**
+   * Makes this test use a temp directory:
+   * - The shell's cwd will be set to the temp directory
+   * - All FS functions on the `TestBuilder` will use this temp directory.
+   * @returns
+   */
   ensureTempDir(): this {
     this.getTempDir();
     return this;
   }
 
-  error(expected?: string | boolean): this {
+  error(expected?: ShellError | string | boolean): this {
     if (expected === undefined || expected === true) {
       this.expected_error = true;
     } else if (expected === false) {
@@ -125,6 +175,11 @@ export class TestBuilder {
     return this.tempdir;
   }
 
+  timeout(ms: number): this {
+    this._timeout = ms;
+    return this;
+  }
+
   async run(): Promise<undefined> {
     if (this.promise.type === "err") {
       const err = this.promise.val;
@@ -133,11 +188,17 @@ export class TestBuilder {
       if (this.expected_error === false) expect(err).toBeUndefined();
       if (typeof this.expected_error === "string") {
         expect(err.message).toEqual(this.expected_error);
+      } else if (this.expected_error instanceof ShellError) {
+        expect(err).toBeInstanceOf(ShellError);
+        const e = err as ShellError;
+        expect(e.exitCode).toEqual(this.expected_error.exitCode);
+        expect(e.stdout.toString()).toEqual(this.expected_error.stdout.toString());
+        expect(e.stderr.toString()).toEqual(this.expected_error.stderr.toString());
       }
       return undefined;
     }
 
-    const output = await this.promise.val;
+    const output = await (this._env !== undefined ? this.promise.val.env(this._env) : this.promise.val);
 
     const { stdout, stderr, exitCode } = output!;
     const tempdir = this.tempdir || "NO_TEMP_DIR";
@@ -148,8 +209,13 @@ export class TestBuilder {
         this.expected_stdout(stdout.toString(), tempdir);
       }
     }
-    if (this.expected_stderr !== undefined)
-      expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
+    if (this.expected_stderr !== undefined) {
+      if (typeof this.expected_stderr === "string") {
+        expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
+      } else {
+        this.expected_stderr(stderr.toString(), tempdir);
+      }
+    }
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
     for (const [filename, expected] of Object.entries(this.file_equals)) {
@@ -157,7 +223,34 @@ export class TestBuilder {
       expect(actual).toEqual(expected);
     }
 
+    for (const fsname of this._doesNotExist) {
+      expect(fs.existsSync(join(this.tempdir!, fsname))).toBeFalsy();
+    }
+
     // return output;
+  }
+
+  todo(reason?: string): this {
+    this.__todo = typeof reason === "string" ? reason : true;
+    return this;
+  }
+
+  runAsTest(name: string) {
+    // biome-ignore lint/complexity/noUselessThisAlias: <explanation>
+    const tb = this;
+    if (this.__todo) {
+      test.todo(typeof this.__todo === "string" ? `${name} skipped: ${this.__todo}` : name, async () => {
+        await tb.run();
+      });
+    } else {
+      test(
+        name,
+        async () => {
+          await tb.run();
+        },
+        this._timeout,
+      );
+    }
   }
 
   // async run(): Promise<undefined> {

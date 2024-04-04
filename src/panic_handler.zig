@@ -29,12 +29,17 @@ pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackT
             };
         }
         pub inline fn handle_panic(msg: []const u8, error_return_type: ?*std.builtin.StackTrace, addr: ?usize) noreturn {
+
             // This exists to ensure we flush all buffered output before panicking.
             Output.flush();
+
+            bun.maybeHandlePanicDuringProcessReload();
 
             Report.fatal(null, msg);
 
             Output.disableBuffering();
+
+            Output.Source.Stdio.restore();
 
             if (bun.auto_reload_on_crash) {
                 // attempt to prevent a double panic
@@ -45,8 +50,8 @@ pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackT
                 bun.reloadProcess(bun.default_allocator, false);
             }
 
-            // // We want to always inline the panic handler so it doesn't show up in the stacktrace.
-            @call(.always_inline, panic_func, .{ msg, error_return_type, addr });
+            // We want to always inline the panic handler so it doesn't show up in the stacktrace.
+            @call(bun.callmod_inline, panic_func, .{ msg, error_return_type, addr });
         }
     };
 }

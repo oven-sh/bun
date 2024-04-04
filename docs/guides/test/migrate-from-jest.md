@@ -4,7 +4,7 @@ name: Migrate from Jest to Bun's test runner
 
 In many cases, Bun's test runner can run Jest test suites with no code changes. Just run `bun test` instead of `npx jest`, `yarn test`, etc.
 
-```sh-diff
+```sh
 - $ npx jest
 - $ yarn test
 + $ bun test
@@ -57,7 +57,7 @@ Replace `bail` in your Jest config with the `--bail` CLI flag.
 - };
 ``` -->
 
-```sh-diff
+```sh
 $ bun test --bail 3
 ```
 
@@ -93,7 +93,7 @@ $ bun test --timeout 10000
 
 Many other flags become irrelevant or obsolete when using `bun test`.
 
-- `transform` — Buns supports TypeScript & JSX. Other file types can be configured with [Plugins](/docs/runtime/plugins).
+- `transform` — Bun supports TypeScript & JSX. Other file types can be configured with [Plugins](/docs/runtime/plugins).
 - `extensionsToTreatAsEsm`
 - `haste` — Bun uses it's own internal source maps
 - `watchman`, `watchPlugins`, `watchPathIgnorePatterns` — use `--watch` to run tests in watch mode

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
 import { bunExe, bunEnv } from "../../harness.js";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, mkdtempSync } from "fs";
@@ -23,6 +22,9 @@ it("JSON strings escaped properly", async () => {
     env: bunEnv,
     cwd: testDir,
   });
+  if (exitCode !== 0) {
+    console.log(stderr.toString("utf8"));
+  }
   expect(exitCode).toBe(0);
 
   const packageContents = readFileSync(join(testDir, "package.json"), { encoding: "utf8" });

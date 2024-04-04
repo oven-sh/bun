@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
@@ -35,6 +34,7 @@ describe("// @bun", () => {
       cwd: import.meta.dir,
       env: bunEnv,
       stderr: "inherit",
+      stdout: "pipe",
     });
     expect(stdout.toString()).toBe("Hello world!\n");
     expect(exitCode).toBe(0);

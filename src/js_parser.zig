@@ -2865,6 +2865,12 @@ pub const Parser = struct {
             this.features.hashForRuntimeTranspiler(hasher);
         }
 
+        // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
+        // to avoid changing line numbers too much to make source mapping more readable
+        pub fn runtimeMergeAdjacentExpressionStatements(this: Options) bool {
+            return this.bundle;
+        }
+
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
                 .ts = loader.isTypeScript(),
@@ -11064,7 +11070,7 @@ fn NewParser_(
             const what = switch (kind) {
                 .k_await_using, .k_using => "declaration",
                 .k_const => "constant",
-                else => comptime unreachable,
+                else => @compileError("unreachable"),
             };
 
             for (decls) |decl| {
@@ -11989,7 +11995,7 @@ fn NewParser_(
         }
 
         fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
-            return try @call(.always_inline, declareSymbolMaybeGenerated, .{ p, kind, loc, name, false });
+            return try @call(bun.callmod_inline, declareSymbolMaybeGenerated, .{ p, kind, loc, name, false });
         }
 
         fn declareSymbolMaybeGenerated(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string, comptime is_generated: bool) !Ref {
@@ -17807,7 +17813,7 @@ fn NewParser_(
                     p.to_expr_wrapper_hoisted,
                 );
                 if (decl.value) |decl_value| {
-                    value = value.joinWithComma(Expr.assign(binding, decl_value, p.allocator), p.allocator);
+                    value = value.joinWithComma(Expr.assign(binding, decl_value), p.allocator);
                 } else if (mode == .for_in_or_for_of) {
                     value = value.joinWithComma(binding, p.allocator);
                 }
@@ -18585,7 +18591,6 @@ fn NewParser_(
                                 stmt.loc,
                             ),
                             p.visitExpr(data.value),
-                            p.allocator,
                         ),
                     ) catch unreachable;
                     p.recordUsage(p.module_ref);
@@ -18661,7 +18666,7 @@ fn NewParser_(
                                 p.recordUsage((p.enclosing_namespace_arg_ref orelse unreachable));
                                 // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
                                 stmts.append(p.s(S.SExpr{
-                                    .value = Expr.assign(Binding.toExpr(&d.binding, p.to_expr_wrapper_namespace), val, p.allocator),
+                                    .value = Expr.assign(Binding.toExpr(&d.binding, p.to_expr_wrapper_namespace), val),
                                 }, stmt.loc)) catch unreachable;
                             }
                         }
@@ -19044,7 +19049,6 @@ fn NewParser_(
                                             Stmt.assign(
                                                 Expr.initIdentifier(decl.binding.data.b_identifier.ref, decl.binding.loc),
                                                 val,
-                                                p.allocator,
                                             ),
                                         ) catch unreachable;
                                         decl.value = null;
@@ -19203,11 +19207,14 @@ fn NewParser_(
                         const enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref orelse unreachable;
                         stmts.ensureUnusedCapacity(3) catch unreachable;
                         stmts.appendAssumeCapacity(stmt.*);
-                        stmts.appendAssumeCapacity(Stmt.assign(p.newExpr(E.Dot{
-                            .target = p.newExpr(E.Identifier{ .ref = enclosing_namespace_arg_ref }, stmt.loc),
-                            .name = p.loadNameFromRef(data.func.name.?.ref.?),
-                            .name_loc = data.func.name.?.loc,
-                        }, stmt.loc), p.newExpr(E.Identifier{ .ref = data.func.name.?.ref.? }, data.func.name.?.loc), p.allocator));
+                        stmts.appendAssumeCapacity(Stmt.assign(
+                            p.newExpr(E.Dot{
+                                .target = p.newExpr(E.Identifier{ .ref = enclosing_namespace_arg_ref }, stmt.loc),
+                                .name = p.loadNameFromRef(data.func.name.?.ref.?),
+                                .name_loc = data.func.name.?.loc,
+                            }, stmt.loc),
+                            p.newExpr(E.Identifier{ .ref = data.func.name.?.ref.? }, data.func.name.?.loc),
+                        ));
                     } else if (!mark_as_dead) {
                         if (p.symbols.items[data.func.name.?.ref.?.innerIndex()].remove_overwritten_function_declaration) {
                             return;
@@ -19286,7 +19293,6 @@ fn NewParser_(
                                     E.Identifier{ .ref = data.class.class_name.?.ref.? },
                                     data.class.class_name.?.loc,
                                 ),
-                                p.allocator,
                             ),
                         ) catch unreachable;
                     }
@@ -19359,16 +19365,19 @@ fn NewParser_(
                             enum_value.value = p.newExpr(E.Undefined{}, enum_value.loc);
                         }
                         // "Enum['Name'] = value"
-                        assign_target = Expr.assign(p.newExpr(E.Index{
-                            .target = p.newExpr(
-                                E.Identifier{ .ref = data.arg },
-                                enum_value.loc,
-                            ),
-                            .index = p.newExpr(
-                                enum_value.name,
-                                enum_value.loc,
-                            ),
-                        }, enum_value.loc), enum_value.value orelse unreachable, allocator);
+                        assign_target = Expr.assign(
+                            p.newExpr(E.Index{
+                                .target = p.newExpr(
+                                    E.Identifier{ .ref = data.arg },
+                                    enum_value.loc,
+                                ),
+                                .index = p.newExpr(
+                                    enum_value.name,
+                                    enum_value.loc,
+                                ),
+                            }, enum_value.loc),
+                            enum_value.value orelse unreachable,
+                        );
 
                         p.recordUsage(data.arg);
 
@@ -19387,7 +19396,6 @@ fn NewParser_(
                                         .index = assign_target,
                                     }, enum_value.loc),
                                     p.newExpr(enum_value.name, enum_value.loc),
-                                    allocator,
                                 ),
                             ) catch unreachable;
                         }
@@ -19640,7 +19648,7 @@ fn NewParser_(
                         var output_properties = object.properties.slice();
                         var end: u32 = 0;
                         for (bound_object.properties) |property| {
-                            if (property.key.asString(p.allocator)) |name| {
+                            if (property.key.asStringLiteral(p.allocator)) |name| {
                                 if (object.asProperty(name)) |query| {
                                     switch (query.expr.data) {
                                         .e_object, .e_array => p.visitBindingAndExprForMacro(property.value, query.expr),
@@ -19858,12 +19866,10 @@ fn NewParser_(
                                     name_loc,
                                 ),
                                 p.newExpr(E.Object{}, name_loc),
-                                allocator,
                             ),
                         },
                         name_loc,
                     ),
-                    allocator,
                 );
                 p.recordUsage(namespace);
                 p.recordUsage(namespace);
@@ -19879,7 +19885,6 @@ fn NewParser_(
                             E.Object{},
                             name_loc,
                         ),
-                        allocator,
                     ),
                 }, name_loc);
                 p.recordUsage(name_ref);
@@ -19980,14 +19985,29 @@ fn NewParser_(
 
                         if (prop.ts_decorators.len > 0) {
                             const loc = prop.key.?.loc;
-                            const descriptor_key = switch (prop.key.?.data) {
+                            const _descriptor_key = switch (prop.key.?.data) {
                                 .e_identifier => |k| p.newExpr(E.Identifier{ .ref = k.ref }, loc),
                                 .e_number => |k| p.newExpr(E.Number{ .value = k.value }, loc),
                                 .e_string => |k| p.newExpr(E.String{ .data = k.data }, loc),
                                 .e_index => |k| p.newExpr(E.Index{ .target = k.target, .index = k.index }, loc),
                                 .e_private_identifier => |k| p.newExpr(E.PrivateIdentifier{ .ref = k.ref }, loc),
-                                else => bun.unreachablePanic("Unexpected AST node type {any}", .{prop.key.?}),
+
+                                // This should be unreachable. Due to zig bug using `unreachable` keyword or `noreturn` type will
+                                // result in a segfault at runtime with a release build. Minimum repro:
+                                //
+                                // class Foo {
+                                //   foo;
+                                // }
+                                //
+                                // Workaround: assign to null and say the orelse branch is unreachable. The cause
+                                // of this bug seems to be a combination of release build optimizations with switch expression
+                                // and unreachable or noreturn else.
+                                //
+                                // TODO: when zig is upgraded check if this workaround is still needed. The bug happens
+                                // on macos aarch64
+                                else => null,
                             };
+                            const descriptor_key = _descriptor_key orelse unreachable;
 
                             // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
                             // the if statement.
@@ -20094,9 +20114,9 @@ fn NewParser_(
 
                             // remove fields with decorators from class body. Move static members outside of class.
                             if (prop.flags.contains(.is_static)) {
-                                static_members.append(Stmt.assign(target, initializer, p.allocator)) catch unreachable;
+                                static_members.append(Stmt.assign(target, initializer)) catch unreachable;
                             } else {
-                                instance_members.append(Stmt.assign(target, initializer, p.allocator)) catch unreachable;
+                                instance_members.append(Stmt.assign(target, initializer)) catch unreachable;
                             }
                             continue;
                         }
@@ -20197,7 +20217,6 @@ fn NewParser_(
                         stmts.appendAssumeCapacity(Stmt.assign(
                             p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
                             p.callRuntime(stmt.loc, "__legacyDecorateClassTS", args),
-                            p.allocator,
                         ));
 
                         p.recordUsage(class.class_name.?.ref.?);
@@ -20931,7 +20950,6 @@ fn NewParser_(
                                                     .name_loc = arg.binding.loc,
                                                 }, arg.binding.loc),
                                                 ident,
-                                                p.allocator,
                                             )) catch unreachable;
                                             // O(N)
                                             class_body.items.len += 1;
@@ -21253,7 +21271,7 @@ fn NewParser_(
                 // if this fails it means that scope pushing/popping is not balanced
                 assert(p.current_scope == initial_scope);
 
-            if (!p.options.features.minify_syntax) {
+            if (!p.options.features.minify_syntax or !p.options.features.dead_code_elimination) {
                 return;
             }
 
@@ -21403,6 +21421,9 @@ fn NewParser_(
                     continue;
                 }
 
+                // The following calls to `joinWithComma` are only enabled during bundling. We do this
+                // to avoid changing line numbers too much for source maps
+
                 switch (stmt.data) {
                     .s_empty => continue,
 
@@ -21426,7 +21447,7 @@ fn NewParser_(
                         // Merge adjacent expression statements
                         if (output.items.len > 0) {
                             var prev_stmt = &output.items[output.items.len - 1];
-                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall() and p.options.runtimeMergeAdjacentExpressionStatements()) {
                                 prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
                                     s_expr.does_not_affect_tree_shaking;
                                 prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
@@ -21473,7 +21494,7 @@ fn NewParser_(
                     },
                     .s_switch => |s_switch| {
                         // Absorb a previous expression statement
-                        if (output.items.len > 0) {
+                        if (output.items.len > 0 and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
@@ -21483,7 +21504,7 @@ fn NewParser_(
                     },
                     .s_if => |s_if| {
                         // Absorb a previous expression statement
-                        if (output.items.len > 0) {
+                        if (output.items.len > 0 and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
@@ -21496,7 +21517,7 @@ fn NewParser_(
 
                     .s_return => |ret| {
                         // Merge return statements with the previous expression statement
-                        if (output.items.len > 0 and ret.value != null) {
+                        if (output.items.len > 0 and ret.value != null and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
@@ -21514,7 +21535,7 @@ fn NewParser_(
 
                     .s_throw => {
                         // Merge throw statements with the previous expression statement
-                        if (output.items.len > 0) {
+                        if (output.items.len > 0 and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 prev_stmt.* = p.s(S.Throw{
@@ -21619,7 +21640,7 @@ fn NewParser_(
                 // There may be a "=" after the type (but not after an "as" cast)
                 if (is_typescript_enabled and p.lexer.token == .t_equals and !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())) {
                     try p.lexer.next();
-                    item = Expr.assign(item, try p.parseExpr(.comma), p.allocator);
+                    item = Expr.assign(item, try p.parseExpr(.comma));
                 }
 
                 items_list.append(item) catch unreachable;
@@ -22286,65 +22307,69 @@ fn NewParser_(
                     parts[parts.len - 1].stmts = new_stmts_list;
                 },
 
-                // This transforms the user's code into.
-                //
-                //   (function (exports, require, module, __filename, __dirname) {
-                //      ...
-                //   })
-                //
-                //  which is then called in `evaluateCommonJSModuleOnce`
                 .bun_js => {
-                    var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
-                    args[0..5].* = .{
-                        Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
-                        Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
-                        Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) },
-                        Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
-                        Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
-                    };
-                    if (p.has_import_meta) {
-                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
-                        args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
-                    }
-
-                    var total_stmts_count: usize = 0;
-                    for (parts) |part| {
-                        total_stmts_count += part.stmts.len;
-                    }
-
-                    const stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
-                    {
-                        var remaining_stmts = stmts_to_copy;
-                        for (parts) |part| {
-                            for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
-                                dest.* = src;
-                            }
-                            remaining_stmts = remaining_stmts[part.stmts.len..];
+                    // if remove_cjs_module_wrapper is true, `evaluateCommonJSModuleOnce` will put exports, require, module, __filename, and
+                    // __dirname on the globalObject.
+                    if (!p.options.features.remove_cjs_module_wrapper) {
+                        // This transforms the user's code into.
+                        //
+                        //   (function (exports, require, module, __filename, __dirname) {
+                        //      ...
+                        //   })
+                        //
+                        //  which is then called in `evaluateCommonJSModuleOnce`
+                        var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
+                        args[0..5].* = .{
+                            Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
+                            Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
+                            Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) },
+                            Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
+                            Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
+                        };
+                        if (p.has_import_meta) {
+                            p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
+                            args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
                         }
-                    }
 
-                    const wrapper = p.newExpr(
-                        E.Function{
-                            .func = G.Fn{
-                                .name = null,
-                                .open_parens_loc = logger.Loc.Empty,
-                                .args = args,
-                                .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
-                                .flags = Flags.Function.init(.{ .is_export = false }),
+                        var total_stmts_count: usize = 0;
+                        for (parts) |part| {
+                            total_stmts_count += part.stmts.len;
+                        }
+
+                        const stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
+                        {
+                            var remaining_stmts = stmts_to_copy;
+                            for (parts) |part| {
+                                for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
+                                    dest.* = src;
+                                }
+                                remaining_stmts = remaining_stmts[part.stmts.len..];
+                            }
+                        }
+
+                        const wrapper = p.newExpr(
+                            E.Function{
+                                .func = G.Fn{
+                                    .name = null,
+                                    .open_parens_loc = logger.Loc.Empty,
+                                    .args = args,
+                                    .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
+                                    .flags = Flags.Function.init(.{ .is_export = false }),
+                                },
                             },
-                        },
-                        logger.Loc.Empty,
-                    );
+                            logger.Loc.Empty,
+                        );
 
-                    var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
-                    parts[0].stmts = top_level_stmts;
-                    top_level_stmts[0] = p.s(
-                        S.SExpr{
-                            .value = wrapper,
-                        },
-                        logger.Loc.Empty,
-                    );
-                    parts.len = 1;
+                        var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                        parts[0].stmts = top_level_stmts;
+                        top_level_stmts[0] = p.s(
+                            S.SExpr{
+                                .value = wrapper,
+                            },
+                            logger.Loc.Empty,
+                        );
+                        parts.len = 1;
+                    }
                 },
 
                 .none => {
@@ -22586,7 +22611,6 @@ fn NewParser_(
                                     .name = named_export.key_ptr.*,
                                     .name_loc = logger.Loc.Empty,
                                 }, logger.Loc.Empty),
-                                allocator,
                             );
 
                             export_properties[named_export_i] = G.Property{
@@ -22669,7 +22693,6 @@ fn NewParser_(
                                         logger.Loc.Empty,
                                     ),
                                     func,
-                                    allocator,
                                 ),
                             },
                             logger.Loc.Empty,
@@ -22727,7 +22750,6 @@ fn NewParser_(
                                         },
                                         logger.Loc.Empty,
                                     ),
-                                    allocator,
                                 ),
                             },
                             logger.Loc.Empty,

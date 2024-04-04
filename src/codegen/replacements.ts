@@ -1,5 +1,6 @@
 import { LoaderKeys } from "../api/schema";
 import { sliceSourceCode } from "./builtin-parser";
+import { registerNativeCall } from "./js2native-generator";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.
@@ -53,6 +54,11 @@ export const globalsToPrefix = [
   "isFinite",
   "undefined",
 ];
+
+replacements.push({
+  from: new RegExp(`\\bextends\\s+(${globalsToPrefix.join("|")})`, "g"),
+  to: "extends __no_intrinsic__%1",
+});
 
 // These enums map to $<enum>IdToLabel and $<enum>LabelToId
 // Make sure to define in ./builtins.d.ts
@@ -125,16 +131,21 @@ export interface ReplacementRule {
   global?: boolean;
 }
 
+export const function_replacements = ["$debug", "$assert", "$zig", "$newZigFunction", "$cpp", "$newCppFunction"];
+
 /** Applies source code replacements as defined in `replacements` */
 export function applyReplacements(src: string, length: number) {
   let slice = src.slice(0, length);
   let rest = src.slice(length);
   slice = slice.replace(/([^a-zA-Z0-9_\$])\$([a-zA-Z0-9_]+\b)/gm, `$1__intrinsic__$2`);
   for (const replacement of replacements) {
-    slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
+    slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__").replaceAll("%", "$"));
   }
   let match;
-  if ((match = slice.match(/__intrinsic__(debug|assert)$/)) && rest.startsWith("(")) {
+  if (
+    (match = slice.match(/__intrinsic__(debug|assert|zig|cpp|newZigFunction|newCppFunction)$/)) &&
+    rest.startsWith("(")
+  ) {
     const name = match[1];
     if (name === "debug") {
       const innerSlice = sliceSourceCode(rest, true);
@@ -168,6 +179,40 @@ export function applyReplacements(src: string, length: number) {
         rest2,
         true,
       ];
+    } else if (["zig", "cpp", "newZigFunction", "newCppFunction"].includes(name)) {
+      const kind = name.includes("ig") ? "zig" : "cpp";
+      const is_create_fn = name.startsWith("new");
+
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      try {
+        const str =
+          "[" +
+          inner.result
+            .slice(1, -1)
+            .replaceAll("'", '"')
+            .replace(/,[\s\n]*$/s, "") +
+          "]";
+        args = JSON.parse(str);
+      } catch {
+        throw new Error(`Call is not known at bundle-time: '$${name}${inner.result}'`);
+      }
+      if (
+        args.length != (is_create_fn ? 3 : 2) ||
+        typeof args[0] !== "string" ||
+        typeof args[1] !== "string" ||
+        (is_create_fn && typeof args[2] !== "number")
+      ) {
+        if (is_create_fn) {
+          throw new Error(`$${name} takes three arguments, but got '$${name}${inner.result}'`);
+        } else {
+          throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
+        }
+      }
+
+      const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : undefined);
+
+      return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
     }
   }
   return [slice, rest, false];

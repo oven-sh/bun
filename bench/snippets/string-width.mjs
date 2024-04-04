@@ -3,41 +3,38 @@ import npmStringWidth from "string-width";
 
 const bunStringWidth = globalThis?.Bun?.stringWidth;
 
-bench("npm/string-width (ansi + emoji + ascii)", () => {
-  npmStringWidth("hello there! 😀\u001b[31m😀😀");
-});
+const stringWidth = bunStringWidth || npmStringWidth;
+const formatter = new Intl.NumberFormat();
+const format = n => {
+  return formatter.format(n);
+};
 
-bench("npm/string-width (ansi + emoji)", () => {
-  npmStringWidth("😀\u001b[31m😀😀");
-});
+const inputs = [
+  ["hello", "ascii"],
+  ["[31mhello", "ascii+ansi"],
+  ["hello😀", "ascii+emoji"],
+  ["[31m😀😀", "ansi+emoji"],
+  ["😀hello😀[31m😀😀😀", "ansi+emoji+ascii"],
+];
 
-bench("npm/string-width (ansi + ascii)", () => {
-  npmStringWidth("\u001b[31mhello there!");
-});
+const repeatCounts = [1, 10, 100, 1000, 5000];
 
-if (bunStringWidth) {
-  bench("Bun.stringWidth (ansi + emoji + ascii)", () => {
-    bunStringWidth("hello there! 😀\u001b[31m😀😀");
-  });
+const maxInputLength = Math.max(...inputs.map(([input]) => input.repeat(Math.max(...repeatCounts)).length));
 
-  bench("Bun.stringWidth (ansi + emoji)", () => {
-    bunStringWidth("😀\u001b[31m😀😀");
-  });
+for (const [input, textLabel] of inputs) {
+  for (let repeatCount of repeatCounts) {
+    const label = bunStringWidth ? "Bun.stringWidth" : "npm/string-width";
 
-  bench("Bun.stringWidth (ansi + ascii)", () => {
-    bunStringWidth("\u001b[31mhello there!");
-  });
+    const str = input.repeat(repeatCount);
+    const name = `${label} ${format(str.length).padStart(format(maxInputLength).length, " ")} chars ${textLabel}`;
 
-  if (npmStringWidth("😀\u001b[31m😀😀") !== bunStringWidth("😀\u001b[31m😀😀")) {
-    console.error("string-width mismatch");
-  }
+    bench(name, () => {
+      stringWidth(str);
+    });
 
-  if (npmStringWidth("hello there! 😀\u001b[31m😀😀") !== bunStringWidth("hello there! 😀\u001b[31m😀😀")) {
-    console.error("string-width mismatch");
-  }
-
-  if (npmStringWidth("\u001b[31mhello there!") !== bunStringWidth("\u001b[31mhello there!")) {
-    console.error("string-width mismatch");
+    if (bunStringWidth && bunStringWidth(str) !== npmStringWidth(str)) {
+      throw new Error("string-width mismatch");
+    }
   }
 }
 

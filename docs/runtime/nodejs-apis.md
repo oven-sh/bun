@@ -18,7 +18,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-🟡 Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC has partial support and only current only works with other `bun` processes.
+🟡 Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC cannot send socket handles and only works with other `bun` processes.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
@@ -56,7 +56,7 @@ Some methods are not optimized yet.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟡 Missing `Dir` `openAsBlob` `opendir` `opendirSync` `statfs` `statfsSync`
+🟡 Missing `statfs` `statfsSync`, `opendirSync`. `Dir` is partially implemented.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
@@ -116,7 +116,7 @@ Some methods are not optimized yet.
 
 ### [`node:stream`](https://nodejs.org/api/stream.html)
 
-🟡 Missing `getDefaultHighWaterMark` `setDefaultHighWaterMark`
+🟡 Missing `getDefaultHighWaterMark` `setDefaultHighWaterMark` `toWeb`
 
 ### [`node:string_decoder`](https://nodejs.org/api/string_decoder.html)
 
@@ -148,7 +148,7 @@ Some methods are not optimized yet.
 
 ### [`node:url`](https://nodejs.org/api/url.html)
 
-🟡 Missing `domainToASCII` `domainToUnicode`. It's recommended to use `URL` and `URLSearchParams` globals instead.
+🟢 Fully implemented.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
@@ -312,23 +312,23 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`PerformanceEntry`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceEntry)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceMark`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMark)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceMeasure`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMeasure)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceObserver`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceObserverEntryList`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserverEntryList)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceResourceTiming`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming)
 
@@ -356,11 +356,11 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`ReadableStreamBYOBReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBReader)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`ReadableStreamBYOBRequest`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBRequest)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`ReadableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultController)
 
@@ -432,7 +432,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL)
 
-🟢 Fully implemented.
+🟡 `URL.createObjectURL` is missing. See [Issue #3925](https://github.com/oven-sh/bun/issues/3925)
 
 ### [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
 

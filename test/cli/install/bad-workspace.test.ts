@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawnSync } from "bun";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
@@ -10,10 +9,6 @@ let cwd: string;
 
 beforeEach(() => {
   cwd = mkdtempSync(join(realpathSync(tmpdir()), "bad-workspace.test"));
-});
-
-afterEach(() => {
-  rmSync(cwd, { recursive: true, force: true });
 });
 
 test("bad workspace path", () => {

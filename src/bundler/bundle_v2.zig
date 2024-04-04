@@ -153,7 +153,7 @@ pub const ThreadPool = struct {
         } else {
             var cpu_count = @as(u32, @truncate(@max(std.Thread.getCpuCount() catch 2, 2)));
 
-            if (v2.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
+            if (v2.bundler.env.get("GOMAXPROCS")) |max_procs| {
                 if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
                     cpu_count = cpu_count_;
                 } else |_| {}
@@ -460,13 +460,12 @@ pub const BundleV2 = struct {
         return visitor.reachable.toOwnedSlice();
     }
 
-    fn isDone(ptr: *anyopaque) bool {
-        var this = bun.cast(*const BundleV2, ptr);
+    fn isDone(this: *BundleV2) bool {
         return @atomicLoad(usize, &this.graph.parse_pending, .Monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .Monotonic) == 0;
     }
 
     pub fn waitForParse(this: *BundleV2) void {
-        this.loop().tick(this, isDone);
+        this.loop().tick(this, &isDone);
 
         debug("Parsed {d} files, producing {d} ASTs", .{ this.graph.input_files.len, this.graph.ast.len });
     }
@@ -570,11 +569,10 @@ pub const BundleV2 = struct {
 
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
-            const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
-            if (rel.len > 0 and rel[0] != '.') {
-                path.pretty = rel;
-            }
+            const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
+            path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
         }
+        path.assertPrettyIsValid();
 
         var secondary_path_to_copy: ?Fs.Path = null;
         if (resolve_result.path_pair.secondary) |*secondary| {
@@ -666,12 +664,11 @@ pub const BundleV2 = struct {
         }
         _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
         const source_index = Index.source(this.graph.input_files.len);
+
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
-            const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
-            if (rel.len > 0 and rel[0] != '.') {
-                path.pretty = rel;
-            }
+            const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
+            path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
         }
         path.* = try path.dupeAlloc(this.graph.allocator);
         entry.value_ptr.* = source_index.get();
@@ -807,7 +804,7 @@ pub const BundleV2 = struct {
 
         if (this.bundler.router) |router| {
             defer this.bundler.resetStore();
-            Analytics.Features.filesystem_router = true;
+            Analytics.Features.filesystem_router += 1;
 
             const entry_points = try router.getEntryPoints();
             try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, entry_points.len);
@@ -1089,9 +1086,8 @@ pub const BundleV2 = struct {
                     const source = &sources[index];
                     var pathname = source.path.name;
 
-                    const rel = bun.path.relative(this.bundler.options.root_dir, source.path.text);
-                    if (rel.len > 0 and rel[0] != '.')
-                        pathname = Fs.PathName.init(rel);
+                    // TODO: outbase
+                    pathname = Fs.PathName.init(bun.path.relativePlatform(this.bundler.options.root_dir, source.path.text, .loose, false));
 
                     template.placeholder.name = pathname.base;
                     template.placeholder.dir = pathname.dir;
@@ -1115,10 +1111,8 @@ pub const BundleV2 = struct {
                                     },
                                 },
                                 .size = source.contents.len,
-                                .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{
-                                    template,
-                                }) catch unreachable,
-                                .input_path = bun.default_allocator.dupe(u8, source.path.text) catch unreachable,
+                                .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch bun.outOfMemory(),
+                                .input_path = bun.default_allocator.dupe(u8, source.path.text) catch bun.outOfMemory(),
                                 .input_loader = .file,
                                 .output_kind = .asset,
                                 .loader = loader,
@@ -1163,20 +1157,18 @@ pub const BundleV2 = struct {
         // conditions from creating two
         _ = JSC.WorkPool.get();
 
-        if (!BundleThread.created) {
-            BundleThread.created = true;
-
+        if (BundleThread.instance) |existing| {
+            existing.queue.push(completion);
+            existing.waker.?.wake();
+        } else {
             var instance = bun.default_allocator.create(BundleThread) catch unreachable;
             instance.queue = .{};
-            instance.waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("Failed to create waker");
+            instance.waker = null;
             instance.queue.push(completion);
             BundleThread.instance = instance;
 
             var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
             thread.detach();
-        } else {
-            BundleThread.instance.queue.push(completion);
-            BundleThread.instance.waker.wake();
         }
 
         completion.poll_ref.ref(globalThis.bunVM());
@@ -1554,17 +1546,17 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn generateInNewThreadWrap(
-        instance: *BundleThread,
-    ) void {
+    pub fn generateInNewThreadWrap(instance: *BundleThread) void {
         Output.Source.configureNamedThread("Bundler");
-        var any = false;
 
+        instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
+
+        var has_bundled = false;
         while (true) {
             while (instance.queue.pop()) |completion| {
                 generateInNewThread(completion, instance.generation) catch |err| {
                     completion.result = .{ .err = err };
-                    const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
+                    const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
                     concurrent_task.* = JSC.ConcurrentTask{
                         .auto_delete = true,
                         .task = completion.task.task(),
@@ -1572,23 +1564,25 @@ pub const BundleV2 = struct {
                     };
                     completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
                 };
-                any = true;
+                has_bundled = true;
             }
             instance.generation +|= 1;
 
-            if (any) {
+            if (has_bundled) {
                 bun.Mimalloc.mi_collect(false);
+                has_bundled = false;
             }
-            _ = instance.waker.wait();
+
+            _ = instance.waker.?.wait();
         }
     }
 
     pub const BundleThread = struct {
-        waker: bun.Async.Waker,
+        waker: ?bun.Async.Waker,
         queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
         generation: bun.Generation = 0,
-        pub var created = false;
-        pub var instance: *BundleThread = undefined;
+
+        pub var instance: ?*BundleThread = undefined;
     };
 
     fn generateInNewThread(
@@ -1622,6 +1616,7 @@ pub const BundleV2 = struct {
                 .main_fields = &.{},
                 .extension_order = &.{},
                 .env_files = &.{},
+                .conditions = config.conditions.map.keys(),
             },
             completion.env,
         );
@@ -2012,11 +2007,11 @@ pub const BundleV2 = struct {
 
             if (path.pretty.ptr == path.text.ptr) {
                 // TODO: outbase
-                const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
-                if (rel.len > 0 and rel[0] != '.') {
-                    path.pretty = rel;
-                }
+                const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
+                path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
             }
+            path.assertPrettyIsValid();
+            path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
 
             var secondary_path_to_copy: ?Fs.Path = null;
             if (resolve_result.path_pair.secondary) |*secondary| {
@@ -2028,7 +2023,6 @@ pub const BundleV2 = struct {
                 }
             }
 
-            path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
             import_record.path = path.*;
             debug("created ParseTask: {s}", .{path.text});
 
@@ -2113,7 +2107,7 @@ pub const BundleV2 = struct {
                 }
 
                 if (this.bun_watcher != null) {
-                    if (empty_result.watcher_data.fd.int() > 0 and empty_result.watcher_data.fd != bun.invalid_fd) {
+                    if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
                         this.bun_watcher.?.addFile(
                             empty_result.watcher_data.fd,
                             input_files.items(.source)[empty_result.source_index.get()].path.text,
@@ -2132,7 +2126,7 @@ pub const BundleV2 = struct {
                 {
                     // to minimize contention, we add watcher here
                     if (this.bun_watcher != null) {
-                        if (result.watcher_data.fd.int() > 0 and result.watcher_data.fd != bun.invalid_fd) {
+                        if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
                             this.bun_watcher.?.addFile(
                                 result.watcher_data.fd,
                                 result.source.path.text,
@@ -2350,7 +2344,7 @@ pub const ParseTask = struct {
         // runtime here.
         const runtime_require = switch (target) {
             // __require is intentionally not implemented here, as we
-            // always inline 'import.meta.require' and 'import.meta.resolveSync'
+            // always inline 'import.meta.require' and 'import.meta.require.resolve'
             // Omitting it here acts as an extra assertion.
             .bun, .bun_macro => "",
 
@@ -2789,7 +2783,7 @@ pub const ParseTask = struct {
                     file_path.text,
                     task.contents_or_fd.fd.dir,
                     false,
-                    if (task.contents_or_fd.fd.file.int() > 0)
+                    if (task.contents_or_fd.fd.file != .zero)
                         task.contents_or_fd.fd.file
                     else
                         null,
@@ -2826,12 +2820,12 @@ pub const ParseTask = struct {
 
         errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
 
-        const will_close_file_descriptor = task.contents_or_fd == .fd and entry.fd.int() > 2 and this.ctx.bun_watcher == null;
+        const will_close_file_descriptor = task.contents_or_fd == .fd and !entry.fd.isStdio() and this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
         }
 
-        if (!will_close_file_descriptor and entry.fd.int() > 2) task.contents_or_fd = .{
+        if (!will_close_file_descriptor and !entry.fd.isStdio()) task.contents_or_fd = .{
             .fd = .{
                 .file = entry.fd,
                 .dir = bun.invalid_fd,
@@ -4519,7 +4513,6 @@ const LinkerContext = struct {
                         stmt.loc,
                     ),
                     expr,
-                    this.allocator,
                 );
                 try this.graph.generateSymbolImportAndUse(source_index, 0, module_ref, 1, Index.init(source_index));
             },
@@ -7118,6 +7111,7 @@ const LinkerContext = struct {
                     if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
+                        source.path.assertPrettyIsValid();
                         break :brk source.path.pretty;
                     } else {
                         // If this isn't in the "file" namespace, just use the full path text
@@ -7526,7 +7520,6 @@ const LinkerContext = struct {
                                     },
                                     Logger.Loc.Empty,
                                 ),
-                                temp_allocator,
                             ),
                         ) catch unreachable;
                     },
@@ -8730,7 +8723,6 @@ const LinkerContext = struct {
                                                 value = value.joinWithComma(
                                                     binding.assign(
                                                         other,
-                                                        temp_allocator,
                                                     ),
                                                     temp_allocator,
                                                 );
@@ -9027,11 +9019,20 @@ const LinkerContext = struct {
                 chunk.template.placeholder.hash = chunk.isolated_hash;
 
                 const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
+                bun.path.platformToPosixInPlace(u8, rel_path);
+
                 if ((try path_names_map.getOrPut(rel_path)).found_existing) {
                     try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Multiple files share the same output path: {s}", .{rel_path});
                     return error.DuplicateOutputPath;
                 }
-
+                // resolve any /./ and /../ occurrences
+                // use resolvePosix since we asserted above all seps are '/'
+                if (Environment.isWindows and std.mem.indexOf(u8, rel_path, "/./") != null) {
+                    var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                    const rel_path_fixed = c.allocator.dupe(u8, bun.path.normalizeBuf(rel_path, &buf, .posix)) catch unreachable;
+                    chunk.final_rel_path = rel_path_fixed;
+                    continue;
+                }
                 chunk.final_rel_path = rel_path;
             }
         }
@@ -9377,7 +9378,7 @@ const LinkerContext = struct {
             defer max_heap_allocator.reset();
 
             const rel_path = chunk.final_rel_path;
-            if (std.fs.path.dirname(rel_path)) |rel_parent| {
+            if (std.fs.path.dirnamePosix(rel_path)) |rel_parent| {
                 if (rel_parent.len > 0) {
                     root_dir.makePath(rel_parent) catch |err| {
                         c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving chunk {}", .{
@@ -11082,7 +11083,7 @@ pub const Chunk = struct {
                     shifts.appendAssumeCapacity(shift);
 
                     var count: usize = 0;
-                    var from_chunk_dir = std.fs.path.dirname(chunk.final_rel_path) orelse "";
+                    var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
@@ -11103,7 +11104,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
@@ -11160,7 +11161,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
@@ -11248,14 +11249,16 @@ pub const Chunk = struct {
             switch (this) {
                 .pieces => |*pieces| {
                     var count: usize = 0;
-                    const file_path_buf: [4096]u8 = undefined;
-                    _ = file_path_buf;
-                    var from_chunk_dir = std.fs.path.dirname(chunk.final_rel_path) orelse "";
+                    var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
                     for (pieces.slice()) |piece| {
                         count += piece.data_len;
+
+                        if (Environment.allow_assert) {
+                            std.debug.assert(piece.data().len == piece.data_len);
+                        }
 
                         switch (piece.index.kind) {
                             .chunk, .asset => {
@@ -11274,13 +11277,14 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
-
+                                // normalize windows paths to '/'
+                                bun.path.platformToPosixInPlace(u8, @constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
@@ -11295,10 +11299,10 @@ pub const Chunk = struct {
                     for (pieces.slice()) |piece| {
                         const data = piece.data();
 
-                        if (data.len > 0)
+                        if (data.len > 0) {
                             @memcpy(remain[0..data.len], data);
-
-                        remain = remain[data.len..];
+                            remain = remain[data.len..];
+                        }
 
                         switch (piece.index.kind) {
                             .asset, .chunk => {
@@ -11315,12 +11319,13 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
+
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
@@ -11536,7 +11541,10 @@ const ContentHasher = struct {
     // xxhash64 outperforms Wyhash if the file is > 1KB or so
     hasher: std.hash.XxHash64 = std.hash.XxHash64.init(0),
 
+    const log = bun.Output.scoped(.ContentHasher, true);
+
     pub fn write(self: *ContentHasher, bytes: []const u8) void {
+        log("HASH_UPDATE {d}:\n{s}\n----------\n", .{ bytes.len, std.mem.sliceAsBytes(bytes) });
         self.hasher.update(std.mem.asBytes(&bytes.len));
         self.hasher.update(bytes);
     }
@@ -11548,6 +11556,7 @@ const ContentHasher = struct {
     }
 
     pub fn writeInts(self: *ContentHasher, i: []const u32) void {
+        log("HASH_UPDATE: {any}\n", .{i});
         self.hasher.update(std.mem.sliceAsBytes(i));
     }
 

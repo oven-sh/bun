@@ -71,7 +71,7 @@ pub const Request = struct {
     upgrader: ?*anyopaque = null,
 
     // We must report a consistent value for this
-    reported_estimated_size: ?u63 = null,
+    reported_estimated_size: usize = 0,
 
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
@@ -128,10 +128,16 @@ pub const Request = struct {
     }
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
-        return this.reported_estimated_size orelse brk: {
-            this.reported_estimated_size = @as(u63, @truncate(this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request)));
-            break :brk this.reported_estimated_size.?;
-        };
+        return this.reported_estimated_size;
+    }
+
+    pub fn calculateEstimatedByteSize(this: *Request) void {
+        this.reported_estimated_size = this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    }
+
+    pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
+        this.calculateEstimatedByteSize();
+        return Request.toJSUnchecked(globalObject, this);
     }
 
     pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
@@ -174,7 +180,7 @@ pub const Request = struct {
                     try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
-                if (this.body.value.Locked.readable) |stream| {
+                if (this.body.value.Locked.readable.get()) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
                     formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
@@ -391,7 +397,7 @@ pub const Request = struct {
                             }
                         } else {
                             // TODO: what is the right thing to do for invalid URLS?
-                            this.url = bun.String.create(url);
+                            this.url = bun.String.createUTF8(url);
                         }
 
                         return;
@@ -414,7 +420,7 @@ pub const Request = struct {
                             req_url,
                         }) catch bun.outOfMemory();
                         defer bun.default_allocator.free(temp_url);
-                        this.url = bun.String.create(temp_url);
+                        this.url = bun.String.createUTF8(temp_url);
                     }
 
                     const href = bun.JSC.URL.hrefFromString(this.url);
@@ -430,7 +436,7 @@ pub const Request = struct {
             if (comptime Environment.allow_assert) {
                 std.debug.assert(this.sizeOfURL() == req_url.len);
             }
-            this.url = bun.String.create(req_url);
+            this.url = bun.String.createUTF8(req_url);
         }
     }
 
@@ -679,6 +685,8 @@ pub const Request = struct {
         {
             req.headers.?.put("content-type", req.body.value.Blob.content_type, globalThis);
         }
+
+        req.calculateEstimatedByteSize();
 
         return req;
     }

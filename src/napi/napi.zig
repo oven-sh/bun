@@ -168,6 +168,8 @@ pub const napi_status = enum(c_uint) {
     would_deadlock = 21,
 };
 pub const napi_callback = ?*const fn (napi_env, napi_callback_info) callconv(.C) napi_value;
+
+/// expects `napi_env`, `callback_data`, `context`
 pub const napi_finalize = ?*const fn (napi_env, ?*anyopaque, ?*anyopaque) callconv(.C) void;
 pub const napi_property_descriptor = extern struct {
     utf8name: [*c]const u8,
@@ -319,7 +321,7 @@ pub export fn napi_create_string_utf8(env: napi_env, str: ?[*]const u8, length: 
 
     log("napi_create_string_utf8: {s}", .{slice});
 
-    var string = bun.String.create(slice);
+    var string = bun.String.createUTF8(slice);
     if (string.tag == .Dead) {
         return .generic_failure;
     }
@@ -560,6 +562,7 @@ pub export fn napi_has_element(env: napi_env, object: napi_value, index: c_uint,
     return .ok;
 }
 pub extern fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
+pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
 pub export fn napi_is_array(_: napi_env, value: napi_value, result: *bool) napi_status {
     log("napi_is_array", .{});
@@ -1142,15 +1145,19 @@ pub export fn napi_is_buffer(env: napi_env, value: napi_value, result: *bool) na
     result.* = value.isBuffer(env);
     return .ok;
 }
-pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *[*]u8, length: *usize) napi_status {
+pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: ?*[*]u8, length: ?*usize) napi_status {
     log("napi_get_buffer_info", .{});
     const array_buf = value.asArrayBuffer(env) orelse {
         // TODO: is invalid_arg what to return here?
         return .arraybuffer_expected;
     };
 
-    data.* = array_buf.ptr;
-    length.* = array_buf.byte_len;
+    if (data) |dat|
+        dat.* = array_buf.ptr;
+
+    if (length) |len|
+        len.* = array_buf.byte_len;
+
     return .ok;
 }
 
@@ -1203,8 +1210,12 @@ pub export fn napi_get_node_version(_: napi_env, version: **const napi_node_vers
 }
 pub export fn napi_get_uv_event_loop(env: napi_env, loop: **JSC.EventLoop) napi_status {
     log("napi_get_uv_event_loop", .{});
-    // lol
-    loop.* = env.bunVM().eventLoop();
+    if (bun.Environment.isWindows) {
+        loop.* = @ptrCast(@alignCast(env.bunVM().uvLoop()));
+    } else {
+        // there is no uv event loop on posix, we use our event loop handle.
+        loop.* = env.bunVM().eventLoop();
+    }
     return .ok;
 }
 pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;
@@ -1250,7 +1261,7 @@ pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*any
 
 pub const Finalizer = struct {
     fun: napi_finalize,
-    ctx: ?*anyopaque = null,
+    data: ?*anyopaque = null,
 };
 
 // TODO: generate comptime version of this instead of runtime checking
@@ -1274,14 +1285,14 @@ pub const ThreadSafeFunction = struct {
     /// prevent it from being destroyed.
     poll_ref: Async.KeepAlive,
 
-    owning_threads: std.AutoArrayHashMapUnmanaged(u64, void) = .{},
+    thread_count: usize = 0,
     owning_thread_lock: Lock = Lock.init(),
     event_loop: *JSC.EventLoop,
 
     env: napi_env,
 
     finalizer_task: JSC.AnyTask = undefined,
-    finalizer: Finalizer = Finalizer{ .fun = null, .ctx = null },
+    finalizer: Finalizer = Finalizer{ .fun = null, .data = null },
     channel: Queue,
 
     ctx: ?*anyopaque = null,
@@ -1389,7 +1400,7 @@ pub const ThreadSafeFunction = struct {
     pub fn finalize(opaq: *anyopaque) void {
         var this = bun.cast(*ThreadSafeFunction, opaq);
         if (this.finalizer.fun) |fun| {
-            fun(this.event_loop.global, opaq, this.finalizer.ctx);
+            fun(this.event_loop.global, this.finalizer.data, this.ctx);
         }
 
         if (this.callback == .js) {
@@ -1417,24 +1428,33 @@ pub const ThreadSafeFunction = struct {
         defer this.owning_thread_lock.unlock();
         if (this.channel.isClosed())
             return error.Closed;
-        _ = this.owning_threads.getOrPut(bun.default_allocator, std.Thread.getCurrentId()) catch unreachable;
+        this.thread_count += 1;
     }
 
-    pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode) void {
+    pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode) napi_status {
         this.owning_thread_lock.lock();
         defer this.owning_thread_lock.unlock();
-        if (!this.owning_threads.swapRemove(std.Thread.getCurrentId()))
-            return;
+
+        if (this.thread_count == 0) {
+            return invalidArg();
+        }
+
+        this.thread_count -= 1;
+
+        if (this.channel.isClosed()) {
+            return .ok;
+        }
 
         if (mode == .abort) {
             this.channel.close();
         }
 
-        if (this.owning_threads.count() == 0) {
+        if (mode == .abort or this.thread_count == 0) {
             this.finalizer_task = JSC.AnyTask{ .ctx = this, .callback = finalize };
             this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, finalize));
-            return;
         }
+
+        return .ok;
     }
 };
 
@@ -1474,11 +1494,11 @@ pub export fn napi_create_threadsafe_function(
         },
         .ctx = context,
         .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
-        .owning_threads = .{},
+        .thread_count = initial_thread_count,
         .poll_ref = Async.KeepAlive.init(),
     };
-    function.owning_threads.ensureTotalCapacity(bun.default_allocator, initial_thread_count) catch return genericFailure();
-    function.finalizer = .{ .ctx = thread_finalize_data, .fun = thread_finalize_cb };
+
+    function.finalizer = .{ .data = thread_finalize_data, .fun = thread_finalize_cb };
     result.* = function;
     return .ok;
 }
@@ -1507,8 +1527,7 @@ pub export fn napi_acquire_threadsafe_function(func: napi_threadsafe_function) n
 }
 pub export fn napi_release_threadsafe_function(func: napi_threadsafe_function, mode: napi_threadsafe_function_release_mode) napi_status {
     log("napi_release_threadsafe_function", .{});
-    func.release(mode);
-    return .ok;
+    return func.release(mode);
 }
 pub export fn napi_unref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_unref_threadsafe_function", .{});

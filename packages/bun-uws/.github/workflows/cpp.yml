@@ -20,11 +20,12 @@ jobs:
         language: c++
         fuzz-seconds: 600
     - name: Upload crash
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: failure() && steps.build.outcome == 'success'
       with:
         name: artifacts
         path: ./out/artifacts
+        if-no-files-found: "error"
 
   build_windows:
     runs-on: windows-latest

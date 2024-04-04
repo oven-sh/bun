@@ -1,4 +1,5 @@
 import { it, expect } from "bun:test";
+import { ospath } from "harness";
 import { join, resolve } from "path";
 
 function resolveFrom(from) {
@@ -6,24 +7,21 @@ function resolveFrom(from) {
 }
 
 it("#imports", async () => {
-  const baz = await import.meta.resolve("#foo", join(await import.meta.resolve("package-json-imports/baz"), "../"));
-  expect(baz.endsWith("foo/private-foo.js")).toBe(true);
+  const baz = import.meta.resolveSync("#foo", join(import.meta.resolveSync("package-json-imports/baz"), "../"));
+  expect(baz).toBe(resolve(import.meta.dir, "node_modules/package-json-imports/foo/private-foo.js"));
 
-  const subpath = await import.meta.resolve(
-    "#foo/bar",
-    join(await import.meta.resolve("package-json-imports/baz"), "../"),
-  );
-  expect(subpath.endsWith("foo/private-foo.js")).toBe(true);
+  const subpath = import.meta.resolveSync("#foo/bar", join(import.meta.resolveSync("package-json-imports/baz"), "../"));
+  expect(subpath).toBe(resolve(import.meta.dir, "node_modules/package-json-imports/foo/private-foo.js"));
 
-  const react = await import.meta.resolve(
+  const react = import.meta.resolveSync(
     "#internal-react",
-    join(await import.meta.resolve("package-json-imports/baz"), "../"),
+    join(import.meta.resolveSync("package-json-imports/baz"), "../"),
   );
-  expect(react.endsWith("/react/index.js")).toBe(true);
+  expect(react).toBe(resolve(import.meta.dir, "../../../../node_modules/react/index.js"));
 
   // Check that #foo is not resolved to the package.json file.
   try {
-    await import.meta.resolve("#foo");
+    import.meta.resolveSync("#foo");
     throw new Error("Test failed");
   } catch (exception) {
     expect(exception instanceof ResolveMessage).toBe(true);
@@ -33,7 +31,7 @@ it("#imports", async () => {
 
   // Chcek that package-json-imports/#foo doesn't work
   try {
-    await import.meta.resolve("package-json-imports/#foo");
+    import.meta.resolveSync("package-json-imports/#foo");
     throw new Error("Test failed");
   } catch (exception) {
     expect(exception instanceof ResolveMessage).toBe(true);
@@ -50,54 +48,55 @@ it("#imports with wildcard", async () => {
   expect(run("#foo/extensionless/wildcard")).toBe(wildcard);
 });
 
-it("import.meta.resolve", async () => {
-  expect(await import.meta.resolve("./resolve-test.js")).toBe(import.meta.path);
+it("import.meta.resolveSync", async () => {
+  expect(import.meta.resolveSync("./resolve-test.js")).toBe(import.meta.path);
 
-  expect(await import.meta.resolve("./resolve-test.js", import.meta.path)).toBe(import.meta.path);
+  expect(import.meta.resolveSync("./resolve-test.js", import.meta.path)).toBe(import.meta.path);
 
   expect(
     // optional second param can be any path, including a dir
-    await import.meta.resolve("./resolve/resolve-test.js", join(import.meta.path, "../")),
+    import.meta.resolveSync("./resolve/resolve-test.js", join(import.meta.path, "../")),
   ).toBe(import.meta.path);
 
   // can be a package path
-  expect((await import.meta.resolve("react", import.meta.path)).length > 0).toBe(true);
+  expect(import.meta.resolveSync("react", import.meta.path).length > 0).toBe(true);
 
   // file extensions are optional
-  expect(await import.meta.resolve("./resolve-test")).toBe(import.meta.path);
+  expect(import.meta.resolveSync("./resolve-test")).toBe(import.meta.path);
 
   // works with tsconfig.json "paths"
-  expect(await import.meta.resolve("foo/bar")).toBe(join(import.meta.path, "../baz.js"));
-  expect(await import.meta.resolve("@faasjs/baz")).toBe(join(import.meta.path, "../baz.js"));
-  expect(await import.meta.resolve("@faasjs/bar")).toBe(join(import.meta.path, "../bar/src/index.js"));
+  expect(import.meta.resolveSync("foo/bar")).toBe(join(import.meta.path, "../baz.js"));
+  expect(import.meta.resolveSync("@faasjs/baz")).toBe(join(import.meta.path, "../baz.js"));
+  expect(import.meta.resolveSync("@faasjs/bar")).toBe(join(import.meta.path, "../bar/src/index.js"));
+  expect(import.meta.resolveSync("@faasjs/larger/bar")).toBe(join(import.meta.path, "../bar/larger-index.js"));
 
   // works with package.json "exports"
-  expect(await import.meta.resolve("package-json-exports/baz")).toBe(
+  expect(import.meta.resolveSync("package-json-exports/baz")).toBe(
     join(import.meta.path, "../node_modules/package-json-exports/foo/bar.js"),
   );
 
   // if they never exported /package.json, allow reading from it too
-  expect(await import.meta.resolve("package-json-exports/package.json")).toBe(
+  expect(import.meta.resolveSync("package-json-exports/package.json")).toBe(
     join(import.meta.path, "../node_modules/package-json-exports/package.json"),
   );
 
   // if an unnecessary ".js" extension was added, try against /baz
-  expect(await import.meta.resolve("package-json-exports/baz.js")).toBe(
+  expect(import.meta.resolveSync("package-json-exports/baz.js")).toBe(
     join(import.meta.path, "../node_modules/package-json-exports/foo/bar.js"),
   );
 
   // works with TypeScript compiler edgecases like:
   // - If the file ends with .js and it doesn't exist, try again with .ts and .tsx
-  expect(await import.meta.resolve("./resolve-typescript-file.js")).toBe(
+  expect(import.meta.resolveSync("./resolve-typescript-file.js")).toBe(
     join(import.meta.path, "../resolve-typescript-file.tsx"),
   );
-  expect(await import.meta.resolve("./resolve-typescript-file.tsx")).toBe(
+  expect(import.meta.resolveSync("./resolve-typescript-file.tsx")).toBe(
     join(import.meta.path, "../resolve-typescript-file.tsx"),
   );
 
   // throws a ResolveMessage on failure
   try {
-    await import.meta.resolve("THIS FILE DOESNT EXIST");
+    import.meta.resolveSync("THIS FILE DOESNT EXIST");
     throw new Error("Test failed");
   } catch (exception) {
     expect(exception instanceof ResolveMessage).toBe(true);
@@ -118,8 +117,8 @@ it("Bun.resolveSync", () => {
 });
 
 it("self-referencing imports works", async () => {
-  const baz = await import.meta.resolve("package-json-exports/baz");
-  const namespace = await import.meta.resolve("package-json-exports/references-baz");
+  const baz = import.meta.resolveSync("package-json-exports/baz");
+  const namespace = import.meta.resolveSync("package-json-exports/references-baz");
   Loader.registry.delete(baz);
   Loader.registry.delete(namespace);
   var a = await import(baz);

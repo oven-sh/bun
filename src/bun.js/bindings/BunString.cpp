@@ -1,14 +1,19 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include "helpers.h"
 #include "simdutf.h"
 #include "JSDOMURL.h"
 #include "DOMURL.h"
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
-#include "JSDOMWrapperCache.h"
 
+#include <wtf/Seconds.h>
+#include <wtf/text/ExternalStringImpl.h>
+#include <JavaScriptCore/JSONObject.h>
+#include <wtf/text/AtomString.h>
+#include <wtf/text/WTFString.h>
+
+#include "JSDOMWrapperCache.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -21,12 +26,8 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 
-#include <wtf/Seconds.h>
-#include <wtf/text/ExternalStringImpl.h>
 #include "GCDefferalContext.h"
-#include <JavaScriptCore/JSONObject.h>
-#include <wtf/text/AtomString.h>
-#include <wtf/text/WTFString.h>
+#include "wtf/text/StringImpl.h"
 
 extern "C" void mi_free(void* ptr);
 
@@ -225,7 +226,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(bytes), length);
+    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(bytes), length });
     str.impl()->ref();
     return Bun::toString(str);
 }
@@ -233,7 +234,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
-    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(bytes, length).leakRef() } };
+    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(std::span { bytes, length }).leakRef() } };
 }
 
 extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t length)
@@ -255,7 +256,7 @@ extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t 
 extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);
-    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(bytes, length).leakRef() } };
+    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(std::span { bytes, length }).leakRef() } };
 }
 
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length)
@@ -559,4 +560,9 @@ extern "C" bool WTFStringImpl__isThreadSafe(
     //     return wtf->characters8() == reinterpret_cast_ptr<const LChar*>(reinterpret_cast<const uint8_t*>(wtf) + tailOffset<const LChar*>());
 
     // return wtf->characters16() == reinterpret_cast_ptr<const UChar*>(reinterpret_cast<const uint16_t*>(wtf) + tailOffset<const UChar*>());
+}
+
+extern "C" void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)
+{
+    str->hash();
 }

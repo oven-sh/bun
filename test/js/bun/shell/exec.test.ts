@@ -54,6 +54,8 @@ describe("bun exec", () => {
       ["exit",   1, "exit: numeric argument required\n", ""],
       ["true",   0, "", ""],
       ["false",  1, "", ""],
+      // ["yes",    1, "", ""],
+      ["seq",    1, "seq: invalid argument\n", ""],
     ] as const;
     for (const [item, exitCode, stderr, stdout] of programs) {
       TestBuilder.command`${BUN} exec ${`${item} --help`}`

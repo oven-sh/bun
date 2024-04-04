@@ -4628,6 +4628,7 @@ pub const Interpreter = struct {
             true: True,
             false: False,
             yes: Yes,
+            seq: Seq,
         };
 
         const Result = @import("../result.zig").Result;
@@ -4649,6 +4650,7 @@ pub const Interpreter = struct {
             true,
             false,
             yes,
+            seq,
 
             pub fn parentType(this: Kind) type {
                 _ = this;
@@ -4671,6 +4673,7 @@ pub const Interpreter = struct {
                     .true => "",
                     .false => "",
                     .yes => "yes [expletive]\n",
+                    .seq => "seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n",
                 };
             }
 
@@ -4829,6 +4832,7 @@ pub const Interpreter = struct {
                 .true => this.callImplWithType(True, Ret, "true", field, args_),
                 .false => this.callImplWithType(False, Ret, "false", field, args_),
                 .yes => this.callImplWithType(Yes, Ret, "yes", field, args_),
+                .seq => this.callImplWithType(Seq, Ret, "seq", field, args_),
             };
         }
 
@@ -9482,6 +9486,143 @@ pub const Interpreter = struct {
                 _ = this;
             }
         };
+
+        pub const Seq = struct {
+            bltn: *Builtin,
+            state: enum { idle, waiting_io, err, done } = .idle,
+            buf: std.ArrayListUnmanaged(u8) = .{},
+            start: f32 = 1,
+            end: f32 = 1,
+            increment: f32 = 1,
+            separator: string = "\n",
+            terminator: string = "",
+            fixed_width: bool = false,
+
+            pub fn start(this: *@This()) Maybe(void) {
+                const args = this.bltn.argsSlice();
+                var iter = bun.SliceIterator([*:0]const u8).init(args);
+
+                if (args.len == 0) {
+                    return this.fail(Builtin.Kind.usageString(.seq));
+                }
+                while (iter.next()) |item| {
+                    const arg = bun.sliceTo(item, 0);
+
+                    if (std.mem.eql(u8, arg, "-s") or std.mem.eql(u8, arg, "--separator")) {
+                        this.separator = bun.sliceTo(iter.next() orelse return this.fail("seq: option requires an argument -- s\n"), 0);
+                        continue;
+                    }
+                    if (std.mem.startsWith(u8, arg, "-s")) {
+                        this.separator = arg[2..];
+                        continue;
+                    }
+
+                    if (std.mem.eql(u8, arg, "-t") or std.mem.eql(u8, arg, "--terminator")) {
+                        this.terminator = bun.sliceTo(iter.next() orelse return this.fail("seq: option requires an argument -- t\n"), 0);
+                        continue;
+                    }
+                    if (std.mem.startsWith(u8, arg, "-t")) {
+                        this.terminator = arg[2..];
+                        continue;
+                    }
+
+                    if (std.mem.eql(u8, arg, "-w") or std.mem.eql(u8, arg, "--fixed-width")) {
+                        this.fixed_width = true;
+                        continue;
+                    }
+
+                    iter.index -= 1;
+                    break;
+                }
+
+                const maybe1 = iter.next().?;
+                const int1 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
+                this.end = int1;
+                if (this.start > this.end) this.increment = -1;
+
+                const maybe2 = iter.next();
+                if (maybe2 == null) return this.do();
+                const int2 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
+                this.start = int1;
+                this.end = int2;
+                if (this.start < this.end) this.increment = 1;
+                if (this.start > this.end) this.increment = -1;
+
+                const maybe3 = iter.next();
+                if (maybe3 == null) return this.do();
+                const int3 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
+                this.start = int1;
+                this.increment = int2;
+                this.end = int3;
+
+                if (this.increment == 0) return this.fail("seq: zero increment\n");
+                if (this.start > this.end and this.increment > 0) return this.fail("seq: needs negative decrement\n");
+                if (this.start < this.end and this.increment < 0) return this.fail("seq: needs positive increment\n");
+
+                return this.do();
+            }
+
+            fn fail(this: *@This(), msg: string) Maybe(void) {
+                if (this.bltn.stderr.needsIO()) {
+                    this.state = .err;
+                    this.bltn.stderr.enqueue(this, msg);
+                    return Maybe(void).success;
+                }
+                _ = this.bltn.writeNoIO(.stderr, msg);
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            fn do(this: *@This()) Maybe(void) {
+                var current = this.start;
+                var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                defer arena.deinit();
+
+                while (if (this.increment > 0) current <= this.end else current >= this.end) : (current += this.increment) {
+                    const str = std.fmt.allocPrint(arena.allocator(), "{d}", .{current}) catch bun.outOfMemory();
+                    defer _ = arena.reset(.retain_capacity);
+                    _ = this.print(str);
+                    _ = this.print(this.separator);
+                }
+                _ = this.print(this.terminator);
+
+                this.state = .done;
+                if (this.bltn.stdout.needsIO()) {
+                    this.bltn.stdout.enqueue(this, this.buf.items);
+                }
+                return Maybe(void).success;
+            }
+
+            fn print(this: *@This(), msg: string) Maybe(void) {
+                if (this.bltn.stdout.needsIO()) {
+                    this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+                    return Maybe(void).success;
+                }
+                const res = this.bltn.writeNoIO(.stdout, msg);
+                if (res == .err) return Maybe(void).initErr(res.err);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
+                if (maybe_e) |e| {
+                    defer e.deref();
+                    this.state = .err;
+                    this.bltn.done(1);
+                    return;
+                }
+                if (this.state == .done) {
+                    this.bltn.done(0);
+                }
+                if (this.state == .err) {
+                    this.bltn.done(1);
+                }
+            }
+
+            pub fn deinit(this: *@This()) void {
+                this.buf.deinit(bun.default_allocator);
+                //seq
+            }
+        };
     };
 
     /// This type is reference counted, but deinitialization is queued onto the event loop
@@ -10526,6 +10667,7 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.True,
         Interpreter.Builtin.False,
         Interpreter.Builtin.Yes,
+        Interpreter.Builtin.Seq,
         shell.subproc.PipeReader.CapturedWriter,
     });
 

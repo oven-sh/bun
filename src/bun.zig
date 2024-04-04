@@ -2850,3 +2850,20 @@ pub fn selfExePath() ![:0]u8 {
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
 
 pub const spawnSync = @This().spawn.sync.spawn;
+
+pub fn SliceIterator(comptime T: type) type {
+    return struct {
+        items: []const T,
+        index: usize = 0,
+
+        pub fn init(items: []const T) @This() {
+            return .{ .items = items };
+        }
+
+        pub fn next(this: *@This()) ?T {
+            if (this.index >= this.items.len) return null;
+            defer this.index += 1;
+            return this.items[this.index];
+        }
+    };
+}

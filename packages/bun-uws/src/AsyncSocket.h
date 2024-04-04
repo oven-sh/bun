@@ -266,7 +266,6 @@ public:
                 } else {
                     /* This path is horrible and points towards erroneous usage */
                     asyncSocketData->buffer.append(src, (unsigned int) length);
-                    /* Return the failure */
                     return {length, true};
                 }
             }
@@ -308,7 +307,6 @@ public:
                     if (optionally) {
                         return {written, true};
                     }
-               
                     /* Fall back to worst possible case (should be very rare for HTTP) */
                     /* At least we can reserve room for next chunk if we know it up front */
                     if (nextLength) {
@@ -318,7 +316,7 @@ public:
                     /* Buffer this chunk */
                     asyncSocketData->buffer.append(src + written, (size_t) (length - written));
 
-                     /* Return the failure */
+                    /* Return the failure */
                     return {length, true};
                 }
                 /* Fall through to default return */

@@ -1,9 +1,12 @@
 test("BuildError is modifiable", async () => {
   try {
-    await import("./inspect-error-fixture-bad.js");
+    await import("../util/inspect-error-fixture-bad.js");
     expect.unreachable();
   } catch (e) {
     var error: BuildMessage = e as BuildMessage;
+    if (error.name !== "BuildMessage") {
+      throw new Error("Expected BuildMessage, got " + error.name);
+    }
   }
 
   const message = error!.message;

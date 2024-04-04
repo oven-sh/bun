@@ -2056,10 +2056,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     return true;
                 }
             } else {
-                // only allow less than highWaterMark to be written if the request has ended
-                if (chunk.len < this.highWaterMark and !this.requested_end) {
-                    return false;
-                }
                 if (!this.send(chunk)) {
                     // if we were unable to send it, retry
                     return false;

@@ -1206,7 +1206,7 @@ pub const PipeReader = struct {
         const owned = this.toOwnedSlice();
         this.state = .{ .done = owned };
         if (!this.isDone()) return;
-        // we need to ref because the process might be done and deref inside signalDoneToCmd before we call onCloseIO
+        // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
         this.ref();
         defer this.deref();
         this.trySignalDoneToCmd();
@@ -1325,6 +1325,9 @@ pub const PipeReader = struct {
             bun.default_allocator.free(this.state.done);
         }
         this.state = .{ .err = err.toSystemError() };
+        // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
+        this.ref();
+        defer this.deref();
         this.trySignalDoneToCmd();
         if (this.process) |process| {
             // this.process = null;

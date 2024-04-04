@@ -339,7 +339,7 @@ pub fn WindowsPipeReader(
             var this = bun.cast(*This, stream.data);
 
             const nread_int = nread.int();
-            bun.sys.syslog("onStreamRead() = {d}", .{nread_int});
+            bun.sys.syslog("onStreamRead(0x{d}) = {d}", .{ @intFromPtr(this), nread_int });
 
             // NOTE: pipes/tty need to call stopReading on errors (yeah)
             switch (nread_int) {
@@ -368,29 +368,46 @@ pub fn WindowsPipeReader(
         }
 
         fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
+            const result = fs.result;
+            const nread_int = result.int();
+            bun.sys.syslog("onFileRead({}) = {d}", .{ bun.toFD(fs.file.fd), nread_int });
+            if (nread_int == uv.UV_ECANCELED) {
+                fs.deinit();
+                return;
+            }
             var this: *This = bun.cast(*This, fs.data);
-            const nread_int = fs.result.int();
-            const continue_reading = !this.flags.is_paused;
-            this.flags.is_paused = true;
-            bun.sys.syslog("onFileRead() = {d}", .{nread_int});
+            fs.deinit();
 
             switch (nread_int) {
                 // 0 actually means EOF too
                 0, uv.UV_EOF => {
+                    this.flags.is_paused = true;
                     this.onRead(.{ .result = 0 }, "", .eof);
                 },
-                uv.UV_ECANCELED => {
-                    this.onRead(.{ .result = 0 }, "", .drained);
-                },
+                // UV_ECANCELED needs to be on the top so we avoid UAF
+                uv.UV_ECANCELED => unreachable,
                 else => {
-                    if (fs.result.toError(.recv)) |err| {
+                    if (result.toError(.read)) |err| {
+                        this.flags.is_paused = true;
                         this.onRead(.{ .err = err }, "", .progress);
                         return;
                     }
-                    // continue reading
                     defer {
-                        if (continue_reading) {
-                            _ = this.startReading();
+                        // if we are not paused we keep reading until EOF or err
+                        if (!this.flags.is_paused) {
+                            if (this.source) |source| {
+                                if (source == .file) {
+                                    const file = source.file;
+                                    source.setData(this);
+                                    const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
+                                    file.iov = uv.uv_buf_t.init(buf);
+                                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFileRead).toError(.write)) |err| {
+                                        this.flags.is_paused = true;
+                                        // we should inform the error if we are unable to keep reading
+                                        this.onRead(.{ .err = err }, "", .progress);
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -413,6 +430,7 @@ pub fn WindowsPipeReader(
             if (this.flags.is_done or !this.flags.is_paused) return .{ .result = {} };
             this.flags.is_paused = false;
             const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.BADF, .read) };
+            std.debug.assert(!source.isClosed());
 
             switch (source) {
                 .file => |file| {
@@ -454,9 +472,14 @@ pub fn WindowsPipeReader(
             if (this.source) |source| {
                 switch (source) {
                     .sync_file, .file => |file| {
-                        file.fs.deinit();
-                        file.fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&onFileClose));
+                        if (!this.flags.is_paused) {
+                            // always cancel the current one
+                            file.fs.cancel();
+                            this.flags.is_paused = true;
+                        }
+                        // always use close_fs here because we can have a operation in progress
+                        file.close_fs.data = file;
+                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
                     },
                     .pipe => |pipe| {
                         pipe.data = pipe;
@@ -486,7 +509,7 @@ pub fn WindowsPipeReader(
 
         fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
             const file = bun.cast(*Source.File, handle.data);
-            file.fs.deinit();
+            handle.deinit();
             bun.default_allocator.destroy(file);
         }
 
@@ -514,10 +537,7 @@ pub fn WindowsPipeReader(
                 },
                 .drained => {
                     // we call drained so we know if we should stop here
-                    const keep_reading = onReadChunk(this, slice, hasMore);
-                    if (!keep_reading) {
-                        this.pause();
-                    }
+                    _ = onReadChunk(this, slice, hasMore);
                 },
                 else => {
                     var buffer = getBuffer(this);
@@ -528,10 +548,7 @@ pub fn WindowsPipeReader(
                     }
                     // move cursor foward
                     buffer.items.len += amount.result;
-                    const keep_reading = onReadChunk(this, slice, hasMore);
-                    if (!keep_reading) {
-                        this.pause();
-                    }
+                    _ = onReadChunk(this, slice, hasMore);
                 },
             }
         }
@@ -1037,7 +1054,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn done(this: *WindowsOutputReader) void {
-        std.debug.assert(if (this.source) |source| source.isClosed() else true);
+        if (this.source) |source| std.debug.assert(source.isClosed());
 
         this.finish();
 
@@ -1057,16 +1074,14 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn startWithCurrentPipe(this: *WindowsOutputReader) bun.JSC.Maybe(void) {
-        std.debug.assert(this.source != null);
+        std.debug.assert(!this.source.?.isClosed());
         this.source.?.setData(this);
         this.buffer().clearRetainingCapacity();
         this.flags.is_done = false;
-        this.unpause();
-        return .{ .result = {} };
+        return this.startReading();
     }
 
     pub fn startWithPipe(this: *WindowsOutputReader, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
-        std.debug.assert(this.source == null);
         this.source = .{ .pipe = pipe };
         return this.startWithCurrentPipe();
     }
@@ -1090,6 +1105,16 @@ pub const WindowsBufferedReader = struct {
             this.closeImpl(false);
         }
         this.source = null;
+    }
+
+    pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.JSC.Maybe(void) {
+        const source = this.source orelse return .{
+            .err = .{
+                .errno = @intFromEnum(bun.C.E.BADF),
+                .syscall = .uv_tty_set_mode,
+            },
+        };
+        return source.setRawMode(value);
     }
 
     comptime {

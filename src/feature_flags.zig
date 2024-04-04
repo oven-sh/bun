@@ -164,4 +164,17 @@ pub const disable_auto_js_to_ts_in_node_modules = true;
 
 pub const runtime_transpiler_cache = true;
 
-pub const breaking_changes_1_1_0 = false;
+/// On Windows, node_modules/.bin uses pairs of '.exe' + '.bunx' files.  The
+/// fast path is to load the .bunx file within `bun.exe` instead of
+/// `bun_shim_impl.exe` by using `bun_shim_impl.tryStartupFromBunJS`
+///
+/// When debugging weird script runner issues, it may be worth disabling this in
+/// order to isolate your bug.
+pub const windows_bunx_fast_path = true;
+
+pub const breaking_changes_1_2 = false;
+
+// This causes strange bugs where writing via console.log (sync) has a different
+// order than via Bun.file.writer() so we turn it off until there's a unified,
+// buffered writer abstraction shared throughout Bun
+pub const nonblocking_stdout_and_stderr_on_posix = false;

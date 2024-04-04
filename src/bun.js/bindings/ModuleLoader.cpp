@@ -35,13 +35,12 @@
 #include "NativeModuleImpl.h"
 
 #include "../modules/ObjectModule.h"
+#include "wtf/Assertions.h"
 
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
 using namespace WebCore;
-
-static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, bool wasModuleMock = false);
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
@@ -77,7 +76,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         JSValue requireResult = globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId);
         RETURN_IF_EXCEPTION(throwScope, void());
         auto* object = requireResult.getObject();
-        ASSERT(object);
+        ASSERT_WITH_MESSAGE(object, "Expected object from requireId %s", moduleKey.string().string().utf8().data());
 
         JSC::EnsureStillAliveScope stillAlive(object);
 
@@ -660,16 +659,6 @@ static JSValue fetchESMSourceCode(
         } else {
             throwException(globalObject, scope, exception);
             return {};
-        }
-    };
-
-    const auto resolve = [&](JSValue code) -> JSValue {
-        if constexpr (allowPromise) {
-            auto* ret = resolvedInternalPromise(globalObject, code);
-            scope.release();
-            return ret;
-        } else {
-            return code;
         }
     };
 

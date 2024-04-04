@@ -1,4 +1,8 @@
-const { setRawMode: ttySetMode, isTTY: isatty, getWindowSize: _getWindowSize } = $lazy("tty");
+const {
+  setRawMode: ttySetMode,
+  isatty,
+  getWindowSize: _getWindowSize,
+} = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 // primordials
 const NumberIsInteger = Number.isInteger;
@@ -25,12 +29,39 @@ Object.defineProperty(ReadStream, "prototype", {
     const Prototype = Object.create(require("node:fs").ReadStream.prototype);
 
     Prototype.setRawMode = function (flag) {
-      const err = ttySetMode(this.fd, !!flag);
-      if (err) {
-        this.emit("error", new Error("setRawMode failed with errno: " + err));
-        return this;
+      flag = !!flag;
+
+      // On windows, this goes through the stream handle itself, as it must call
+      // uv_tty_set_mode on the uv_tty_t.
+      //
+      // On POSIX, I tried to use the same approach, but it didn't work reliably,
+      // so we just use the file descriptor and use termios APIs directly.
+      if (process.platform === "win32") {
+        const handle = this.$bunNativePtr;
+        if (!handle) {
+          this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
+          return this;
+        }
+
+        // If you call setRawMode before you call on('data'), the stream will
+        // not be constructed, leading to EBADF
+        this[require("node:stream")[Symbol.for("::bunternal::")].kEnsureConstructed]();
+
+        const err = handle.setRawMode(flag);
+        if (err) {
+          this.emit("error", err);
+          return this;
+        }
+      } else {
+        const err = ttySetMode(this.fd, flag);
+        if (err) {
+          this.emit("error", new Error("setRawMode failed with errno: " + err));
+          return this;
+        }
       }
+
       this.isRaw = flag;
+
       return this;
     };
 
@@ -276,7 +307,7 @@ Object.defineProperty(WriteStream, "prototype", {
     };
 
     WriteStream.prototype.moveCursor = function (dx, dy, cb) {
-      return (readline ??= require("node:readline")).moveCursor(this, dx, dy, cb);
+      return require("node:readline").moveCursor(this, dx, dy, cb);
     };
 
     return Real;

@@ -37,7 +37,6 @@ beforeEach(async () => {
   await dummyBeforeEach();
 });
 afterEach(async () => {
-  await rm(add_dir, { force: true, recursive: true });
   await dummyAfterEach();
 });
 

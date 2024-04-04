@@ -28,51 +28,24 @@ using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
-static uintptr_t getSourceProviderMapKey(ResolvedSource& resolvedSource)
+SourceOrigin toSourceOrigin(const String& specifier, bool isBuiltin)
 {
-    switch (resolvedSource.source_code.tag) {
-    case BunStringTag::WTFStringImpl: {
-        return (uintptr_t)resolvedSource.source_code.impl.wtf->characters8();
-    }
-    case BunStringTag::StaticZigString:
-    case BunStringTag::ZigString: {
-        return (uintptr_t)Zig::untag(resolvedSource.source_code.impl.zig.ptr);
-    }
-    default: {
-        return 0;
-    }
-    }
-}
 
-SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
-{
+    ASSERT_WITH_MESSAGE(!specifier.startsWith("file://"_s), "specifier should not already be a file URL");
+
     if (isBuiltin) {
-        if (sourceURL.startsWith("node:"_s)) {
-            return SourceOrigin(WTF::URL(makeString("builtin://node/", sourceURL.substring(5))));
-        } else if (sourceURL.startsWith("bun:"_s)) {
-            return SourceOrigin(WTF::URL(makeString("builtin://bun/", sourceURL.substring(4))));
+        if (specifier.startsWith("node:"_s)) {
+            return SourceOrigin(WTF::URL(makeString("builtin://node/", specifier.substring(5))));
+        } else if (specifier.startsWith("bun:"_s)) {
+            return SourceOrigin(WTF::URL(makeString("builtin://bun/", specifier.substring(4))));
         } else {
-            return SourceOrigin(WTF::URL(makeString("builtin://", sourceURL)));
+            return SourceOrigin(WTF::URL(makeString("builtin://", specifier)));
         }
     }
 
-    ASSERT_WITH_MESSAGE(!sourceURL.startsWith("file://"_s), "sourceURL should not already be a file URL");
-    return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
+    return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(specifier));
 }
 
-void forEachSourceProvider(const WTF::Function<void(JSC::SourceID)>& func)
-{
-    // if (sourceProviderMap == nullptr) {
-    //     return;
-    // }
-
-    // for (auto& pair : *sourceProviderMap) {
-    //     auto sourceProvider = pair.value;
-    //     if (sourceProvider) {
-    //         func(sourceProvider);
-    //     }
-    // }
-}
 extern "C" int ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL);
 extern "C" void* ByteRangeMapping__find(BunString sourceURL);
 void* sourceMappingForSourceURL(const WTF::String& sourceURL)

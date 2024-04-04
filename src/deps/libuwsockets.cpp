@@ -323,7 +323,7 @@ extern "C"
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(port, [handler, config,
+      uwsApp->listen(port, [handler, 
                             user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, user_data); });
     }
@@ -331,7 +331,7 @@ extern "C"
     {
       uWS::App *uwsApp = (uWS::App *)app;
 
-      uwsApp->listen(port, [handler, config,
+      uwsApp->listen(port, [handler, 
                             user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, user_data); });
     }
@@ -1198,7 +1198,7 @@ extern "C"
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
     return uwsRes->write(std::string_view(data, length));
   }
-  uintmax_t uws_res_get_write_offset(int ssl, uws_res_t *res)
+  uint64_t uws_res_get_write_offset(int ssl, uws_res_t *res)
   {
     if (ssl)
     {
@@ -1221,20 +1221,20 @@ extern "C"
   }
 
   void uws_res_on_writable(int ssl, uws_res_t *res,
-                           bool (*handler)(uws_res_t *res, uintmax_t,
+                           bool (*handler)(uws_res_t *res, uint64_t,
                                            void *opcional_data),
                            void *opcional_data)
   {
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->onWritable([handler, res, opcional_data](uintmax_t a)
+      uwsRes->onWritable([handler, res, opcional_data](uint64_t a)
                          { return handler(res, a, opcional_data); });
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->onWritable([handler, res, opcional_data](uintmax_t a)
+      uwsRes->onWritable([handler, res, opcional_data](uint64_t a)
                          { return handler(res, a, opcional_data); });
     }
   }
@@ -1492,7 +1492,7 @@ extern "C"
                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
-  void uws_res_override_write_offset(int ssl, uws_res_t *res, uintmax_t offset)
+  void uws_res_override_write_offset(int ssl, uws_res_t *res, uint64_t offset)
   {
     if (ssl)
     {

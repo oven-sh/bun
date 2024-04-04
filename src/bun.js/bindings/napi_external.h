@@ -63,7 +63,9 @@ public:
             if (!stackTrace->isEmpty()) {
                 for (auto& frame : *stackTrace) {
                     if (frame.hasLineAndColumnInfo()) {
-                        frame.computeLineAndColumn(accessor->sourceOriginLine, accessor->sourceOriginColumn);
+                        LineColumn lineColumn = frame.computeLineAndColumn();
+                        accessor->sourceOriginLine = lineColumn.line;
+                        accessor->sourceOriginColumn = lineColumn.column;
                         break;
                     }
                 }

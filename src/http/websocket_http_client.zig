@@ -239,7 +239,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub usingnamespace bun.New(@This());
 
         const HTTPClient = @This();
-
         pub fn register(_: *JSC.JSGlobalObject, _: *anyopaque, ctx: *uws.SocketContext) callconv(.C) void {
             Socket.configure(
                 ctx,
@@ -311,6 +310,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 client,
                 "tcp",
             )) |out| {
+                bun.Analytics.Features.WebSocket += 1;
+
                 if (comptime ssl) {
                     if (!strings.isIPAddress(host_.slice())) {
                         out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
@@ -454,9 +455,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
 
             const is_first = this.body.items.len == 0;
-            if (is_first) {
+            const http_101 = "HTTP/1.1 101 ";
+            if (is_first and body.len > http_101.len) {
                 // fail early if we receive a non-101 status code
-                if (!strings.hasPrefixComptime(body, "HTTP/1.1 101 ")) {
+                if (!strings.hasPrefixComptime(body, http_101)) {
                     this.terminate(ErrorCode.expected_101_status_code);
                     return;
                 }
@@ -482,6 +484,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleEnd(this: *HTTPClient, socket: Socket) void {
             log("onEnd", .{});
+
             std.debug.assert(socket.socket == this.tcp.?.socket);
             this.terminate(ErrorCode.ended);
         }
@@ -492,7 +495,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var websocket_accept_header = PicoHTTP.Header{ .name = "", .value = "" };
             var visited_protocol = this.websocket_protocol == 0;
             // var visited_version = false;
-            std.debug.assert(response.status_code == 101);
+
+            if (response.status_code != 101) {
+                this.terminate(ErrorCode.expected_101_status_code);
+                return;
+            }
 
             for (response.headers) |header| {
                 switch (header.name.len) {
@@ -954,7 +961,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         const WebSocket = @This();
 
         pub usingnamespace bun.New(@This());
-
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             const vm = global.bunVM();
             const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
@@ -985,6 +991,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn clearData(this: *WebSocket) void {
+            log("clearData", .{});
             this.poll_ref.unref(this.globalThis.bunVM());
             this.clearReceiveBuffers(true);
             this.clearSendBuffers(true);
@@ -994,6 +1001,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn cancel(this: *WebSocket) callconv(.C) void {
+            log("cancel", .{});
             this.clearData();
 
             if (this.tcp.isClosed() or this.tcp.isShutdown())
@@ -1020,6 +1028,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn handleHandshake(this: *WebSocket, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             JSC.markBinding(@src());
+
             const authorized = if (success == 1) true else false;
 
             log("onHandshake({d})", .{success});
@@ -1057,6 +1066,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn terminate(this: *WebSocket, code: ErrorCode) void {
+            log("terminate", .{});
             this.fail(code);
         }
 
@@ -1156,6 +1166,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleData(this: *WebSocket, socket: Socket, data_: []const u8) void {
+
             // after receiving close we should ignore the data
             if (this.close_received) return;
 
@@ -1596,8 +1607,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.clearData();
                 return;
             }
-
-            socket.shutdownRead();
+            // we dont wanna shutdownRead when SSL, because SSL handshake can happen when writting
+            if (comptime !ssl) {
+                socket.shutdownRead();
+            }
             var final_body_bytes: [128 + 8]u8 = undefined;
             var header = @as(WebsocketHeader, @bitCast(@as(u16, 0)));
             header.final = true;
@@ -1641,6 +1654,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this: *WebSocket,
             socket: Socket,
         ) void {
+            if (this.close_received) return;
             std.debug.assert(socket.socket == this.tcp.socket);
             const send_buf = this.send_buffer.readableSlice(0);
             if (send_buf.len == 0)

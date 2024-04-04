@@ -198,6 +198,9 @@ extern "C" int Bun__ttySetMode(int fd, int mode);
 
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+#if OS(WINDOWS)
+    RELEASE_ASSERT_NOT_REACHED();
+#else
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -217,15 +220,6 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     auto fdToUse = fd.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-#if OS(WINDOWS)
-    if (fdToUse > -1 && fdToUse < 3) {
-        int err = uv_tty_set_mode(getSharedHandle(fdToUse, static_cast<Zig::GlobalObject*>(globalObject)->uvLoop()), mode.isTrue() ? UV_TTY_MODE_RAW : UV_TTY_MODE_NORMAL);
-        return JSValue::encode(jsNumber(err));
-    } else {
-        // TODO:
-        return JSValue::encode(jsNumber(0));
-    }
-#else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fdToUse, mode.toInt32(globalObject));
     return JSValue::encode(jsNumber(err));
@@ -363,9 +357,6 @@ public:
     {
         Base::finishCreation(vm);
 
-        auto* clientData = WebCore::clientData(vm);
-        auto& builtinNames = clientData->builtinNames();
-
         reifyStaticProperties(vm, TTYWrapObject::info(), TTYWrapPrototypeValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }
@@ -494,12 +485,12 @@ private:
 
 const ClassInfo TTYWrapConstructor::s_info = { "TTY"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TTYWrapConstructor) };
 
-JSValue createBunTTYFunctions(JSC::JSGlobalObject* globalObject)
+JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto* obj = constructEmptyObject(globalObject);
 
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "setRawMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsTTYSetMode, ImplementationVisibility::Public), 0);
 

@@ -58,3 +58,17 @@ test("sleep should saturate timeout values", async () => {
 
   await allExited;
 });
+
+test("sleep should keep the event loop alive", async () => {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "sleep-keepalive.ts"],
+    stderr: "inherit",
+    stdout: "pipe",
+    stdin: "inherit",
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  await proc.exited;
+  expect(proc.exitCode).toBe(0);
+  expect(await new Response(proc.stdout).text()).toContain("event loop was not killed");
+});

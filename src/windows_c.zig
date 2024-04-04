@@ -1294,7 +1294,7 @@ pub fn renameAtW(
     return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
 }
 
-const log = bun.Output.scoped(.SYS, false);
+const log = bun.Output.scoped(.SYS, true);
 
 /// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
 /// Does not close the file descriptor.
@@ -1426,3 +1426,5 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
     else
         Maybe(void).errno(rc, .NtSetInformationFile);
 }
+
+pub extern fn windows_enable_stdio_inheritance() void;

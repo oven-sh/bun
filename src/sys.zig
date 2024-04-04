@@ -78,6 +78,7 @@ pub const Tag = enum(u8) {
     fcntl,
     fdatasync,
     fstat,
+    fstatat,
     fsync,
     ftruncate,
     futimens,
@@ -142,6 +143,7 @@ pub const Tag = enum(u8) {
 
     uv_spawn,
     uv_pipe,
+    uv_tty_set_mode,
 
     // Below this line are Windows API calls only.
 
@@ -469,6 +471,13 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     return Maybe(bun.Stat){ .result = stat_ };
 }
 
+pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
+    if (Environment.isWindows) @compileError("TODO");
+    var stat_ = mem.zeroes(bun.Stat);
+    if (Maybe(bun.Stat).errnoSys(sys.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| return err;
+    return Maybe(bun.Stat){ .result = stat_ };
+}
+
 pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         .mac => Maybe(void).errnoSysP(system.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
@@ -791,6 +800,8 @@ pub fn openFileAtWindowsNtPath(
     };
     var io: windows.IO_STATUS_BLOCK = undefined;
 
+    var attributes: w.DWORD = w.FILE_ATTRIBUTE_NORMAL;
+
     while (true) {
         const rc = windows.ntdll.NtCreateFile(
             &result,
@@ -798,7 +809,7 @@ pub fn openFileAtWindowsNtPath(
             &attr,
             &io,
             null,
-            w.FILE_ATTRIBUTE_NORMAL,
+            attributes,
             w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
             disposition,
             options,
@@ -820,6 +831,25 @@ pub fn openFileAtWindowsNtPath(
             } else {
                 log("NtCreateFile({}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             }
+        }
+
+        if (rc == .ACCESS_DENIED and
+            attributes == w.FILE_ATTRIBUTE_NORMAL and
+            (access_mask & (w.GENERIC_READ | w.GENERIC_WRITE)) == w.GENERIC_WRITE)
+        {
+            // > If CREATE_ALWAYS and FILE_ATTRIBUTE_NORMAL are specified,
+            // > CreateFile fails and sets the last error to ERROR_ACCESS_DENIED
+            // > if the file exists and has the FILE_ATTRIBUTE_HIDDEN or
+            // > FILE_ATTRIBUTE_SYSTEM attribute. To avoid the error, specify the
+            // > same attributes as the existing file.
+            //
+            // The above also applies to NtCreateFile. In order to make this work,
+            // we retry but only in the case that the file was opened for writing.
+            //
+            // See https://github.com/oven-sh/bun/issues/6820
+            //     https://github.com/libuv/libuv/pull/3380
+            attributes = w.FILE_ATTRIBUTE_HIDDEN;
+            continue;
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -1023,9 +1053,11 @@ pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.F
 }
 
 pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    // TODO(@paperdave): this should not need to use libuv
     if (comptime Environment.isWindows) {
         return sys_uv.open(file_path, flags, perm);
     }
+
     // this is what open() does anyway.
     return openat(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
 }
@@ -1524,6 +1556,51 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
+        return Maybe(void).success;
+    }
+}
+
+pub const RenameAt2Flags = packed struct {
+    exchange: bool = false,
+    exclude: bool = false,
+    nofollow: bool = false,
+
+    pub fn int(self: RenameAt2Flags) u32 {
+        var flags: u32 = 0;
+
+        if (comptime Environment.isMac) {
+            if (self.exchange) flags |= bun.C.RENAME_SWAP;
+            if (self.exclude) flags |= bun.C.RENAME_EXCL;
+            if (self.nofollow) flags |= bun.C.RENAME_NOFOLLOW_ANY;
+        } else {
+            if (self.exchange) flags |= bun.C.RENAME_EXCHANGE;
+            if (self.exclude) flags |= bun.C.RENAME_NOREPLACE;
+        }
+
+        return flags;
+    }
+};
+
+pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8, flags: RenameAt2Flags) Maybe(void) {
+    if (Environment.isWindows) {
+        return renameat(from_dir, from, to_dir, to);
+    }
+
+    while (true) {
+        const rc = switch (comptime Environment.os) {
+            .linux => linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
+            .mac => bun.C.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
+            else => @compileError("renameat2() is not implemented on this platform"),
+        };
+
+        if (Maybe(void).errnoSys(rc, .rename)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            if (comptime Environment.allow_assert)
+                log("renameat2({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
+            return err;
+        }
+        if (comptime Environment.allow_assert)
+            log("renameat2({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
         return Maybe(void).success;
     }
 }
@@ -2055,12 +2132,13 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
             w.TRUE,
             w.DUPLICATE_SAME_ACCESS,
         );
-        log("dup({d}) = {d}", .{ fd.cast(), out });
         if (out == 0) {
             if (Maybe(bun.FileDescriptor).errnoSysFd(0, .dup, fd)) |err| {
+                log("dup({}) = {}", .{ fd, err });
                 return err;
             }
         }
+        log("dup({}) = {}", .{ fd, bun.toFD(target) });
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
 
@@ -2408,3 +2486,29 @@ pub const File = struct {
         };
     }
 };
+
+pub inline fn toLibUVOwnedFD(
+    maybe_windows_fd: bun.FileDescriptor,
+    comptime syscall: Syscall.Tag,
+    comptime error_case: enum { close_on_fail, leak_fd_on_fail },
+) Maybe(bun.FileDescriptor) {
+    if (!Environment.isWindows) {
+        return .{ .result = maybe_windows_fd };
+    }
+
+    return .{
+        .result = bun.toLibUVOwnedFD(maybe_windows_fd) catch |err| switch (err) {
+            error.SystemFdQuotaExceeded => {
+                if (error_case == .close_on_fail) {
+                    _ = close(maybe_windows_fd);
+                }
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(bun.C.E.MFILE),
+                        .syscall = syscall,
+                    },
+                };
+            },
+        },
+    };
+}

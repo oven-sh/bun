@@ -143,7 +143,7 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
         .allocator = null,
         .source_code = bun.String.empty,
         .specifier = specifier,
-        .source_url = bun.String.init(@tagName(name)),
+        .source_url = bun.String.static(@tagName(name)),
         .hash = 0,
         .tag = name,
         .source_code_needs_deref = false,
@@ -594,7 +594,7 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .hash = 0,
                 };
-                this.resolved_source.source_code.value.WTFStringImpl.ensureHash();
+                this.resolved_source.source_code.ensureHash();
                 return;
             }
 
@@ -683,7 +683,7 @@ pub const RuntimeTranspilerStore = struct {
                 // Before ensureHash:
                 // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
                 //
-                result.value.WTFStringImpl.ensureHash();
+                result.ensureHash();
 
                 break :brk result;
             };
@@ -706,6 +706,8 @@ pub const RuntimeTranspilerStore = struct {
 pub const ModuleLoader = struct {
     transpile_source_code_arena: ?*bun.ArenaAllocator = null,
     eval_source: ?*logger.Source = null,
+
+    pub var is_allowed_to_use_internal_testing_apis = false;
 
     /// This must be called after calling transpileSourceCode
     pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
@@ -2064,19 +2066,20 @@ pub const ModuleLoader = struct {
             else => {
                 var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
                 const allocator = stack_buf.get();
-                var buf = MutableString.init2048(allocator) catch unreachable;
+                var buf = MutableString.init2048(allocator) catch bun.outOfMemory();
                 defer buf.deinit();
                 var writer = buf.writer();
                 if (!jsc_vm.origin.isEmpty()) {
-                    writer.writeAll("export default `") catch unreachable;
+                    writer.writeAll("export default `") catch bun.outOfMemory();
                     // TODO: escape backtick char, though we might already do that
                     JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
-                    writer.writeAll("`;\n") catch unreachable;
+                    writer.writeAll("`;\n") catch bun.outOfMemory();
                 } else {
-                    writer.writeAll("export default ") catch unreachable;
-                    buf = js_printer.quoteForJSON(specifier, buf, true) catch @panic("out of memory");
+                    // search keywords: "export default \"{}\";"
+                    writer.writeAll("export default ") catch bun.outOfMemory();
+                    buf = js_printer.quoteForJSON(specifier, buf, true) catch bun.outOfMemory();
                     writer = buf.writer();
-                    writer.writeAll(";\n") catch unreachable;
+                    writer.writeAll(";\n") catch bun.outOfMemory();
                 }
 
                 const public_url = bun.String.createUTF8(buf.toOwnedSliceLeaky());
@@ -2320,6 +2323,8 @@ pub const ModuleLoader = struct {
                 .hash = Runtime.Runtime.versionHash(),
             };
         } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
+            Analytics.Features.builtin_modules.insert(hardcoded);
+
             switch (hardcoded) {
                 .@"bun:main" => {
                     return ResolvedSource{
@@ -2344,6 +2349,22 @@ pub const ModuleLoader = struct {
                 .@"node:constants" => return jsSyntheticModule(.@"node:constants", specifier),
                 .@"bun:jsc" => return jsSyntheticModule(.@"bun:jsc", specifier),
                 .@"bun:test" => return jsSyntheticModule(.@"bun:test", specifier),
+
+                .@"bun:internal-for-testing" => {
+                    if (!Environment.isDebug) {
+                        if (!is_allowed_to_use_internal_testing_apis)
+                            return null;
+                        const is_outside_our_ci = brk: {
+                            const repo = jsc_vm.bundler.env.get("GITHUB_REPOSITORY") orelse break :brk true;
+                            break :brk !strings.endsWithComptime(repo, "/bun");
+                        };
+                        if (is_outside_our_ci) {
+                            return null;
+                        }
+                    }
+
+                    return jsSyntheticModule(.InternalForTesting, specifier);
+                },
 
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
@@ -2513,6 +2534,7 @@ pub const ModuleLoader = struct {
                 return true;
             },
         );
+        Analytics.Features.virtual_modules += 1;
         return true;
     }
 
@@ -2545,6 +2567,7 @@ pub const HardcodedModule = enum {
     @"bun:main",
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
     @"bun:sqlite",
+    @"bun:internal-for-testing",
     @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
@@ -2619,6 +2642,7 @@ pub const HardcodedModule = enum {
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:test", HardcodedModule.@"bun:test" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
+            .{ "bun:internal-for-testing", HardcodedModule.@"bun:internal-for-testing" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
             .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
@@ -2832,6 +2856,7 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
+            .{ "bun:internal-for-testing", .{ .path = "bun:internal-for-testing" } },
             .{ "ffi", .{ .path = "bun:ffi" } },
 
             // Thirdparty packages we override

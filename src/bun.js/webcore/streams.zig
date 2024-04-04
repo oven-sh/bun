@@ -2030,7 +2030,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return this.buffer.ptr[this.offset..this.buffer.cap][0..this.buffer.len];
         }
 
-        pub fn onWritable(this: *@This(), write_offset_: c_ulong, _: *UWSResponse) callconv(.C) bool {
+        pub fn onWritable(this: *@This(), write_offset_: u64, _: *UWSResponse) callconv(.C) bool {
             const write_offset: u64 = @as(u64, write_offset_);
             log("onWritable ({d})", .{write_offset});
 
@@ -2674,6 +2674,21 @@ pub fn ReadableStreamSource(
             return ReadableStream.fromNative(globalThis, out_value);
         }
 
+        pub fn setRawModeFromJS(this: *ReadableStreamSourceType, global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) callconv(.C) JSValue {
+            if (@hasDecl(Context, "setRawMode")) {
+                const flag = call_frame.argument(0);
+                if (Environment.allow_assert) {
+                    std.debug.assert(flag.isBoolean());
+                }
+                return switch (this.context.setRawMode(flag == .true)) {
+                    .result => .undefined,
+                    .err => |e| e.toJSC(global),
+                };
+            }
+
+            @compileError("setRawMode is not implemented on " ++ @typeName(Context));
+        }
+
         const supports_ref = setRefUnrefFn != null;
 
         pub usingnamespace @field(JSC.Codegen, "JS" ++ name_ ++ "InternalReadableStreamSource");
@@ -2711,6 +2726,7 @@ pub fn ReadableStreamSource(
                     this.onPullFromJS(buffer.slice(), view),
                 );
             }
+
             pub fn start(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 JSC.markBinding(@src());
                 this.globalThis = globalThis;
@@ -2759,6 +2775,7 @@ pub fn ReadableStreamSource(
                     else => return result.toJS(globalThis),
                 }
             }
+
             pub fn cancel(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 _ = globalObject; // autofix
                 JSC.markBinding(@src());
@@ -2766,6 +2783,7 @@ pub fn ReadableStreamSource(
                 this.cancel();
                 return JSC.JSValue.jsUndefined();
             }
+
             pub fn setOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
                 JSC.markBinding(@src());
                 this.close_handler = JSReadableStreamSource.onClose;
@@ -3039,9 +3057,24 @@ pub const FileSink = struct {
 
     pub fn setup(this: *FileSink, options: *const StreamStart.FileSinkOptions) JSC.Maybe(void) {
         // TODO: this should be concurrent.
+        var isatty: ?bool = null;
+        var is_nonblocking_tty = false;
         const fd = switch (switch (options.input_path) {
             .path => |path| bun.sys.openA(path.slice(), options.flags(), options.mode),
-            .fd => |fd_| bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync_on_windows) std.os.O.NONBLOCK else 0),
+            .fd => |fd_| brk: {
+                if (comptime Environment.isPosix and FeatureFlags.nonblocking_stdout_and_stderr_on_posix) {
+                    if (bun.FDTag.get(fd_) != .none) {
+                        const rc = bun.C.open_as_nonblocking_tty(@intCast(fd_.cast()), std.os.O.WRONLY);
+                        if (rc > -1) {
+                            isatty = true;
+                            is_nonblocking_tty = true;
+                            break :brk JSC.Maybe(bun.FileDescriptor){ .result = bun.toFD(rc) };
+                        }
+                    }
+                }
+
+                break :brk bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync_on_windows) std.os.O.NONBLOCK else 0);
+            },
         }) {
             .err => |err| return .{ .err = err },
             .result => |fd| fd,
@@ -3054,13 +3087,22 @@ pub const FileSink = struct {
                     return .{ .err = err };
                 },
                 .result => |stat| {
-                    this.pollable = bun.sys.isPollable(stat.mode) or std.os.isatty(fd.int());
+                    this.pollable = bun.sys.isPollable(stat.mode);
+                    if (!this.pollable and isatty == null) {
+                        isatty = std.os.isatty(fd.int());
+                    }
+
+                    if (isatty) |is| {
+                        if (is)
+                            this.pollable = true;
+                    }
+
                     this.fd = fd;
                     this.is_socket = std.os.S.ISSOCK(stat.mode);
-                    this.nonblocking = this.pollable and switch (options.input_path) {
+                    this.nonblocking = is_nonblocking_tty or (this.pollable and switch (options.input_path) {
                         .path => true,
                         .fd => |fd_| bun.FDTag.get(fd_) == .none,
-                    };
+                    });
                 },
             }
         } else if (comptime Environment.isWindows) {
@@ -3399,47 +3441,62 @@ pub const FileReader = struct {
             file_type: bun.io.FileType = .file,
         };
 
-        pub fn openFileBlob(
-            file: *Blob.FileStore,
-        ) JSC.Maybe(OpenedFileBlob) {
+        pub fn openFileBlob(file: *Blob.FileStore) JSC.Maybe(OpenedFileBlob) {
             var this = OpenedFileBlob{ .fd = bun.invalid_fd };
             var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var is_nonblocking_tty = false;
 
-            const fd = if (file.pathlike != .path)
-                // We will always need to close the file descriptor.
-                // switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
-                //     if (comptime Environment.isPosix) {
-                //         if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
-                //             break :brk std.os.O.NONBLOCK;
-                //         }
-                //     }
+            const fd = if (file.pathlike == .fd)
+                if (file.pathlike.fd.isStdio()) brk: {
+                    if (comptime Environment.isPosix) {
+                        const rc = bun.C.open_as_nonblocking_tty(@intCast(file.pathlike.fd.int()), std.os.O.RDONLY);
+                        if (rc > -1) {
+                            is_nonblocking_tty = true;
+                            file.is_atty = true;
+                            break :brk bun.toFD(rc);
+                        }
+                    }
+                    break :brk file.pathlike.fd;
+                } else switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
+                    if (comptime Environment.isPosix) {
+                        if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
+                            break :brk std.os.O.NONBLOCK;
+                        }
+                    }
 
-                //     break :brk 0;
-                // })) {
-                //     .result => |_fd| if (Environment.isWindows) bun.toLibUVOwnedFD(_fd) else _fd,
-                //     .err => |err| {
-                //         return .{ .err = err.withFd(file.pathlike.fd) };
-                //     },
-                // }
-                file.pathlike.fd
+                    break :brk 0;
+                })) {
+                    .result => |fd| switch (bun.sys.toLibUVOwnedFD(fd, .dup, .close_on_fail)) {
+                        .result => |owned_fd| owned_fd,
+                        .err => |err| {
+                            return .{ .err = err };
+                        },
+                    },
+                    .err => |err| {
+                        return .{ .err = err.withFd(file.pathlike.fd) };
+                    },
+                }
             else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
-                .result => |_fd| _fd,
+                .result => |fd| fd,
                 .err => |err| {
                     return .{ .err = err.withPath(file.pathlike.path.slice()) };
                 },
             };
 
             if (comptime Environment.isPosix) {
-                if ((file.is_atty orelse false) or (fd.int() < 3 and std.os.isatty(fd.cast())) or (file.pathlike == .fd and bun.FDTag.get(file.pathlike.fd) != .none and std.os.isatty(file.pathlike.fd.cast()))) {
+                if ((file.is_atty orelse false) or
+                    (fd.int() < 3 and std.os.isatty(fd.cast())) or
+                    (file.pathlike == .fd and
+                    bun.FDTag.get(file.pathlike.fd) != .none and
+                    std.os.isatty(file.pathlike.fd.cast())))
+                {
                     // var termios = std.mem.zeroes(std.os.termios);
                     // _ = std.c.tcgetattr(fd.cast(), &termios);
                     // bun.C.cfmakeraw(&termios);
                     // _ = std.c.tcsetattr(fd.cast(), std.os.TCSA.NOW, &termios);
                     file.is_atty = true;
                 }
-            }
 
-            if (comptime Environment.isPosix) {
                 const stat: bun.Stat = switch (Syscall.fstat(fd)) {
                     .result => |result| result,
                     .err => |err| {
@@ -3453,9 +3510,20 @@ pub const FileReader = struct {
                     return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
                 }
 
-                this.pollable = bun.sys.isPollable(stat.mode) or (file.is_atty orelse false);
-                this.file_type = if (bun.S.ISFIFO(stat.mode)) .pipe else if (bun.S.ISSOCK(stat.mode)) .socket else .file;
-                this.nonblocking = this.pollable and !(file.is_atty orelse false);
+                this.pollable = bun.sys.isPollable(stat.mode) or is_nonblocking_tty or (file.is_atty orelse false);
+                this.file_type = if (bun.S.ISFIFO(stat.mode))
+                    .pipe
+                else if (bun.S.ISSOCK(stat.mode))
+                    .socket
+                else
+                    .file;
+
+                // pretend it's a non-blocking pipe if it's a TTY
+                if (is_nonblocking_tty and this.file_type != .socket) {
+                    this.file_type = .nonblocking_pipe;
+                }
+
+                this.nonblocking = is_nonblocking_tty or (this.pollable and !(file.is_atty orelse false));
 
                 if (this.nonblocking and this.file_type == .pipe) {
                     this.file_type = .nonblocking_pipe;
@@ -3508,6 +3576,7 @@ pub const FileReader = struct {
                             return .{ .err = err };
                         },
                         .result => |opened| {
+                            std.debug.assert(opened.fd.isValid());
                             this.fd = opened.fd;
                             pollable = opened.pollable;
                             file_type = opened.file_type;
@@ -3680,6 +3749,9 @@ pub const FileReader = struct {
 
             if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
                 if (this.reader.isDone()) {
+                    if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
+                        this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
+                    }
                     this.pending.result = .{
                         .temporary_and_done = bun.ByteList.init(buf),
                     };
@@ -3687,6 +3759,10 @@ pub const FileReader = struct {
                     this.pending.result = .{
                         .temporary = bun.ByteList.init(buf),
                     };
+
+                    if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
+                        this.reader.buffer().clearRetainingCapacity();
+                    }
                 }
 
                 this.pending_value.clear();
@@ -3711,6 +3787,9 @@ pub const FileReader = struct {
             return !was_done;
         } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
             this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+            if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
+                this.reader.buffer().clearRetainingCapacity();
+            }
         }
 
         // For pipes, we have to keep pulling or the other process will block.
@@ -3817,6 +3896,9 @@ pub const FileReader = struct {
         if (this.buffered.items.len > 0) {
             const out = bun.ByteList.init(this.buffered.items);
             this.buffered = .{};
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(this.reader.buffer().items.ptr != out.ptr);
+            }
             return out;
         }
 
@@ -3824,7 +3906,7 @@ pub const FileReader = struct {
             return .{};
         }
 
-        const out = this.reader.buffer();
+        const out = this.reader.buffer().*;
         this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         return bun.ByteList.fromList(out);
     }
@@ -3893,6 +3975,13 @@ pub const FileReader = struct {
 
         this.pending.result = .{ .err = .{ .Error = err } };
         this.pending.run();
+    }
+
+    pub fn setRawMode(this: *FileReader, flag: bool) bun.sys.Maybe(void) {
+        if (!Environment.isWindows) {
+            @panic("FileReader.setRawMode must not be called on " ++ comptime Environment.os.displayString());
+        }
+        return this.reader.setRawMode(flag);
     }
 
     pub const Source = ReadableStreamSource(

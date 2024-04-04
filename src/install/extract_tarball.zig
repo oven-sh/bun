@@ -304,7 +304,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
     var cache_dir = this.cache_dir;
-    cache_dir.deleteTree(folder_name) catch {};
 
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
@@ -333,18 +332,62 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             .result => {},
         }
     } else {
-        switch (bun.sys.renameat(bun.toFD(tmpdir.fd), bun.sliceTo(tmpname, 0), bun.toFD(cache_dir.fd), folder_name)) {
-            .err => |err| {
-                this.package_manager.log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    this.package_manager.allocator,
-                    "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
-                    .{ name, err, tmpname, folder_name },
-                ) catch unreachable;
-                return error.InstallFailed;
-            },
-            .result => {},
+        // Attempt to gracefully handle duplicate concurrent `bun install` calls
+        //
+        // By:
+        // 1. Rename from temporary directory to cache directory and fail if it already exists
+        // 2a. If the rename fails, swap the cache directory with the temporary directory version
+        // 2b. Delete the temporary directory version ONLY if we're not using a provided temporary directory
+        // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
+        //
+        const src = bun.sliceTo(tmpname, 0);
+
+        var did_atomically_replace = false;
+        if (did_atomically_replace and PackageManager.using_fallback_temp_dir) tmpdir.deleteTree(src) catch {};
+
+        attempt_atomic_rename_and_fallback_to_racy_delete: {
+            {
+                // Happy path: the folder doesn't exist in the cache dir, so we can
+                // just rename it. We don't need to delete anything.
+                var err = switch (bun.sys.renameat2(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name, .{
+                    .exclude = true,
+                })) {
+                    .err => |err| err,
+                    .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
+                };
+
+                // Fallback path: the folder exists in the cache dir, it might be in a strange state
+                // let's attempt to atomically replace it with the temporary folder's version
+                if (switch (err.getErrno()) {
+                    .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
+                    else => false,
+                }) {
+                    did_atomically_replace = true;
+                    switch (bun.sys.renameat2(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name, .{
+                        .exchange = true,
+                    })) {
+                        .err => {},
+                        .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
+                    }
+                    did_atomically_replace = false;
+                }
+            }
+
+            //  sad path: let's try to delete the folder and then rename it
+            cache_dir.deleteTree(src) catch {};
+            switch (bun.sys.renameat(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name)) {
+                .err => |err| {
+                    this.package_manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.package_manager.allocator,
+                        "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                        .{ name, err, tmpname, folder_name },
+                    ) catch unreachable;
+                    return error.InstallFailed;
+                },
+                .result => {},
+            }
         }
     }
 
@@ -388,7 +431,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 .npm => folder_name[name.len + 1 ..],
                 else => folder_name,
             },
-            .{},
+            .{ .is_directory = true },
         ) catch break :create_index;
     }
 
@@ -451,7 +494,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 /// Opens the dir if the path already exists and is a directory.
 /// This function is not atomic, and if it returns an error, the file system may
 /// have been modified regardless.
-fn makeOpenPathAccessMaskW(self: std.fs.Dir, sub_path: []const u8, access_mask: u32, no_follow: bool) std.os.OpenError!std.fs.Dir {
+fn makeOpenPathAccessMaskW(self: std.fs.Dir, sub_path: []const u8, access_mask: u32, no_follow: bool) !std.fs.Dir {
     var it = try std.fs.path.componentIterator(sub_path);
     // If there are no components in the path, then create a dummy component with the full path.
     var component = it.last() orelse std.fs.path.NativeUtf8ComponentIterator.Component{
@@ -483,7 +526,7 @@ const MakeOpenDirAccessMaskWOptions = struct {
     create_disposition: u32,
 };
 
-fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_mask: u32, flags: MakeOpenDirAccessMaskWOptions) std.os.OpenError!std.fs.Dir {
+fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_mask: u32, flags: MakeOpenDirAccessMaskWOptions) !std.fs.Dir {
     var result = std.fs.Dir{
         .fd = undefined,
     };
@@ -528,6 +571,7 @@ fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_m
         // and the directory is trying to be opened for iteration.
         .ACCESS_DENIED => return error.AccessDenied,
         .INVALID_PARAMETER => return error.BadPathName,
+        .SHARING_VIOLATION => return error.SharingViolation,
         else => return w.unexpectedStatus(rc),
     }
 }

@@ -44,8 +44,6 @@ void *sni_find(void *sni, const char *hostname);
 #endif
 
 #include "./root_certs.h"
-static X509 *root_cert_instances[sizeof(root_certs) / sizeof(root_certs[0])] = {
-    NULL};
 
 /* These are in root_certs.cpp */
 extern X509_STORE *us_get_default_ca_store();
@@ -102,9 +100,10 @@ struct us_internal_ssl_socket_context_t {
 struct us_internal_ssl_socket_t {
   struct us_socket_t s;
   SSL *ssl;
-  int ssl_write_wants_read; // we use this for now
-  int ssl_read_wants_write;
-  int pending_handshake;
+  unsigned int ssl_write_wants_read : 1; // we use this for now
+  unsigned int ssl_read_wants_write : 1;
+  unsigned int pending_handshake : 1;
+  unsigned int received_ssl_shutdown : 1;
 };
 
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
@@ -186,6 +185,8 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   s->ssl = SSL_new(context->ssl_context);
   s->ssl_write_wants_read = 0;
   s->ssl_read_wants_write = 0;
+  s->pending_handshake = 1;
+  s->received_ssl_shutdown = 0;
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
 
@@ -203,11 +204,8 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
                                                           ip_length);
 
   // Hello Message!
-  // always handshake after open if on_handshake is set
-  if (context->on_handshake || s->pending_handshake) {
-    s->pending_handshake = 1;
-    us_internal_ssl_handshake(s);
-  }
+  // always handshake after open
+  us_internal_ssl_handshake(s);
 
   return result;
 }
@@ -222,6 +220,30 @@ void us_internal_on_ssl_handshake(
   context->handshake_data = custom_data;
 }
 
+struct us_internal_ssl_socket_t *
+us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
+                             void *reason) {
+  struct us_internal_ssl_socket_context_t *context =
+      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+
+  if (s->pending_handshake) {
+    s->pending_handshake = 0;
+    // if we have some pending handshake we cancel it and try to check the
+    // latest handshake error this way we will always call on_handshake with the
+    // latest error before closing this should always call
+    // secureConnection/secure before close if we remove this here, we will need
+    // to do this check on every on_close event on sockets, fetch etc and will
+    // increase complexity on a lot of places
+    if (context->on_handshake != NULL) {
+      struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
+      context->on_handshake(s, 0, verify_error, context->handshake_data);
+    }
+  }
+
+  return (struct us_internal_ssl_socket_t *)us_socket_close(
+      0, (struct us_socket_t *)s, code, reason);
+}
+
 void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
@@ -232,7 +254,6 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
 
   // will start on_open, on_writable or on_data
   if (!s->ssl) {
-    s->pending_handshake = 1;
     return;
   }
 
@@ -245,7 +266,8 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
 
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) ||
+      SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     s->pending_handshake = 0;
 
     struct us_bun_verify_error_t verify_error = (struct us_bun_verify_error_t){
@@ -257,6 +279,12 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
   }
 
   int result = SSL_do_handshake(s->ssl);
+
+  if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
+    s->received_ssl_shutdown = 1;
+    us_internal_ssl_socket_close(s, 0, NULL);
+    return;
+  }
   if (result <= 0) {
     int err = SSL_get_error(s->ssl, result);
     // as far as I know these are the only errors we want to handle
@@ -274,16 +302,14 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
         on_handshake(s, 0, verify_error, custom_data);
       }
       return;
-    } else {
-
-      s->pending_handshake = 1;
-      context->on_handshake = on_handshake;
-      context->handshake_data = custom_data;
-      // Ensure that we'll cycle through internal openssl's state
-      if (!us_socket_is_closed(0, &s->s) &&
-          !us_internal_ssl_socket_is_shut_down(s)) {
-        us_socket_write(1, loop_ssl_data->ssl_socket, "\0", 0, 0);
-      }
+    }
+    s->pending_handshake = 1;
+    context->on_handshake = on_handshake;
+    context->handshake_data = custom_data;
+    // Ensure that we'll cycle through internal openssl's state
+    if (!us_socket_is_closed(0, &s->s) &&
+        !us_internal_ssl_socket_is_shut_down(s)) {
+      us_socket_write(1, loop_ssl_data->ssl_socket, "\0", 0, 0);
     }
   } else {
     s->pending_handshake = 0;
@@ -302,30 +328,11 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
 }
 
 struct us_internal_ssl_socket_t *
-us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
-                             void *reason) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  if (s->pending_handshake) {
-    s->pending_handshake = 0;
-    if (context->on_handshake != NULL) {
-      struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
-      context->on_handshake(s, 0, verify_error, context->handshake_data);
-    }
-  }
-
-  return (struct us_internal_ssl_socket_t *)us_socket_close(
-      0, (struct us_socket_t *)s, code, reason);
-}
-
-struct us_internal_ssl_socket_t *
 ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-  if (s->pending_handshake) {
-    s->pending_handshake = 0;
-  }
+
+  s->pending_handshake = 0;
   SSL_free(s->ssl);
 
   return context->on_close(s, code, reason);
@@ -345,7 +352,6 @@ ssl_on_end(struct us_internal_ssl_socket_t *s) {
 // this whole function needs a complete clean-up
 struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
                                              void *data, int length) {
-
   // note: this context can change when we adopt the socket!
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
@@ -365,8 +371,8 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
 
-  if (us_socket_is_closed(0, &s->s)) {
-    return s;
+  if (us_socket_is_closed(0, &s->s) || s->received_ssl_shutdown) {
+    return NULL;
   }
 
   if (us_internal_ssl_socket_is_shut_down(s)) {
@@ -397,11 +403,18 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   // check-ups
   int read = 0;
 restart:
-  while (1) {
+  // read until shutdown
+  while (!s->received_ssl_shutdown) {
     int just_read = SSL_read(s->ssl,
                              loop_ssl_data->ssl_read_output +
                                  LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
+    // we need to check if we received a shutdown here
+    if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
+      s->pending_handshake = 0;
+      s->received_ssl_shutdown = 1;
+      // we will only close after we handle the data and errors
+    }
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
 
@@ -419,7 +432,7 @@ restart:
             s = context->on_data(
                 s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
                 read);
-            if (us_socket_is_closed(0, &s->s)) {
+            if (!s || us_socket_is_closed(0, &s->s)) {
               return s;
             }
           }
@@ -458,7 +471,7 @@ restart:
         s = context->on_data(
             s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
             read);
-        if (us_socket_is_closed(0, &s->s)) {
+        if (!s || us_socket_is_closed(0, &s->s)) {
           return s;
         }
 
@@ -478,7 +491,7 @@ restart:
       // emit data and restart
       s = context->on_data(
           s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
-      if (us_socket_is_closed(0, &s->s)) {
+      if (!s || us_socket_is_closed(0, &s->s)) {
         return s;
       }
 
@@ -486,7 +499,11 @@ restart:
       goto restart;
     }
   }
-
+  // we received the shutdown after reading so we close
+  if (s->received_ssl_shutdown) {
+    us_internal_ssl_socket_close(s, 0, NULL);
+    return NULL;
+  }
   // trigger writable if we failed last write with want read
   if (s->ssl_write_wants_read) {
     s->ssl_write_wants_read = 0;
@@ -504,24 +521,11 @@ restart:
     }
   }
 
-  // check this then?
-  if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
-    // printf("SSL_RECEIVED_SHUTDOWN\n");
-
-    // exit(-2);
-
-    // not correct anyways!
-    s = us_internal_ssl_socket_close(s, 0, NULL);
-
-    // us_
-  }
-
   return s;
 }
 
 struct us_internal_ssl_socket_t *
 ssl_on_writable(struct us_internal_ssl_socket_t *s) {
-
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
@@ -543,7 +547,6 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
     s = (struct us_internal_ssl_socket_t *)context->sc.on_data(&s->s, 0,
                                                                0); // cast here!
   }
-
 
   // Do not call on_writable if the socket is closed.
   // on close means the socket data is no longer accessible
@@ -943,7 +946,9 @@ const char *us_X509_error_code(long err) { // NOLINT(runtime/int)
 
 long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
     const SSL *ssl,
-    long def) {   // NOLINT(runtime/int)
+    long def) { // NOLINT(runtime/int)
+  if (!ssl)
+    return def;
   long err = def; // NOLINT(runtime/int)
   X509 *peer_cert = SSL_get_peer_certificate(ssl);
   if (peer_cert) {
@@ -967,8 +972,8 @@ long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
 
 struct us_bun_verify_error_t
 us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
-
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) ||
+      s->received_ssl_shutdown) {
     return (struct us_bun_verify_error_t){
         .error = 0, .code = NULL, .reason = NULL};
   }
@@ -1219,10 +1224,10 @@ void us_internal_ssl_socket_context_add_server_name(
   if (ssl_context) {
     /* Attach the user data to this context */
     if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
-      #if BUN_DEBUG
-        printf("CANNOT SET EX DATA!\n");
-        abort();
-      #endif
+#if BUN_DEBUG
+      printf("CANNOT SET EX DATA!\n");
+      abort();
+#endif
     }
 
     /* * We do not want to hold any nullptr's in our SNI tree */
@@ -1442,8 +1447,8 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
 }
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *path, size_t pathlen,
-    int options, int socket_ext_size) {
+    struct us_internal_ssl_socket_context_t *context, const char *path,
+    size_t pathlen, int options, int socket_ext_size) {
   return us_socket_context_listen_unix(0, &context->sc, path, pathlen, options,
                                        sizeof(struct us_internal_ssl_socket_t) -
                                            sizeof(struct us_socket_t) +
@@ -1460,8 +1465,8 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
 }
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *server_path, size_t pathlen,
-    int options, int socket_ext_size) {
+    struct us_internal_ssl_socket_context_t *context, const char *server_path,
+    size_t pathlen, int options, int socket_ext_size) {
   return (struct us_internal_ssl_socket_t *)us_socket_context_connect_unix(
       0, &context->sc, server_path, pathlen, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
@@ -1933,7 +1938,8 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   socket->ssl = NULL;
   socket->ssl_write_wants_read = 0;
   socket->ssl_read_wants_write = 0;
-
+  socket->pending_handshake = 1;
+  socket->received_ssl_shutdown = 0;
   return socket;
 }
 

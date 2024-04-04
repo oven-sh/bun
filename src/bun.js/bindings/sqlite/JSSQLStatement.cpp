@@ -452,7 +452,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 break;
             }
 
-            columnNames->add(Identifier::fromString(vm, WTF::String::fromUTF8(name, len)));
+            columnNames->add(Identifier::fromString(vm, WTF::String::fromUTF8({ name, len })));
         }
 
         if (LIKELY(!anyHoles)) {
@@ -494,7 +494,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         if (len == 0)
             break;
 
-        auto wtfString = WTF::String::fromUTF8(name, len);
+        auto wtfString = WTF::String::fromUTF8({ name, len });
         auto str = JSValue(jsString(vm, wtfString));
         auto key = str.toPropertyKey(lexicalGlobalObject);
         JSC::JSValue primitive = JSC::jsUndefined();
@@ -1371,7 +1371,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
                     value = JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject));
                     break;
                 } else {
-                    value = jsString(vm, WTF::String::fromUTF8(text, len));
+                    value = jsString(vm, WTF::String::fromUTF8({ text, len }));
                     break;
                 }
             }
@@ -1428,7 +1428,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
                     continue;
                 }
 
-                result->putDirect(vm, name, jsString(vm, WTF::String::fromUTF8(text, len)), 0);
+                result->putDirect(vm, name, jsString(vm, WTF::String::fromUTF8({ text, len })), 0);
                 break;
             }
             case SQLITE_BLOB: {
@@ -1453,7 +1453,6 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     return JSValue(result);
 }
 
-static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext);
 static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext)
 {
     int count = castedThis->columnNames->size();
@@ -1485,7 +1484,7 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
                 result->putDirectIndex(lexicalGlobalObject, i, jsEmptyString(vm));
                 continue;
             }
-            result->putDirectIndex(lexicalGlobalObject, i, len < 64 ? jsString(vm, WTF::String::fromUTF8(text, len)) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
+            result->putDirectIndex(lexicalGlobalObject, i, len < 64 ? jsString(vm, WTF::String::fromUTF8({ text, len })) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
             break;
         }
         case SQLITE_BLOB: {
@@ -1508,11 +1507,6 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
     }
 
     return result;
-}
-
-static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope)
-{
-    return constructResultRow(lexicalGlobalObject, castedThis, scope, nullptr);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1815,7 +1809,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementToStringFunction, (JSC::JSGlobalObject * 
         RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
     size_t length = strlen(string);
-    JSString* jsString = JSC::jsString(vm, WTF::String::fromUTF8(string, length));
+    JSString* jsString = JSC::jsString(vm, WTF::String::fromUTF8({ string, length }));
     sqlite3_free(string);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString));
@@ -1968,4 +1962,14 @@ void JSSQLStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 
 template void JSSQLStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
 template void JSSQLStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
+
+JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    return JSSQLStatementConstructor::create(
+        vm,
+        globalObject,
+        JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get()));
 }
+
+} // namespace WebCore

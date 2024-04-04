@@ -301,7 +301,7 @@ const NetworkTask = struct {
         name: string,
         allocator: std.mem.Allocator,
         scope: *const Npm.Registry.Scope,
-        loaded_manifest: ?Npm.PackageManifest,
+        loaded_manifest: ?*const Npm.PackageManifest,
         warn_on_error: bool,
     ) !void {
         this.url_buf = blk: {
@@ -337,6 +337,21 @@ const NetworkTask = struct {
 
                 return error.InvalidURL;
             }
+
+            if (!(tmp.hasPrefixComptime("https://") or tmp.hasPrefixComptime("http://"))) {
+                const msg = .{
+                    .fmt = "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                    .args = .{tmp},
+                };
+
+                if (warn_on_error)
+                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
+                else
+                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
+
+                return error.InvalidURL;
+            }
+
             // This actually duplicates the string! So we defer deref the WTF managed one above.
             break :blk try tmp.toOwnedSlice(allocator);
         };
@@ -408,7 +423,7 @@ const NetworkTask = struct {
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
-                .loaded_manifest = loaded_manifest,
+                .loaded_manifest = if (loaded_manifest) |manifest| manifest.* else null,
             },
         };
 
@@ -448,6 +463,16 @@ const NetworkTask = struct {
             );
         } else {
             this.url_buf = tarball_url;
+        }
+
+        if (!(strings.hasPrefixComptime(this.url_buf, "https://") or strings.hasPrefixComptime(this.url_buf, "http://"))) {
+            const msg = .{
+                .fmt = "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
+                .args = .{ bun.fmt.QuotedFormatter{ .text = this.url_buf }, bun.fmt.QuotedFormatter{ .text = tarball.name.slice() } },
+            };
+
+            this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
+            return error.InvalidURL;
         }
 
         this.response_buffer = try MutableString.init(allocator, 0);
@@ -1090,6 +1115,15 @@ pub const PackageInstall = struct {
             }
         },
 
+        pub fn fail(err: anyerror, step: Step) Result {
+            return .{
+                .fail = .{
+                    .err = err,
+                    .step = step,
+                },
+            };
+        }
+
         pub const Tag = enum {
             success,
             fail,
@@ -1335,23 +1369,17 @@ pub const PackageInstall = struct {
     fn installWithHardlink(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
+        var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir);
         defer cached_package_dir.close();
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
             &[_]bun.OSPathSlice{},
             &[_]bun.OSPathSlice{},
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
+        ) catch |err| return Result.fail(err, .opening_cache_dir);
         defer walker_.deinit();
 
-        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
+        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_cache_dir);
 
         defer subdir.close();
 
@@ -1360,36 +1388,41 @@ pub const PackageInstall = struct {
         var to_copy_buf: []u16 = undefined;
         var to_copy_buf2: []u16 = undefined;
         if (comptime Environment.isWindows) {
-            var fd_path_buf: bun.PathBuffer = undefined;
+            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(subdir.fd, &buf, buf.len, 0);
+            if (dest_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                    // If this code path is reached, it should have a toSystemErrno mapping
+                    Output.warn("Failed to get destination path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
+                    break :brk error.Unexpected;
+                };
+                return Result.fail(err, .copying_files);
+            }
+            const dest_path = buf[0..dest_path_length];
+            if (buf[dest_path.len - 1] != '\\') {
+                buf[dest_path.len] = '\\';
+                to_copy_buf = buf[dest_path.len + 1 ..];
+            } else {
+                to_copy_buf = buf[dest_path.len..];
+            }
 
-            // buf[0] = '\\';
-            // buf[1] = '\\';
-            // buf[2] = '?';
-            // buf[3] = '\\';
-            // const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
-            // strings.copyU8IntoU16(buf[4..], dest_path);
-            // buf[dest_path.len + 4] = '\\';
-            // to_copy_buf = buf[dest_path.len + 5 ..];
-
-            // buf2[0] = '\\';
-            // buf2[1] = '\\';
-            // buf2[2] = '?';
-            // buf2[3] = '\\';
-            // const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
-            // strings.copyU8IntoU16(buf2[4..], cache_path);
-            // buf2[cache_path.len + 4] = '\\';
-            // to_copy_buf2 = buf2[cache_path.len + 5 ..];
-
-            // TODO(dylan-conway): find out why //?/ isn't working
-            const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
-            strings.copyU8IntoU16(&buf, dest_path);
-            buf[dest_path.len] = '\\';
-            to_copy_buf = buf[dest_path.len + 1 ..];
-
-            const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
-            strings.copyU8IntoU16(&buf2, cache_path);
-            buf2[cache_path.len] = '\\';
-            to_copy_buf2 = buf2[cache_path.len + 1 ..];
+            const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(cached_package_dir.fd, &buf2, buf2.len, 0);
+            if (cache_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else brk: {
+                    // If this code path is reached, it should have a toSystemErrno mapping
+                    Output.warn("Failed to get cache path for package \"{s}\" during installation: {s}", .{ this.package_name, @tagName(e) });
+                    break :brk error.Unexpected;
+                };
+                return Result.fail(err, .copying_files);
+            }
+            const cache_path = buf2[0..cache_path_length];
+            if (buf2[cache_path.len - 1] != '\\') {
+                buf2[cache_path.len] = '\\';
+                to_copy_buf2 = buf2[cache_path.len + 1 ..];
+            } else {
+                to_copy_buf2 = buf2[cache_path.len..];
+            }
         }
 
         const FileCopier = struct {
@@ -1465,17 +1498,12 @@ pub const PackageInstall = struct {
         ) catch |err| {
             if (comptime Environment.isWindows) {
                 if (err == error.FailedToCopyFile) {
-                    return Result{
-                        .fail = .{ .err = err, .step = .copying_files },
-                    };
+                    return Result.fail(err, .copying_files);
                 }
             } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
                 return err;
             }
-
-            return Result{
-                .fail = .{ .err = err, .step = .copying_files },
-            };
+            return Result.fail(err, .copying_files);
         };
 
         return Result{
@@ -2482,6 +2510,8 @@ pub const PackageManager = struct {
         unreachable;
     }
 
+    pub var using_fallback_temp_dir: bool = false;
+
     // We need a temporary directory that can be rename()
     // This is important for extracting files.
     //
@@ -2513,6 +2543,11 @@ pub const PackageManager = struct {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
                         Global.crash();
                     };
+
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("<r><yellow>warn<r>: bun is unable to access tempdir: {s}, using fallback", .{@errorName(err2)});
+                    }
+
                     continue :brk;
                 }
                 Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>", .{
@@ -2528,6 +2563,11 @@ pub const PackageManager = struct {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
                         Global.crash();
                     };
+
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("<r><d>info<r>: cannot move files from tempdir: {s}, using fallback", .{@errorName(err)});
+                    }
+
                     continue :brk;
                 }
 
@@ -2538,6 +2578,9 @@ pub const PackageManager = struct {
             };
             cache_directory.deleteFileZ(tmpname) catch {};
             break;
+        }
+        if (tried_dot_tmp) {
+            using_fallback_temp_dir = true;
         }
         if (this.options.log_level != .silent) {
             const elapsed = timer.read();
@@ -2555,9 +2598,6 @@ pub const PackageManager = struct {
     }
 
     pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
-        if (Environment.isWindows) {
-            Output.debug("TODO: VERIFY ensureTempNodeGypScript WORKS!!", .{});
-        }
         if (this.node_gyp_tempdir_name.len > 0) return;
 
         const tempdir = this.getTemporaryDirectory();
@@ -2593,26 +2633,34 @@ pub const PackageManager = struct {
         };
         defer node_gyp_file.close();
 
-        var bytes: string = switch (Environment.os) {
-            else => "#!/usr/bin/env node\nrequire(\"child_process\").spawnSync(\"bun\",[\"x\",\"node-gyp\",...process.argv.slice(2)],{stdio:\"inherit\"})",
-            .windows => "@node -e \"require('child_process').spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'})\"",
+        const content = switch (Environment.os) {
+            .windows =>
+            \\if not defined npm_config_node_gyp (
+            \\  bun x --silent node-gyp %*
+            \\) else (
+            \\  node "%npm_config_node_gyp%" %*
+            \\)
+            \\
+            ,
+            else =>
+            \\#!/bin/sh
+            \\if [ "x$npm_config_node_gyp" = "x" ]; then
+            \\  bun x --silent node-gyp $@
+            \\else
+            \\  "$npm_config_node_gyp" $@
+            \\fi
+            \\
+            ,
         };
-        var index: usize = 0;
-        while (index < bytes.len) {
-            switch (bun.sys.write(bun.toFD(node_gyp_file.handle), bytes[index..])) {
-                .result => |written| {
-                    index += written;
-                },
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@tagName(err.getErrno())});
-                    Global.crash();
-                },
-            }
-        }
+
+        node_gyp_file.writeAll(content) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@errorName(err)});
+            Global.crash();
+        };
 
         // Add our node-gyp tempdir to the path
         const existing_path = this.env.get("PATH") orelse "";
-        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + this.node_gyp_tempdir_name.len);
+        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + this.temp_dir_name.len + 1 + this.node_gyp_tempdir_name.len);
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
@@ -2621,16 +2669,16 @@ pub const PackageManager = struct {
         try PATH.appendSlice(this.node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
 
-        const node_gyp_abs_dir = try bun.fmt.bufPrint(&path_buf, "{s}" ++ .{std.fs.path.sep} ++ "{s}", .{
+        const npm_config_node_gyp = try bun.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
             strings.withoutTrailingSlash(this.temp_dir_name),
+            std.fs.path.sep_str,
             strings.withoutTrailingSlash(this.node_gyp_tempdir_name),
+            std.fs.path.sep_str,
+            file_name,
         });
-        try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
 
-        path_buf[node_gyp_abs_dir.len] = std.fs.path.sep;
-        @memcpy(path_buf[node_gyp_abs_dir.len + 1 ..][0.."node-gyp".len], "node-gyp");
-        const npm_config_node_gyp = path_buf[0 .. node_gyp_abs_dir.len + 1 + "node-gyp".len];
-        try this.env.map.putAllocKeyAndValue(this.allocator, "npm_config_node_gyp", npm_config_node_gyp);
+        const node_gyp_abs_dir = std.fs.path.dirname(npm_config_node_gyp).?;
+        try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
     }
 
     pub var instance: PackageManager = undefined;
@@ -3306,8 +3354,8 @@ pub const PackageManager = struct {
             .folder => {
                 // relative to cwd
                 const folder_path = this.lockfile.str(&version.value.folder);
+                var buf2: bun.PathBuffer = undefined;
                 const folder_path_abs = if (std.fs.path.isAbsolute(folder_path)) folder_path else blk: {
-                    var buf2: bun.PathBuffer = undefined;
                     break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{folder_path}, .auto);
                 };
                 const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
@@ -3329,8 +3377,8 @@ pub const PackageManager = struct {
                 // package name hash should be used to find workspace path from map
                 const workspace_path_raw: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
                 const workspace_path = this.lockfile.str(workspace_path_raw);
+                var buf2: bun.PathBuffer = undefined;
                 const workspace_path_u8 = if (std.fs.path.isAbsolute(workspace_path)) workspace_path else blk: {
-                    var buf2: bun.PathBuffer = undefined;
                     break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{workspace_path}, .auto);
                 };
 
@@ -3876,7 +3924,7 @@ pub const PackageManager = struct {
                                         name_str,
                                         this.allocator,
                                         this.scopeForPackageName(name_str),
-                                        loaded_manifest,
+                                        if (loaded_manifest) |*manifest| manifest else null,
                                         dependency.behavior.isOptional() or !this.options.do.install_peer_dependencies,
                                     );
                                     this.enqueueNetworkTask(network_task);
@@ -5102,7 +5150,7 @@ pub const PackageManager = struct {
                         continue;
                     }
                     manager.extracted_count += 1;
-                    bun.Analytics.Features.extracted_packages = true;
+                    bun.Analytics.Features.extracted_packages += 1;
 
                     // GitHub and tarball URL dependencies are not fully resolved until after the tarball is downloaded & extracted.
                     if (manager.processExtractedTarballPackage(&package_id, resolution, task.data.extract, comptime log_level)) |pkg| brk: {
@@ -6405,27 +6453,17 @@ pub const PackageManager = struct {
                 if (request.e_string) |e_string| {
                     e_string.data = switch (request.resolution.tag) {
                         .npm => brk: {
-                            if (comptime FeatureFlags.breaking_changes_1_1_0) {
-                                if (request.version.tag == .dist_tag) {
-                                    const fmt = if (options.exact_versions) "{}" else "^{}";
-                                    break :brk try std.fmt.allocPrint(allocator, fmt, .{
-                                        request.resolution.value.npm.version.fmt(request.version_buf),
-                                    });
+                            if (request.version.tag == .dist_tag) {
+                                switch (options.exact_versions) {
+                                    inline else => |exact_versions| {
+                                        const fmt = if (exact_versions) "{}" else "^{}";
+                                        break :brk try std.fmt.allocPrint(allocator, fmt, .{
+                                            request.resolution.value.npm.version.fmt(request.version_buf),
+                                        });
+                                    },
                                 }
-                                break :brk null;
-                            } else {
-                                break :brk if (request.version.tag == .dist_tag and request.version.literal.isEmpty())
-                                    switch (options.exact_versions) {
-                                        false => std.fmt.allocPrint(allocator, "^{}", .{
-                                            request.resolution.value.npm.version.fmt(request.version_buf),
-                                        }) catch unreachable,
-                                        true => std.fmt.allocPrint(allocator, "{}", .{
-                                            request.resolution.value.npm.version.fmt(request.version_buf),
-                                        }) catch unreachable,
-                                    }
-                                else
-                                    null;
                             }
+                            break :brk null;
                         },
                         .uninitialized => switch (request.version.tag) {
                             .uninitialized => try allocator.dupe(u8, latest),
@@ -6647,7 +6685,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(entries_option.entries, &[_][]u8{}, .production);
+        try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
@@ -8241,7 +8279,8 @@ pub const PackageManager = struct {
                 const tree_id = entry.tree_id;
                 if (this.canRunScripts(tree_id)) {
                     _ = this.pending_lifecycle_scripts.swapRemove(i);
-                    this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level) catch |err| {
+                    const output_in_foreground = false;
+                    this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, output_in_foreground) catch |err| {
                         if (comptime log_level != .silent) {
                             const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                             const args = .{ name, @errorName(err) };
@@ -8279,7 +8318,8 @@ pub const PackageManager = struct {
                     PackageManager.instance.sleep();
                 }
 
-                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level) catch |err| {
+                const output_in_foreground = false;
+                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, output_in_foreground) catch |err| {
                     if (comptime log_level != .silent) {
                         const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                         const args = .{ package_name, @errorName(err) };
@@ -9162,23 +9202,6 @@ pub const PackageManager = struct {
             );
         }
 
-        const root_lifecycle_scripts_count = brk: {
-            if (this.options.do.run_scripts and
-                this.options.do.install_packages and
-                this.root_lifecycle_scripts != null)
-            {
-                var counter: usize = 0;
-
-                for (this.root_lifecycle_scripts.?.items) |item| {
-                    if (item != null) counter += 1;
-                }
-
-                this.total_scripts += counter;
-                break :brk counter;
-            }
-            break :brk 0;
-        };
-
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
@@ -9192,7 +9215,7 @@ pub const PackageManager = struct {
             download_node = root_node.start(ProgressStrings.download(), 0);
 
             install_node = root_node.start(ProgressStrings.install(), this.lockfile.packages.len);
-            scripts_node = root_node.start(ProgressStrings.script(), root_lifecycle_scripts_count);
+            scripts_node = root_node.start(ProgressStrings.script(), 0);
             this.downloads_node = &download_node;
             this.scripts_node = &scripts_node;
         }
@@ -9487,18 +9510,12 @@ pub const PackageManager = struct {
 
             installer.completeRemainingScripts(log_level);
 
-            if (root_lifecycle_scripts_count > 0) {
-                // root lifecycle scripts can run now that all dependencies are installed
-                // and their lifecycle script have finished
-                try this.spawnPackageLifecycleScripts(ctx, this.root_lifecycle_scripts.?, log_level);
-            }
-
             while (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
                 if (PackageManager.verbose_install) {
                     if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{this.pending_lifecycle_script_tasks.load(.Monotonic)});
                 }
 
-                PackageManager.instance.sleep();
+                this.sleep();
             }
 
             if (comptime log_level.showProgress()) {
@@ -10138,6 +10155,31 @@ pub const PackageManager = struct {
             }
         }
 
+        if (manager.options.do.run_scripts) {
+            if (manager.root_lifecycle_scripts) |scripts| {
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(scripts.total > 0);
+                }
+
+                if (comptime log_level != .silent) {
+                    Output.printError("\n", .{});
+                    Output.flush();
+                }
+                // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
+                // have finished, and lockfiles have been saved
+                const output_in_foreground = true;
+                try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, output_in_foreground);
+
+                while (manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+                    if (PackageManager.verbose_install) {
+                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{manager.pending_lifecycle_script_tasks.load(.Monotonic)});
+                    }
+
+                    manager.sleep();
+                }
+            }
+        }
+
         var printed_timestamp = false;
         if (comptime log_level != .silent) {
             if (manager.options.do.summary) {
@@ -10258,6 +10300,7 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
+        comptime foreground: bool,
     ) !void {
         var any_scripts = false;
         for (list.items) |maybe_item| {
@@ -10305,7 +10348,7 @@ pub const PackageManager = struct {
         try this_bundler.env.map.put("PATH", original_path);
         PATH.deinit();
 
-        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level, foreground);
     }
 };
 

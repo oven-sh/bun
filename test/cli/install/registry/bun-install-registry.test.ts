@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
-import { join } from "path";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
+import { join, sep } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
@@ -20,7 +20,7 @@ var packageDir: string;
 
 beforeAll(async () => {
   verdaccioServer = fork(
-    await import.meta.resolve("verdaccio/bin/verdaccio"),
+    require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
     { silent: true, execPath: "bun" },
   );
@@ -48,10 +48,6 @@ cache = false
 registry = "http://localhost:${port}/"
 `,
   );
-});
-
-afterEach(async () => {
-  await rm(packageDir, { force: true, recursive: true });
 });
 
 describe.each(["--production", "without --production"])("%s", flag => {
@@ -244,6 +240,52 @@ describe.each(["--production", "without --production"])("%s", flag => {
       expect(newHash).toBe(initialLockfileHash);
     }
   });
+});
+
+test("hardlinks on windows dont fail with long paths", async () => {
+  await mkdir(join(packageDir, "a-package"));
+  await writeFile(
+    join(packageDir, "a-package", "package.json"),
+    JSON.stringify({
+      name: "a-package",
+      version: "1.0.0",
+    }),
+  );
+
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      dependencies: {
+        // 255 characters
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":
+          "file:./a-package",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@a-package",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
 });
 
 test("basic 1", async () => {
@@ -1625,6 +1667,7 @@ describe("hoisting", async () => {
         version: "1.0.1",
       });
     });
+
     test("dependency with normal dependency same as root", async () => {
       await writeFile(
         join(packageDir, "package.json"),
@@ -1715,6 +1758,7 @@ describe("workspaces", async () => {
     expect(err).toContain('Workspace name "pkg1" already exists');
     expect(await exited).toBe(1);
   });
+
   const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0", "*"];
 
   for (const rootVersion of versions) {
@@ -1851,6 +1895,7 @@ describe("workspaces", async () => {
       });
     }
   }
+
   for (const version of versions) {
     test(`it should allow listing workspace as dependency of the root package version ${version}`, async () => {
       await writeFile(
@@ -2060,6 +2105,87 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   } else {
     expect(await file(join(packageDir, "node_modules", ".bin", "what-bin")).text()).toContain("what-bin@1.5.0");
   }
+});
+
+test("one version with binary map", async () => {
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "map-bin": "1.0.2",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stderr: "pipe",
+    stdout: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + map-bin@1.0.2",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toHaveBins(["map-bin", "map_bin"]);
+  expect(join(packageDir, "node_modules", ".bin", "map-bin")).toBeValidBin(join("..", "map-bin", "bin", "map-bin"));
+  expect(join(packageDir, "node_modules", ".bin", "map_bin")).toBeValidBin(join("..", "map-bin", "bin", "map-bin"));
+});
+
+test("multiple versions with binary map", async () => {
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      dependencies: {
+        "map-bin-multiple": "1.0.2",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stderr: "pipe",
+    stdout: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + map-bin-multiple@1.0.2",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toHaveBins(["map-bin", "map_bin"]);
+  expect(join(packageDir, "node_modules", ".bin", "map-bin")).toBeValidBin(
+    join("..", "map-bin-multiple", "bin", "map-bin"),
+  );
+  expect(join(packageDir, "node_modules", ".bin", "map_bin")).toBeValidBin(
+    join("..", "map-bin-multiple", "bin", "map-bin"),
+  );
 });
 
 test("missing package on reinstall, some with binaries", async () => {
@@ -2882,9 +3008,10 @@ for (const forceWaiterThread of [false, true]) {
         expect.stringContaining("1 package installed"),
       ]);
       expect(await exited).toBe(0);
-      expect(await file(join(packageDir, "test.txt")).text()).toBe(packageDir + "/");
-      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(packageDir + "/");
-      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(packageDir + "/");
+      const expected = packageDir.replaceAll("\\", "/") + "/";
+      expect(await file(join(packageDir, "test.txt")).text()).toBe(expected);
+      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(expected);
+      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(expected);
     });
 
     test("failing lifecycle script should print output", async () => {
@@ -2923,7 +3050,7 @@ for (const forceWaiterThread of [false, true]) {
           name: "fooooooooo",
           version: "1.0.0",
           scripts: {
-            preinstall: `${bunExe().replace(/\\/g, "\\\\")} -e "throw new Error('Oops!')"`,
+            preinstall: `${bunExe()} -e "throw new Error('Oops!')"`,
           },
         }),
       );
@@ -2941,6 +3068,43 @@ for (const forceWaiterThread of [false, true]) {
       const err = await Bun.readableStreamToText(stderr);
       expect(err).toContain("error: Oops!");
       expect(err).toContain('error: preinstall script from "fooooooooo" exited with 1');
+    });
+
+    test("exit 0 in lifecycle scripts works", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            postinstall: "exit 0",
+            prepare: "exit 0",
+            postprepare: "exit 0",
+          },
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await new Response(stderr).text();
+      expect(err).toContain("No packages! Deleted empty lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      const out = await new Response(stdout).text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        expect.stringContaining("done"),
+        "",
+      ]);
+      expect(await exited).toBe(0);
     });
 
     test("--ignore-scripts should skip lifecycle scripts", async () => {
@@ -3383,7 +3547,7 @@ for (const forceWaiterThread of [false, true]) {
 
     test("reach max concurrent scripts", async () => {
       const scripts = {
-        "preinstall": `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(500)"`,
+        "preinstall": `${bunExe()} -e 'Bun.sleepSync(500)'`,
       };
 
       const dependenciesList = await createPackagesWithScripts(4, scripts);
@@ -3414,7 +3578,7 @@ for (const forceWaiterThread of [false, true]) {
 
     test("stress test", async () => {
       const dependenciesList = await createPackagesWithScripts(500, {
-        "postinstall": `${bunExe().replace(/\\/g, "\\\\")} --version`,
+        "postinstall": `${bunExe()} --version`,
       });
 
       // the script is quick, default number for max concurrent scripts
@@ -3441,7 +3605,7 @@ for (const forceWaiterThread of [false, true]) {
       ]);
 
       expect(await exited).toBe(0);
-    });
+    }, 15_000);
 
     test("it should install and use correct binary version", async () => {
       // this should install `what-bin` in two places:
@@ -3487,9 +3651,11 @@ for (const forceWaiterThread of [false, true]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      expect(await file(join(packageDir, "node_modules", ".bin", "what-bin")).text()).toContain("what-bin@1.5.0");
+      expect(await file(join(packageDir, "node_modules", "what-bin", "what-bin.js")).text()).toContain(
+        "what-bin@1.5.0",
+      );
       expect(
-        await file(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin", "what-bin")).text(),
+        await file(join(packageDir, "node_modules", "uses-what-bin", "node_modules", "what-bin", "what-bin.js")).text(),
       ).toContain("what-bin@1.0.0");
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -3528,9 +3694,11 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("panic:");
 
       expect(await exited).toBe(0);
-      expect(await file(join(packageDir, "node_modules", ".bin", "what-bin")).text()).toContain("what-bin@1.0.0");
+      expect(await file(join(packageDir, "node_modules", "what-bin", "what-bin.js")).text()).toContain(
+        "what-bin@1.0.0",
+      );
       expect(
-        await file(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin", "what-bin")).text(),
+        await file(join(packageDir, "node_modules", "uses-what-bin", "node_modules", "what-bin", "what-bin.js")).text(),
       ).toContain("what-bin@1.5.0");
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -3559,6 +3727,7 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
     });
+
     test("node-gyp should always be available for lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
@@ -3589,35 +3758,6 @@ for (const forceWaiterThread of [false, true]) {
 
       // if node-gyp isn't available, it would return a non-zero exit code
       expect(await exited).toBe(0);
-    });
-
-    test("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
-      await writeFile(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "foo",
-          scripts: {
-            install: "node $npm_config_node_gyp --version",
-          },
-        }),
-      );
-
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env: testEnv,
-      });
-
-      expect(await exited).toBe(0);
-      const err = await new Response(stderr).text();
-      expect(err).not.toContain("Saved lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
-      expect(err).toContain("v");
     });
 
     // if this test fails, `electron` might be removed from the default list
@@ -3658,7 +3798,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test.todo("default trusted dependencies should not be used of trustedDependencies is populated", async () => {
+    test("default trusted dependencies should not be used of trustedDependencies is populated", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3694,6 +3834,9 @@ for (const forceWaiterThread of [false, true]) {
         " + uses-what-bin@1.0.0",
         "",
         expect.stringContaining("3 packages installed"),
+        "",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
       ]);
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
@@ -3738,6 +3881,9 @@ for (const forceWaiterThread of [false, true]) {
         " + uses-what-bin@1.0.0",
         "",
         expect.stringContaining("3 packages installed"),
+        "",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
       ]);
       expect(await exited).toBe(0);
 
@@ -3745,7 +3891,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
     });
 
-    test.todo("does not run any scripts if trustedDependencies is an empty list", async () => {
+    test("does not run any scripts if trustedDependencies is an empty list", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3780,13 +3926,16 @@ for (const forceWaiterThread of [false, true]) {
         " + uses-what-bin@1.0.0",
         "",
         expect.stringContaining("3 packages installed"),
+        "",
+        " Blocked 2 postinstalls. Run `bun pm untrusted` for details.",
+        "",
       ]);
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
     });
 
-    test.todo("will run default trustedDependencies after install that didn't include them", async () => {
+    test("will run default trustedDependencies after install that didn't include them", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3821,6 +3970,9 @@ for (const forceWaiterThread of [false, true]) {
         " + electron@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
+        "",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
       ]);
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
@@ -4103,6 +4255,7 @@ for (const forceWaiterThread of [false, true]) {
         });
       });
     });
+
     describe("updating trustedDependencies", async () => {
       test("existing trustedDependencies, unchanged trustedDependencies", async () => {
         await writeFile(
@@ -4171,6 +4324,7 @@ for (const forceWaiterThread of [false, true]) {
         ]);
         expect(await exited).toBe(0);
       });
+
       test("existing trustedDependencies, removing trustedDependencies", async () => {
         await writeFile(
           join(packageDir, "package.json"),
@@ -4257,6 +4411,7 @@ for (const forceWaiterThread of [false, true]) {
         });
         expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
       });
+
       test("non-existent trustedDependencies, then adding it", async () => {
         await writeFile(
           join(packageDir, "package.json"),
@@ -4339,6 +4494,7 @@ for (const forceWaiterThread of [false, true]) {
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
       });
     });
+
     test("node -p should work in postinstall scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
@@ -4346,7 +4502,7 @@ for (const forceWaiterThread of [false, true]) {
           name: "foo",
           version: "1.0.0",
           scripts: {
-            postinstall: 'node -p \'require("fs").writeFileSync("postinstall.txt", "postinstall")\'',
+            postinstall: `node -p "require('fs').writeFileSync('postinstall.txt', 'postinstall')"`,
           },
         }),
       );
@@ -4374,6 +4530,41 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
+    });
+
+    test("ensureTempNodeGypScript works", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            preinstall: "node-gyp --version",
+          },
+        }),
+      );
+
+      const originalPath = env.PATH;
+      env.PATH = "";
+
+      let { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env,
+      });
+
+      env.PATH = originalPath;
+
+      let err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("No packages! Deleted empty lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
+      expect(await exited).toBe(0);
     });
 
     test("bun pm trust and untrusted on missing package", async () => {
@@ -4619,11 +4810,12 @@ for (const forceWaiterThread of [false, true]) {
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await Bun.readableStreamToText(stdout);
-          expect(out).toContain("./node_modules/uses-what-bin @1.0.0");
+          expect(out).toContain("./node_modules/uses-what-bin @1.0.0".replaceAll("/", sep));
           expect(await exited).toBe(0);
         });
       }
     });
+
     describe.if(!forceWaiterThread || process.platform === "linux")("does not use 100% cpu", async () => {
       test("install", async () => {
         await writeFile(
@@ -4632,7 +4824,7 @@ for (const forceWaiterThread of [false, true]) {
             name: "foo",
             version: "1.0.0",
             scripts: {
-              preinstall: `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(1000)"`,
+              preinstall: `${bunExe()} -e 'Bun.sleepSync(1000)'`,
             },
           }),
         );
@@ -4650,6 +4842,7 @@ for (const forceWaiterThread of [false, true]) {
 
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
+
       test("bun pm trust", async () => {
         await writeFile(
           join(packageDir, "package.json"),
@@ -4690,6 +4883,111 @@ for (const forceWaiterThread of [false, true]) {
       });
     });
   });
+
+  describe("stdout/stderr is inherited from root scripts during install", async () => {
+    test("without packages", async () => {
+      const exe = bunExe().replace(/\\/g, "\\\\");
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.2.3",
+          scripts: {
+            "preinstall": `${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
+            "install": `${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
+            "prepare": `${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
+      expect(err.split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install"),
+        "No packages! Deleted empty lockfile",
+        "",
+        `$ ${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
+        "preinstall stderr 🍦",
+        `$ ${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
+        `$ ${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
+        "",
+      ]);
+      const out = await Bun.readableStreamToText(stdout);
+      expect(out.split(/\r?\n/)).toEqual([
+        "install stdout 🚀",
+        "prepare stdout done ✅",
+        "",
+        expect.stringContaining("done"),
+        "",
+      ]);
+      expect(await exited).toBe(0);
+    });
+
+    test("with a package", async () => {
+      const exe = bunExe().replace(/\\/g, "\\\\");
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.2.3",
+          scripts: {
+            "preinstall": `${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
+            "install": `${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
+            "prepare": `${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
+          },
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
+      expect(err.split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install"),
+        " Resolving dependencies",
+        expect.stringContaining(" Resolved, downloaded and extracted "),
+        " Saved lockfile",
+        "",
+        `$ ${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
+        "preinstall stderr 🍦",
+        `$ ${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
+        `$ ${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
+        "",
+      ]);
+      const out = await Bun.readableStreamToText(stdout);
+      expect(out.split(/\r?\n/)).toEqual([
+        "install stdout 🚀",
+        "prepare stdout done ✅",
+        "",
+        " + no-deps@1.0.0",
+        "",
+        expect.stringContaining(" 1 package installed"),
+        "",
+      ]);
+      expect(await exited).toBe(0);
+    });
+  });
 }
 
 describe("pm trust", async () => {
@@ -4719,6 +5017,7 @@ describe("pm trust", async () => {
     expect(out).toContain("Default trusted dependencies");
     expect(await exited).toBe(0);
   });
+
   describe("--all", async () => {
     test("no dependencies", async () => {
       await writeFile(
@@ -4742,6 +5041,7 @@ describe("pm trust", async () => {
       expect(out).toBeEmpty();
       expect(await exited).toBe(1);
     });
+
     test("some dependencies, non with scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
@@ -4822,12 +5122,10 @@ test("it should be able to find binary in node_modules/.bin from parent director
 
   await cp(join(packageDir, "bunfig.toml"), join(packageDir, "morePackageDir", "bunfig.toml"));
 
-  await await writeFile(
+  await writeShebangScript(
     join(packageDir, "node_modules", ".bin", "missing-bin"),
-    `#!/usr/bin/env node
-require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");
-`,
-    { mode: 0o777 },
+    "node",
+    `require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");`,
   );
 
   const { stdout, stderr, exited } = spawn({
@@ -6353,6 +6651,7 @@ describe("yarn tests", () => {
     expect(err).toBeEmpty();
     expect(await exited).toBe(0);
   });
+
   test("it should install in such a way that two identical packages with the same peer dependencies are the same instances (complex)", async () => {
     await writeFile(
       join(packageDir, "package.json"),

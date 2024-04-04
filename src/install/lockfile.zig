@@ -1112,7 +1112,7 @@ pub const Printer = struct {
         };
 
         env_loader.loadProcess();
-        try env_loader.load(entries_option.entries, &[_][]u8{}, .production);
+        try env_loader.load(entries_option.entries, &[_][]u8{}, .production, false);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,
@@ -5926,21 +5926,12 @@ const default_trusted_dependencies = brk: {
 };
 
 pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
-    if (comptime FeatureFlags.breaking_changes_1_1_0) {
-        if (this.trusted_dependencies) |trusted_dependencies| {
-            const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
-            return trusted_dependencies.contains(hash);
-        }
-
-        return default_trusted_dependencies.has(name);
-    } else {
-        if (this.trusted_dependencies) |trusted_dependencies| {
-            const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
-            return trusted_dependencies.contains(hash) or default_trusted_dependencies.has(name);
-        }
-
-        return default_trusted_dependencies.has(name);
+    if (this.trusted_dependencies) |trusted_dependencies| {
+        const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
+        return trusted_dependencies.contains(hash);
     }
+
+    return default_trusted_dependencies.has(name);
 }
 
 pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependency, res: ?PackageID) !void {

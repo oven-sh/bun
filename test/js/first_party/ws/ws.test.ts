@@ -276,6 +276,25 @@ describe("WebSocketServer", () => {
     new WebSocket("ws://localhost:" + wss.address().port);
     await promise;
   });
+
+  it("sockets can be terminated", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers();
+
+    wss.on("connection", ws => {
+      ws.on("close", () => {
+        resolve();
+      });
+      try {
+        ws.terminate();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    new WebSocket("ws://localhost:" + wss.address().port);
+    await promise;
+  });
 });
 
 describe("Server", () => {
@@ -337,6 +356,7 @@ it("onmessage", done => {
     ws.onmessage = e => {
       expect(e.data).toEqual(Buffer.from("hello"));
       done();
+      wss.close();
     };
   });
 
@@ -344,6 +364,51 @@ it("onmessage", done => {
   ws.onopen = () => {
     ws.send("hello");
   };
+});
+
+// https://github.com/oven-sh/bun/issues/7896
+it("close event", async () => {
+  const via = [
+    function once(ws) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      ws.once("close", () => resolve());
+      return promise;
+    },
+    function on(ws) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      ws.on("close", () => resolve());
+      return promise;
+    },
+    function addEventListener(ws) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      ws.addEventListener("close", () => resolve());
+      return promise;
+    },
+    function onclose(ws) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      // @ts-expect-error
+      ws.onclose = () => resolve();
+      return promise;
+    },
+  ];
+  const wss = new WebSocketServer({ port: 0 });
+  wss.on("connection", ws => {
+    ws.onmessage = e => {
+      expect(e.data).toEqual(Buffer.from("hello"));
+      setTimeout(() => ws.close(), 10);
+    };
+  });
+  await Promise.all(
+    via.map(async version => {
+      const ws = new WebSocket("ws://localhost:" + wss.address().port);
+      ws.onopen = () => {
+        ws.send("hello");
+      };
+      return version(ws);
+    }),
+  );
+
+  wss.close();
 });
 
 function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {

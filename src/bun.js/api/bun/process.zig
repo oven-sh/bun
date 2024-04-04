@@ -493,6 +493,10 @@ pub const Status = union(enum) {
     signaled: bun.SignalCode,
     err: bun.sys.Error,
 
+    pub fn isOK(this: *const Status) bool {
+        return this.* == .exited and this.exited.code == 0;
+    }
+
     pub const Exited = struct {
         code: u8 = 0,
         signal: bun.SignalCode = @enumFromInt(0),
@@ -1141,6 +1145,7 @@ pub fn spawnProcessPosix(
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
 ) !JSC.Maybe(PosixSpawnResult) {
+    bun.Analytics.Features.spawn += 1;
     var actions = try PosixSpawn.Actions.init();
     defer actions.deinit();
 
@@ -1266,13 +1271,14 @@ pub fn spawnProcessPosix(
                         return error.SystemResources;
                     }
 
-                    var before = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.GETFL);
-
-                    _ = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.SETFL, before | bun.C.FD_CLOEXEC);
+                    {
+                        const before = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.GETFD);
+                        _ = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.SETFD, before | std.os.FD_CLOEXEC);
+                    }
 
                     if (comptime Environment.isMac) {
                         // SO_NOSIGPIPE
-                        before = 1;
+                        const before: i32 = 1;
                         _ = std.c.setsockopt(fds_[if (i == 0) 1 else 0], std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, &before, @sizeOf(c_int));
                     }
 
@@ -1318,7 +1324,8 @@ pub fn spawnProcessPosix(
                 try to_close_on_error.append(fds[0]);
 
                 try actions.dup2(fds[1], fileno);
-                try actions.close(fds[1]);
+                if (fds[1] != fileno)
+                    try actions.close(fds[1]);
 
                 stdio.* = fds[0];
             },
@@ -1357,9 +1364,9 @@ pub fn spawnProcessPosix(
                     }
 
                     // enable non-block
-                    var before = std.c.fcntl(fds_[0], std.os.F.GETFL);
+                    var before = std.c.fcntl(fds_[0], std.os.F.GETFD);
 
-                    _ = std.c.fcntl(fds_[0], std.os.F.SETFL, before | std.os.O.NONBLOCK | bun.C.FD_CLOEXEC);
+                    _ = std.c.fcntl(fds_[0], std.os.F.SETFD, before | bun.C.FD_CLOEXEC);
 
                     if (comptime Environment.isMac) {
                         // SO_NOSIGPIPE
@@ -1373,7 +1380,8 @@ pub fn spawnProcessPosix(
                 try to_close_on_error.append(fds[0]);
 
                 try actions.dup2(fds[1], fileno);
-                try actions.close(fds[1]);
+                if (fds[1] != fileno)
+                    try actions.close(fds[1]);
                 try extra_fds.append(fds[0]);
             },
             .pipe => |fd| {
@@ -1424,6 +1432,7 @@ pub fn spawnProcessWindows(
     envp: [*:null]?[*:0]const u8,
 ) !JSC.Maybe(WindowsSpawnResult) {
     bun.markWindowsOnly();
+    bun.Analytics.Features.spawn += 1;
 
     var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
 
@@ -1719,6 +1728,10 @@ pub const sync = struct {
         status: Status,
         stdout: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
         stderr: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
+
+        pub fn isOK(this: *const Result) bool {
+            return this.status.isOK();
+        }
     };
 
     const SyncWindowsPipeReader = struct {

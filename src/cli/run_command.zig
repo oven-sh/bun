@@ -266,6 +266,7 @@ pub const RunCommand = struct {
     const log = Output.scoped(.RUN, false);
 
     fn runPackageScriptForeground(
+        ctx: *Command.Context,
         allocator: std.mem.Allocator,
         original_script: string,
         name: string,
@@ -316,7 +317,7 @@ pub const RunCommand = struct {
             }
 
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            const code = bun.shell.Interpreter.initAndRunFromSource(mini, name, combined_script) catch |err| {
+            const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, combined_script) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
@@ -456,7 +457,7 @@ pub const RunCommand = struct {
         // wrapper exe.  we build the full exe path even though we could do
         // a relative lookup, because in the case we do find it, we have to
         // generate this full path anyways.
-        if (Environment.isWindows and bun.strings.hasSuffixComptime(executable, ".exe")) {
+        if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path and bun.strings.hasSuffixComptime(executable, ".exe")) {
             std.debug.assert(std.fs.path.isAbsolute(executable));
 
             // Using @constCast is safe because we know that
@@ -678,7 +679,7 @@ pub const RunCommand = struct {
     } ++ if (!Environment.isDebug)
         "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
-        "/bun-debug-node";
+        "/bun-node-debug";
 
     pub fn bunNodeFileUtf8(allocator: std.mem.Allocator) ![:0]const u8 {
         if (!Environment.isWindows) return bun_node_dir;
@@ -706,8 +707,6 @@ pub const RunCommand = struct {
         return try allocator.dupeZ(u8, target_path_buffer[0 .. converted.len + file_name.len :0]);
     }
 
-    var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-
     pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
@@ -722,10 +721,9 @@ pub const RunCommand = struct {
                 argv0 = bun.argv()[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
-                var self = try std.fs.selfExePath(&self_exe_bin_path_buf);
+                const self = try bun.selfExePath();
                 if (self.len > 0) {
-                    self.ptr[self.len] = 0;
-                    argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
+                    argv0 = self.ptr;
                     optional_bun_path.* = self;
                 }
             }
@@ -737,10 +735,7 @@ pub const RunCommand = struct {
             if (Environment.isDebug) {
                 std.fs.deleteTreeAbsolute(bun_node_dir) catch {};
             }
-            const paths = if (Environment.isDebug)
-                .{ bun_node_dir ++ "/node", bun_node_dir ++ "/bun" }
-            else
-                .{bun_node_dir ++ "/node"};
+            const paths = .{ bun_node_dir ++ "/node", bun_node_dir ++ "/bun" };
             inline for (paths) |path| {
                 var retried = false;
                 while (true) {
@@ -759,7 +754,6 @@ pub const RunCommand = struct {
                     break;
                 }
             }
-
             if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
                 try PATH.append(std.fs.path.delimiter);
             }
@@ -790,7 +784,15 @@ pub const RunCommand = struct {
                 "-" ++ Environment.git_sha_short
             else
                 "";
+            @memcpy(target_path_buffer[prefix.len..][len..].ptr, comptime bun.strings.w(dir_name));
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
+
+            if (Environment.isDebug) {
+                const dir_slice_u8 = std.unicode.utf16leToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
+                defer bun.default_allocator.free(dir_slice_u8);
+                std.fs.deleteTreeAbsolute(dir_slice_u8) catch {};
+                std.fs.makeDirAbsolute(dir_slice_u8) catch @panic("huh?");
+            }
 
             const image_path = bun.windows.exePathW();
             inline for (.{ "node.exe", "bun.exe" }) |name| {
@@ -816,6 +818,9 @@ pub const RunCommand = struct {
                         },
                     }
                 }
+            }
+            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+                try PATH.append(std.fs.path.delimiter);
             }
 
             // The reason for the extra delim is because we are going to append the system PATH
@@ -850,7 +855,7 @@ pub const RunCommand = struct {
 
         this_bundler.configureLinker();
 
-        var root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
+        const root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
             if (!log_errors) return error.CouldntReadCurrentDirectory;
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
@@ -882,20 +887,7 @@ pub const RunCommand = struct {
                 }
             }
 
-            // TODO: evaluate if we can skip running this in nested calls to bun run
-            // The reason why it's unclear:
-            // - Some scripts may do NODE_ENV=production bun run foo
-            //   This would cause potentially a different .env file to be loaded
-            this_bundler.runEnvLoader() catch {};
-
-            if (root_dir_info.getEntries(0)) |dir| {
-                // Run .env again if it exists in a parent dir
-                if (this_bundler.options.production) {
-                    this_bundler.env.load(dir, this_bundler.options.env.files, .production) catch {};
-                } else {
-                    this_bundler.env.load(dir, this_bundler.options.env.files, .development) catch {};
-                }
-            }
+            this_bundler.runEnvLoader(true) catch {};
         }
 
         this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
@@ -913,7 +905,7 @@ pub const RunCommand = struct {
 
         if (this_bundler.env.get("npm_execpath") == null) {
             // we don't care if this fails
-            if (std.fs.selfExePathAlloc(ctx.allocator)) |self_exe_path| {
+            if (bun.selfExePath()) |self_exe_path| {
                 this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
             } else |_| {}
         }
@@ -1459,6 +1451,7 @@ pub const RunCommand = struct {
 
                     if (scripts.get(temp_script_buffer[1..])) |prescript| {
                         if (!try runPackageScriptForeground(
+                            &ctx,
                             ctx.allocator,
                             prescript,
                             temp_script_buffer[1..],
@@ -1473,6 +1466,7 @@ pub const RunCommand = struct {
                     }
 
                     if (!try runPackageScriptForeground(
+                        &ctx,
                         ctx.allocator,
                         script_content,
                         script_name_to_search,
@@ -1487,6 +1481,7 @@ pub const RunCommand = struct {
 
                     if (scripts.get(temp_script_buffer)) |postscript| {
                         if (!try runPackageScriptForeground(
+                            &ctx,
                             ctx.allocator,
                             postscript,
                             temp_script_buffer,
@@ -1506,7 +1501,7 @@ pub const RunCommand = struct {
         }
 
         // Run absolute/relative path
-        if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
+        if (std.fs.path.isAbsolute(script_name_to_search) or
             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
         {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
@@ -1525,7 +1520,6 @@ pub const RunCommand = struct {
 
         if (script_name_to_search.len == 1 and script_name_to_search[0] == '-') {
             // read from stdin
-
             var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
             var list = std.ArrayList(u8).init(stack_fallback.get());
             errdefer list.deinit();
@@ -1554,7 +1548,7 @@ pub const RunCommand = struct {
             return true;
         }
 
-        if (Environment.isWindows) try_bunx_file: {
+        if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path) try_bunx_file: {
             // Attempt to find a ".bunx" file on disk, and run it, skipping the
             // wrapper exe.  we build the full exe path even though we could do
             // a relative lookup, because in the case we do find it, we have to
@@ -1675,7 +1669,10 @@ pub const BunXFastPath = struct {
     var environment_buffer: bun.WPathBuffer = undefined;
 
     /// If this returns, it implies the fast path cannot be taken
-    fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+    fn tryLaunch(ctx_const: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+        if (!bun.FeatureFlags.windows_bunx_fast_path) return;
+
+        var ctx = ctx_const;
         std.debug.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
@@ -1700,6 +1697,7 @@ pub const BunXFastPath = struct {
             const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
             i += result.len + 1;
         }
+        ctx.passthrough = passthrough;
 
         const run_ctx = shim_impl.FromBunRunContext{
             .handle = handle,

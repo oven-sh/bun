@@ -39,6 +39,8 @@ pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackT
 
             Output.disableBuffering();
 
+            Output.Source.Stdio.restore();
+
             if (bun.auto_reload_on_crash) {
                 // attempt to prevent a double panic
                 bun.auto_reload_on_crash = false;
@@ -48,7 +50,7 @@ pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackT
                 bun.reloadProcess(bun.default_allocator, false);
             }
 
-            // // We want to always inline the panic handler so it doesn't show up in the stacktrace.
+            // We want to always inline the panic handler so it doesn't show up in the stacktrace.
             @call(bun.callmod_inline, panic_func, .{ msg, error_return_type, addr });
         }
     };

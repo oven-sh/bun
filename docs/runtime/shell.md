@@ -1,9 +1,5 @@
 Bun Shell makes shell scripting with JavaScript & TypeScript fun. It's a cross-platform bash-like shell with seamless JavaScript interop.
 
-{% callout type="note" %}
-**Alpha-quality software**: Bun Shell is an unstable API still under development. If you have feature requests or run into bugs, please open an issue. There may be breaking changes in the future.
-{% /callout %}
-
 Quickstart:
 
 ```js
@@ -12,7 +8,7 @@ import { $ } from "bun";
 const response = await fetch("https://example.com");
 
 // Use Response as stdin.
-await $`echo < ${response} > wc -c`; // 120
+await $`cat < ${response} | wc -c`; // 1256
 ```
 
 ## Features:
@@ -23,6 +19,8 @@ await $`echo < ${response} > wc -c`; // 120
 - **Template literals**: Template literals are used to execute shell commands. This allows for easy interpolation of variables and expressions.
 - **Safety**: Bun Shell escapes all strings by default, preventing shell injection attacks.
 - **JavaScript interop**: Use `Response`, `ArrayBuffer`, `Blob`, `Bun.file(path)` and other JavaScript objects as stdin, stdout, and stderr.
+- **Shell scripting**: Bun Shell can be used to run shell scripts (`.bun.sh` files).
+- **Custom interpreter**: Bun Shell is written in Zig, along with it's lexer, parser, and interpreter. Bun Shell is a small programming language.
 
 ## Getting started
 
@@ -53,30 +51,78 @@ const welcome = await $`echo "Hello World!"`.text();
 console.log(welcome); // Hello World!\n
 ```
 
-To get stdout, stderr, and the exit code, use await or `.run`:
+By default, `await`ing will return stdout and stderr as `Buffer`s.
 
 ```js
 import { $ } from "bun";
 
-const { stdout, stderr, exitCode } = await $`echo "Hello World!"`.quiet();
+const { stdout, stderr } = await $`echo "Hello World!"`.quiet();
 
 console.log(stdout); // Buffer(6) [ 72, 101, 108, 108, 111, 32 ]
 console.log(stderr); // Buffer(0) []
-console.log(exitCode); // 0
+```
+
+## Error handling
+
+By default, non-zero exit codes will throw an error. This `ShellError` contains information about the command run.
+
+```js
+import { $ } from "bun";
+
+try {
+  const output = await $`something-that-may-fail`.text();
+  console.log(output);
+} catch (err) {
+  console.log(`Failed with code ${err.exitCode}`);
+  console.log(output.stdout.toString());
+  console.log(output.stderr.toString());
+}
+```
+
+Throwing can be disabled with `.nothrow()`. The result's `exitCode` will need to be checked manually.
+
+```js
+import { $ } from "bun";
+
+const { stdout, stderr, exitCode } = await $`something-that-may-fail`
+  .nothrow()
+  .quiet();
+
+if (exitCode !== 0) {
+  console.log(`Non-zero exit code ${exitCode}`);
+}
+
+console.log(stdout);
+console.log(stderr);
+```
+
+The default handling of non-zero exit codes can be configured by calling `.nothrow()` or `.throws(boolean)` on the `$` function itself.
+
+```js
+// shell promises will not throw, meaning you will have to
+// check for `exitCode` manually on every shell command.
+$.nothrow(); // equivilent to $.throws(false)
+
+// default behavior, non-zero exit codes will throw an error
+$.throws(true);
+
+// alias for $.nothrow()
+$.throws(false);
 ```
 
 ## Redirection
 
 A command's _input_ or _output_ may be _redirected_ using the typical Bash operators:
-- `<`           redirect stdin 
-- `>` or `1>`   redirect stdout
-- `2>`          redirect stderr
-- `&>`          redirect both stdout and stderr
+
+- `<` redirect stdin
+- `>` or `1>` redirect stdout
+- `2>` redirect stderr
+- `&>` redirect both stdout and stderr
 - `>>` or `1>>` redirect stdout, _appending_ to the destination, instead of overwriting
-- `2>>`         redirect stderr, _appending_ to the destination, instead of overwriting
-- `&>>`         redirect both stdout and stderr, _appending_ to the destination, instead of overwriting
-- `1>&2`        redirect stdout to stderr (all writes to stdout will instead be in stderr)
-- `2>&1`        redirect stderr to stdout (all writes to stderr will instead be in stdout)
+- `2>>` redirect stderr, _appending_ to the destination, instead of overwriting
+- `&>>` redirect both stdout and stderr, _appending_ to the destination, instead of overwriting
+- `1>&2` redirect stdout to stderr (all writes to stdout will instead be in stderr)
+- `2>&1` redirect stderr to stdout (all writes to stderr will instead be in stdout)
 
 Bun Shell also supports redirecting from and to JavaScript objects.
 
@@ -88,9 +134,8 @@ To redirect stdout to a JavaScript object, use the `>` operator:
 import { $ } from "bun";
 
 const buffer = Buffer.alloc(100);
-const result = await $`echo "Hello World!" > ${buffer}`;
+await $`echo "Hello World!" > ${buffer}`;
 
-console.log(result.exitCode); // 0
 console.log(buffer.toString()); // Hello World!\n
 ```
 
@@ -122,46 +167,45 @@ The following JavaScript objects are supported for redirection from:
 ### Example: Redirect stdin -> file
 
 ```js
-import { $ } from "bun"
+import { $ } from "bun";
 
-await $`cat < myfile.txt`
+await $`cat < myfile.txt`;
 ```
 
 ### Example: Redirect stdout -> file
 
 ```js
-import { $ } from "bun"
+import { $ } from "bun";
 
-await $`echo bun! > greeting.txt`
+await $`echo bun! > greeting.txt`;
 ```
 
 ### Example: Redirect stderr -> file
 
 ```js
-import { $ } from "bun"
+import { $ } from "bun";
 
-await $`bun run index.ts 2> errors.txt`
+await $`bun run index.ts 2> errors.txt`;
 ```
-
 
 ### Example: Redirect stdout -> stderr
 
 ```js
-import { $ } from "bun"
+import { $ } from "bun";
 
 // redirects stderr to stdout, so all output
 // will be available on stdout
-await $`bun run ./index.ts 2>&1`
+await $`bun run ./index.ts 2>&1`;
 ```
 
 ### Example: Redirect stderr -> stdout
 
 ```js
-import { $ } from "bun"
+import { $ } from "bun";
 
 // redirects stdout to stderr, so all output
 // will be available on stderr
-await $`bun run ./index.ts 1>&2`
+await $`bun run ./index.ts 1>&2`;
 ```
 
 ## Piping (`|`)
@@ -385,7 +429,7 @@ Exposes Bun Shell's escaping logic as a function:
 ```js
 import { $ } from "bun";
 
-console.log($.escape('$(foo) `bar` "baz"'))
+console.log($.escape('$(foo) `bar` "baz"'));
 // => \$(foo) \`bar\` \"baz\"
 ```
 
@@ -394,7 +438,7 @@ If you do not want your string to be escaped, wrap it in a `{ raw: 'str' }` obje
 ```js
 import { $ } from "bun";
 
-await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`
+await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`;
 // => bun: command not found: foo
 // => bun: command not found: bar
 // => baz
@@ -421,6 +465,10 @@ Scripts with Bun Shell are cross platform, which means they work on Windows:
 PS C:\Users\Demo> bun .\script.sh
 Hello World! pwd=C:\Users\Demo
 ```
+
+## Implementation notes
+
+Bun Shell is a small programming language in Bun that is implemented in Zig. It includes a handwritten lexer, parser, and interpreter. Unlike bash, zsh, and other shells, Bun Shell runs operations concurrently.
 
 ## Credits
 

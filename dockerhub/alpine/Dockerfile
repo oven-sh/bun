@@ -14,6 +14,7 @@ ARG GLIBC_VERSION=2.34-r0
 # https://github.com/oven-sh/bun/issues/5545#issuecomment-1722461083
 ARG GLIBC_VERSION_AARCH64=2.26-r1
 
+# We add python3 for node-gyp, see https://github.com/oven-sh/bun/issues/9807
 RUN apk --no-cache add \
       ca-certificates \
       curl \
@@ -21,6 +22,7 @@ RUN apk --no-cache add \
       gpg \
       gpg-agent \
       unzip \
+      python3 \
     && arch="$(apk --print-arch)" \
     && case "${arch##*-}" in \
       x86_64) build="x64-baseline";; \

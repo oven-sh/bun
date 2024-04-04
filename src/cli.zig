@@ -1829,7 +1829,7 @@ pub const Command = struct {
                         .failure => {},
                         .ok => return,
                         .code => |code| {
-                            Global.exit(code);
+                            Global.exitWide(code);
                         },
                     }
 

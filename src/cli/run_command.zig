@@ -277,7 +277,7 @@ pub const RunCommand = struct {
         passthrough: []const string,
         silent: bool,
         use_system_shell: bool,
-    ) !bool {
+    ) !ExecResult {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         const script = original_script;
@@ -323,8 +323,7 @@ pub const RunCommand = struct {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
-
-                Global.exit(1);
+                return ExecResult.failure;
             };
 
             if (code > 0) {
@@ -333,10 +332,10 @@ pub const RunCommand = struct {
                     Output.flush();
                 }
 
-                Global.exitWide(code);
+                return ExecResult.withCode(code);
             }
 
-            return true;
+            return ExecResult.ok;
         }
 
         const argv = [_]string{
@@ -350,13 +349,23 @@ pub const RunCommand = struct {
             Output.flush();
         }
 
+        const envp = try env.map.createNullDelimitedEnvMap(allocator);
+        defer {
+            for (envp) |e| {
+                if (e) |ptr| {
+                    allocator.free(bun.span(ptr));
+                }
+            }
+            allocator.free(envp);
+        }
+
         const spawn_result = switch ((bun.spawnSync(&.{
             .argv = &argv,
             .argv0 = shell_bin.ptr,
 
             // TODO: remember to free this when we add --filter or --concurrent
             // in the meantime we don't need to free it.
-            .envp = try env.map.createNullDelimitedEnvMap(bun.default_allocator),
+            .envp = envp,
 
             .cwd = cwd,
             .stderr = .inherit,
@@ -372,7 +381,7 @@ pub const RunCommand = struct {
             }
 
             Output.flush();
-            return true;
+            return ExecResult.failure;
         })) {
             .err => |err| {
                 if (!silent) {
@@ -380,7 +389,7 @@ pub const RunCommand = struct {
                 }
 
                 Output.flush();
-                return true;
+                return ExecResult.failure;
             },
             .result => |result| result,
         };
@@ -400,7 +409,7 @@ pub const RunCommand = struct {
                         Output.flush();
                     }
 
-                    Global.exit(exit_code.code);
+                    return ExecResult.withCode(exit_code.code);
                 }
             },
 
@@ -419,13 +428,13 @@ pub const RunCommand = struct {
                 }
 
                 Output.flush();
-                return true;
+                return ExecResult.failure;
             },
 
             else => {},
         }
 
-        return true;
+        return ExecResult.ok;
     }
 
     /// When printing error messages from 'bun run', attribute bun overridden node.js to bun
@@ -453,7 +462,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         original_script_for_bun_run: ?[]const u8,
-    ) !noreturn {
+    ) !ExecResult {
         // Attempt to find a ".bunx" file on disk, and run it, skipping the
         // wrapper exe.  we build the full exe path even though we could do
         // a relative lookup, because in the case we do find it, we have to
@@ -474,7 +483,7 @@ pub const RunCommand = struct {
             BunXFastPath.tryLaunch(ctx, wpath, env, passthrough);
         }
 
-        try runBinaryWithoutBunxPath(
+        return try runBinaryWithoutBunxPath(
             ctx,
             executable,
             executableZ,
@@ -485,15 +494,13 @@ pub const RunCommand = struct {
         );
     }
 
-    fn runBinaryGenericError(executable: []const u8, silent: bool, err: bun.sys.Error) noreturn {
+    fn runBinaryGenericError(executable: []const u8, silent: bool, err: bun.sys.Error) void {
         if (!silent) {
             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{}", .{ basenameOrBun(executable), err.withPath(executable) });
             if (@errorReturnTrace()) |trace| {
                 std.debug.dumpStackTrace(trace.*);
             }
         }
-
-        Global.exit(1);
     }
 
     fn runBinaryWithoutBunxPath(
@@ -504,7 +511,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         original_script_for_bun_run: ?[]const u8,
-    ) !noreturn {
+    ) !ExecResult {
         var argv_ = [_]string{executable};
         var argv: []const string = &argv_;
 
@@ -563,19 +570,21 @@ pub const RunCommand = struct {
                     }
                 }
             }
-            Global.exit(1);
+            return ExecResult.failure;
         };
 
         switch (spawn_result) {
             .err => |err| {
                 // an error occurred while spawning the process
                 runBinaryGenericError(executable, silent, err);
+                return ExecResult.failure;
             },
             .result => |result| {
                 switch (result.status) {
                     // An error occurred after the process was spawned.
                     .err => |err| {
                         runBinaryGenericError(executable, silent, err);
+                        return ExecResult.failure;
                     },
 
                     .signaled => |signal| {
@@ -648,7 +657,7 @@ pub const RunCommand = struct {
                             }
                         }
 
-                        Global.exit(code);
+                        return ExecResult.withCode(code);
                     },
                     .running => @panic("Unexpected state: process is running"),
                 }
@@ -1281,53 +1290,12 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
-    pub fn bootMaybeSubprocess(ctx_: Command.Context, entry_path: string, comptime subprocess: bool) !ExecResult {
-        if (comptime subprocess) {
-            const pid = std.c.fork();
-            if (pid == 0) {
-                // child
-                Run.boot(ctx_, entry_path) catch {
-                    Global.exit(1);
-                };
-                Global.exit(0);
-            } else {
-                // parent
-                var cstatus: c_int = 0;
-                switch (std.c.getErrno(std.c.waitpid(pid, &cstatus, 0))) {
-                    .SUCCESS => {
-                        const status: u32 = @intCast(cstatus);
-                        const os = std.os;
-                        if (os.W.IFEXITED(status)) {
-                            const code = os.W.EXITSTATUS(status);
-                            return ExecResult.withCode(@intCast(code));
-                            // Term{ .Exited = os.W.EXITSTATUS(status) };
-                        } else if (os.W.IFSIGNALED(status)) {
-                            const code = os.W.TERMSIG(status);
-                            Global.exit(128 + @as(u8, @as(u7, @truncate(code))));
-                        } else if (os.W.IFSTOPPED(status)) {
-                            const code = os.W.STOPSIG(status);
-                            Global.exit(128 + @as(u8, @as(u7, @truncate(code))));
-                        } else {
-                            // shouldn't be possible, but in case we get an invalid status code just ignore it
-                            return ExecResult.ok;
-                        }
-                    },
-                    // if the waitpid call failed, we can't get the exit code
-                    else => return ExecResult.failure,
-                }
-            }
-        } else {
-            try Run.boot(ctx_, entry_path);
-            return ExecResult.ok;
-        }
-    }
-
-    const ExecResult = union(enum) {
-        code: u8,
+    pub const ExecResult = union(enum) {
+        code: u32,
         failure,
         ok,
 
-        pub fn withCode(code: u8) ExecResult {
+        pub fn withCode(code: u32) ExecResult {
             return ExecResult{ .code = code };
         }
 
@@ -1346,7 +1314,7 @@ pub const RunCommand = struct {
             switch (try exec(ctx, bin_dirs_only, true, false)) {
                 .ok => return,
                 .failure => Global.exit(1),
-                .code => |code| Global.exit(code),
+                .code => |code| Global.exitWide(code),
             }
             return;
         }
@@ -1410,7 +1378,7 @@ pub const RunCommand = struct {
                     var parser = try json_parser.PackageJSONVersionChecker.init(arena_alloc, &json_source, ctx.log);
                     _ = try parser.parseExpr();
                     if (!parser.has_found_name) {
-                        // TODO warn of malformed package
+                        Output.warn("Failed to find package name in {s}\n", .{package_json_path});
                         continue;
                     }
                     break :matches filter_instance.matchesPathName(path, parser.found_name);
@@ -1628,7 +1596,7 @@ pub const RunCommand = struct {
                     defer ctx.allocator.free(temp_script_buffer);
 
                     if (scripts.get(temp_script_buffer[1..])) |prescript| {
-                        if (!try runPackageScriptForeground(
+                        const res = try runPackageScriptForeground(
                             &ctx,
                             ctx.allocator,
                             prescript,
@@ -1638,12 +1606,11 @@ pub const RunCommand = struct {
                             &.{},
                             ctx.debug.silent,
                             ctx.debug.use_system_shell,
-                        )) {
-                            return ExecResult.failure;
-                        }
+                        );
+                        if (!res.notFailure()) return ExecResult.failure;
                     }
 
-                    if (!try runPackageScriptForeground(
+                    const res2 = try runPackageScriptForeground(
                         &ctx,
                         ctx.allocator,
                         script_content,
@@ -1653,12 +1620,13 @@ pub const RunCommand = struct {
                         passthrough,
                         ctx.debug.silent,
                         ctx.debug.use_system_shell,
-                    )) return ExecResult.failure;
+                    );
+                    if (!res2.notFailure()) return ExecResult.failure;
 
                     temp_script_buffer[0.."post".len].* = "post".*;
 
                     if (scripts.get(temp_script_buffer)) |postscript| {
-                        if (!try runPackageScriptForeground(
+                        const res3 = try runPackageScriptForeground(
                             &ctx,
                             ctx.allocator,
                             postscript,
@@ -1668,9 +1636,8 @@ pub const RunCommand = struct {
                             &.{},
                             ctx.debug.silent,
                             ctx.debug.use_system_shell,
-                        )) {
-                            return ExecResult.failure;
-                        }
+                        );
+                        if (!res3.notFailure()) return ExecResult.failure;
                     }
 
                     return ExecResult.ok;
@@ -1692,7 +1659,6 @@ pub const RunCommand = struct {
                 if (@errorReturnTrace()) |trace| {
                     std.debug.dumpStackTrace(trace.*);
                 }
-                // Global.exit(1);
                 return ExecResult.failure;
             };
         }

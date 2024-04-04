@@ -2488,10 +2488,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         // so it must zero out state instead of make it
         pub fn finalize(this: *@This()) void {
             log("finalize()", .{});
-            this.res.clearOnWritable();
+
             if (!this.done) {
                 this.done = true;
                 this.unregisterAutoFlusher();
+                this.res.clearOnWritable();
                 this.res.endStream(false);
             }
 

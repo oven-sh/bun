@@ -374,9 +374,7 @@ private:
                     return s;
                 }
 
-                /* We don't want to fall through since we don't want to mess with timeout.
-                 * It makes little sense to drain any backpressure when the user has registered onWritable. */
-                return s;
+                /* We need to drain any remaining buffered data if success == true*/    
             }
 
             /* Drain any socket buffer, this might empty our backpressure and thus finish the request */

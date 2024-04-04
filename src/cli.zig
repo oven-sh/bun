@@ -435,8 +435,9 @@ pub const Arguments = struct {
                 break :brk try allocator.dupe(u8, out);
             };
         } else {
-            cwd = try bun.getcwd(&cwd_buf);
+            cwd = try allocator.dupe(u8, try bun.getcwd(&cwd_buf));
         }
+        ctx.args.cwd_override = cwd;
 
         if (cmd == .RunCommand) {
             ctx.filters = args.options("--filter");

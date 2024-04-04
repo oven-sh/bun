@@ -2216,13 +2216,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             const len = @as(Blob.SizeType, @truncate(bytes.len));
             log("write({d})", .{bytes.len});
 
-            if (this.hasBackpressureAndIsTryEnd()) {
-                // queue the data send in onWritable
-                _ = this.buffer.write(this.allocator, bytes) catch {
-                    return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
-                };
-                return .{ .owned = len };
-            }
             if (this.buffer.len == 0 and len >= this.highWaterMark) {
                 // fast path:
                 // - large-ish chunk

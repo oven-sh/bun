@@ -136,6 +136,9 @@ pub const FilterSet = struct {
             var codepointer_iter = strings.UnsignedCodepointIterator.init(filter_utf8);
             var cursor = strings.UnsignedCodepointIterator.Cursor{};
             while (codepointer_iter.next(&cursor)) {
+                if (cursor.c == @as(u32, '\\')) {
+                    try filter_utf32.append(self.allocator, cursor.c);
+                }
                 try filter_utf32.append(self.allocator, cursor.c);
             }
             self.has_name_filters = self.has_name_filters or !is_path;

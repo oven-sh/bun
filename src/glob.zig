@@ -248,7 +248,8 @@ pub const DirEntryAccessor = struct {
     pub fn openat(handle: Handle, path_: [:0]const u8) !Maybe(Handle) {
         var path: []const u8 = path_;
         var buf: bun.PathBuffer = undefined;
-        if (path.len > 0 and path[0] != '/') {
+
+        if (!bun.path.Platform.auto.isAbsolute(path)) {
             if (handle.value) |entry| {
                 path = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path }, .auto);
             }

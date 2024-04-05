@@ -149,7 +149,7 @@ describe("bun", () => {
   });
 
   test("run binaries in package directories", () => {
-    runInCwdSuccess(cwd_root, "*", [/pkga/, /pkgb/, /dirname/], [], ["pwd"]);
+    runInCwdSuccess(cwd_root, "*", [/pkga/, /pkgb/, /dirname/], [], ["bun", "-e", "console.log(process.cwd())"]);
   });
 
   test("should error with missing script", () => {

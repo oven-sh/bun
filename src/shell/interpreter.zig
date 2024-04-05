@@ -4526,6 +4526,13 @@ pub const Interpreter = struct {
                 };
 
                 const first_arg_len = std.mem.len(first_arg);
+                var first_arg_real = first_arg[0..first_arg_len];
+
+                if (bun.Environment.isDebug) {
+                    if (bun.strings.eqlComptime(first_arg_real, "bun")) {
+                        first_arg_real = "bun-debug";
+                    }
+                }
 
                 if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
                     const cwd = this.base.shell.cwd_fd;
@@ -4561,7 +4568,7 @@ pub const Interpreter = struct {
                 }
 
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
+                const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse {
                     this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
                     return;
                 };

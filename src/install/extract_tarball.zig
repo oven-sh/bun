@@ -298,11 +298,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         const path2 = bun.strings.toWPathNormalized(&path2_buf, folder_name);
         if (create_subdir) {
             if (bun.Dirname.dirname(u16, path2)) |folder| {
-                bun.MakePath.makePath(u16, cache_dir, folder) catch {};
+                _ = bun.MakePath.makePath(u16, cache_dir, folder) catch {};
             }
         }
 
-        const path_to_use = path2[if (std.mem.lastIndexOfScalar(u16, path2, '\\')) |i| i + 1 else 0..];
+        const path_to_use = path2;
 
         while (true) {
             const dir_to_move = bun.sys.openDirAtWindowsA(bun.toFD(this.temp_dir.fd), bun.span(tmpname), .{

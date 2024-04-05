@@ -1751,6 +1751,10 @@ pub const Interpreter = struct {
             }
         };
 
+        pub fn format(this: *const Expansion, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("Expansion(0x{x})", .{@intFromPtr(this)});
+        }
+
         pub fn init(
             interpreter: *ThisInterpreter,
             shell_state: *ShellState,
@@ -2115,6 +2119,7 @@ pub const Interpreter = struct {
         }
 
         fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) void {
+            log("{} onGlobWalkDone", .{this});
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.child_state == .glob);
             }
@@ -2133,6 +2138,16 @@ pub const Interpreter = struct {
             }
 
             if (task.result.items.len == 0) {
+                // In variable assignments, a glob that fails to match should not produce an error, but instead expand to just the pattern
+                if (this.parent.ptr.is(Assigns) or (this.parent.ptr.is(Cmd) and this.parent.ptr.as(Cmd).state == .expanding_assigns)) {
+                    this.pushCurrentOut();
+                    this.child_state.glob.walker.deinit(true);
+                    this.child_state = .idle;
+                    this.state = .done;
+                    this.next();
+                    return;
+                }
+
                 const msg = std.fmt.allocPrint(bun.default_allocator, "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch bun.outOfMemory();
                 this.state = .{
                     .err = bun.shell.ShellErr{
@@ -2678,8 +2693,13 @@ pub const Interpreter = struct {
                 } else {
                     const size = brk: {
                         var total: usize = 0;
-                        for (expanding.current_expansion_result.items) |slice| {
+                        const last = expanding.current_expansion_result.items.len -| 1;
+                        for (expanding.current_expansion_result.items, 0..) |slice, i| {
                             total += slice.len;
+                            if (i != last) {
+                                // for space
+                                total += 1;
+                            }
                         }
                         break :brk total;
                     };
@@ -2687,9 +2707,14 @@ pub const Interpreter = struct {
                     const value = brk: {
                         var merged = bun.default_allocator.allocSentinel(u8, size, 0) catch bun.outOfMemory();
                         var i: usize = 0;
-                        for (expanding.current_expansion_result.items) |slice| {
+                        const last = expanding.current_expansion_result.items.len -| 1;
+                        for (expanding.current_expansion_result.items, 0..) |slice, j| {
                             @memcpy(merged[i .. i + slice.len], slice[0..slice.len]);
                             i += slice.len;
+                            if (j != last) {
+                                merged[i] = ' ';
+                                i += 1;
+                            }
                         }
                         break :brk merged;
                     };

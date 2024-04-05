@@ -10042,7 +10042,7 @@ pub const Interpreter = struct {
         err: ?JSC.SystemError = null,
         evtloop: JSC.EventLoopHandle,
         concurrent_task: JSC.EventLoopTask,
-        async_deinit: AsyncDeinit,
+        async_deinit: AsyncDeinitReader,
         is_reading: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
 
         pub const ChildPtr = IOReaderChildPtr;
@@ -10266,7 +10266,7 @@ pub const Interpreter = struct {
         }
     };
 
-    pub const AsyncDeinit = struct {
+    pub const AsyncDeinitReader = struct {
         ran: bool = false,
 
         pub fn enqueue(this: *@This()) void {
@@ -10281,16 +10281,16 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn reader(this: *AsyncDeinit) *IOReader {
+        pub fn reader(this: *AsyncDeinitReader) *IOReader {
             return @fieldParentPtr(IOReader, "async_deinit", this);
         }
 
-        pub fn runFromMainThread(this: *AsyncDeinit) void {
+        pub fn runFromMainThread(this: *AsyncDeinitReader) void {
             const ioreader = @fieldParentPtr(IOReader, "async_deinit", this);
             ioreader.__deinit();
         }
 
-        pub fn runFromMainThreadMini(this: *AsyncDeinit, _: *void) void {
+        pub fn runFromMainThreadMini(this: *AsyncDeinitReader, _: *void) void {
             this.runFromMainThread();
         }
     };

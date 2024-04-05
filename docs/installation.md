@@ -55,7 +55,7 @@ To install, paste this into a terminal:
 ```
 
 ```powershell#Scoop
-scoop install bun
+> scoop install bun
 ```
 
 {% /codetabs %}
@@ -238,7 +238,7 @@ $ rm -rf ~/.bun # for macOS, Linux, and WSL
 ```
 
 ```powershell#Scoop
-scoop uninstall bun
+> scoop uninstall bun
 ```
 
 ```bash#npm

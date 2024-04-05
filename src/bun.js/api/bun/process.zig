@@ -853,7 +853,7 @@ const WaiterThreadPosix = struct {
         }
 
         if (comptime Environment.isLinux) {
-            const linux = std.posix.linux;
+            const linux = std.os.linux;
             instance.eventfd = bun.toFD(try std.posix.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0));
         }
 
@@ -873,7 +873,7 @@ const WaiterThreadPosix = struct {
 
         if (comptime Environment.isLinux) {
             var current_mask = std.posix.empty_sigset;
-            std.posix.linux.sigaddset(&current_mask, std.posix.SIG.CHLD);
+            std.os.linux.sigaddset(&current_mask, std.posix.SIG.CHLD);
             const act = std.posix.Sigaction{
                 .handler = .{ .handler = &wakeup },
                 .mask = current_mask,
@@ -1075,15 +1075,15 @@ pub const PosixSpawnResult = struct {
 
         var pidfd_flags = pidfdFlagsForLinux();
 
-        var rc = std.posix.linux.pidfd_open(
+        var rc = std.os.linux.pidfd_open(
             @intCast(this.pid),
             pidfd_flags,
         );
         while (true) {
-            switch (std.posix.linux.getErrno(rc)) {
+            switch (bun.C.getErrno(rc)) {
                 .SUCCESS => return JSC.Maybe(PidFDType){ .result = @intCast(rc) },
                 .INTR => {
-                    rc = std.posix.linux.pidfd_open(
+                    rc = std.os.linux.pidfd_open(
                         @intCast(this.pid),
                         pidfd_flags,
                     );
@@ -1092,7 +1092,7 @@ pub const PosixSpawnResult = struct {
                 else => |err| {
                     if (err == .INVAL) {
                         if (pidfd_flags != 0) {
-                            rc = std.posix.linux.pidfd_open(
+                            rc = std.os.linux.pidfd_open(
                                 @intCast(this.pid),
                                 0,
                             );
@@ -1108,7 +1108,7 @@ pub const PosixSpawnResult = struct {
 
                     var status: u32 = 0;
                     // ensure we don't leak the child process on error
-                    _ = std.posix.linux.wait4(this.pid, &status, 0, null);
+                    _ = std.os.linux.wait4(this.pid, &status, 0, null);
 
                     return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
                 },
@@ -1249,8 +1249,8 @@ pub fn spawnProcessPosix(
                         };
 
                         // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
-                        const rc = std.posix.linux.memfd_create(label, 0);
-                        if (std.posix.linux.getErrno(rc) != .SUCCESS) {
+                        const rc = std.os.linux.memfd_create(label, 0);
+                        if (bun.C.getErrno(rc) != .SUCCESS) {
                             break :use_memfd;
                         }
 

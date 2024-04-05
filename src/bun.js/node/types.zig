@@ -7,7 +7,7 @@ const heap_allocator = bun.default_allocator;
 const is_bindgen: bool = false;
 const kernel32 = windows.kernel32;
 const logger = bun.logger;
-const os = std.posix;
+const posix = std.posix;
 const path_handler = bun.path;
 const strings = bun.strings;
 const string = bun.string;
@@ -211,9 +211,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn getErrno(this: @This()) os.E {
+        pub inline fn getErrno(this: @This()) posix.E {
             return switch (this) {
-                .result => os.E.SUCCESS,
+                .result => posix.E.SUCCESS,
                 .err => |e| @enumFromInt(e.errno),
             };
         }
@@ -262,7 +262,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         }
 
         pub inline fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
-            if (meta.Child(@TypeOf(path)) == u16) {
+            if (bun.meta.Item(@TypeOf(path)) == u16) {
                 @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
             }
             if (comptime Environment.isWindows) {
@@ -1573,7 +1573,7 @@ pub fn StatType(comptime Big: bool) type {
             return @truncate(this.mode);
         }
 
-        const S = if (Environment.isWindows) bun.C.S else os.system.S;
+        const S = if (Environment.isWindows) bun.C.S else posix.system.S;
 
         pub fn isBlockDevice(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(S.ISBLK(@intCast(this.modeInternal())));
@@ -4391,7 +4391,7 @@ pub const Path = struct {
                     //
                     // TODO: Enable test once spawnResult.stdout works on Windows.
                     // test/js/node/path/resolve.test.js
-                    if (std.posix.getenvW(key_w)) |r| {
+                    if (std.process.getenvW(key_w)) |r| {
                         if (T == u16) {
                             bufSize = r.len;
                             @memcpy(buf2[0..bufSize], r);

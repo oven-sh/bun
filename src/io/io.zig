@@ -1,7 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const sys = bun.sys;
-const linux = std.posix.linux;
+const linux = std.os.linux;
 const Environment = bun.Environment;
 const heap = @import("./heap.zig");
 const JSC = bun.JSC;
@@ -10,7 +10,7 @@ const log = bun.Output.scoped(.loop, false);
 
 const TimerHeap = heap.Intrusive(Timer, void, Timer.less);
 
-const os = std.posix;
+const posix = std.posix;
 const assert = std.debug.assert;
 
 pub const Source = @import("./source.zig").Source;
@@ -22,7 +22,7 @@ pub const Loop = struct {
 
     timers: TimerHeap = .{ .context = {} },
 
-    cached_now: os.timespec = .{
+    cached_now: posix.timespec = .{
         .tv_nsec = 0,
         .tv_sec = 0,
     },
@@ -41,15 +41,15 @@ pub const Loop = struct {
                 .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
             };
             if (comptime Environment.isLinux) {
-                loop.epoll_fd = bun.toFD(std.posix.epoll_create1(std.posix.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
+                loop.epoll_fd = bun.toFD(std.posix.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
 
                 {
-                    var epoll = std.mem.zeroes(std.posix.linux.epoll_event);
-                    epoll.events = std.posix.linux.EPOLL.IN | std.posix.linux.EPOLL.ERR | std.posix.linux.EPOLL.HUP;
+                    var epoll = std.mem.zeroes(std.os.linux.epoll_event);
+                    epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
                     epoll.data.ptr = @intFromPtr(&loop);
-                    const rc = std.posix.linux.epoll_ctl(loop.epoll_fd.cast(), std.posix.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
+                    const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
 
-                    switch (std.posix.linux.getErrno(rc)) {
+                    switch (bun.C.getErrno(rc)) {
                         .SUCCESS => {},
                         else => |err| bun.Output.panic("Failed to wait on epoll {s}", .{@tagName(err)}),
                     }
@@ -184,7 +184,7 @@ pub const Loop = struct {
                 timeout,
             );
 
-            switch (std.posix.linux.getErrno(rc)) {
+            switch (bun.C.getErrno(rc)) {
                 .INTR => continue,
                 .SUCCESS => {},
                 else => |e| bun.Output.panic("epoll_wait: {s}", .{@tagName(e)}),
@@ -192,7 +192,7 @@ pub const Loop = struct {
 
             this.updateNow();
 
-            const current_events: []std.posix.linux.epoll_event = events[0..rc];
+            const current_events: []std.os.linux.epoll_event = events[0..rc];
             if (rc != 0) {
                 log("epoll_wait({}) = {d}", .{ this.pollfd(), rc });
             }
@@ -336,7 +336,7 @@ pub const Loop = struct {
                 break :timeout out;
             };
 
-            const rc = os.system.kevent64(
+            const rc = posix.system.kevent64(
                 this.pollfd().cast(),
                 events_list.items.ptr,
                 @intCast(change_count),
@@ -406,7 +406,7 @@ pub const Loop = struct {
     }
 
     extern "C" fn clock_gettime_monotonic(sec: *i64, nsec: *i64) c_int;
-    pub fn updateTimespec(timespec: *os.timespec) void {
+    pub fn updateTimespec(timespec: *posix.timespec) void {
         if (comptime Environment.isLinux) {
             const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, timespec);
             assert(rc == 0);
@@ -511,13 +511,13 @@ const TimerReference = bun.JSC.BunTimer.Timeout.TimerReference;
 
 pub const Timer = struct {
     /// The absolute time to fire this timer next.
-    next: os.timespec,
+    next: posix.timespec,
 
     /// Only used internally. If this is non-null and timer is
     /// CANCELLED, then the timer is rearmed automatically with this
     /// as the next time. The callback will not be called on the
     /// cancellation.
-    reset: ?os.timespec = null,
+    reset: ?posix.timespec = null,
 
     /// Internal heap fields.
     heap: heap.IntrusiveField(Timer) = .{},
@@ -717,21 +717,21 @@ pub const Poll = struct {
             return flags;
         }
 
-        pub fn fromEpollEvent(epoll: std.posix.linux.epoll_event) Flags.Set {
+        pub fn fromEpollEvent(epoll: std.os.linux.epoll_event) Flags.Set {
             var flags = Flags.Set{};
-            if (epoll.events & std.posix.linux.EPOLL.IN != 0) {
+            if (epoll.events & std.os.linux.EPOLL.IN != 0) {
                 flags.insert(Flags.readable);
                 log("readable", .{});
             }
-            if (epoll.events & std.posix.linux.EPOLL.OUT != 0) {
+            if (epoll.events & std.os.linux.EPOLL.OUT != 0) {
                 flags.insert(Flags.writable);
                 log("writable", .{});
             }
-            if (epoll.events & std.posix.linux.EPOLL.ERR != 0) {
+            if (epoll.events & std.os.linux.EPOLL.ERR != 0) {
                 flags.insert(Flags.eof);
                 log("eof", .{});
             }
-            if (epoll.events & std.posix.linux.EPOLL.HUP != 0) {
+            if (epoll.events & std.os.linux.EPOLL.HUP != 0) {
                 flags.insert(Flags.hup);
                 log("hup", .{});
             }
@@ -837,7 +837,7 @@ pub const Poll = struct {
             .empty => {},
 
             inline else => |t| {
-                var this: *Pollable.Tag.Type(t) = @fieldParentPtr("io_poll", poll);
+                var this: *Pollable.Tag.Type(t) = @alignCast(@fieldParentPtr("io_poll", poll));
                 if (event.flags == std.c.EV_ERROR) {
                     log("error({d}) = {d}", .{ event.ident, event.data });
                     this.onIOError(bun.sys.Error.fromCode(@enumFromInt(event.data), .kevent));
@@ -859,9 +859,9 @@ pub const Poll = struct {
             .empty => {},
 
             inline else => |t| {
-                var this: *Pollable.Tag.Type(t) = @fieldParentPtr("io_poll", poll);
+                var this: *Pollable.Tag.Type(t) = @alignCast(@fieldParentPtr("io_poll", poll));
                 if (event.events & linux.EPOLL.ERR != 0) {
-                    const errno = std.posix.linux.getErrno(event.events);
+                    const errno = bun.C.getErrno(event.events);
                     log("error() = {s}", .{@tagName(errno)});
                     this.onIOError(bun.sys.Error.fromCode(errno, .epoll_ctl));
                 } else {

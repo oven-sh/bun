@@ -4,14 +4,14 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const bun = @import("root").bun;
-const os = std.posix;
+const posix = std.posix;
 
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const default_allocator = bun.default_allocator;
 const kernel32 = bun.windows;
-const linux = os.linux;
+const linux = std.os.linux;
 const mem = std.mem;
-const mode_t = os.mode_t;
+const mode_t = posix.mode_t;
 const open_sym = system.open;
 const sys = std.posix.system;
 const windows = bun.windows;
@@ -540,7 +540,7 @@ pub fn chdir(destination: anytype) Maybe(void) {
 
 pub fn sendfile(src: bun.FileDescriptor, dest: bun.FileDescriptor, len: usize) Maybe(usize) {
     while (true) {
-        const rc = std.posix.linux.sendfile(
+        const rc = std.os.linux.sendfile(
             dest.cast(),
             src.cast(),
             null,
@@ -1173,7 +1173,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
     }
 
     while (true) {
-        const rc = Syscall.system.openat(dirfd.cast(), file_path, flags, perm);
+        const rc = Syscall.system.openat(dirfd.cast(), file_path, bun.O.toPacked(flags), perm);
         if (comptime Environment.allow_assert)
             log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
         return switch (Syscall.getErrno(rc)) {
@@ -1461,28 +1461,28 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.posix.iovec, position: isiz
 }
 
 const preadv_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    std.posix.linux.preadv
+    std.os.linux.preadv
 else if (builtin.os.tag.isDarwin())
     system.@"preadv$NOCANCEL"
 else
     system.preadv;
 
 const readv_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    std.posix.linux.readv
+    std.os.linux.readv
 else if (builtin.os.tag.isDarwin())
     system.@"readv$NOCANCEL"
 else
     system.readv;
 
 const pwritev_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    std.posix.linux.pwritev
+    std.os.linux.pwritev
 else if (builtin.os.tag.isDarwin())
     system.@"pwritev$NOCANCEL"
 else
     system.pwritev;
 
 const writev_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    std.posix.linux.writev
+    std.os.linux.writev
 else if (builtin.os.tag.isDarwin())
     system.@"writev$NOCANCEL"
 else
@@ -1804,7 +1804,7 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
     }
 }
 
-pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
+pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(C.chown(path, uid, gid), .chown)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -2024,7 +2024,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
             @memset(out_buffer[0..MAX_PATH_BYTES], 0);
-            if (Maybe([]u8).errnoSys(system.fcntl(fd.cast(), os.F.GETPATH, out_buffer), .fcntl)) |err| {
+            if (Maybe([]u8).errnoSys(system.fcntl(fd.cast(), posix.F.GETPATH, out_buffer), .fcntl)) |err| {
                 return err;
             }
             const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;
@@ -2094,7 +2094,7 @@ pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offse
 
     if (wanted_size) |size_| size = @min(size, size_);
 
-    const map = switch (mmap(null, size, os.PROT.READ | os.PROT.WRITE, flags, fd, offset)) {
+    const map = switch (mmap(null, size, posix.PROT.READ | posix.PROT.WRITE, flags, fd, offset)) {
         .result => |map| map,
 
         .err => |err| {
@@ -2136,12 +2136,12 @@ pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usi
 
     // We don't use glibc here
     // It didn't work. Always returned 0.
-    const pipe_len = std.posix.linux.fcntl(fd.cast(), F_GETPIPE_SZ, 0);
+    const pipe_len = std.os.linux.fcntl(fd.cast(), F_GETPIPE_SZ, 0);
     if (Maybe(usize).errnoSys(pipe_len, .fcntl)) |err| return err;
     if (pipe_len == 0) return Maybe(usize){ .result = 0 };
     if (pipe_len >= capacity) return Maybe(usize){ .result = pipe_len };
 
-    const new_pipe_len = std.posix.linux.fcntl(fd.cast(), F_SETPIPE_SZ, capacity);
+    const new_pipe_len = std.os.linux.fcntl(fd.cast(), F_SETPIPE_SZ, capacity);
     if (Maybe(usize).errnoSys(new_pipe_len, .fcntl)) |err| return err;
     return Maybe(usize){ .result = new_pipe_len };
 }
@@ -2317,7 +2317,7 @@ pub fn isExecutableFilePath(path: anytype) bool {
 pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
     if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysFd(
-            linux.lseek(fd.cast(), @intCast(offset), os.SEEK.SET),
+            linux.lseek(fd.cast(), @intCast(offset), posix.SEEK.SET),
             .lseek,
             fd,
         ) orelse Maybe(void).success;
@@ -2325,7 +2325,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
 
     if (comptime Environment.isMac) {
         return Maybe(void).errnoSysFd(
-            std.c.lseek(fd.cast(), @intCast(offset), os.SEEK.SET),
+            std.c.lseek(fd.cast(), @intCast(offset), posix.SEEK.SET),
             .lseek,
             fd,
         ) orelse Maybe(void).success;
@@ -2452,12 +2452,12 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
         std.debug.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
 
     return Maybe(void).errnoSysP(
-        std.posix.linux.linkat(
+        std.os.linux.linkat(
             bun.fdcast(tmpfd),
             "",
             dirfd,
             name,
-            os.AT.EMPTY_PATH,
+            posix.AT.EMPTY_PATH,
         ),
         .link,
         name,
@@ -2575,7 +2575,7 @@ pub fn getFileSize(fd: bun.FileDescriptor) Maybe(usize) {
 }
 
 pub fn isPollable(mode: mode_t) bool {
-    return os.S.ISFIFO(mode) or os.S.ISSOCK(mode);
+    return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode);
 }
 
 const This = @This();

@@ -185,7 +185,7 @@ pub const ReadFile = struct {
     pub fn onRequestReadable(request: *io.Request) io.Action {
         bloblog("ReadFile.onRequestReadable", .{});
         request.scheduled = false;
-        var this: *ReadFile = @fieldParentPtr("io_request", request);
+        var this: *ReadFile = @alignCast(@fieldParentPtr("io_request", request));
         return io.Action{
             .readable = .{
                 .onError = @ptrCast(&onIOError),
@@ -439,7 +439,7 @@ pub const ReadFile = struct {
     }
 
     fn doReadLoopTask(task: *JSC.WorkPoolTask) void {
-        var this: *ReadFile = @fieldParentPtr("task", task);
+        var this: *ReadFile = @alignCast(@fieldParentPtr("task", task));
 
         this.update();
     }

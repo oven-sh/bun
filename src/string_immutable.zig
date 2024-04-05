@@ -33,7 +33,7 @@ pub inline fn contains(self: string, str: string) bool {
 }
 
 // TODO: remove this
-const w = toUTF16Literal;
+pub const w = toUTF16Literal;
 
 pub fn toUTF16Literal(comptime str: []const u8) [:0]const u16 {
     return comptime literal(u16, str);
@@ -62,7 +62,7 @@ fn literalLength(comptime T: type, comptime str: string) usize {
 }
 
 // TODO: remove this
-const toUTF16LiteralZ = toUTF16Literal;
+pub const toUTF16LiteralZ = toUTF16Literal;
 
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
@@ -862,7 +862,7 @@ pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool 
 pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: anytype) bool {
     const rhs = comptime switch (T) {
         u8 => alt,
-        u16 => switch (std.meta.Child(@TypeOf(alt))) {
+        u16 => switch (bun.meta.Item(@TypeOf(alt))) {
             u16 => alt,
             else => w(alt),
         },

@@ -34,8 +34,8 @@ pub fn main() void {
             @ptrCast(&bun.Mimalloc.mi_calloc),
             @ptrCast(&bun.Mimalloc.mi_free),
         );
-        environ = @ptrCast(std.posix.environ.ptr);
-        _environ = @ptrCast(std.posix.environ.ptr);
+        environ = @ptrCast(std.os.environ.ptr);
+        _environ = @ptrCast(std.os.environ.ptr);
     }
 
     bun.initArgv(bun.default_allocator) catch |err| {

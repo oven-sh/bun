@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const os = std.posix;
+const posix = std.posix;
 const mem = std.mem;
 const meta = std.meta;
 const atomic = std.atomic;

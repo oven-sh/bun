@@ -946,14 +946,10 @@ pub fn initScopedDebugWriterAtStartup() void {
             const path_fmt = std.mem.replaceOwned(u8, bun.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
             defer bun.default_allocator.free(path_fmt);
 
-            const fd = std.posix.openat(
-                std.fs.cwd().fd,
-                path_fmt,
-                .{ .CREAT = true, .ACCMODE = .WRONLY },
-                // on windows this is u0
-                if (Environment.isWindows) 0 else 0o644,
-            ) catch |err_| {
-                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(err_), path });
+            const fd = std.fs.cwd().createFile(path_fmt, .{
+                .mode = if (Environment.isPosix) 0o644 else 0,
+            }) catch |open_err| {
+                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
             };
             _ = bun.sys.ftruncate(bun.toFD(fd), 0); // windows
             ScopedDebugWriter.scoped_file_writer = File.from(fd).quietWriter();

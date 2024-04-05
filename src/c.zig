@@ -12,12 +12,12 @@ pub usingnamespace PlatformSpecific;
 
 const C = std.c;
 const builtin = @import("builtin");
-const os = std.posix;
+const posix = std.posix;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
-const errno = os.errno;
+const errno = posix.errno;
 const mode_t = bun.Mode;
 // TODO: this is wrong on Windows
 const libc_stat = bun.Stat;
@@ -65,7 +65,7 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
         .BADF => unreachable, // Always a race condition.
         .NOMEM => return error.SystemResources,
         .ACCES => return error.AccessDenied,
-        else => |err| return os.unexpectedErrno(err),
+        else => |err| return posix.unexpectedErrno(err),
     }
 
     const atime = st.atime();
@@ -77,22 +77,22 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
         .mode = st.mode,
         .kind = switch (builtin.os.tag) {
             .wasi => switch (st.filetype) {
-                os.FILETYPE_BLOCK_DEVICE => Kind.block_device,
-                os.FILETYPE_CHARACTER_DEVICE => Kind.character_device,
-                os.FILETYPE_DIRECTORY => Kind.directory,
-                os.FILETYPE_SYMBOLIC_LINK => Kind.sym_link,
-                os.FILETYPE_REGULAR_FILE => Kind.file,
-                os.FILETYPE_SOCKET_STREAM, os.FILETYPE_SOCKET_DGRAM => Kind.unix_domain_socket,
+                posix.FILETYPE_BLOCK_DEVICE => Kind.block_device,
+                posix.FILETYPE_CHARACTER_DEVICE => Kind.character_device,
+                posix.FILETYPE_DIRECTORY => Kind.directory,
+                posix.FILETYPE_SYMBOLIC_LINK => Kind.sym_link,
+                posix.FILETYPE_REGULAR_FILE => Kind.file,
+                posix.FILETYPE_SOCKET_STREAM, posix.FILETYPE_SOCKET_DGRAM => Kind.unix_domain_socket,
                 else => Kind.unknown,
             },
-            else => switch (st.mode & os.S.IFMT) {
-                os.S.IFBLK => Kind.block_device,
-                os.S.IFCHR => Kind.character_device,
-                os.S.IFDIR => Kind.directory,
-                os.S.IFIFO => Kind.named_pipe,
-                os.S.IFLNK => Kind.sym_link,
-                os.S.IFREG => Kind.file,
-                os.S.IFSOCK => Kind.unix_domain_socket,
+            else => switch (st.mode & posix.S.IFMT) {
+                posix.S.IFBLK => Kind.block_device,
+                posix.S.IFCHR => Kind.character_device,
+                posix.S.IFDIR => Kind.directory,
+                posix.S.IFIFO => Kind.named_pipe,
+                posix.S.IFLNK => Kind.sym_link,
+                posix.S.IFREG => Kind.file,
+                posix.S.IFSOCK => Kind.unix_domain_socket,
                 else => Kind.unknown,
             },
         },
@@ -176,7 +176,7 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
     defer _ = bun.sys.close(out_handle);
 
     if (comptime Environment.isLinux) {
-        _ = std.posix.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
+        _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
     }
 
     try bun.copyFile(in_handle.cast(), out_handle.cast());
@@ -218,8 +218,8 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                 }
                 allocator.free(slice);
             }
-            try os.dl_iterate_phdr(&paths, error{OutOfMemory}, struct {
-                fn callback(info: *os.dl_phdr_info, size: usize, list: *List) !void {
+            try posix.dl_iterate_phdr(&paths, error{OutOfMemory}, struct {
+                fn callback(info: *posix.dl_phdr_info, size: usize, list: *List) !void {
                     _ = size;
                     const name = info.dlpi_name orelse return;
                     if (name[0] == '/') {
@@ -344,7 +344,7 @@ pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
     if (code == 0) return .SUCCESS;
 
     const errcode = bun.sys.getErrno(code);
-    return errcode;
+    return @enumFromInt(@intFromEnum(errcode));
 }
 
 pub fn getVersion(buf: []u8) []const u8 {

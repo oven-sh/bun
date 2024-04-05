@@ -82,17 +82,20 @@ pub const LinuxMemFdAllocator = struct {
         };
     };
 
-    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize, flags: u32) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
+    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize, flags: std.posix.MAP) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
         var size = len;
 
         // size rounded up to nearest page
         size += (size + std.mem.page_size - 1) & std.mem.page_size;
 
+        var flags_mut = flags;
+        flags_mut.TYPE = .SHARED;
+
         switch (bun.sys.mmap(
             null,
             @min(size, this.size),
             std.posix.PROT.READ | std.posix.PROT.WRITE,
-            std.posix.MAP.SHARED | flags,
+            flags_mut,
             this.fd,
             offset,
         )) {
@@ -136,13 +139,13 @@ pub const LinuxMemFdAllocator = struct {
             const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .monotonic)}) catch "";
 
             // Using huge pages was slower.
-            const code = std.posix.linux.memfd_create(label.ptr, std.posix.linux.MFD.CLOEXEC | 0);
+            const code = std.posix.system.memfd_create(label.ptr, std.os.linux.MFD.CLOEXEC | 0);
 
             bun.sys.syslog("memfd_create({s}) = {d}", .{ label, code });
             break :brk code;
         };
 
-        switch (std.posix.linux.getErrno(rc)) {
+        switch (bun.C.getErrno(rc)) {
             .SUCCESS => {},
             else => |errno| {
                 bun.sys.syslog("Failed to create memfd: {s}", .{@tagName(errno)});
@@ -189,7 +192,7 @@ pub const LinuxMemFdAllocator = struct {
             .size = bytes.len,
         });
 
-        switch (linux_memfd_allocator.alloc(bytes.len, 0, 0)) {
+        switch (linux_memfd_allocator.alloc(bytes.len, 0, .{ .TYPE = .SHARED })) {
             .result => |res| {
                 return .{ .result = res };
             },

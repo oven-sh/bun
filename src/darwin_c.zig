@@ -1,13 +1,13 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
-const os = std.posix;
+const posix = std.posix;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 const off_t = std.c.off_t;
-const errno = os.errno;
+const errno = posix.errno;
 const zeroes = mem.zeroes;
 const This = @This();
 pub extern "c" fn copyfile(from: [*:0]const u8, to: [*:0]const u8, state: ?std.c.copyfile_state_t, flags: u32) c_int;
@@ -142,7 +142,7 @@ pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_in
 
 // benchmarking this did nothing on macOS
 // i verified it wasn't returning -1
-pub fn preallocate_file(_: os.fd_t, _: off_t, _: off_t) !void {
+pub fn preallocate_file(_: posix.fd_t, _: off_t, _: off_t) !void {
     //     pub const struct_fstore = extern struct {
     //     fst_flags: c_uint,
     //     fst_posmode: c_int,

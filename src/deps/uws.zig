@@ -952,7 +952,7 @@ pub const PosixLoop = extern struct {
     ready_polls: [1024]EventType align(16),
 
     const EventType = switch (Environment.os) {
-        .linux => std.posix.linux.epoll_event,
+        .linux => std.os.linux.epoll_event,
         .mac => std.posix.system.kevent64_s,
         // TODO:
         .windows => *anyopaque,
@@ -1250,9 +1250,9 @@ pub const Poll = opaque {
         write: bool = false,
 
         //#define LIBUS_SOCKET_READABLE
-        pub const read_flag = if (Environment.isLinux) std.posix.linux.EPOLL.IN else 1;
+        pub const read_flag = if (Environment.isLinux) std.os.linux.EPOLL.IN else 1;
         // #define LIBUS_SOCKET_WRITABLE
-        pub const write_flag = if (Environment.isLinux) std.posix.linux.EPOLL.OUT else 2;
+        pub const write_flag = if (Environment.isLinux) std.os.linux.EPOLL.OUT else 2;
     };
 
     pub fn deinit(self: *Poll) void {

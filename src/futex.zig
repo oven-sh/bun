@@ -6,6 +6,7 @@
 // This is copy-pasted from Zig's source code to fix an issue with linking on macOS Catalina and earlier.
 
 const std = @import("std");
+const bun = @import("root").bun;
 const builtin = @import("builtin");
 const Futex = @This();
 
@@ -129,7 +130,7 @@ const WindowsFutex = struct {
 };
 
 const LinuxFutex = struct {
-    const linux = std.posix.linux;
+    const linux = std.os.linux;
 
     fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
         var ts: std.posix.timespec = undefined;
@@ -142,7 +143,7 @@ const LinuxFutex = struct {
             ts.tv_nsec = @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
         }
 
-        switch (linux.getErrno(linux.futex_wait(
+        switch (bun.C.getErrno(linux.futex_wait(
             @as(*const i32, @ptrCast(ptr)),
             linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAIT,
             @as(i32, @bitCast(expect)),
@@ -159,7 +160,7 @@ const LinuxFutex = struct {
     }
 
     fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        switch (linux.getErrno(linux.futex_wake(
+        switch (bun.C.getErrno(linux.futex_wake(
             @as(*const i32, @ptrCast(ptr)),
             linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
             std.math.cast(i32, num_waiters) orelse std.math.maxInt(i32),

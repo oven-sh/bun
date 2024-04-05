@@ -2,7 +2,7 @@
 // Thank you @frmdstryr.
 const std = @import("std");
 
-const os = std.posix;
+const posix = std.posix;
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;

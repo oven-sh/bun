@@ -3123,7 +3123,7 @@ pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 
 pub fn exePathW() [:0]const u16 {
     const image_path_unicode_string = &std.os.windows.peb().ProcessParameters.ImagePathName;
-    return image_path_unicode_string.Buffer[0 .. image_path_unicode_string.Length / 2 :0];
+    return image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2 :0];
 }
 
 pub const KEY_EVENT_RECORD = extern struct {

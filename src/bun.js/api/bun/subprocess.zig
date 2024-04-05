@@ -2191,8 +2191,6 @@ pub const Subprocess = struct {
         return sync_value;
     }
 
-    const os = std.posix;
-
     pub fn handleIPCMessage(
         this: *Subprocess,
         message: IPC.DecodedIPCMessage,

@@ -374,7 +374,7 @@ pub fn preallocate_file(fd: std.posix.fd_t, offset: std.posix.off_t, len: std.po
     //   './micro 65432000 temp --preallocate' ran
     //     1.18 ± 0.06 times faster than './micro 65432000 temp'
     //
-    _ = std.posix.linux.fallocate(fd, 0, @as(i64, @intCast(offset)), len);
+    _ = std.os.linux.fallocate(fd, 0, @as(i64, @intCast(offset)), len);
 }
 
 /// splice() moves data between two file descriptors without copying
@@ -383,7 +383,7 @@ pub fn preallocate_file(fd: std.posix.fd_t, offset: std.posix.off_t, len: std.po
 /// to the file descriptor fd_out, where one of the file descriptors
 /// must refer to a pipe.
 pub fn splice(fd_in: std.posix.fd_t, off_in: ?*i64, fd_out: std.posix.fd_t, off_out: ?*i64, len: usize, flags: u32) usize {
-    return std.posix.linux.syscall6(
+    return std.os.linux.syscall6(
         .splice,
         @as(usize, @bitCast(@as(isize, fd_in))),
         @intFromPtr(off_in),
@@ -599,8 +599,8 @@ pub fn getErrno(rc: anytype) E {
     }
 }
 
-pub const getuid = std.posix.linux.getuid;
-pub const getgid = std.posix.linux.getgid;
+pub const getuid = std.os.linux.getuid;
+pub const getgid = std.os.linux.getgid;
 pub const linux_fs = if (bun.Environment.isLinux) @cImport({
     @cInclude("linux/fs.h");
 }) else struct {};
@@ -609,7 +609,7 @@ pub const linux_fs = if (bun.Environment.isLinux) @cImport({
 ///
 /// Support for FICLONE is dependent on the filesystem driver.
 pub fn ioctl_ficlone(dest_fd: bun.FileDescriptor, srcfd: bun.FileDescriptor) usize {
-    return std.posix.linux.ioctl(dest_fd.cast(), linux_fs.FICLONE, @intCast(srcfd.int()));
+    return std.os.linux.ioctl(dest_fd.cast(), linux_fs.FICLONE, @intCast(srcfd.int()));
 }
 
 pub const RWFFlagSupport = enum(u8) {

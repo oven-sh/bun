@@ -1789,7 +1789,7 @@ pub const PackageInstall = struct {
 
     pub fn isDanglingSymlink(path: [:0]const u8) bool {
         if (comptime Environment.isLinux) {
-            const rc = Syscall.system.open(path, @as(u32, bun.O.PATH | 0), @as(u32, 0));
+            const rc = Syscall.system.open(path, .{ .PATH = true }, @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
                     _ = Syscall.system.close(@intCast(rc));

@@ -53,3 +53,23 @@ pub fn banFieldType(comptime Container: type, comptime T: type) void {
         }
     }
 }
+
+// []T -> T
+// *const T -> T
+// *[n]T -> T
+pub fn Item(comptime T: type) type {
+    switch (@typeInfo(T)) {
+        .Pointer => |ptr| {
+            if (ptr.size == .One) {
+                switch (@typeInfo(ptr.child)) {
+                    .Array => |array| {
+                        return array.child;
+                    },
+                    else => {},
+                }
+            }
+            return ptr.child;
+        },
+        else => return std.meta.Child(T),
+    }
+}

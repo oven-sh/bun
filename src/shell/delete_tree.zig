@@ -3,7 +3,7 @@
 //! - uses Bun's DirIterator
 //! - can pass a Context which allows you to inspect which files/directories have been deleted (needed for shell's implementation of rm with verbose flag)
 const std = @import("std");
-const os = std.posix;
+const posix = std.posix;
 
 const bun = @import("root").bun;
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
@@ -38,4 +38,4 @@ pub const DeleteTreeError = error{
 
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
-} || os.UnexpectedError;
+} || posix.UnexpectedError;

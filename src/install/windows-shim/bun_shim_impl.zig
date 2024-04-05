@@ -53,17 +53,7 @@ const callmod_inline = if (is_standalone) std.builtin.CallModifier.always_inline
 
 const Flags = @import("./BinLinkingShim.zig").Flags;
 
-pub inline fn wliteral(comptime str: []const u8) []const u16 {
-    if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
-    comptime var output: [str.len]u16 = undefined;
-    for (str, 0..) |c, i| {
-        output[i] = c;
-    }
-    const Static = struct {
-        pub const literal: []const u16 = output[0..output.len];
-    };
-    return Static.literal;
-}
+const wliteral = std.unicode.utf8ToUtf16LeStringLiteral;
 
 /// A copy of all ntdll declarations this program uses
 const nt = struct {
@@ -342,7 +332,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     const image_path_u8 = @as([*]u8, @ptrCast(if (is_standalone) ImagePathName.Buffer else bun_ctx.base_path.ptr))[0..image_path_b_len];
 
     const cmd_line_b_len = CommandLine.Length;
-    const cmd_line_u16 = CommandLine.Buffer[0 .. cmd_line_b_len / 2];
+    const cmd_line_u16 = CommandLine.Buffer.?[0 .. cmd_line_b_len / 2];
     const cmd_line_u8 = @as([*]u8, @ptrCast(CommandLine.Buffer))[0..cmd_line_b_len];
 
     assert(@intFromPtr(cmd_line_u16.ptr) % 2 == 0); // alignment assumption

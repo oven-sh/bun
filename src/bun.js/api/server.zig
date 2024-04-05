@@ -87,7 +87,7 @@ const SendfileContext = struct {
     has_set_on_writable: bool = false,
     auto_close: bool = false,
 };
-const linux = std.posix.linux;
+const linux = std.os.linux;
 const Async = bun.Async;
 
 const BlobFileContentResult = struct {
@@ -1901,7 +1901,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 const val = linux.sendfile(this.sendfile.socket_fd.cast(), this.sendfile.fd.cast(), &signed_offset, this.sendfile.remain);
                 this.sendfile.offset = @as(Blob.SizeType, @intCast(signed_offset));
 
-                const errcode = linux.getErrno(val);
+                const errcode = bun.C.getErrno(val);
 
                 this.sendfile.remain -|= @as(Blob.SizeType, @intCast(this.sendfile.offset -| start));
 

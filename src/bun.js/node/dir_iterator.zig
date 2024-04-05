@@ -134,7 +134,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             end_index: usize,
 
             const Self = @This();
-            const linux = posix.linux;
+            const linux = std.os.linux;
 
             pub const Error = IteratorError;
 
@@ -154,17 +154,17 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         self.end_index = rc;
                     }
                     const linux_entry = @as(*align(1) linux.dirent64, @ptrCast(&self.buf[self.index]));
-                    const next_index = self.index + linux_entry.reclen();
+                    const next_index = self.index + linux_entry.reclen;
                     self.index = next_index;
 
-                    const name = mem.sliceTo(@as([*:0]u8, @ptrCast(&linux_entry.d_name)), 0);
+                    const name = mem.sliceTo(@as([*:0]u8, @ptrCast(&linux_entry.name)), 0);
 
                     // skip . and .. entries
                     if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..")) {
                         continue :start_over;
                     }
 
-                    const entry_kind = switch (linux_entry.d_type) {
+                    const entry_kind = switch (linux_entry.type) {
                         linux.DT.BLK => Entry.Kind.block_device,
                         linux.DT.CHR => Entry.Kind.character_device,
                         linux.DT.DIR => Entry.Kind.directory,
@@ -185,7 +185,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
         },
         .windows => struct {
             dir: Dir,
-            buf: [8192]u8 align(@alignOf(posix.windows.FILE_DIRECTORY_INFORMATION)),
+            buf: [8192]u8 align(@alignOf(std.os.windows.FILE_DIRECTORY_INFORMATION)),
             index: usize,
             end_index: usize,
             first: bool,
@@ -205,7 +205,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
             pub fn next(self: *Self) ResultT {
                 while (true) {
-                    const w = posix.windows;
+                    const w = std.os.windows;
                     if (self.index >= self.end_index) {
                         var io: w.IO_STATUS_BLOCK = undefined;
 

@@ -20,7 +20,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const string = []const u8;
 const bun = @import("root").bun;
-const os = std.posix;
+const posix = std.posix;
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -9593,7 +9593,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-                    var this: *ShellRmTask = @fieldParentPtr("task", task);
+                    var this: *ShellRmTask = @alignCast(@fieldParentPtr("task", task));
                     this.root_task.runFromThreadPoolImpl();
                 }
 
@@ -10848,12 +10848,12 @@ const ShellSyscall = struct {
                         .result => |p| p,
                         .err => |e| return .{ .err = e },
                     };
-                    return switch (Syscall.openDirAtWindowsA(dir, p, .{ .iterable = true, .no_follow = flags & os.O.NOFOLLOW != 0 })) {
+                    return switch (Syscall.openDirAtWindowsA(dir, p, .{ .iterable = true, .no_follow = flags & bun.O.NOFOLLOW != 0 })) {
                         .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
                         .err => |e| .{ .err = e.withPath(path) },
                     };
                 }
-                return switch (Syscall.openDirAtWindowsA(dir, path, .{ .iterable = true, .no_follow = flags & os.O.NOFOLLOW != 0 })) {
+                return switch (Syscall.openDirAtWindowsA(dir, path, .{ .iterable = true, .no_follow = flags & bun.O.NOFOLLOW != 0 })) {
                     .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
                     .err => |e| .{ .err = e.withPath(path) },
                 };
@@ -11140,7 +11140,7 @@ pub fn FlagParser(comptime Opts: type) type {
 
 pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
     if (bun.Environment.isWindows) return false;
-    if (bun.Environment.isLinux) return os.S.ISFIFO(mode) or os.S.ISSOCK(mode) or os.isatty(fd.int());
+    if (bun.Environment.isLinux) return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int());
     // macos allows regular files to be pollable: ISREG(mode) == true
-    return os.S.ISFIFO(mode) or os.S.ISSOCK(mode) or os.isatty(fd.int()) or os.S.ISREG(mode);
+    return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int()) or posix.S.ISREG(mode);
 }

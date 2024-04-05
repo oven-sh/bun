@@ -80,6 +80,15 @@ pub const OperatingSystem = enum {
             .wasm => "wasm",
         };
     }
+
+    pub fn stdOSTag(self: OperatingSystem) std.Target.Os.Tag {
+        return switch (self) {
+            .mac => .macos,
+            .linux => .linux,
+            .windows => .windows,
+            .wasm => unreachable,
+        };
+    }
 };
 
 pub const os: OperatingSystem = if (isMac)

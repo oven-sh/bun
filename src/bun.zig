@@ -5,6 +5,7 @@
 //      @import("root").bun
 //
 // Otherwise, you risk a circular dependency or Zig including multiple copies of this file which leads to strange bugs.
+const builtin = @import("builtin");
 const std = @import("std");
 pub const Environment = @import("env.zig");
 
@@ -768,7 +769,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
 
     if (comptime Environment.isWindows) {
         // Windows UCRT will fill this in for us
-        for (std.posix.environ) |lineZ| {
+        for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
             const key = line[0..key_end];
@@ -1846,6 +1847,9 @@ pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
 
 pub fn openFileForPath(file_path: [:0]const u8) !std.fs.File {
+    if (Environment.isWindows)
+        return std.fs.cwd().openFileZ(file_path, .{});
+
     const O_PATH = if (comptime Environment.isLinux) O.PATH else O.RDONLY;
     const flags: u32 = O.CLOEXEC | O.NOCTTY | O_PATH;
 
@@ -1856,6 +1860,9 @@ pub fn openFileForPath(file_path: [:0]const u8) !std.fs.File {
 }
 
 pub fn openDirForPath(file_path: [:0]const u8) !std.fs.Dir {
+    if (Environment.isWindows)
+        return std.fs.cwd().openDirZ(file_path, .{});
+
     const O_PATH = if (comptime Environment.isLinux) O.PATH else O.RDONLY;
     const flags: u32 = O.CLOEXEC | O.NOCTTY | O.DIRECTORY | O_PATH;
 
@@ -1906,7 +1913,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
-            FDImpl => fd,
+            FDImpl => fd, // TODO: remove the toFD call from these places and make this a @compileError
             FDImpl.System => FDImpl.fromSystem(fd),
             FDImpl.UV, i32, comptime_int => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd),
@@ -1921,7 +1928,8 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         // even though file descriptors are always positive, linux/mac repesents them as signed integers
         return switch (T) {
             FileDescriptor => fd, // TODO: remove the toFD call from these places and make this a @compileError
-            std.fs.File, sys.File => toFD(fd.handle),
+            sys.File => fd.handle,
+            std.fs.File => @enumFromInt(fd.handle),
             std.fs.Dir => @enumFromInt(@as(i32, @intCast(fd.fd))),
             c_int, i32, u32, comptime_int => @enumFromInt(fd),
             usize, i64 => @enumFromInt(@as(i32, @intCast(fd))),
@@ -2011,7 +2019,9 @@ pub const HOST_NAME_MAX = if (Environment.isWindows)
 else
     std.posix.HOST_NAME_MAX;
 
-pub const enums = @import("./enums.zig");
+// TODO: remove this
+pub const enums = std.enums;
+
 const WindowsStat = extern struct {
     dev: u32,
     ino: u32,
@@ -2372,9 +2382,11 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
         var buf: [literal.len:0]u8 = undefined;
         for (literal, 0..) |c, i| {
             buf[i] = if (c == '/') '\\' else c;
+            std.debug.assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
-        return &buf;
+        const final = buf[0..buf.len :0].*;
+        return &final;
     };
 }
 
@@ -2385,13 +2397,13 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
         var buf: [literal.len:0]OSPathChar = undefined;
         for (literal, 0..) |c, i| {
             buf[i] = if (c == '/') '\\' else c;
+            std.debug.assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
-        return &buf;
+        const final = buf[0..buf.len :0].*;
+        return &final;
     };
 }
-
-const builtin = @import("builtin");
 
 pub const MakePath = struct {
     const w = std.os.windows;

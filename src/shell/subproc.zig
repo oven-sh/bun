@@ -962,8 +962,6 @@ pub const ShellSubprocess = struct {
             }
         }
     }
-
-    const os = std.posix;
 };
 
 const WaiterThread = bun.spawn.WaiterThread;

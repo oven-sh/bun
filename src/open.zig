@@ -139,8 +139,8 @@ pub const Editor = enum(u8) {
     pub fn byFallbackPathForEditor(editor: Editor, out: ?*[]const u8) bool {
         if (bin_path.get(editor)) |paths| {
             for (paths) |path| {
-                if (std.posix.open(path, .{}, 0)) |opened| {
-                    std.posix.close(opened);
+                if (std.fs.cwd().openFile(path, .{ })) |opened| {
+                    opened.close();
                     if (out != null) {
                         out.?.* = bun.asByteSlice(path);
                     }

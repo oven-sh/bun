@@ -1,12 +1,13 @@
 const std = @import("std");
+const posix = std.posix;
 
-fn setup_sigactions(act: ?*const os.Sigaction) !void {
-    try os.sigaction(os.SIG.ABRT, act, null);
-    try os.sigaction(os.SIG.BUS, act, null);
-    try os.sigaction(os.SIG.FPE, act, null);
-    try os.sigaction(os.SIG.ILL, act, null);
-    try os.sigaction(os.SIG.SEGV, act, null);
-    try os.sigaction(os.SIG.TRAP, act, null);
+fn setup_sigactions(act: ?*const posix.Sigaction) !void {
+    try posix.sigaction(posix.SIG.ABRT, act, null);
+    try posix.sigaction(posix.SIG.BUS, act, null);
+    try posix.sigaction(posix.SIG.FPE, act, null);
+    try posix.sigaction(posix.SIG.ILL, act, null);
+    try posix.sigaction(posix.SIG.SEGV, act, null);
+    try posix.sigaction(posix.SIG.TRAP, act, null);
 }
 
 const builtin = @import("builtin");
@@ -36,25 +37,24 @@ pub fn reloadHandlers() !void {
     if (comptime @import("root").bun.Environment.isWindows) {
         return @import("root").bun.todo(@src(), {});
     }
-    try os.sigaction(os.SIG.PIPE, null, null);
+    try posix.sigaction(posix.SIG.PIPE, null, null);
     try setup_sigactions(null);
 
-    var act = os.Sigaction{
+    var act = posix.Sigaction{
         .handler = .{ .sigaction = sigaction_handler },
-        .mask = os.empty_sigset,
-        .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
+        .mask = posix.empty_sigset,
+        .flags = (posix.SA.SIGINFO | posix.SA.RESTART | posix.SA.RESETHAND),
     };
 
     try setup_sigactions(&act);
     @import("root").bun.spawn.WaiterThread.reloadHandlers();
     bun_ignore_sigpipe();
 }
-const os = std.posix;
 pub fn start() !void {
-    var act = os.Sigaction{
+    var act = posix.Sigaction{
         .handler = .{ .sigaction = sigaction_handler },
-        .mask = os.empty_sigset,
-        .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
+        .mask = posix.empty_sigset,
+        .flags = (posix.SA.SIGINFO | posix.SA.RESTART | posix.SA.RESETHAND),
     };
 
     try setup_sigactions(&act);

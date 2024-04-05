@@ -237,7 +237,7 @@ pub const FilePoll = struct {
         poll.onUpdate(kqueue_event.data);
     }
 
-    pub fn onEpollEvent(poll: *FilePoll, _: *Loop, epoll_event: *std.posix.linux.epoll_event) void {
+    pub fn onEpollEvent(poll: *FilePoll, _: *Loop, epoll_event: *std.os.linux.epoll_event) void {
         poll.updateFlags(Flags.fromEpollEvent(epoll_event.*));
         poll.onUpdate(0);
     }
@@ -511,18 +511,18 @@ pub const FilePoll = struct {
             return flags;
         }
 
-        pub fn fromEpollEvent(epoll: std.posix.linux.epoll_event) Flags.Set {
+        pub fn fromEpollEvent(epoll: std.os.linux.epoll_event) Flags.Set {
             var flags = Flags.Set{};
-            if (epoll.events & std.posix.linux.EPOLL.IN != 0) {
+            if (epoll.events & std.os.linux.EPOLL.IN != 0) {
                 flags.insert(Flags.readable);
             }
-            if (epoll.events & std.posix.linux.EPOLL.OUT != 0) {
+            if (epoll.events & std.os.linux.EPOLL.OUT != 0) {
                 flags.insert(Flags.writable);
             }
-            if (epoll.events & std.posix.linux.EPOLL.ERR != 0) {
+            if (epoll.events & std.os.linux.EPOLL.ERR != 0) {
                 flags.insert(Flags.eof);
             }
-            if (epoll.events & std.posix.linux.EPOLL.HUP != 0) {
+            if (epoll.events & std.os.linux.EPOLL.HUP != 0) {
                 flags.insert(Flags.hup);
             }
             return flags;
@@ -777,7 +777,7 @@ pub const FilePoll = struct {
 
     const timeout = std.mem.zeroes(std.posix.timespec);
     const kevent = std.c.kevent;
-    const linux = std.posix.linux;
+    const linux = std.os.linux;
 
     pub const OneShotFlag = enum { dispatch, one_shot, none };
 

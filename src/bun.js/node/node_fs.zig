@@ -24,8 +24,8 @@ const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 const Constants = @import("./node_fs_constant.zig").Constants;
 const builtin = @import("builtin");
 const posix = std.posix;
-const darwin = posix.system;
-const linux = posix.system;
+const darwin = std.os.darwin;
+const linux = std.os.linux;
 const PathLike = JSC.Node.PathLike;
 const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
@@ -179,7 +179,7 @@ pub const Async = struct {
             }
 
             fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-                var this: *Task = @fieldParentPtr("task", task);
+                var this: *Task = @alignCast(@fieldParentPtr("task", task));
 
                 var node_fs = NodeFS{};
                 this.result = Function(&node_fs, this.args, .promise);
@@ -286,7 +286,7 @@ pub const AsyncCpTask = struct {
     }
 
     fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-        const this: *AsyncCpTask = @fieldParentPtr("task", task);
+        const this: *AsyncCpTask = @alignCast(@fieldParentPtr("task", task));
 
         var node_fs = NodeFS{};
         node_fs.cpAsync(this);
@@ -426,7 +426,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         pub usingnamespace bun.New(@This());
 
         pub fn call(task: *JSC.WorkPoolTask) void {
-            var this: *Subtask = @fieldParentPtr("task", task);
+            var this: *Subtask = @alignCast(@fieldParentPtr("task", task));
             defer {
                 bun.default_allocator.free(this.basename.sliceAssumeZ());
                 this.destroy();
@@ -5426,7 +5426,7 @@ pub const NodeFS = struct {
                         const pos = bun.sys.system.lseek(
                             fd.cast(),
                             @as(std.posix.off_t, @intCast(0)),
-                            std.posix.linux.SEEK.CUR,
+                            std.os.linux.SEEK.CUR,
                         );
 
                         switch (bun.sys.getErrno(pos)) {

@@ -52,7 +52,7 @@ const INotify = struct {
         std.debug.assert(this.loaded_inotify);
         const old_count = this.watch_count.fetchAdd(1, .release);
         defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-        const watch_file_mask = std.posix.linux.IN.EXCL_UNLINK | std.posix.linux.IN.MOVE_SELF | std.posix.linux.IN.DELETE_SELF | std.posix.linux.IN.MOVED_TO | std.posix.linux.IN.MODIFY;
+        const watch_file_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MODIFY;
         return std.posix.inotify_add_watchZ(this.inotify_fd, pathname, watch_file_mask);
     }
 
@@ -60,7 +60,7 @@ const INotify = struct {
         std.debug.assert(this.loaded_inotify);
         const old_count = this.watch_count.fetchAdd(1, .release);
         defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-        const watch_dir_mask = std.posix.linux.IN.EXCL_UNLINK | std.posix.linux.IN.DELETE | std.posix.linux.IN.DELETE_SELF | std.posix.linux.IN.CREATE | std.posix.linux.IN.MOVE_SELF | std.posix.linux.IN.ONLYDIR | std.posix.linux.IN.MOVED_TO;
+        const watch_dir_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.DELETE | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.CREATE | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.ONLYDIR | std.os.linux.IN.MOVED_TO;
         return std.posix.inotify_add_watchZ(this.inotify_fd, pathname, watch_dir_mask);
     }
 
@@ -78,7 +78,7 @@ const INotify = struct {
             this.coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
         }
 
-        this.inotify_fd = try std.posix.inotify_init1(std.posix.linux.IN.CLOEXEC);
+        this.inotify_fd = try std.posix.inotify_init1(std.os.linux.IN.CLOEXEC);
     }
 
     pub fn read(this: *INotify) ![]*const INotifyEvent {
@@ -333,7 +333,7 @@ const WindowsWatcher = struct {
             const rc = w.kernel32.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, @intFromEnum(timeout));
             if (rc == 0) {
                 const err = w.kernel32.GetLastError();
-                if (err == w.Win32Error.IMEOUT) {
+                if (err == .TIMEOUT) {
                     return null;
                 } else {
                     log("GetQueuedCompletionStatus failed: {s}", .{@tagName(err)});
@@ -425,10 +425,10 @@ pub const WatchEvent = struct {
     pub fn fromINotify(this: *WatchEvent, event: INotify.INotifyEvent, index: WatchItemIndex) void {
         this.* = WatchEvent{
             .op = Op{
-                .delete = (event.mask & std.posix.linux.IN.DELETE_SELF) > 0 or (event.mask & std.posix.linux.IN.DELETE) > 0,
-                .rename = (event.mask & std.posix.linux.IN.MOVE_SELF) > 0,
-                .move_to = (event.mask & std.posix.linux.IN.MOVED_TO) > 0,
-                .write = (event.mask & std.posix.linux.IN.MODIFY) > 0,
+                .delete = (event.mask & std.os.linux.IN.DELETE_SELF) > 0 or (event.mask & std.os.linux.IN.DELETE) > 0,
+                .rename = (event.mask & std.os.linux.IN.MOVE_SELF) > 0,
+                .move_to = (event.mask & std.os.linux.IN.MOVED_TO) > 0,
+                .write = (event.mask & std.os.linux.IN.MODIFY) > 0,
             },
             .index = index,
         };

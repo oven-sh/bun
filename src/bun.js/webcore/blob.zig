@@ -1848,7 +1848,7 @@ pub const Blob = struct {
                 const Closer = @This();
 
                 fn scheduleClose(request: *io.Request) io.Action {
-                    var this: *This = @fieldParentPtr("io_request", request);
+                    var this: *This = @alignCast(@fieldParentPtr("io_request", request));
                     return io.Action{
                         .close = .{
                             .ctx = this,
@@ -1868,7 +1868,7 @@ pub const Blob = struct {
 
                 fn onCloseIORequest(task: *JSC.WorkPoolTask) void {
                     bloblog("onCloseIORequest()", .{});
-                    var this: *This = @fieldParentPtr("task", task);
+                    var this: *This = @alignCast(@fieldParentPtr("task", task));
                     this.close_after_io = false;
                     this.update();
                 }
@@ -2207,7 +2207,7 @@ pub const Blob = struct {
                 return try CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file);
             }
 
-            const linux = std.posix.system;
+            const linux = std.os.linux;
             const darwin = std.posix.system;
 
             pub fn deinit(this: *CopyFile) void {
@@ -2267,7 +2267,7 @@ pub const Blob = struct {
                 }
             }
 
-            const os = std.posix;
+            const posix = std.posix;
 
             pub fn doCloseFile(this: *CopyFile, comptime which: IOWhich) void {
                 switch (which) {
@@ -2284,7 +2284,7 @@ pub const Blob = struct {
                 }
             }
 
-            const O = if (Environment.isLinux) linux.O else bun.O;
+            const O = bun.O;
             const open_destination_flags = O.CLOEXEC | O.CREAT | O.WRONLY | O.TRUNC;
             const open_source_flags = O.CLOEXEC | O.RDONLY;
 
@@ -2413,7 +2413,7 @@ pub const Blob = struct {
                         .splice => bun.C.splice(src_fd.cast(), null, dest_fd.cast(), null, remain, 0),
                     };
 
-                    switch (linux.getErrno(written)) {
+                    switch (bun.C.getErrno(written)) {
                         .SUCCESS => {},
 
                         .NOSYS, .XDEV => {
@@ -2436,7 +2436,7 @@ pub const Blob = struct {
                                     // make() can set STDOUT / STDERR to O_APPEND
                                     // this messes up sendfile()
                                     has_unset_append = true;
-                                    const flags = linux.fcntl(dest_fd.cast(), linux.F.GETFL, 0);
+                                    const flags = linux.fcntl(dest_fd.cast(), linux.F.GETFL, @as(c_int, 0));
                                     if ((flags & O.APPEND) != 0) {
                                         _ = linux.fcntl(dest_fd.cast(), linux.F.SETFL, flags ^ O.APPEND);
                                         continue;
@@ -2477,14 +2477,14 @@ pub const Blob = struct {
                     }
 
                     // wrote zero bytes means EOF
-                    remain -|= written;
-                    total_written += written;
+                    remain -|= @intCast(written);
+                    total_written += @intCast(written);
                     if (written == 0 or remain == 0) break;
                 }
             }
 
             pub fn doFCopyFile(this: *CopyFile) anyerror!void {
-                switch (bun.sys.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE_DATA)) {
+                switch (bun.sys.fcopyfile(this.source_fd, this.destination_fd, posix.system.COPYFILE_DATA)) {
                     .err => |errno| {
                         this.system_error = errno.toSystemError();
 
@@ -2559,12 +2559,12 @@ pub const Blob = struct {
                                     .result => |result| {
                                         stat_ = result;
 
-                                        if (os.S.ISDIR(result.mode)) {
+                                        if (posix.S.ISDIR(result.mode)) {
                                             this.system_error = unsupported_directory_error;
                                             return;
                                         }
 
-                                        if (!os.S.ISREG(result.mode))
+                                        if (!posix.S.ISREG(result.mode))
                                             break :do_clonefile;
                                     },
                                     .err => |err| {
@@ -2629,7 +2629,7 @@ pub const Blob = struct {
                     },
                 };
 
-                if (os.S.ISDIR(stat.mode)) {
+                if (posix.S.ISDIR(stat.mode)) {
                     this.system_error = unsupported_directory_error;
                     this.doClose();
                     return;
@@ -2642,7 +2642,7 @@ pub const Blob = struct {
                         return;
                     }
 
-                    if (os.S.ISREG(stat.mode) and
+                    if (posix.S.ISREG(stat.mode) and
                         this.max_length > bun.C.preallocate_length and
                         this.max_length != Blob.max_size)
                     {
@@ -2653,7 +2653,7 @@ pub const Blob = struct {
                 if (comptime Environment.isLinux) {
 
                     // Bun.write(Bun.file("a"), Bun.file("b"))
-                    if (os.S.ISREG(stat.mode) and (os.S.ISREG(this.destination_file_store.mode) or this.destination_file_store.mode == 0)) {
+                    if (posix.S.ISREG(stat.mode) and (posix.S.ISREG(this.destination_file_store.mode) or this.destination_file_store.mode == 0)) {
                         if (this.destination_file_store.is_atty orelse false) {
                             this.doCopyFileRange(.copy_file_range, true) catch {};
                         } else {
@@ -2665,7 +2665,7 @@ pub const Blob = struct {
                     }
 
                     // $ bun run foo.js | bun run bar.js
-                    if (os.S.ISFIFO(stat.mode) and os.S.ISFIFO(this.destination_file_store.mode)) {
+                    if (posix.S.ISFIFO(stat.mode) and posix.S.ISFIFO(this.destination_file_store.mode)) {
                         if (this.destination_file_store.is_atty orelse false) {
                             this.doCopyFileRange(.splice, true) catch {};
                         } else {
@@ -2676,7 +2676,7 @@ pub const Blob = struct {
                         return;
                     }
 
-                    if (os.S.ISREG(stat.mode) or os.S.ISCHR(stat.mode) or os.S.ISSOCK(stat.mode)) {
+                    if (posix.S.ISREG(stat.mode) or posix.S.ISCHR(stat.mode) or posix.S.ISSOCK(stat.mode)) {
                         if (this.destination_file_store.is_atty orelse false) {
                             this.doCopyFileRange(.sendfile, true) catch {};
                         } else {

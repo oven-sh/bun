@@ -822,13 +822,8 @@ pub const OS = struct {
             result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(username).withEncoding().toValueGC(globalThis));
             result.put(globalThis, JSC.ZigString.static("shell"), JSC.ZigString.init(bun.getenvZ("SHELL") orelse "unknown").withEncoding().toValueGC(globalThis));
 
-            if (comptime Environment.isLinux) {
-                result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(std.posix.linux.getuid()));
-                result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(std.posix.linux.getgid()));
-            } else {
-                result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(C.darwin.getuid()));
-                result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(C.darwin.getgid()));
-            }
+            result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(C.getuid()));
+            result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(C.getgid()));
         }
 
         return result;

@@ -25,7 +25,8 @@ const Brotli = bun.brotli;
 const StringBuilder = @import("./string_builder.zig");
 const ThreadPool = bun.ThreadPool;
 const ObjectPool = @import("./pool.zig").ObjectPool;
-const SOCK = os.SOCK;
+const posix = std.posix;
+const SOCK = posix.SOCK;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
 const BoringSSL = bun.BoringSSL;
@@ -141,10 +142,10 @@ pub const Sendfile = struct {
             const begin = this.offset;
             const val =
                 // this does the syscall directly, without libc
-                std.posix.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
+                std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
             this.offset = @as(u64, @intCast(signed_offset));
 
-            const errcode = std.posix.linux.getErrno(val);
+            const errcode = bun.C.getErrno(val);
 
             this.remain -|= @as(u64, @intCast(this.offset -| begin));
 
@@ -745,7 +746,7 @@ pub const HTTPThread = struct {
         });
 
         if (Environment.isWindows) {
-            _ = std.posix.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
+            _ = std.process.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
                 std.debug.panic("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
             };
         }
@@ -1111,7 +1112,7 @@ pub inline fn cleanup(force: bool) void {
 pub const Headers = @import("./http/headers.zig");
 
 pub const SOCKET_FLAGS: u32 = if (Environment.isLinux)
-    SOCK.CLOEXEC | os.MSG.NOSIGNAL
+    SOCK.CLOEXEC | posix.MSG.NOSIGNAL
 else
     SOCK.CLOEXEC;
 
@@ -1564,10 +1565,6 @@ const Stage = enum(u8) {
     done,
     fail,
 };
-
-// threadlocal var resolver_cache
-
-const os = std.posix;
 
 // lowercase hash header names so that we can be sure
 pub fn hashHeaderName(name: string) u64 {

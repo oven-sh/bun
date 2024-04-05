@@ -451,9 +451,11 @@ const NetworkTask = struct {
     pub fn forTarball(
         this: *NetworkTask,
         allocator: std.mem.Allocator,
-        tarball: ExtractTarball,
+        tarball_: *const ExtractTarball,
         scope: *const Npm.Registry.Scope,
     ) !void {
+        this.callback = .{ .extract = tarball_.* };
+        const tarball = &this.callback.extract;
         const tarball_url = tarball.url.slice();
         if (tarball_url.len == 0) {
             this.url_buf = try ExtractTarball.buildURL(
@@ -501,8 +503,6 @@ const NetworkTask = struct {
         if (PackageManager.verbose_install) {
             this.http.client.verbose = true;
         }
-
-        this.callback = .{ .extract = tarball };
     }
 };
 
@@ -3310,7 +3310,7 @@ pub const PackageManager = struct {
 
         try network_task.forTarball(
             this.allocator,
-            .{
+            &.{
                 .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(
                     this.lockfile.str(&package.name),

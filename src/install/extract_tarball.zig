@@ -296,20 +296,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         var did_retry = false;
         var path2_buf: bun.WPathBuffer = undefined;
         const path2 = bun.strings.toWPathNormalized(&path2_buf, folder_name);
-        var close_target_dir = false;
-        var target_dir = brk: {
-            if (create_subdir) {
-                if (bun.Dirname.dirname(u16, path2)) |folder| {
-                    if (bun.MakePath.makeOpenPath(cache_dir, folder, .{})) |targ| {
-                        close_target_dir = true;
-                        break :brk targ;
-                    } else |_| {}
-                }
+        if (create_subdir) {
+            if (bun.Dirname.dirname(u16, path2)) |folder| {
+                bun.MakePath.makePath(u16, cache_dir, folder) catch {};
             }
-
-            break :brk cache_dir;
-        };
-        defer if (close_target_dir) target_dir.close();
+        }
 
         const path_to_use = path2[if (std.mem.lastIndexOfScalar(u16, path2, '\\')) |i| i + 1 else 0..];
 
@@ -331,7 +322,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 return error.InstallFailed;
             };
 
-            switch (bun.C.moveOpenedFileAt(dir_to_move, bun.toFD(target_dir.fd), path_to_use, true)) {
+            switch (bun.C.moveOpenedFileAt(dir_to_move, bun.toFD(cache_dir.fd), path_to_use, true)) {
                 .err => |err| {
                     if (!did_retry) {
                         switch (err.getErrno()) {
@@ -352,7 +343,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                                 tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
                                 const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
                                 switch (bun.sys.renameat(
-                                    bun.toFD(target_dir.fd),
+                                    bun.toFD(cache_dir.fd),
                                     folder_name,
                                     bun.toFD(tmpdir.fd),
                                     tempdest,

@@ -1328,7 +1328,6 @@ pub fn moveOpenedFileAt(
     comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
 
     if (bun.Environment.allow_assert) {
-        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '\\') == null); // Call moveOpenedFileAtLoose
         std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
     }
 

@@ -54,6 +54,10 @@ To install, paste this into a terminal:
 > npm install -g bun # the last `npm` command you'll ever need
 ```
 
+```powershell#Scoop
+> scoop install bun
+```
+
 {% /codetabs %}
 
 For support and discussion, please join the [#windows channel on our Discord](http://bun.sh/discord).
@@ -139,6 +143,8 @@ $ bun upgrade
 
 {% callout %}
 **Homebrew users** — To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
+
+**Scoop users** — To avoid conflicts with Scoop, use `scoop upgrade bun` instead.
 
 **proto users** - Use `proto install bun --pin` instead.
 {% /callout %}
@@ -229,6 +235,10 @@ $ rm -rf ~/.bun # for macOS, Linux, and WSL
 
 ```powershell#Windows
 > powershell -c ~\.bun\uninstall.ps1
+```
+
+```powershell#Scoop
+> scoop uninstall bun
 ```
 
 ```bash#npm

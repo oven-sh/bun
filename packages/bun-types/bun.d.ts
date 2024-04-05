@@ -2991,14 +2991,18 @@ declare module "bun" {
     edgeNames: string[];
   }
 
-  /**
-   * Nanoseconds since Bun.js was started as an integer.
-   *
-   * This uses a high-resolution monotonic system timer.
-   *
-   * After 14 weeks of consecutive uptime, this function
-   * wraps
-   */
+	/**
+	 * Returns the number of nanoseconds since the process was started.
+	 *
+	 * This function uses a high-resolution monotonic system timer to provide precise time measurements.
+	 * The timer counts the elapsed time in nanoseconds and is represented as a 64-bit unsigned integer.
+	 *
+	 * Note: After approximately 14 weeks of consecutive uptime (when the value approaches 2^64 - 1),
+	 * the timer will wrap around to zero. It is crucial to handle this wrap-around in your application logic
+	 * if the process uptime may exceed this duration, to avoid negative impacts on time calculations and comparisons.
+	 *
+	 * @returns {number} The number of nanoseconds since the process was started.
+	 */
   function nanoseconds(): number;
 
   /**

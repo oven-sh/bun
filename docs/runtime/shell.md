@@ -396,6 +396,18 @@ For cross-platform compatibility, Bun Shell implements a set of builtin commands
 - `echo`: print text
 - `pwd`: print the working directory
 - `bun`: run bun in bun
+- `cat`
+- `touch`
+- `mkdir`
+- `which`
+- `mv`
+- `exit`
+- `true`
+- `false`
+- `yes`
+- `seq`
+- `dirname`
+- `basename`
 
 **Partially** implemented:
 
@@ -403,9 +415,7 @@ For cross-platform compatibility, Bun Shell implements a set of builtin commands
 
 **Not** implemented yet, but planned:
 
-- `mkdir`: create directories
-- `cp`: copy files and directories
-- `cat`: concatenate files
+- See https://github.com/oven-sh/bun/issues/9716 for the full list.
 
 ## Utilities
 

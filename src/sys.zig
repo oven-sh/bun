@@ -1668,9 +1668,9 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
 
         return bun.C.renameAtW(
             from_dir,
-            bun.strings.toWPath(&w_buf_from, from),
+            bun.strings.toWPathNormalized(&w_buf_from, from),
             to_dir,
-            bun.strings.toWPath(&w_buf_to, to),
+            bun.strings.toWPathNormalized(&w_buf_to, to),
             // @paperdave why waas this set to false?
             true,
         );

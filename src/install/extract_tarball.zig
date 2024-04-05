@@ -351,7 +351,12 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
                                 tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
                                 const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
-                                switch (bun.sys.renameat(bun.toFD(target_dir.fd), folder_name, bun.toFD(tmpdir.fd), tempdest)) {
+                                switch (bun.sys.renameat(
+                                    bun.toFD(target_dir.fd),
+                                    folder_name,
+                                    bun.toFD(tmpdir.fd),
+                                    tempdest,
+                                )) {
                                     .err => {},
                                     .result => {
                                         tmpdir.deleteTree(tempdest) catch {};

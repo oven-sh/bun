@@ -152,7 +152,8 @@ pub const PathWatcher = struct {
             if (event.emit(hash, timestamp, event_type)) {
                 const ctx = this.handlers.keys()[i];
                 onPathUpdateFn(ctx, path, is_file, event_type);
-                debug_count += 1;
+                if (comptime bun.Environment.isDebug)
+                    debug_count += 1;
                 onUpdateEndFn(ctx);
             }
         }

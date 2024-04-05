@@ -171,8 +171,6 @@ pub const FSWatcher = struct {
     };
 
     pub const FSWatchTaskWindows = struct {
-        pub usingnamespace bun.New(@This());
-
         file_path: StringOrBytesToDecode = .{ .bytes_to_free = "" },
         event_type: EventType = .@"error",
         ctx: *FSWatcher = undefined,

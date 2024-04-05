@@ -122,6 +122,12 @@ describe("Bun.Transpiler", () => {
       err("const x: Foo<> = {}", "Unexpected >");
     });
 
+    it("should parse infer extends ternary correctly #9959", () => {
+      ts.expectPrinted_("type Foo<T> = T extends infer U ? U : never;", "");
+      ts.expectPrinted_("var foo: Foo extends string | infer Foo extends string ? Foo : never", "var foo");
+      ts.expectPrinted_("var foo: Foo extends string & infer Foo extends string ? Foo : never", "var foo");
+    });
+
     it.todo("instantiation expressions", async () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;

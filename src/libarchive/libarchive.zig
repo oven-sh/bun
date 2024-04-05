@@ -589,12 +589,21 @@ pub const Archive = struct {
                                     break :brk dir_path_len.?;
                                 };
 
+                                // TODO: the symlink target may or may not exist because it might
+                                // still need to be extracted. For now we silently ignore errors.
+                                // In the future, we should defer making these symlinks in order
+                                // to determine whether the target is a file or directory, if it
+                                // exists. Additionally, if we use junctions or the symlink target
+                                // is an absolute path, moving the extracted directory will break
+                                // the link.
+
                                 @memcpy(dir_path_buf[dir_len..][0..pathname.len], pathname);
                                 dir_path_buf[dir_len + pathname.len] = 0;
                                 const dest = dir_path_buf[0 .. dir_len + pathname.len :0];
 
                                 switch (bun.sys.symlinkOrJunctionOnWindowsW(dest, link_target, .{})) {
-                                    .err => |err| return bun.errnoToZigErr(err.errno),
+                                    // best effort, see todo above
+                                    .err => {},
                                     .result => {},
                                 }
                             } else {

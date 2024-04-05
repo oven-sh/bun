@@ -1396,7 +1396,9 @@ pub const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     if (comptime Environment.isWindows) {
                         switch (entry.kind) {
-                            .directory, .file, .sym_link => {},
+                            // TODO: use CopyFileExW for symlinks
+                            .sym_link => {},
+                            .directory, .file => {},
                             else => continue,
                         }
 
@@ -1418,13 +1420,16 @@ pub const PackageInstall = struct {
                                     bun.MakePath.makePath(u16, destination_dir_, entry.path) catch {};
                                 }
                             },
-                            .file => {
+                            .file, .sym_link => {
                                 if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) == 0) {
                                     if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
                                         bun.MakePath.makePath(u16, destination_dir_, entry_dirname) catch {};
                                         if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
                                             continue;
                                         }
+
+                                        // best effort
+                                        if (entry.kind == .sym_link) continue;
                                     }
 
                                     progress_.root.end();
@@ -1584,9 +1589,12 @@ pub const PackageInstall = struct {
                             }
                         }
 
+                        // TODO: use CopyFileExW for symlinks
                         if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
                             continue;
                         }
+
+                        if (entry.kind == .sym_link) continue;
 
                         return bun.errnoToZigErr(bun.windows.getLastErrno());
                     }
@@ -1900,7 +1908,7 @@ pub const PackageInstall = struct {
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
-            switch (bun.sys.symlinkOrJunctionOnWindows(to_path_z, dest_z)) {
+            switch (bun.sys.symlinkOrJunctionOnWindows(to_path_z, dest_z, .{ .directory = true })) {
                 .err => |err| {
                     return Result{
                         .fail = .{

@@ -50,17 +50,17 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
         log.errors = 0;
         log.warnings = 0;
 
-        const json_file = std.fs.cwd().openFileZ(
-            name_buf[0 .. parent_trimmed.len + "/package.json".len :0].ptr,
-            .{ .mode = .read_only },
-        ) catch continue;
-        defer json_file.close();
+        const json_source = switch (bun.sys.File.toSource(json_path, allocator)) {
+            .err => |err| {
+                switch (err.getErrno()) {
+                    .NOENT, .ACCES, .PERM => continue,
+                    else => |errno| return bun.errnoToZigErr(errno),
+                }
+            },
+            .result => |source| source,
+        };
+        defer allocator.free(json_source.contents);
 
-        const json_stat_size = try json_file.getEndPos();
-        const json_buf = try allocator.alloc(u8, json_stat_size + 64);
-        defer allocator.free(json_buf);
-        const json_len = try json_file.preadAll(json_buf, 0);
-        const json_source = bun.logger.Source.initPathString(json_path, json_buf[0..json_len]);
         const json = try json_parser.ParseJSONUTF8(&json_source, log, allocator);
 
         const prop = json.asProperty("workspaces") orelse continue;
@@ -77,21 +77,14 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
         for (json_array.slice()) |expr| {
             switch (expr.data) {
                 .e_string => |pattern_expr| {
-                    // /basepath/pattern/package.json
-                    // const size = parent_trimmed.len + 1 + pattern_expr.data.len + "/package.json".len;
                     const size = pattern_expr.data.len + "/package.json".len;
                     var pattern = try allocator.alloc(u8, size);
                     @memcpy(pattern[0..pattern_expr.data.len], pattern_expr.data);
                     @memcpy(pattern[pattern_expr.data.len..size], "/package.json");
 
-                    // @memcpy(pattern[0..parent_trimmed.len], parent_trimmed);
-                    // pattern[parent_trimmed.len] = '/';
-                    // @memcpy(pattern[parent_trimmed.len + 1 .. parent_trimmed.len + 1 + pattern_expr.data.len], pattern_expr.data);
-                    // @memcpy(pattern[parent_trimmed.len + 1 + pattern_expr.data.len .. size], "/package.json");
                     try out_patterns.append(pattern);
                 },
                 else => {
-                    // TODO log error and fail
                     Output.prettyErrorln("<r><red>error<r>: Failed to parse \"workspaces\" property: all items must be strings", .{});
                     Global.exit(1);
                 },

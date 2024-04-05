@@ -1381,7 +1381,10 @@ pub const RunCommand = struct {
                     const json_source = bun.logger.Source.initPathString(path, json_buf[0..json_len]);
 
                     var parser = try json_parser.PackageJSONVersionChecker.init(arena_alloc, &json_source, ctx.log);
-                    _ = try parser.parseExpr();
+                    _ = parser.parseExpr() catch {
+                        Output.warn("Failed to parse package.json in {s}\n", .{package_json_path});
+                        continue;
+                    };
                     if (!parser.has_found_name) {
                         Output.warn("Failed to find package name in {s}\n", .{package_json_path});
                         continue;

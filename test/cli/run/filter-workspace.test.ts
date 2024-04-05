@@ -32,13 +32,23 @@ const cwd_root = tempDirWithFiles("testworkspace", {
         },
       }),
     },
+    "malformed1": {
+      "package.json": JSON.stringify({
+        "scripts": {
+          "present": "echo malformed1",
+        }
+      })
+    },
+    "malformed2": {
+      "package.json": "asdfsadfas",
+    }
   },
   "package.json": JSON.stringify({
     "name": "ws",
     "scripts": {
       "present": "echo rootscript",
     },
-    "workspaces": ["packages/pkga", "packages/pkgb", "packages/dirname"],
+    "workspaces": ["packages/pkga", "packages/pkgb", "packages/dirname", "packages/malformed1", "packages/malformed2"],
   }),
 });
 

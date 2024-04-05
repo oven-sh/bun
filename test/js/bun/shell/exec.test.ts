@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { $ } from "bun";
+import { describe, test, expect } from "bun:test";
 import { TestBuilder } from "./test_builder";
 import { bunEnv } from "harness";
 
@@ -65,5 +66,11 @@ describe("bun exec", () => {
         .stdout(stdout)
         .runAsTest(item);
     }
+  });
+
+  test("bun works even when not in PATH", async () => {
+    const val = await $`bun exec 'bun'`.env({ ...bunEnv, PATH: "" }).nothrow();
+    expect(val.stderr.toString()).not.toContain("bun: command not found: bun");
+    expect(val.stdout.toString()).toContain("Bun is a fast JavaScript runtime");
   });
 });

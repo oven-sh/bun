@@ -625,19 +625,16 @@
     {
       "type": "cppvsdbg",
       "request": "launch",
-      "name": "Windows: bun run [file] (fast)",
+      "name": "Windows: bun install",
       "program": "${workspaceFolder}/build/bun-debug.exe",
-      "args": ["run", "${fileBasename}"],
+      "args": ["install"],
       "cwd": "${fileDirname}",
       "environment": [
         {
           "name": "FORCE_COLOR",
           "value": "1"
         },
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1"
-        },
+
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "0"

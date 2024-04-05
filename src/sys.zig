@@ -2541,6 +2541,14 @@ pub const File = struct {
 
     pub const ReadError = anyerror;
 
+    pub fn closeAndMoveTo(this: File, src: [:0]const u8, dest: [:0]const u8) !void {
+        // On POSIX,close the file after moving it.
+        defer if (Environment.isPosix) this.close();
+        // On Windows, close the file before moving it.
+        if (Environment.isWindows) this.close();
+        try bun.C.moveFileZWithHandle(this.handle, bun.toFD(std.fs.cwd()), src, bun.toFD(std.fs.cwd()), dest);
+    }
+
     fn stdIoRead(this: File, buf: []u8) ReadError!usize {
         return try this.read(buf).unwrap();
     }
@@ -2597,6 +2605,13 @@ pub const File = struct {
     pub const ReadToEndResult = struct {
         bytes: std.ArrayList(u8) = std.ArrayList(u8).init(default_allocator),
         err: ?Error = null,
+
+        pub fn unwrap(self: *const ReadToEndResult) ![]u8 {
+            if (self.err) |err| {
+                try (JSC.Maybe(void){ .err = err }).unwrap();
+            }
+            return self.bytes.items;
+        }
     };
     pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8)) Maybe(usize) {
         const size = switch (this.getEndPos()) {

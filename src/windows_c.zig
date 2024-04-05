@@ -1280,7 +1280,7 @@ pub fn renameAtW(
         old_dir_fd,
         old_path_w,
         // access_mask
-        w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_WRITE_DATA | w.FILE_TRAVERSE,
+        w.SYNCHRONIZE | w.DELETE | w.FILE_TRAVERSE,
         // create disposition
         w.FILE_OPEN,
         // create options

@@ -90,7 +90,7 @@ const zero_hash = std.mem.zeroes(MetaHash);
 pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);
 pub const TrustedDependenciesSet = std.ArrayHashMapUnmanaged(TruncatedPackageNameHash, void, ArrayIdentityContext, false);
 pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Version, ArrayIdentityContext.U64, false);
-
+const File = bun.sys.File;
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
 // Serialized data
@@ -194,28 +194,23 @@ pub const LoadFromDiskResult = union(enum) {
 pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
     if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
 
-    var file = if (filename.len > 0)
-        std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
-            return switch (err) {
-                error.FileNotFound => {
-                    // Attempt to load from "package-lock.json", "yarn.lock", etc.
-                    return migration.detectAndLoadOtherLockfile(
-                        this,
-                        allocator,
-                        log,
-                        filename,
-                    );
-                },
-                error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
-                else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
-            };
-        }
+    const buf = (if (filename.len > 0)
+        File.readFrom(std.fs.cwd(), filename, allocator).unwrap()
     else
-        std.io.getStdIn();
-
-    defer file.close();
-    const buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
-        return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
+        File.from(std.io.getStdIn()).readToEnd(allocator).unwrap()) catch |err| {
+        return switch (err) {
+            error.EACCESS, error.EPERM, error.ENOENT => {
+                // Attempt to load from "package-lock.json", "yarn.lock", etc.
+                return migration.detectAndLoadOtherLockfile(
+                    this,
+                    allocator,
+                    log,
+                    filename,
+                );
+            },
+            error.EINVAL, error.ENOTDIR, error.EISDIR => LoadFromDiskResult{ .not_found = {} },
+            else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
+        };
     };
 
     return this.loadFromBytes(buf, allocator, log);
@@ -1615,75 +1610,67 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         };
         std.debug.assert(FileSystem.instance_loaded);
     }
-    var tmpname_buf: [512]u8 = undefined;
-    tmpname_buf[0..9].* = ".bunlockb".*;
-    var tmpfile = FileSystem.RealFS.Tmpfile{};
-    var base64_bytes: [16]u8 = undefined;
-    std.crypto.random.bytes(&base64_bytes);
 
-    const tmpname__ = std.fmt.bufPrint(tmpname_buf[9..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
-    tmpname_buf[tmpname__.len + 9] = 0;
-    const tmpname = tmpname_buf[0 .. tmpname__.len + 9 :0];
+    var bytes = std.ArrayList(u8).init(bun.default_allocator);
+    defer bytes.deinit();
 
-    tmpfile.create(&FileSystem.instance.fs, tmpname) catch |err| {
-        Output.prettyErrorln("<r><red>error:<r> failed to open lockfile: {s}", .{@errorName(err)});
-        Global.crash();
-    };
-
-    const file = tmpfile.fd.asFile();
     {
-        var bytes = std.ArrayList(u8).init(bun.default_allocator);
-        defer bytes.deinit();
         var total_size: usize = 0;
         var end_pos: usize = 0;
         Lockfile.Serializer.save(this, &bytes, &total_size, &end_pos) catch |err| {
-            tmpfile.dir().deleteFileZ(tmpname) catch {};
-            Output.prettyErrorln("<r><red>error:<r> failed to serialize lockfile: {s}", .{@errorName(err)});
+            Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };
         if (bytes.items.len >= end_pos)
             bytes.items[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
+    }
 
-        var node_fs: bun.JSC.Node.NodeFS = undefined;
-        switch (node_fs.writeFile(
-            .{
-                .file = .{
-                    .fd = bun.toFD(file.handle),
-                },
-                .dirfd = bun.invalid_fd,
-                .data = .{ .string = .{ .utf8 = bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes.items) } },
-            },
-            .sync,
-        )) {
-            .err => |e| {
-                tmpfile.dir().deleteFileZ(tmpname) catch {};
-                Output.prettyErrorln("<r><red>error:<r> failed to write lockfile\n{}", .{e});
-                Global.crash();
-            },
-            .result => {},
-        }
+    var tmpname_buf: [512]u8 = undefined;
+    var base64_bytes: [8]u8 = undefined;
+    bun.rand(&base64_bytes);
+    const tmpname = std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+
+    const file = switch (File.openat(std.fs.cwd(), tmpname, std.os.O.CREAT | std.os.O.WRONLY, 0o777)) {
+        .err => |err| {
+            Output.err(err, "failed to create temporary file to save lockfile\n{}", .{});
+            Global.crash();
+        },
+        .result => |f| f,
+    };
+
+    switch (file.writeAll(bytes.items)) {
+        .err => |e| {
+            file.close();
+            _ = bun.sys.unlink(tmpname);
+            Output.err(e, "failed to write lockfile\n{}", .{});
+            Global.crash();
+        },
+        .result => {},
     }
 
     if (comptime Environment.isPosix) {
         // chmod 777 on posix
-        switch (bun.sys.fchmod(tmpfile.fd, 0o777)) {
+        switch (bun.sys.fchmod(file.fd, 0o777)) {
             .err => |err| {
-                tmpfile.dir().deleteFileZ(tmpname) catch {};
-                Output.prettyErrorln("<r><red>error:<r> failed to change lockfile permissions: {s}", .{@tagName(err.getErrno())});
+                file.close();
+                _ = bun.sys.unlink(tmpname);
+                Output.err(err, "failed to change lockfile permissions\n{}", .{});
                 Global.crash();
             },
             .result => {},
         }
     }
 
-    tmpfile.promoteToCWD(tmpname, filename) catch |err| {
+    file.closeAndMoveTo(tmpname, filename) catch |err| {
+        // note: file is already closed here.
+        _ = bun.sys.unlink(tmpname);
+
         if (comptime Environment.allow_assert) {
             if (@errorReturnTrace()) |trace| {
                 std.debug.dumpStackTrace(trace.*);
             }
         }
-        tmpfile.dir().deleteFileZ(tmpname) catch {};
-        Output.prettyErrorln("<r><red>error:<r> failed to save lockfile: {s}", .{@errorName(err)});
+        Output.err(err, "failed to replace old lockfile with new lockfile on disk", .{});
         Global.crash();
     };
 }

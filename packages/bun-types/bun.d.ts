@@ -2997,9 +2997,9 @@ declare module "bun" {
    * This function uses a high-resolution monotonic system timer to provide precise time measurements.
    * The timer counts the elapsed time in nanoseconds and is represented as a 64-bit unsigned integer.
    *
-   * Note: After approximately 14 weeks of consecutive uptime (when the value approaches 2^64 - 1),
-   * the timer will wrap around to zero. It is crucial to handle this wrap-around in your application logic
-   * if the process uptime may exceed this duration, to avoid negative impacts on time calculations and comparisons.
+   * Note: The counter will wrap around to zero upon reaching its maximum value of 2^64 - 1.
+   * (This corresponds to about 585 years of continuous operation, making it extremely unlikely 
+   * to occur within the typical lifespan of an application, unless the counter is artificially manipulated).
    *
    * @returns {number} The number of nanoseconds since the process was started.
    */

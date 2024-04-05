@@ -938,20 +938,14 @@ fn NewPrinter(
 
         fn fmt(p: *Printer, comptime str: string, args: anytype) !void {
             const len = @call(
-                .{
-                    .modifier = .always_inline,
-                },
+                .always_inline,
                 std.fmt.count,
                 .{ str, args },
             );
-            var ptr = try p.writer.reserveNext(
-                len,
-            );
+            var ptr = try p.writer.reserve(len);
 
             const written = @call(
-                .{
-                    .modifier = .always_inline,
-                },
+                .always_inline,
                 std.fmt.bufPrint,
                 .{ ptr[0..len], str, args },
             ) catch unreachable;
@@ -1611,8 +1605,7 @@ fn NewPrinter(
                 return;
             }
 
-            @panic("buh TODO");
-            // std.fmt.format(p.writer, "{d}", .{float}) catch {};
+            p.fmt("{d}", .{float}) catch {};
         }
 
         pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
@@ -5361,8 +5354,8 @@ pub fn NewWriter(
     comptime writeAllFn: fn (ctx: *ContextType, buf: anytype) anyerror!usize,
     comptime getLastByte: fn (ctx: *const ContextType) u8,
     comptime getLastLastByte: fn (ctx: *const ContextType) u8,
-    comptime reserveNext: fn (ctx: *ContextType, count: u32) anyerror![*]u8,
-    comptime advanceBy: fn (ctx: *ContextType, count: u32) void,
+    comptime reserveNext: fn (ctx: *ContextType, count: u64) anyerror![*]u8,
+    comptime advanceBy: fn (ctx: *ContextType, count: u64) void,
 ) type {
     return struct {
         const Self = @This();
@@ -5418,11 +5411,11 @@ pub fn NewWriter(
             return @call(bun.callmod_inline, getLastLastByte, .{&writer.ctx});
         }
 
-        pub fn reserve(writer: *Self, count: u32) anyerror![*]u8 {
+        pub fn reserve(writer: *Self, count: u64) anyerror![*]u8 {
             return try reserveNext(&writer.ctx, count);
         }
 
-        pub fn advance(writer: *Self, count: u32) void {
+        pub fn advance(writer: *Self, count: u64) void {
             advanceBy(&writer.ctx, count);
             writer.written += @as(i32, @intCast(count));
         }
@@ -5552,11 +5545,11 @@ const FileWriterInternal = struct {
         return this.last_bytes[0];
     }
 
-    pub fn reserveNext(_: *FileWriterInternal, count: u32) anyerror![*]u8 {
+    pub fn reserveNext(_: *FileWriterInternal, count: u64) anyerror![*]u8 {
         try buffer.growIfNeeded(count);
         return @as([*]u8, @ptrCast(&buffer.list.items.ptr[buffer.list.items.len]));
     }
-    pub fn advanceBy(this: *FileWriterInternal, count: u32) void {
+    pub fn advanceBy(this: *FileWriterInternal, count: u64) void {
         if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
@@ -5671,11 +5664,11 @@ pub const BufferWriter = struct {
         return ctx.last_bytes[0];
     }
 
-    pub fn reserveNext(ctx: *BufferWriter, count: u32) anyerror![*]u8 {
+    pub fn reserveNext(ctx: *BufferWriter, count: u64) anyerror![*]u8 {
         try ctx.buffer.growIfNeeded(count);
         return @as([*]u8, @ptrCast(&ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]));
     }
-    pub fn advanceBy(ctx: *BufferWriter, count: u32) void {
+    pub fn advanceBy(ctx: *BufferWriter, count: u64) void {
         if (comptime Environment.isDebug) std.debug.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
 
         ctx.buffer.list.items = ctx.buffer.list.items.ptr[0 .. ctx.buffer.list.items.len + count];

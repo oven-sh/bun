@@ -7453,13 +7453,19 @@ pub const Macro = struct {
 };
 
 pub const ASTMemoryAllocator = struct {
-    stack_allocator: std.heap.StackFallbackAllocator(@min(8192, std.mem.page_size)) = undefined,
+    const SFA = std.heap.StackFallbackAllocator(@min(8192, std.mem.page_size));
+
+    stack_allocator: SFA = undefined,
     bump_allocator: std.mem.Allocator = undefined,
     allocator: std.mem.Allocator,
     previous: ?*ASTMemoryAllocator = null,
 
     pub fn reset(this: *ASTMemoryAllocator) void {
-        this.stack_allocator.fallback_allocator = this.allocator;
+        this.stack_allocator = SFA{
+            .buffer = undefined,
+            .fallback_allocator = this.allocator,
+            .fixed_buffer_allocator = undefined,
+        };
         this.bump_allocator = this.stack_allocator.get();
     }
 

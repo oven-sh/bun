@@ -2086,7 +2086,7 @@ pub const Blob = struct {
                 // TODO: optimize this
                 @setCold(true);
 
-                var node_fs: JSC.Node.NodeFS = undefined;
+                var node_fs: JSC.Node.NodeFS = .{};
                 _ = node_fs.truncate(
                     .{
                         .path = this.destination_file_store.data.file.pathlike,

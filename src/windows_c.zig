@@ -1276,18 +1276,29 @@ pub fn renameAtW(
         }
     }
 
-    const src_fd = switch (bun.sys.openFileAtWindows(
-        old_dir_fd,
-        old_path_w,
-        // access_mask
-        w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_WRITE_DATA | w.FILE_TRAVERSE,
-        // create disposition
-        w.FILE_OPEN,
-        // create options
-        w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
-    )) {
-        .err => |err| return Maybe(void){ .err = err },
-        .result => |fd| fd,
+    const src_fd = brk: {
+        switch (bun.sys.openFileAtWindows(
+            old_dir_fd,
+            old_path_w,
+            w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_TRAVERSE,
+            w.FILE_OPEN,
+            w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+        )) {
+            .err => {
+                // retry, wtihout FILE_TRAVERSE flag
+                switch (bun.sys.openFileAtWindows(
+                    old_dir_fd,
+                    old_path_w,
+                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+                    w.FILE_OPEN,
+                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                )) {
+                    .err => |err2| return .{ .err = err2 },
+                    .result => |fd| break :brk fd,
+                }
+            },
+            .result => |fd| break :brk fd,
+        }
     };
     defer _ = bun.sys.close(src_fd);
 
@@ -1317,7 +1328,6 @@ pub fn moveOpenedFileAt(
     comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
 
     if (bun.Environment.allow_assert) {
-        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '\\') == null); // Call moveOpenedFileAtLoose
         std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
     }
 

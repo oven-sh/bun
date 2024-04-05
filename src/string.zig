@@ -299,6 +299,13 @@ pub const String = extern struct {
         if (this.tag == .WTFStringImpl) this.value.WTFStringImpl.ensureHash();
     }
 
+    pub fn transferToJS(this: *String, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const js_value = this.toJS(globalThis);
+        this.deref();
+        this.* = dead;
+        return js_value;
+    }
+
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
         switch (this.tag) {
             .ZigString => return try this.value.ZigString.toOwnedSlice(allocator),

@@ -296,23 +296,21 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         var did_retry = false;
         var path2_buf: bun.WPathBuffer = undefined;
         const path2 = bun.strings.toWPathNormalized(&path2_buf, folder_name);
-        var close_target_dir = false;
-        var target_dir = brk: {
-            if (create_subdir) {
-                if (bun.Dirname.dirname(u16, path2)) |folder| {
-                    if (bun.MakePath.makeOpenPath(cache_dir, folder, .{})) |targ| {
-                        close_target_dir = true;
-                        break :brk targ;
-                    } else |_| {}
-                }
+        if (create_subdir) {
+            if (bun.Dirname.dirname(u16, path2)) |folder| {
+                _ = bun.MakePath.makePath(u16, cache_dir, folder) catch {};
             }
+        }
 
-            break :brk cache_dir;
-        };
-        defer if (close_target_dir) target_dir.close();
+        const path_to_use = path2;
 
         while (true) {
-            const dir_to_move = bun.sys.openDirAtWindowsA(bun.toFD(this.temp_dir.fd), bun.span(tmpname), .{ .can_rename_or_delete = true, .create = false, .iterable = false }).unwrap() catch |err| {
+            const dir_to_move = bun.sys.openDirAtWindowsA(bun.toFD(this.temp_dir.fd), bun.span(tmpname), .{
+                .can_rename_or_delete = true,
+                .create = false,
+                .iterable = false,
+                .read_only = true,
+            }).unwrap() catch |err| {
                 // i guess we just
                 this.package_manager.log.addErrorFmt(
                     null,
@@ -324,16 +322,38 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 return error.InstallFailed;
             };
 
-            switch (bun.C.moveOpenedFileAt(dir_to_move, bun.toFD(target_dir.fd), path2[if (std.mem.lastIndexOfScalar(u16, path2, '\\')) |i| i + 1 else 0..], true)) {
+            switch (bun.C.moveOpenedFileAt(dir_to_move, bun.toFD(cache_dir.fd), path_to_use, true)) {
                 .err => |err| {
                     if (!did_retry) {
                         switch (err.getErrno()) {
                             .PERM, .BUSY, .EXIST => {
+
                                 // before we attempt to delete the destination, let's close the source dir.
                                 _ = bun.sys.close(dir_to_move);
 
-                                // two copies of bun are trying to extract the same package version to the same folder
-                                cache_dir.deleteTree(bun.span(folder_name)) catch {};
+                                // We tried to move the folder over
+                                // but it didn't work!
+                                // so instead of just simply deleting the folder
+                                // we rename it back into the temp dir
+                                // and then delete that temp dir
+                                // The goal is to make it more difficult for an application to reach this folder
+                                var tmpname_bytes = std.mem.asBytes(&tmpname_buf);
+                                const tmpname_len = std.mem.sliceTo(tmpname, 0).len;
+
+                                tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
+                                const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
+                                switch (bun.sys.renameat(
+                                    bun.toFD(cache_dir.fd),
+                                    folder_name,
+                                    bun.toFD(tmpdir.fd),
+                                    tempdest,
+                                )) {
+                                    .err => {},
+                                    .result => {
+                                        tmpdir.deleteTree(tempdest) catch {};
+                                    },
+                                }
+                                tmpname_bytes[tmpname_len] = 0;
                                 did_retry = true;
                                 continue;
                             },

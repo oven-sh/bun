@@ -363,8 +363,6 @@ pub const RunCommand = struct {
             .argv = &argv,
             .argv0 = shell_bin.ptr,
 
-            // TODO: remember to free this when we add --filter or --concurrent
-            // in the meantime we don't need to free it.
             .envp = envp,
 
             .cwd = cwd,
@@ -1292,6 +1290,7 @@ pub const RunCommand = struct {
 
     pub const ExecResult = union(enum) {
         code: u32,
+        signal: u32,
         failure,
         ok,
 
@@ -1299,24 +1298,30 @@ pub const RunCommand = struct {
             return ExecResult{ .code = code };
         }
 
-        pub fn notFailure(self: ExecResult) bool {
+        pub fn isOk(self: ExecResult) bool {
             return switch (self) {
                 .ok => true,
                 .failure => false,
                 .code => |code| code == 0,
+                .signal => false,
             };
+        }
+
+        pub fn exit(self: ExecResult) noreturn {
+            switch (self) {
+                .ok => Global.exit(0),
+                .failure => Global.exit(1),
+                .code => |code| Global.exitWide(code),
+                .signal => |code| Global.raiseIgnoringPanicHandler(code),
+            }
         }
     };
 
     pub fn execAll(ctx: Command.Context, comptime bin_dirs_only: bool) !void {
         // without filters just behave like normal exec
         if (ctx.filters.len == 0) {
-            switch (try exec(ctx, bin_dirs_only, true, false)) {
-                .ok => return,
-                .failure => Global.exit(1),
-                .code => |code| Global.exitWide(code),
-            }
-            return;
+            const res = try exec(ctx, bin_dirs_only, true, false);
+            res.exit();
         }
 
         const fsinstance = try bun.fs.FileSystem.init(null);
@@ -1407,7 +1412,7 @@ pub const RunCommand = struct {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
                 continue;
             };
-            ok = ok and res.notFailure();
+            ok = ok and res.isOk();
         }
 
         if (!any_match) {
@@ -1607,7 +1612,7 @@ pub const RunCommand = struct {
                             ctx.debug.silent,
                             ctx.debug.use_system_shell,
                         );
-                        if (!res.notFailure()) return ExecResult.failure;
+                        if (!res.isOk()) return ExecResult.failure;
                     }
 
                     const res2 = try runPackageScriptForeground(
@@ -1621,7 +1626,7 @@ pub const RunCommand = struct {
                         ctx.debug.silent,
                         ctx.debug.use_system_shell,
                     );
-                    if (!res2.notFailure()) return ExecResult.failure;
+                    if (!res2.isOk()) return ExecResult.failure;
 
                     temp_script_buffer[0.."post".len].* = "post".*;
 
@@ -1637,7 +1642,7 @@ pub const RunCommand = struct {
                             ctx.debug.silent,
                             ctx.debug.use_system_shell,
                         );
-                        if (!res3.notFailure()) return ExecResult.failure;
+                        if (!res3.isOk()) return ExecResult.failure;
                     }
 
                     return ExecResult.ok;

@@ -525,7 +525,7 @@ pub const BunxCommand = struct {
                     passthrough,
                     null,
                 );
-                Global.exit(if (res.notFailure()) 0 else 1);
+                res.exit();
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -562,7 +562,7 @@ pub const BunxCommand = struct {
                             passthrough,
                             null,
                         );
-                        Global.exit(if (res.notFailure()) 0 else 1);
+                        res.exit();
                     }
                 }
             } else |err| {
@@ -681,7 +681,7 @@ pub const BunxCommand = struct {
                 passthrough,
                 null,
             );
-            Global.exit(if (res.notFailure()) 0 else 1);
+            res.exit();
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -705,7 +705,7 @@ pub const BunxCommand = struct {
                         passthrough,
                         null,
                     );
-                    Global.exit(if (res.notFailure()) 0 else 1);
+                    res.exit();
                 }
             }
         } else |_| {}

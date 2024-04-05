@@ -783,19 +783,6 @@ pub fn GlobWalker_(
             error_on_broken_symlinks: bool,
             only_files: bool,
         ) !Maybe(void) {
-            errdefer arena.deinit();
-            var cwd: []const u8 = undefined;
-            switch (Accessor.getcwd(&this.pathBuf)) {
-                .err => |err| {
-                    return .{ .err = err };
-                },
-                .result => |result| {
-                    const copiedCwd = try arena.allocator().alloc(u8, result.len);
-                    @memcpy(copiedCwd, result);
-                    cwd = copiedCwd;
-                },
-            }
-
             return try this.initWithCwd(
                 arena,
                 pattern,

@@ -92,7 +92,8 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
                 },
                 else => {
                     // TODO log error and fail
-                    Global.crash();
+                    Output.prettyErrorln("<r><red>error<r>: Failed to parse \"workspaces\" property: all items must be strings", .{});
+                    Global.exit(1);
                 },
             }
         }

@@ -97,10 +97,8 @@ const TypeParameterFlag = packed struct {
     /// TypeScript 5.0
     allow_const_modifier: bool = false,
 
-    pub const all = TypeParameterFlag{
-        .allow_in_out_variance_annotations = true,
-        .allow_const_modifier = true,
-    };
+    /// Allow "<>" without any type parameters
+    allow_empty_type_parameters: bool = false,
 };
 
 const JSXImport = enum {
@@ -8877,6 +8875,11 @@ fn NewParser_(
             var result = SkipTypeParameterResult.could_be_type_cast;
             try p.lexer.next();
 
+            if (p.lexer.token == .t_greater_than and flags.allow_empty_type_parameters) {
+                try p.lexer.next();
+                return .definitely_type_parameters;
+            }
+
             while (true) {
                 var has_in = false;
                 var has_out = false;
@@ -10524,7 +10527,10 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{
+                .allow_in_out_variance_annotations = true,
+                .allow_empty_type_parameters = true,
+            });
 
             try p.lexer.expect(.t_equals);
             try p.skipTypeScriptType(.lowest);
@@ -10652,7 +10658,10 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{
+                .allow_in_out_variance_annotations = true,
+                .allow_empty_type_parameters = true,
+            });
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();

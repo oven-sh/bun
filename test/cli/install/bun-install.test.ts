@@ -6037,9 +6037,34 @@ it("should handle --cwd", async () => {
 });
 
 it("should handle --frozen-lockfile", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));
+
   await writeFile(
     join(package_dir, "package.json"),
-    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+  );
+
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
+  // change version of baz in package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { baz: "0.0.5" },
+    }),
   );
 
   const { stderr, exited } = spawn({
@@ -6058,16 +6083,43 @@ it("should handle --frozen-lockfile", async () => {
 });
 
 it("should handle frozenLockfile in config file", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));
+
   await writeFile(
     join(package_dir, "package.json"),
-    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
   );
+
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
   await writeFile(
     join(package_dir, "bunfig.toml"),
     `
 [install]
 frozenLockfile = true
+registry = "${root_url}"
 `,
+  );
+
+  // change version of baz in package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { baz: "0.0.5" },
+    }),
   );
 
   const { stderr, exited } = spawn({

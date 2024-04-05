@@ -23,11 +23,11 @@ Creating a new Next.js app in /path/to/my-app.
 
 ---
 
-To start the dev server with Bun, run `bun --bun run dev` from the project root.
+To start the dev server with Bun, run `bunx --bun run dev` from the project root.
 
 ```sh
 $ cd my-app
-$ bun --bun run dev
+$ bunx --bun run dev
 ```
 
 ---

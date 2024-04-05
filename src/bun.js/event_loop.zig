@@ -994,7 +994,7 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
-                .FSWatchTask => {
+                @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
                     transform_task.*.run();
                     transform_task.deinit();

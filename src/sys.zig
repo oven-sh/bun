@@ -2542,7 +2542,7 @@ pub const File = struct {
     pub const ReadError = anyerror;
 
     pub fn closeAndMoveTo(this: File, src: [:0]const u8, dest: [:0]const u8) !void {
-        // On POSIX,close the file after moving it.
+        // On POSIX, close the file after moving it.
         defer if (Environment.isPosix) this.close();
         // On Windows, close the file before moving it.
         if (Environment.isWindows) this.close();

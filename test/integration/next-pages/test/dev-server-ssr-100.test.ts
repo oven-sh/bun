@@ -8,7 +8,7 @@ import { cp, rm } from "fs/promises";
 
 import { tmpdir } from "node:os";
 
-let root = join(tmpdir(), "next-pages" + Math.random().toString(36).slice(2) + "-" + Date.now().toString(36));
+let root = join(tmpdir(), "ssr" + Math.random().toString(36).slice(2, 4) + "-" + Date.now().toString(36).slice(2, 4));
 
 beforeAll(async () => {
   await rm(root, { recursive: true, force: true });

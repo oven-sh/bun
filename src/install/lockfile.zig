@@ -1650,7 +1650,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
 
     if (comptime Environment.isPosix) {
         // chmod 777 on posix
-        switch (bun.sys.fchmod(file.fd, 0o777)) {
+        switch (bun.sys.fchmod(file.handle, 0o777)) {
             .err => |err| {
                 file.close();
                 _ = bun.sys.unlink(tmpname);

@@ -442,6 +442,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellAsync,
     ShellAsyncSubprocessDone,
     TimerReference,
+    bun.shell.Interpreter.Builtin.Yes.YesTask,
 
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,

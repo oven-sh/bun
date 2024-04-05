@@ -9716,6 +9716,7 @@ pub const Interpreter = struct {
             bltn: *Builtin,
             state: enum { idle, waiting_io, err, done } = .idle,
             expletive: string = "y",
+            task: YesTask = undefined,
 
             pub fn start(this: *@This()) Maybe(void) {
                 const args = this.bltn.argsSlice();
@@ -9724,41 +9725,74 @@ pub const Interpreter = struct {
                     this.expletive = std.mem.sliceTo(args[0], 0);
                 }
 
-                while (true) {
+                if (!this.bltn.stdout.needsIO()) {
                     var res: Maybe(usize) = undefined;
-
-                    res = this.print(this.expletive);
-                    if (res == .err) {
-                        this.bltn.done(1);
-                        return Maybe(void).success;
+                    while (true) {
+                        res = this.bltn.writeNoIO(.stdout, this.expletive);
+                        if (res == .err) {
+                            this.bltn.done(1);
+                            return Maybe(void).success;
+                        }
+                        res = this.bltn.writeNoIO(.stdout, "\n");
+                        if (res == .err) {
+                            this.bltn.done(1);
+                            return Maybe(void).success;
+                        }
                     }
-
-                    res = this.print("\n");
-                    if (res == .err) {
-                        this.bltn.done(1);
-                        return Maybe(void).success;
-                    }
+                    @compileError(unreachable);
                 }
-            }
-
-            fn print(this: *@This(), msg: string) Maybe(usize) {
-                if (this.bltn.stdout.needsIO()) {
-                    this.state = .waiting_io;
-                    this.bltn.stdout.enqueue(this, msg);
-                    return Maybe(usize).success;
-                }
-                return this.bltn.writeNoIO(.stdout, msg);
+                const evtloop = this.bltn.eventLoop();
+                this.task = .{
+                    .evtloop = evtloop,
+                    .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
+                };
+                this.state = .waiting_io;
+                this.bltn.stdout.enqueue(this, this.expletive);
+                this.bltn.stdout.enqueue(this, "\n");
+                this.task.enqueue();
+                return Maybe(void).success;
             }
 
             pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
-                _ = this;
-                _ = maybe_e;
-                unreachable;
+                if (maybe_e) |e| {
+                    defer e.deref();
+                    this.state = .err;
+                    this.bltn.done(1);
+                    return;
+                }
             }
 
             pub fn deinit(this: *@This()) void {
                 _ = this;
             }
+
+            pub const YesTask = struct {
+                evtloop: JSC.EventLoopHandle,
+                concurrent_task: JSC.EventLoopTask,
+
+                pub fn enqueue(this: *@This()) void {
+                    if (this.evtloop == .js) {
+                        this.evtloop.js.tick();
+                        this.evtloop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+                    } else {
+                        this.evtloop.mini.loop.tick();
+                        this.evtloop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+                    }
+                }
+
+                pub fn runFromMainThread(this: *@This()) void {
+                    const yes = @fieldParentPtr(Yes, "task", this);
+
+                    yes.bltn.stdout.enqueue(yes, yes.expletive);
+                    yes.bltn.stdout.enqueue(yes, "\n");
+
+                    this.enqueue();
+                }
+
+                pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
+                    this.runFromMainThread();
+                }
+            };
         };
 
         pub const Seq = struct {

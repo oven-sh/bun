@@ -11208,7 +11208,7 @@
         }
       ],
       "events": [
-        { "name": "domContentEventFired", "parameters": [{ "name": "timestamp", "$ref": "Network.monotonicTime" }] },
+        { "name": "domContentEventFired", "parameters": [{ "name": "timestamp", "$ref": "Network.MonotonicTime" }] },
         {
           "name": "fileChooserOpened",
           "description": "Emitted only when `page.interceptFileChooser` is enabled.",
@@ -11398,7 +11398,7 @@
               "$ref": "Network.LoaderId"
             },
             { "name": "name", "type": "string" },
-            { "name": "timestamp", "$ref": "Network.monotonicTime" }
+            { "name": "timestamp", "$ref": "Network.MonotonicTime" }
           ]
         },
         {
@@ -11426,7 +11426,7 @@
             }
           ]
         },
-        { "name": "loadEventFired", "parameters": [{ "name": "timestamp", "$ref": "Network.monotonicTime" }] },
+        { "name": "loadEventFired", "parameters": [{ "name": "timestamp", "$ref": "Network.MonotonicTime" }] },
         {
           "name": "navigatedWithinDocument",
           "description": "Fired when same-document navigation happens, e.g. due to history API usage or anchor navigation.",

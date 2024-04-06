@@ -11604,7 +11604,7 @@ export namespace V8 {
      * @event `Page.domContentEventFired`
      */
     export type DomContentEventFiredEvent = {
-      timestamp: Network.monotonicTime;
+      timestamp: Network.MonotonicTime;
     };
     /**
      * Emitted only when `page.interceptFileChooser` is enabled.
@@ -11869,7 +11869,7 @@ export namespace V8 {
        */
       loaderId: Network.LoaderId;
       name: string;
-      timestamp: Network.monotonicTime;
+      timestamp: Network.MonotonicTime;
     };
     /**
      * Fired for failed bfcache history navigations if BackForwardCache feature is enabled. Do
@@ -11901,7 +11901,7 @@ export namespace V8 {
      * @event `Page.loadEventFired`
      */
     export type LoadEventFiredEvent = {
-      timestamp: Network.monotonicTime;
+      timestamp: Network.MonotonicTime;
     };
     /**
      * Fired when same-document navigation happens, e.g. due to history API usage or anchor navigation.

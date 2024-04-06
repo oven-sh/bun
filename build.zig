@@ -14,7 +14,6 @@ const fs = std.fs;
 const Version = std.SemanticVersion;
 const Arch = std.Target.Cpu.Arch;
 
-const Wyhash11 = @import("./src/wyhash.zig").Wyhash11;
 const OperatingSystem = @import("src/env.zig").OperatingSystem;
 
 const pathRel = fs.path.relative;

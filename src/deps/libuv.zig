@@ -241,7 +241,7 @@ const _O_SHORT_LIVED = 0x1000;
 const _O_SEQUENTIAL = 0x0020;
 const _O_RANDOM = 0x0010;
 
-// These **do not** map to std.posix.O!
+// These **do not** map to std.posix.O/bun.O!
 pub const UV_FS_O_APPEND = 0x0008;
 pub const UV_FS_O_CREAT = _O_CREAT;
 pub const UV_FS_O_EXCL = 0x0400;

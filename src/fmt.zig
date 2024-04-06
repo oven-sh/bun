@@ -1104,6 +1104,7 @@ pub const SizeFormatter = struct {
         }
         const precision: usize = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2;
         try fmt.formatType(new_value, "d", .{ .precision = precision }, writer, 0);
+        try writer.writeAll(&.{ ' ', suffix, 'B' });
     }
 };
 

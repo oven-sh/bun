@@ -5643,6 +5643,7 @@ pub const NodeFS = struct {
                     error.NotDir => .NOTDIR,
                     // On Windows, file paths must be valid Unicode.
                     error.InvalidUtf8 => .INVAL,
+                    error.InvalidWtf8 => .INVAL,
 
                     // On Windows, file paths cannot contain these characters:
                     // '/', '*', '?', '"', '<', '>', '|'
@@ -5688,8 +5689,9 @@ pub const NodeFS = struct {
                     // One of the path components was not a directory.
                     // This error is unreachable if `sub_path` does not contain a path separator.
                     error.NotDir => .NOTDIR,
-                    // On Windows, file paths must be valid Unicode.
+                    // On Windows, file paths must be valid WTF-8.
                     error.InvalidUtf8 => .INVAL,
+                    error.InvalidWtf8 => .INVAL,
 
                     // On Windows, file paths cannot contain these characters:
                     // '/', '*', '?', '"', '<', '>', '|'
@@ -5729,6 +5731,7 @@ pub const NodeFS = struct {
                         error.FileBusy => .BUSY,
                         error.FileNotFound => .NOENT,
                         error.InvalidUtf8 => .INVAL,
+                        error.InvalidWtf8 => .INVAL,
                         error.BadPathName => .INVAL,
                         else => .FAULT,
                     };
@@ -5757,6 +5760,7 @@ pub const NodeFS = struct {
                     error.ReadOnlyFileSystem => .ROFS,
                     error.FileBusy => .BUSY,
                     error.InvalidUtf8 => .INVAL,
+                    error.InvalidWtf8 => .INVAL,
                     error.BadPathName => .INVAL,
                     error.FileNotFound => .NOENT,
                     else => .FAULT,

@@ -220,8 +220,8 @@ it("BigIntArray", () => {
   }
 });
 
-it("FloatArray", () => {
-  for (let TypedArray of [Float32Array, Float64Array]) {
+for (let TypedArray of [Float32Array, Float64Array]) {
+  it(TypedArray.name + " " + Math.fround(42.68), () => {
     const buffer = new TypedArray([Math.fround(42.68)]);
     const input = Bun.inspect(buffer);
 
@@ -231,8 +231,22 @@ it("FloatArray", () => {
         `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
-  }
-});
+  });
+
+  it(TypedArray.name + " " + 42.68, () => {
+    const buffer = new TypedArray([42.68]);
+    const input = Bun.inspect(buffer);
+
+    expect(input).toBe(
+      `${TypedArray.name}(${buffer.length}) [ ${[TypedArray === Float32Array ? Math.fround(42.68) : 42.68].join(", ")} ]`,
+    );
+    for (let i = 1; i < buffer.length + 1; i++) {
+      expect(Bun.inspect(buffer.subarray(i))).toBe(
+        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
+      );
+    }
+  });
+}
 
 it("jsx with two elements", () => {
   const input = Bun.inspect(

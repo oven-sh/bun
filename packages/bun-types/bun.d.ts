@@ -3000,7 +3000,7 @@ declare module "bun" {
    *
    * Due to this limitation, while the internal counter may continue beyond this point,
    * the precision of the returned value will degrade after 14.8 weeks of uptime (when the nanosecond
-   * count exceeds Number.MAX_SAFE_INTEGER). Beyond this point, the function will continue to count but 
+   * count exceeds Number.MAX_SAFE_INTEGER). Beyond this point, the function will continue to count but
    * with reduced precision, which might affect time calculations and comparisons in long-running applications.
    *
    * @returns {number} The number of nanoseconds since the process was started, with precise values up to

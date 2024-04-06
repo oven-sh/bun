@@ -54,6 +54,7 @@ jobs:
       matrix:
         cpu: [haswell, nehalem]
         arch: [x86_64]
+        zig_optimize: [ReleaseSafe, ReleaseFast]
     name: Zig Build
     runs-on: namespace-profile-zig-build
     timeout-minutes: 60
@@ -93,7 +94,7 @@ jobs:
             TRIPLET=${{ matrix.arch }}-windows-msvc
             GIT_SHA=${{ github.sha }}
             CANARY=0
-            ZIG_OPTIMIZE=ReleaseSafe
+            ZIG_OPTIMIZE=${{matrix.zig_optimize}}
           # TODO(@paperdave): enable ASSERTIONS=1
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
@@ -102,7 +103,7 @@ jobs:
       - name: Upload Zig Object
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-zig${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
+          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-zig${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}${{matrix.zig_optimize == 'ReleaseFast' && '-speedy' || '' }}
           path: ${{runner.temp}}/release/bun-zig.o
           if-no-files-found: "error"
 
@@ -277,6 +278,7 @@ jobs:
       matrix:
         cpu: [haswell, nehalem]
         arch: [x86_64]
+        zig_optimize: [ReleaseFast, ReleaseSafe]
     name: Link
     needs: [windows-dependencies, windows-codegen, windows-cpp, windows-zig]
     runs-on: windows-small
@@ -303,7 +305,7 @@ jobs:
       - name: Download Zig Object
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-zig${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
+          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-zig${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}${{matrix.zig_optimize == 'ReleaseFast' && '-speedy' || ''}}
           path: bun-zig
       - name: Download C++ Objects
         uses: actions/download-artifact@v4
@@ -331,7 +333,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
       - name: Package
         run: |
-          $Dist = mkdir -Force "${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}"
+          $Dist = mkdir -Force "${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}${{matrix.zig_optimize == 'ReleaseFast' && '-speedy' || ''}}"
           cp -r build\bun.exe "$Dist\bun.exe"
           Compress-Archive "$Dist" "${Dist}.zip"
           $Dist = "$Dist-profile"
@@ -342,13 +344,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
-          path: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
+          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}${{matrix.zig_optimize == 'ReleaseFast' && '-speedy' || ''}}
+          path: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}${{matrix.zig_optimize == 'ReleaseFast' && '-speedy' || ''}}.zip
           if-no-files-found: "error"
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile
-          path: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile.zip
+          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}${{matrix.zig_optimize == 'ReleaseFast' && '-speedy' || ''}}-profile
+          path: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}${{matrix.zig_optimize == 'ReleaseFast' && '-speedy' || ''}}-profile.zip
           if-no-files-found: "error"
       - name: Release
         id: release
@@ -366,7 +368,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           name: "Canary (${{github.sha}})"
           tag: "canary"
-          artifacts: "${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip,${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile.zip"
+          artifacts: "${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}${{matrix.zig_optimize == 'ReleaseFast' && '-speedy' || ''}}.zip,${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}${{matrix.zig_optimize == 'ReleaseFast' && '-speedy' || ''}}-profile.zip"
       - uses: sarisia/actions-status-discord@v1
         if: failure() && github.repository_owner == 'oven-sh' && github.event_name == 'pull_request'
         with:

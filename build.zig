@@ -19,7 +19,7 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 const pathRel = fs.path.relative;
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.12.0-dev.3518+d2be725e4";
+const recommended_zig_version = "0.12.0-dev.3533+e5d900268";
 
 comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
@@ -49,6 +49,7 @@ const BunBuildOptions = struct {
     generated_code_dir: []const u8,
 
     cached_options_module: ?*Module = null,
+    windows_shim: ?WindowsShim = null,
 
     pub fn isBaseline(this: *const BunBuildOptions) bool {
         // return this.arch.isX86() and (this.target.result.cpu.model == .baseline or
@@ -74,6 +75,13 @@ const BunBuildOptions = struct {
         const mod = opts.createModule();
         this.cached_options_module = mod;
         return mod;
+    }
+
+    pub fn windowsShim(this: *BunBuildOptions, b: *Build) WindowsShim {
+        return this.windows_shim orelse {
+            this.windows_shim = WindowsShim.create(b);
+            return this.windows_shim.?;
+        };
     }
 };
 
@@ -106,6 +114,8 @@ pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
 
 pub fn build(b: *Build) !void {
     std.debug.print("zig build v{s}\n", .{builtin.zig_version_string});
+
+    b.zig_lib_dir = b.zig_lib_dir orelse .{ .path = b.pathFromRoot("src/deps/zig/lib") };
 
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -203,6 +213,14 @@ pub fn build(b: *Build) !void {
         var bun_obj = addBunObject(b, &build_options);
         step.dependOn(&bun_obj.step);
         step.dependOn(&b.addInstallFile(bun_obj.getEmittedBin(), "bun-zig.o").step);
+    }
+
+    // zig build windows-shim
+    {
+        var step = b.step("windows-shim", "Build the Windows shim (bun_shim_impl.exe + bun_shim_debug.exe)");
+        var windows_shim = build_options.windowsShim(b);
+        step.dependOn(&b.addInstallFile(windows_shim.exe.getEmittedBin(), "bun_shim_impl.exe").step);
+        step.dependOn(&b.addInstallFile(windows_shim.dbg.getEmittedBin(), "bun_shim_debug.exe").step);
     }
 
     // zig build check
@@ -304,8 +322,6 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     return obj;
 }
 
-// }
-
 fn exists(path: []const u8) bool {
     const file = std.fs.openFileAbsolute(path, .{ .mode = .read_only }) catch return false;
     file.close();
@@ -356,6 +372,12 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     obj.root_module.addAnonymousImport("ResolvedSourceTag", .{
         .root_source_file = .{ .path = resolved_source_tag_path },
     });
+
+    if (os == .windows) {
+        obj.root_module.addAnonymousImport("bun_shim_impl.exe", .{
+            .root_source_file = opts.windowsShim(b).exe.getEmittedBin(),
+        });
+    }
 }
 
 fn validateGeneratedPath(path: []const u8) void {
@@ -363,3 +385,49 @@ fn validateGeneratedPath(path: []const u8) void {
         std.debug.panic("{s} does not exist in generated code directory!", .{std.fs.path.basename(path)});
     }
 }
+
+const WindowsShim = struct {
+    exe: *Compile,
+    dbg: *Compile,
+
+    fn create(b: *Build) WindowsShim {
+        const target = b.resolveTargetQuery(.{
+            .cpu_model = .{ .explicit = &std.Target.x86.cpu.nehalem },
+            .cpu_arch = .x86_64,
+            .os_tag = .windows,
+            .os_version_min = getOSVersionMin(.windows),
+        });
+
+        const path = "src/install/windows-shim/bun_shim_impl.zig";
+
+        const exe = b.addExecutable(.{
+            .name = "bun_shim_impl",
+            .root_source_file = .{ .path = path },
+            .target = target,
+            .optimize = .ReleaseFast,
+            .use_llvm = true,
+            .use_lld = true,
+            .unwind_tables = false,
+            .omit_frame_pointer = true,
+            .strip = true,
+            .linkage = .static,
+            .sanitize_thread = false,
+            .single_threaded = true,
+            .link_libc = false,
+        });
+
+        const dbg = b.addExecutable(.{
+            .name = "bun_shim_debug",
+            .root_source_file = .{ .path = path },
+            .target = target,
+            .optimize = .Debug,
+            .use_llvm = true,
+            .use_lld = true,
+            .linkage = .static,
+            .single_threaded = true,
+            .link_libc = false,
+        });
+
+        return .{ .exe = exe, .dbg = dbg };
+    }
+};

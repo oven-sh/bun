@@ -125,7 +125,7 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
 }
 
 fn unicodeStringToU16(str: w.UNICODE_STRING) []u16 {
-    return str.Buffer[0 .. str.Length / 2];
+    return str.Buffer.?[0 .. str.Length / 2];
 }
 
 const FILE_GENERIC_READ = w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE;
@@ -328,8 +328,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
     // these are all different views of the same data
     const image_path_b_len = if (is_standalone) ImagePathName.Length else bun_ctx.base_path.len * 2;
-    const image_path_u16 = (if (is_standalone) ImagePathName.Buffer else bun_ctx.base_path.ptr)[0 .. image_path_b_len / 2];
-    const image_path_u8 = @as([*]u8, @ptrCast(if (is_standalone) ImagePathName.Buffer else bun_ctx.base_path.ptr))[0..image_path_b_len];
+    const image_path_u16 = (if (is_standalone) ImagePathName.Buffer.? else bun_ctx.base_path.ptr)[0 .. image_path_b_len / 2];
+    const image_path_u8 = @as([*]u8, @ptrCast(if (is_standalone) ImagePathName.Buffer.? else bun_ctx.base_path.ptr))[0..image_path_b_len];
 
     const cmd_line_b_len = CommandLine.Length;
     const cmd_line_u16 = CommandLine.Buffer.?[0 .. cmd_line_b_len / 2];

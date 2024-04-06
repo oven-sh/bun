@@ -11,7 +11,7 @@ on:
       - main
 
 env:
-  ZIG_VERSION: 0.12.0-dev.3518+d2be725e4
+  ZIG_VERSION: 0.12.0-dev.3533+e5d900268
 
 jobs:
   format:

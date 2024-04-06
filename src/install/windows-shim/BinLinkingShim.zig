@@ -74,7 +74,7 @@ pub const Flags = packed struct(u16) {
     }
 };
 
-pub const embedded_executable_data = @embedFile("./bun_shim_impl.exe");
+pub const embedded_executable_data = @embedFile("bun_shim_impl.exe");
 
 fn wU8(comptime s: []const u8) []const u8 {
     const str = std.unicode.utf8ToUtf16LeStringLiteral(s);

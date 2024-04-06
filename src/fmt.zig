@@ -1259,8 +1259,6 @@ pub fn fmtSlice(data: anytype, comptime delim: []const u8) FormatSlice(@TypeOf(d
 }
 
 fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
-    std.debug.assert(@typeInfo(T).Pointer.size == .Slice);
-
     return struct {
         slice: T,
 

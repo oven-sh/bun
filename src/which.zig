@@ -15,6 +15,8 @@ fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
+    bun.Output.scoped(.which, true)("path={s} cwd={s} bin={s}", .{ path, cwd, bin });
+
     if (bun.Environment.os == .windows) {
         var convert_buf: bun.WPathBuffer = undefined;
         const result = whichWin(&convert_buf, path, cwd, bin) orelse return null;

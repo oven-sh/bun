@@ -275,6 +275,8 @@ function Install-Bun {
       $RegistryKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Bun"  
       $rootKey = New-Item -Path $RegistryKey -Force
       New-ItemProperty -Path $RegistryKey -Name "DisplayName" -Value "Bun" -PropertyType String -Force | Out-Null
+      New-ItemProperty -Path $RegistryKey -Name "DisplayVersion" -Value $DisplayVersion -PropertyType String -Force | Out-Null
+      New-ItemProperty -Path $RegistryKey -Name "Publisher" -Value "Oven-sh" -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "InstallLocation" -Value "${BunRoot}" -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "DisplayIcon" -Value $BunBin\bun.exe -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`' -PauseOnError`"" -PropertyType String -Force | Out-Null

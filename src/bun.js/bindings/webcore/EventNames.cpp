@@ -20,6 +20,9 @@
 
 #include "config.h"
 #include "EventNames.h"
+#include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSStringInlines.h"
+#include "wtf/Assertions.h"
 
 namespace WebCore {
 
@@ -38,6 +41,37 @@ const EventNames& eventNames()
     if (!eventNames_)
         eventNames_ = EventNames::create();
     return *eventNames_;
+}
+
+enum class DOMEventName : uint8_t {
+    rename = 0,
+    change = 1,
+    error = 2,
+    abort = 3,
+    close = 4,
+
+};
+
+extern "C" JSC::EncodedJSValue Bun__domEventNameToJS(JSC::JSGlobalObject* globalObject, DOMEventName name)
+{
+    const auto& eventName = [&]() -> const AtomString& {
+        switch (name) {
+        case DOMEventName::rename:
+            return eventNames().renameEvent;
+        case DOMEventName::change:
+            return eventNames().changeEvent;
+        case DOMEventName::error:
+            return eventNames().errorEvent;
+        case DOMEventName::abort:
+            return eventNames().abortEvent;
+        case DOMEventName::close:
+            return eventNames().closeEvent;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }();
+
+    return JSValue::encode(JSC::jsString(globalObject->vm(), eventName));
 }
 
 }

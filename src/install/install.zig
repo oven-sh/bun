@@ -451,9 +451,11 @@ const NetworkTask = struct {
     pub fn forTarball(
         this: *NetworkTask,
         allocator: std.mem.Allocator,
-        tarball: ExtractTarball,
+        tarball_: *const ExtractTarball,
         scope: *const Npm.Registry.Scope,
     ) !void {
+        this.callback = .{ .extract = tarball_.* };
+        const tarball = &this.callback.extract;
         const tarball_url = tarball.url.slice();
         if (tarball_url.len == 0) {
             this.url_buf = try ExtractTarball.buildURL(
@@ -501,8 +503,6 @@ const NetworkTask = struct {
         if (PackageManager.verbose_install) {
             this.http.client.verbose = true;
         }
-
-        this.callback = .{ .extract = tarball };
     }
 };
 
@@ -3310,7 +3310,7 @@ pub const PackageManager = struct {
 
         try network_task.forTarball(
             this.allocator,
-            .{
+            &.{
                 .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(
                     this.lockfile.str(&package.name),
@@ -10032,7 +10032,7 @@ pub const PackageManager = struct {
             root = .{};
             manager.lockfile.initEmpty(ctx.allocator);
 
-            if (manager.options.enable.frozen_lockfile) {
+            if (manager.options.enable.frozen_lockfile and load_lockfile_result != .not_found) {
                 if (comptime log_level != .silent) {
                     Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
                 }
@@ -10231,7 +10231,7 @@ pub const PackageManager = struct {
 
         const packages_len_before_install = manager.lockfile.packages.len;
 
-        if (manager.options.enable.frozen_lockfile) {
+        if (manager.options.enable.frozen_lockfile and load_lockfile_result != .not_found) {
             if (manager.lockfile.hasMetaHashChanged(PackageManager.verbose_install or manager.options.do.print_meta_hash_string, packages_len_before_install) catch false) {
                 if (comptime log_level != .silent) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});

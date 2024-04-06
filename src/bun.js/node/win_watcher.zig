@@ -116,7 +116,7 @@ pub const PathWatcher = struct {
             Output.debugWarn("uvEventCallback called with null data", .{});
             return;
         }
-        const this: *PathWatcher = @alignCast(@fieldParentPtr(PathWatcher, "handle", event));
+        const this: *PathWatcher = @alignCast(@fieldParentPtr("handle", event));
         if (comptime bun.Environment.isDebug) {
             std.debug.assert(event.data == @as(?*anyopaque, @ptrCast(this)));
         }

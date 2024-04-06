@@ -1724,16 +1724,45 @@ pub const WindowsSymlinkOptions = packed struct {
         symlink_flags = 0;
     }
 
-    pub var has_failed_to_create_symlink = false;
+    pub const ShouldUseJunction = enum(u8) {
+        unset = 0,
+        yes = 1,
+        no = 2,
+    };
+
+    pub var _should_use_junction: ShouldUseJunction = .unset;
+
+    pub fn shouldUseJunction() bool {
+        const value = @atomicLoad(ShouldUseJunction, &_should_use_junction, .Monotonic);
+        return switch (value) {
+            .unset => brk: {
+                if (bun.getenvZ("BUN_FEATURE_FLAG_USE_JUNCTIONS") != null) {
+                    std.debug.print("USE_JUNCTION initial true\n", .{});
+                    @atomicStore(ShouldUseJunction, &_should_use_junction, .yes, .Monotonic);
+                    break :brk true;
+                }
+
+                std.debug.print("USE_JUNCTION initial false\n", .{});
+                @atomicStore(ShouldUseJunction, &_should_use_junction, .no, .Monotonic);
+                break :brk false;
+            },
+            .yes => true,
+            .no => false,
+        };
+    }
+
+    pub fn setShouldUseJunction() void {
+        @atomicStore(ShouldUseJunction, &_should_use_junction, .yes, .Monotonic);
+    }
 };
 
-pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe(void) {
-    if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
+pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8, options: WindowsSymlinkOptions) Maybe(void) {
+    if (!WindowsSymlinkOptions.shouldUseJunction()) {
         var sym16: bun.WPathBuffer = undefined;
         var target16: bun.WPathBuffer = undefined;
         const sym_path = bun.strings.toNTPath(&sym16, sym);
         const target_path = bun.strings.toNTPath(&target16, target);
-        switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
+        switch (symlinkW(sym_path, target_path, options)) {
             .result => {
                 return Maybe(void).success;
             },
@@ -1741,7 +1770,30 @@ pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe
         }
     }
 
-    return sys_uv.symlinkUV(sym, target, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
+    return sys_uv.symlinkUV(target, sym, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
+}
+
+pub fn symlinkOrJunctionOnWindowsW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
+    if (!WindowsSymlinkOptions.shouldUseJunction()) {
+        switch (symlinkW(sym, target, options)) {
+            .result => {
+                return Maybe(void).success;
+            },
+            .err => {},
+        }
+    }
+
+    var sym_buf: bun.PathBuffer = undefined;
+    const _sym_u8 = bun.strings.convertUTF16toUTF8InBuffer(&sym_buf, sym) catch unreachable;
+    sym_buf[_sym_u8.len] = 0;
+    const sym_u8 = sym_buf[0.._sym_u8.len :0];
+
+    var target_buf: bun.PathBuffer = undefined;
+    const _target_u8 = bun.strings.convertUTF16toUTF8InBuffer(&target_buf, target) catch unreachable;
+    target_buf[_target_u8.len] = 0;
+    const target_u8 = target_buf[0.._target_u8.len :0];
+
+    return sys_uv.symlinkUV(target_u8, sym_u8, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
 }
 
 pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
@@ -1767,7 +1819,7 @@ pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymli
             }
 
             if (errno.toSystemErrno()) |err| {
-                WindowsSymlinkOptions.has_failed_to_create_symlink = true;
+                WindowsSymlinkOptions.setShouldUseJunction();
                 return .{
                     .err = .{
                         .errno = @intFromEnum(err),

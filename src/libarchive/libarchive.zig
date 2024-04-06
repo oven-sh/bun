@@ -488,6 +488,8 @@ pub const Archive = struct {
         const archive = stream.archive;
         var count: u32 = 0;
         const dir_fd = dir.fd;
+        var dir_path_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
+        var dir_path_len: if (Environment.isWindows) ?usize else void = if (comptime Environment.isWindows) null else {};
 
         var w_path_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
 
@@ -577,21 +579,47 @@ pub const Archive = struct {
                             }
                         },
                         Kind.sym_link => {
-                            const link_target = lib.archive_entry_symlink(entry).?;
                             if (comptime Environment.isWindows) {
-                                @panic("TODO on Windows: Extracting archives containing symbolic links.");
-                            }
-                            std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
-                                switch (err) {
-                                    error.AccessDenied, error.FileNotFound => {
-                                        dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                        break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
-                                    },
-                                    else => {
-                                        return err;
-                                    },
+                                const link_target = std.mem.sliceTo(lib.archive_entry_symlink_w(entry), 0);
+
+                                const dir_len = dir_path_len orelse brk: {
+                                    const dir_path = bun.getFdPathW(dir_fd, &dir_path_buf) catch continue :loop;
+                                    dir_path_buf[dir_path.len] = std.fs.path.sep;
+                                    dir_path_len = dir_path.len + 1;
+                                    break :brk dir_path_len.?;
+                                };
+
+                                // TODO: the symlink target may or may not exist because it might
+                                // still need to be extracted. For now we silently ignore errors.
+                                // In the future, we should defer making these symlinks in order
+                                // to determine whether the target is a file or directory, if it
+                                // exists. Additionally, if we use junctions or the symlink target
+                                // is an absolute path, moving the extracted directory will break
+                                // the link.
+
+                                @memcpy(dir_path_buf[dir_len..][0..pathname.len], pathname);
+                                dir_path_buf[dir_len + pathname.len] = 0;
+                                const dest = dir_path_buf[0 .. dir_len + pathname.len :0];
+
+                                switch (bun.sys.symlinkOrJunctionOnWindowsW(dest, link_target, .{})) {
+                                    // best effort, see todo above
+                                    .err => {},
+                                    .result => {},
                                 }
-                            };
+                            } else {
+                                const link_target = lib.archive_entry_symlink(entry).?;
+                                std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
+                                    switch (err) {
+                                        error.AccessDenied, error.FileNotFound => {
+                                            dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
+                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
+                                        },
+                                        else => {
+                                            return err;
+                                        },
+                                    }
+                                };
+                            }
                         },
                         Kind.file => {
                             const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(lib.archive_entry_perm(entry));

@@ -657,8 +657,21 @@ pub const UpgradeCommand = struct {
                         },
                     );
 
+                    var buf: bun.PathBuffer = undefined;
+                    const powershell_path = 
+                        bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse 
+                            hardcoded_system_powershell: {
+                                const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
+                                const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe"}, .windows);
+                                if (bun.sys.exists(hardcoded_system_powershell)) {
+                                    break :hardcoded_system_powershell hardcoded_system_powershell;
+                                }
+                                Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
+                                Global.exit(1);
+                            };
+
                     var unzip_argv = [_]string{
-                        "powershell.exe",
+                        powershell_path,
                         "-NoProfile",
                         "-ExecutionPolicy",
                         "Bypass",
@@ -666,24 +679,26 @@ pub const UpgradeCommand = struct {
                         unzip_script,
                     };
 
-                    var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
+                    _ = (bun.spawnSync(&.{
+                        .argv = &unzip_argv,
 
-                    unzip_process.cwd = tmpdir_path;
-                    unzip_process.stdin_behavior = .Inherit;
-                    unzip_process.stdout_behavior = .Inherit;
-                    unzip_process.stderr_behavior = .Inherit;
+                        .envp = null,
+                        .cwd = tmpdir_path,
 
-                    const unzip_result = unzip_process.spawnAndWait() catch |err| {
-                        save_dir.deleteFileZ(tmpname) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
+                        .stderr = .inherit,
+                        .stdout = .inherit,
+                        .stdin = .inherit,
+
+                        .windows = if (Environment.isWindows) .{
+                            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                        } else {},
+                    }) catch |err| {
+                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
                         Global.exit(1);
-                    };
-
-                    if (unzip_result.Exited != 0) {
-                        Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
-                        save_dir.deleteFileZ(tmpname) catch {};
+                    }).unwrap() catch |err| {
+                        Output.prettyErrorln("<r><red>error:<r> Failed to run Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
                         Global.exit(1);
-                    }
+                    };  
                 }
             }
             {

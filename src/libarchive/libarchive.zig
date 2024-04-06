@@ -514,6 +514,17 @@ pub const Archive = struct {
                             &w_path_buf,
                             .windows,
                         );
+
+                        // When writing files on Windows, translate the characters to their
+                        // 0xf000 higher-encoded versions.
+                        // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
+                        for (normalized) |*c| {
+                            switch (c.*) {
+                                '|', '<', '>', '?', ':' => c.* += 0xf000,
+                                else => {},
+                            }
+                        }
+
                         w_path_buf[normalized.len] = 0;
                         break :brk w_path_buf[0..normalized.len :0];
                     } else std.mem.sliceTo(lib.archive_entry_pathname(entry), 0);
@@ -578,20 +589,19 @@ pub const Archive = struct {
                         },
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
-                            if (comptime Environment.isWindows) {
-                                @panic("TODO on Windows: Extracting archives containing symbolic links.");
+                            if (Environment.isPosix) {
+                                std.posix.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
+                                    switch (err) {
+                                        error.AccessDenied, error.FileNotFound => {
+                                            dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
+                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
+                                        },
+                                        else => {
+                                            return err;
+                                        },
+                                    }
+                                };
                             }
-                            std.posix.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
-                                switch (err) {
-                                    error.AccessDenied, error.FileNotFound => {
-                                        dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                        break :brk try std.posix.symlinkatZ(link_target, dir_fd, pathname);
-                                    },
-                                    else => {
-                                        return err;
-                                    },
-                                }
-                            };
                         },
                         Kind.file => {
                             const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(lib.archive_entry_perm(entry));

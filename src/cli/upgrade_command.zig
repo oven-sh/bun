@@ -493,7 +493,7 @@ pub const UpgradeCommand = struct {
             }
 
             if (!Environment.is_canary) {
-                Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+                Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>v{s}<r>\n", .{ version.name().?, Global.package_json_version });
             } else {
                 Output.prettyErrorln("<r><b>Downgrading from Bun <blue>{s}-canary<r> to Bun <cyan>v{s}<r><r>\n", .{ Global.package_json_version, version.name().? });
             }

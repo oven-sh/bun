@@ -858,9 +858,15 @@ pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
 /// be a Zig error, or a string or enum. The error name is converted to a string and displayed
 /// in place of "error:", making it useful to print things like "EACCES: Couldn't open package.json"
 pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) void {
+    const T = @TypeOf(error_name);
+    const info = @typeInfo(T);
+
+    if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
+        prettyErrorln("<r><red>error:<r><d>:<r> " ++ fmt, args ++ .{error_name});
+        return;
+    }
+
     const display_name, const is_comptime_name = display_name: {
-        const T = @TypeOf(error_name);
-        const info = @typeInfo(T);
 
         // Zig string literals are of type *const [n:0]u8
         // we assume that no one will pass this type from not using a string literal.

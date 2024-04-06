@@ -4551,6 +4551,13 @@ pub const Interpreter = struct {
                 };
 
                 const first_arg_len = std.mem.len(first_arg);
+                var first_arg_real = first_arg[0..first_arg_len];
+
+                if (bun.Environment.isDebug) {
+                    if (bun.strings.eqlComptime(first_arg_real, "bun")) {
+                        first_arg_real = "bun-debug";
+                    }
+                }
 
                 if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
                     const cwd = this.base.shell.cwd_fd;
@@ -4586,7 +4593,10 @@ pub const Interpreter = struct {
                 }
 
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
+                const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
+                    if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
+                        break :blk bun.selfExePath() catch break :blk2;
+                    }
                     this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
                     return;
                 };
@@ -4918,10 +4928,15 @@ pub const Interpreter = struct {
             exit: Exit,
             true: True,
             false: False,
+            yes: Yes,
+            seq: Seq,
+            dirname: Dirname,
+            basename: Basename,
         };
 
         const Result = @import("../result.zig").Result;
 
+        // Note: this enum uses @tagName, choose wisely!
         pub const Kind = enum {
             cat,
             touch,
@@ -4937,6 +4952,10 @@ pub const Interpreter = struct {
             exit,
             true,
             false,
+            yes,
+            seq,
+            dirname,
+            basename,
 
             pub fn parentType(this: Kind) type {
                 _ = this;
@@ -4958,25 +4977,10 @@ pub const Interpreter = struct {
                     .exit => "usage: exit [n]\n",
                     .true => "",
                     .false => "",
-                };
-            }
-
-            pub fn asString(this: Kind) []const u8 {
-                return switch (this) {
-                    .cat => "cat",
-                    .touch => "touch",
-                    .mkdir => "mkdir",
-                    .@"export" => "export",
-                    .cd => "cd",
-                    .echo => "echo",
-                    .pwd => "pwd",
-                    .which => "which",
-                    .rm => "rm",
-                    .mv => "mv",
-                    .ls => "ls",
-                    .exit => "exit",
-                    .true => "true",
-                    .false => "false",
+                    .yes => "usage: yes [expletive]\n",
+                    .seq => "usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n",
+                    .dirname => "usage: dirname string\n",
+                    .basename => "usage: basename string\n",
                 };
             }
 
@@ -4987,14 +4991,7 @@ pub const Interpreter = struct {
                         return null;
                     }
                 }
-                @setEvalBranchQuota(5000);
-                const tyinfo = @typeInfo(Builtin.Kind);
-                inline for (tyinfo.Enum.fields) |field| {
-                    if (bun.strings.eqlComptime(str, field.name)) {
-                        return comptime std.meta.stringToEnum(Builtin.Kind, field.name).?;
-                    }
-                }
-                return null;
+                return std.meta.stringToEnum(Builtin.Kind, str);
             }
         };
 
@@ -5141,6 +5138,10 @@ pub const Interpreter = struct {
                 .exit => this.callImplWithType(Exit, Ret, "exit", field, args_),
                 .true => this.callImplWithType(True, Ret, "true", field, args_),
                 .false => this.callImplWithType(False, Ret, "false", field, args_),
+                .yes => this.callImplWithType(Yes, Ret, "yes", field, args_),
+                .seq => this.callImplWithType(Seq, Ret, "seq", field, args_),
+                .dirname => this.callImplWithType(Dirname, Ret, "dirname", field, args_),
+                .basename => this.callImplWithType(Basename, Ret, "basename", field, args_),
             };
         }
 
@@ -5465,27 +5466,25 @@ pub const Interpreter = struct {
         }
 
         /// **WARNING** You should make sure that stdout/stderr does not need IO (e.g. `.needsIO(.stderr)` is false before caling `.writeNoIO(.stderr, buf)`)
-        pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) usize {
+        pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) Maybe(usize) {
             if (comptime io_kind != .stdout and io_kind != .stderr) {
                 @compileError("Bad IO" ++ @tagName(io_kind));
             }
 
-            if (buf.len == 0) return 0;
+            if (buf.len == 0) return Maybe(usize).initResult(0);
 
             var io: *BuiltinIO.Output = &@field(this, @tagName(io_kind));
 
             switch (io.*) {
                 .fd => @panic("writeNoIO(. " ++ @tagName(io_kind) ++ ", buf) can't write to a file descriptor, did you check that needsIO(." ++ @tagName(io_kind) ++ ") was false?"),
                 .buf => {
-                    log("{s} write to buf len={d} str={s}{s}\n", .{ this.kind.asString(), buf.len, buf[0..@min(buf.len, 16)], if (buf.len > 16) "..." else "" });
+                    log("{s} write to buf len={d} str={s}{s}\n", .{ @tagName(this.kind), buf.len, buf[0..@min(buf.len, 16)], if (buf.len > 16) "..." else "" });
                     io.buf.appendSlice(buf) catch bun.outOfMemory();
-                    return buf.len;
+                    return Maybe(usize).initResult(buf.len);
                 },
                 .arraybuf => {
                     if (io.arraybuf.i >= io.arraybuf.buf.array_buffer.byte_len) {
-                        // TODO is it correct to return an error here? is this error the correct one to return?
-                        // return Maybe(usize).initErr(Syscall.Error.fromCode(bun.C.E.NOSPC, .write));
-                        @panic("TODO shell: forgot this");
+                        return Maybe(usize).initErr(Syscall.Error.fromCode(bun.C.E.NOSPC, .write));
                     }
 
                     const len = buf.len;
@@ -5500,10 +5499,10 @@ pub const Interpreter = struct {
                     const slice = io.arraybuf.buf.slice()[io.arraybuf.i .. io.arraybuf.i + write_len];
                     @memcpy(slice, buf[0..write_len]);
                     io.arraybuf.i +|= @truncate(write_len);
-                    log("{s} write to arraybuf {d}\n", .{ this.kind.asString(), write_len });
-                    return write_len;
+                    log("{s} write to arraybuf {d}\n", .{ @tagName(this.kind), write_len });
+                    return Maybe(usize).initResult(write_len);
                 },
-                .blob, .ignore => return buf.len,
+                .blob, .ignore => return Maybe(usize).initResult(buf.len),
             }
         }
 
@@ -5532,7 +5531,7 @@ pub const Interpreter = struct {
         }
 
         pub fn fmtErrorArena(this: *Builtin, comptime kind: ?Kind, comptime fmt_: []const u8, args: anytype) []u8 {
-            const cmd_str = comptime if (kind) |k| k.asString() ++ ": " else "";
+            const cmd_str = comptime if (kind) |k| @tagName(k) ++ ": " else "";
             const fmt = cmd_str ++ fmt_;
             return std.fmt.allocPrint(this.arena.allocator(), fmt, args) catch bun.outOfMemory();
         }
@@ -9747,6 +9746,358 @@ pub const Interpreter = struct {
                 _ = this;
             }
         };
+
+        pub const Yes = struct {
+            bltn: *Builtin,
+            state: enum { idle, waiting_io, err, done } = .idle,
+            expletive: string = "y",
+            task: YesTask = undefined,
+
+            pub fn start(this: *@This()) Maybe(void) {
+                const args = this.bltn.argsSlice();
+
+                if (args.len > 0) {
+                    this.expletive = std.mem.sliceTo(args[0], 0);
+                }
+
+                if (!this.bltn.stdout.needsIO()) {
+                    var res: Maybe(usize) = undefined;
+                    while (true) {
+                        res = this.bltn.writeNoIO(.stdout, this.expletive);
+                        if (res == .err) {
+                            this.bltn.done(1);
+                            return Maybe(void).success;
+                        }
+                        res = this.bltn.writeNoIO(.stdout, "\n");
+                        if (res == .err) {
+                            this.bltn.done(1);
+                            return Maybe(void).success;
+                        }
+                    }
+                    @compileError(unreachable);
+                }
+                const evtloop = this.bltn.eventLoop();
+                this.task = .{
+                    .evtloop = evtloop,
+                    .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
+                };
+                this.state = .waiting_io;
+                this.bltn.stdout.enqueue(this, this.expletive);
+                this.bltn.stdout.enqueue(this, "\n");
+                this.task.enqueue();
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
+                if (maybe_e) |e| {
+                    defer e.deref();
+                    this.state = .err;
+                    this.bltn.done(1);
+                    return;
+                }
+            }
+
+            pub fn deinit(this: *@This()) void {
+                _ = this;
+            }
+
+            pub const YesTask = struct {
+                evtloop: JSC.EventLoopHandle,
+                concurrent_task: JSC.EventLoopTask,
+
+                pub fn enqueue(this: *@This()) void {
+                    if (this.evtloop == .js) {
+                        this.evtloop.js.tick();
+                        this.evtloop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+                    } else {
+                        this.evtloop.mini.loop.tick();
+                        this.evtloop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+                    }
+                }
+
+                pub fn runFromMainThread(this: *@This()) void {
+                    const yes: *Yes = @fieldParentPtr("task", this);
+
+                    yes.bltn.stdout.enqueue(yes, yes.expletive);
+                    yes.bltn.stdout.enqueue(yes, "\n");
+
+                    this.enqueue();
+                }
+
+                pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
+                    this.runFromMainThread();
+                }
+            };
+        };
+
+        pub const Seq = struct {
+            bltn: *Builtin,
+            state: enum { idle, waiting_io, err, done } = .idle,
+            buf: std.ArrayListUnmanaged(u8) = .{},
+            start: f32 = 1,
+            end: f32 = 1,
+            increment: f32 = 1,
+            separator: string = "\n",
+            terminator: string = "",
+            fixed_width: bool = false,
+
+            pub fn start(this: *@This()) Maybe(void) {
+                const args = this.bltn.argsSlice();
+                var iter = bun.SliceIterator([*:0]const u8).init(args);
+
+                if (args.len == 0) {
+                    return this.fail(Builtin.Kind.usageString(.seq));
+                }
+                while (iter.next()) |item| {
+                    const arg = bun.sliceTo(item, 0);
+
+                    if (std.mem.eql(u8, arg, "-s") or std.mem.eql(u8, arg, "--separator")) {
+                        this.separator = bun.sliceTo(iter.next() orelse return this.fail("seq: option requires an argument -- s\n"), 0);
+                        continue;
+                    }
+                    if (std.mem.startsWith(u8, arg, "-s")) {
+                        this.separator = arg[2..];
+                        continue;
+                    }
+
+                    if (std.mem.eql(u8, arg, "-t") or std.mem.eql(u8, arg, "--terminator")) {
+                        this.terminator = bun.sliceTo(iter.next() orelse return this.fail("seq: option requires an argument -- t\n"), 0);
+                        continue;
+                    }
+                    if (std.mem.startsWith(u8, arg, "-t")) {
+                        this.terminator = arg[2..];
+                        continue;
+                    }
+
+                    if (std.mem.eql(u8, arg, "-w") or std.mem.eql(u8, arg, "--fixed-width")) {
+                        this.fixed_width = true;
+                        continue;
+                    }
+
+                    iter.index -= 1;
+                    break;
+                }
+
+                const maybe1 = iter.next().?;
+                const int1 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
+                this.end = int1;
+                if (this.start > this.end) this.increment = -1;
+
+                const maybe2 = iter.next();
+                if (maybe2 == null) return this.do();
+                const int2 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
+                this.start = int1;
+                this.end = int2;
+                if (this.start < this.end) this.increment = 1;
+                if (this.start > this.end) this.increment = -1;
+
+                const maybe3 = iter.next();
+                if (maybe3 == null) return this.do();
+                const int3 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
+                this.start = int1;
+                this.increment = int2;
+                this.end = int3;
+
+                if (this.increment == 0) return this.fail("seq: zero increment\n");
+                if (this.start > this.end and this.increment > 0) return this.fail("seq: needs negative decrement\n");
+                if (this.start < this.end and this.increment < 0) return this.fail("seq: needs positive increment\n");
+
+                return this.do();
+            }
+
+            fn fail(this: *@This(), msg: string) Maybe(void) {
+                if (this.bltn.stderr.needsIO()) {
+                    this.state = .err;
+                    this.bltn.stderr.enqueue(this, msg);
+                    return Maybe(void).success;
+                }
+                _ = this.bltn.writeNoIO(.stderr, msg);
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            fn do(this: *@This()) Maybe(void) {
+                var current = this.start;
+                var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                defer arena.deinit();
+
+                while (if (this.increment > 0) current <= this.end else current >= this.end) : (current += this.increment) {
+                    const str = std.fmt.allocPrint(arena.allocator(), "{d}", .{current}) catch bun.outOfMemory();
+                    defer _ = arena.reset(.retain_capacity);
+                    _ = this.print(str);
+                    _ = this.print(this.separator);
+                }
+                _ = this.print(this.terminator);
+
+                this.state = .done;
+                if (this.bltn.stdout.needsIO()) {
+                    this.bltn.stdout.enqueue(this, this.buf.items);
+                }
+                return Maybe(void).success;
+            }
+
+            fn print(this: *@This(), msg: string) Maybe(void) {
+                if (this.bltn.stdout.needsIO()) {
+                    this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+                    return Maybe(void).success;
+                }
+                const res = this.bltn.writeNoIO(.stdout, msg);
+                if (res == .err) return Maybe(void).initErr(res.err);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
+                if (maybe_e) |e| {
+                    defer e.deref();
+                    this.state = .err;
+                    this.bltn.done(1);
+                    return;
+                }
+                if (this.state == .done) {
+                    this.bltn.done(0);
+                }
+                if (this.state == .err) {
+                    this.bltn.done(1);
+                }
+            }
+
+            pub fn deinit(this: *@This()) void {
+                this.buf.deinit(bun.default_allocator);
+                //seq
+            }
+        };
+
+        pub const Dirname = struct {
+            bltn: *Builtin,
+            state: enum { idle, waiting_io, err, done } = .idle,
+            buf: std.ArrayListUnmanaged(u8) = .{},
+
+            pub fn start(this: *@This()) Maybe(void) {
+                const args = this.bltn.argsSlice();
+                var iter = bun.SliceIterator([*:0]const u8).init(args);
+
+                if (args.len == 0) return this.fail(Builtin.Kind.usageString(.dirname));
+
+                while (iter.next()) |item| {
+                    const arg = bun.sliceTo(item, 0);
+                    _ = this.print(bun.path.dirname(arg, .posix));
+                    _ = this.print("\n");
+                }
+
+                this.state = .done;
+                if (this.bltn.stdout.needsIO()) {
+                    this.bltn.stdout.enqueue(this, this.buf.items);
+                }
+                return Maybe(void).success;
+            }
+
+            pub fn deinit(this: *@This()) void {
+                this.buf.deinit(bun.default_allocator);
+                //dirname
+            }
+
+            fn fail(this: *@This(), msg: string) Maybe(void) {
+                if (this.bltn.stderr.needsIO()) {
+                    this.state = .err;
+                    this.bltn.stderr.enqueue(this, msg);
+                    return Maybe(void).success;
+                }
+                _ = this.bltn.writeNoIO(.stderr, msg);
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            fn print(this: *@This(), msg: string) Maybe(void) {
+                if (this.bltn.stdout.needsIO()) {
+                    this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+                    return Maybe(void).success;
+                }
+                const res = this.bltn.writeNoIO(.stdout, msg);
+                if (res == .err) return Maybe(void).initErr(res.err);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
+                if (maybe_e) |e| {
+                    defer e.deref();
+                    this.state = .err;
+                    this.bltn.done(1);
+                    return;
+                }
+                if (this.state == .done) {
+                    this.bltn.done(0);
+                }
+                if (this.state == .err) {
+                    this.bltn.done(1);
+                }
+            }
+        };
+
+        pub const Basename = struct {
+            bltn: *Builtin,
+            state: enum { idle, waiting_io, err, done } = .idle,
+            buf: std.ArrayListUnmanaged(u8) = .{},
+
+            pub fn start(this: *@This()) Maybe(void) {
+                const args = this.bltn.argsSlice();
+                var iter = bun.SliceIterator([*:0]const u8).init(args);
+
+                if (args.len == 0) return this.fail(Builtin.Kind.usageString(.basename));
+
+                while (iter.next()) |item| {
+                    const arg = bun.sliceTo(item, 0);
+                    _ = this.print(bun.path.basename(arg));
+                    _ = this.print("\n");
+                }
+
+                this.state = .done;
+                if (this.bltn.stdout.needsIO()) {
+                    this.bltn.stdout.enqueue(this, this.buf.items);
+                }
+                return Maybe(void).success;
+            }
+
+            pub fn deinit(this: *@This()) void {
+                this.buf.deinit(bun.default_allocator);
+                //basename
+            }
+
+            fn fail(this: *@This(), msg: string) Maybe(void) {
+                if (this.bltn.stderr.needsIO()) {
+                    this.state = .err;
+                    this.bltn.stderr.enqueue(this, msg);
+                    return Maybe(void).success;
+                }
+                _ = this.bltn.writeNoIO(.stderr, msg);
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            fn print(this: *@This(), msg: string) Maybe(void) {
+                if (this.bltn.stdout.needsIO()) {
+                    this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+                    return Maybe(void).success;
+                }
+                const res = this.bltn.writeNoIO(.stdout, msg);
+                if (res == .err) return Maybe(void).initErr(res.err);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
+                if (maybe_e) |e| {
+                    defer e.deref();
+                    this.state = .err;
+                    this.bltn.done(1);
+                    return;
+                }
+                if (this.state == .done) {
+                    this.bltn.done(0);
+                }
+                if (this.state == .err) {
+                    this.bltn.done(1);
+                }
+            }
+        };
     };
 
     /// This type is reference counted, but deinitialization is queued onto the event loop
@@ -9760,7 +10111,7 @@ pub const Interpreter = struct {
         err: ?JSC.SystemError = null,
         evtloop: JSC.EventLoopHandle,
         concurrent_task: JSC.EventLoopTask,
-        async_deinit: AsyncDeinit,
+        async_deinit: AsyncDeinitReader,
         is_reading: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
 
         pub const ChildPtr = IOReaderChildPtr;
@@ -9983,7 +10334,7 @@ pub const Interpreter = struct {
         }
     };
 
-    pub const AsyncDeinit = struct {
+    pub const AsyncDeinitReader = struct {
         ran: bool = false,
 
         pub fn enqueue(this: *@This()) void {
@@ -9998,15 +10349,16 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn reader(this: *AsyncDeinit) *IOReader {
+        pub fn reader(this: *AsyncDeinitReader) *IOReader {
             return @alignCast(@fieldParentPtr("async_deinit", this));
         }
 
-        pub fn runFromMainThread(this: *AsyncDeinit) void {
-            this.reader().__deinit();
+        pub fn runFromMainThread(this: *AsyncDeinitReader) void {
+            const ioreader: *IOReader = @alignCast(@fieldParentPtr("async_deinit", this));
+            ioreader.__deinit();
         }
 
-        pub fn runFromMainThreadMini(this: *AsyncDeinit, _: *void) void {
+        pub fn runFromMainThreadMini(this: *AsyncDeinitReader, _: *void) void {
             this.runFromMainThread();
         }
     };
@@ -10434,7 +10786,7 @@ pub const Interpreter = struct {
             comptime fmt_: []const u8,
             args: anytype,
         ) void {
-            const cmd_str = comptime if (kind) |k| k.asString() ++ ": " else "";
+            const cmd_str = comptime if (kind) |k| @tagName(k) ++ ": " else "";
             const fmt__ = cmd_str ++ fmt_;
             this.enqueueFmt(ptr, bytelist, fmt__, args);
         }
@@ -10789,6 +11141,10 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.Exit,
         Interpreter.Builtin.True,
         Interpreter.Builtin.False,
+        Interpreter.Builtin.Yes,
+        Interpreter.Builtin.Seq,
+        Interpreter.Builtin.Dirname,
+        Interpreter.Builtin.Basename,
         shell.subproc.PipeReader.CapturedWriter,
     });
 

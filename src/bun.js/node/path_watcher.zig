@@ -824,6 +824,10 @@ pub const PathWatcher = struct {
         this.flushCallback(this.ctx);
     }
 
+    pub fn detach(this: *PathWatcher, _: *anyopaque) void {
+        this.deinit();
+    }
+
     pub fn deinit(this: *PathWatcher) void {
         this.setClosed();
         if (this.hasPendingDirectories()) {
@@ -861,8 +865,8 @@ pub fn watch(
     vm: *VirtualMachine,
     path: [:0]const u8,
     recursive: bool,
-    callback: PathWatcher.Callback,
-    updateEnd: PathWatcher.UpdateEndCallback,
+    comptime callback: PathWatcher.Callback,
+    comptime updateEnd: PathWatcher.UpdateEndCallback,
     ctx: ?*anyopaque,
 ) !*PathWatcher {
     if (default_manager) |manager| {

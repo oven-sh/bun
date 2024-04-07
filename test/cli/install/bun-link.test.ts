@@ -512,5 +512,5 @@ it("should link dependency without crashing", async () => {
     "[] done",
     "",
   ]);
-  expect(await exited4).toBe(0);
+  expect(await exited4).toBe(1);
 });

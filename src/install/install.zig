@@ -2194,6 +2194,8 @@ pub const PackageManager = struct {
     // actually have scripts to run, and we add them to this list
     trusted_deps_to_add_to_package_json: std.ArrayListUnmanaged(string) = .{},
 
+    any_failed_to_install: bool = false,
+
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     pub var verbose_install = false;
@@ -8011,6 +8013,10 @@ pub const PackageManager = struct {
         switch (manager.options.log_level) {
             inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, op, log_level),
         }
+
+        if (manager.any_failed_to_install) {
+            Global.exit(1);
+        }
     }
 
     fn updatePackageJSONAndInstallWithManager(
@@ -8383,6 +8389,10 @@ pub const PackageManager = struct {
         try switch (manager.options.log_level) {
             inline else => |log_level| manager.installWithManager(ctx, package_json_contents, log_level),
         };
+
+        if (manager.any_failed_to_install) {
+            Global.exit(1);
+        }
     }
 
     pub const PackageInstaller = struct {
@@ -10464,6 +10474,10 @@ pub const PackageManager = struct {
                     printed_timestamp = true;
                 }
             }
+        }
+
+        if (install_summary.fail > 0) {
+            manager.any_failed_to_install = true;
         }
 
         Output.flush();

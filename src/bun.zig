@@ -3032,3 +3032,5 @@ pub fn SliceIterator(comptime T: type) type {
         }
     };
 }
+
+pub const Futex = @import("./futex.zig");

@@ -1502,6 +1502,132 @@ pub const PackageInstall = struct {
         };
     }
 
+    fn NewTaskQueue(comptime TaskType: type) type {
+        return struct {
+            remaining: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+            errored_task: ?*TaskType = null,
+            thread_pool: *ThreadPool,
+            wake_value: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+            pub fn push(this: *@This(), task: *TaskType) void {
+                _ = this.remaining.fetchAdd(1, .Monotonic);
+                this.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
+            }
+
+            pub fn wait(this: *@This()) void {
+                this.wake_value.store(0, .Monotonic);
+                while (this.remaining.load(.Monotonic) > 0) {
+                    bun.Futex.wait(&this.wake_value, 0, std.time.ns_per_ms * 5) catch {};
+                }
+            }
+        };
+    }
+
+    const HardLinkWindowsInstallTask = struct {
+        bytes: []u16,
+        src: [:0]bun.OSPathChar,
+        dest: [:0]bun.OSPathChar,
+        basename: u16,
+        queue: *Queue,
+        task: bun.JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
+        err: ?anyerror = null,
+
+        pub const Queue = NewTaskQueue(@This());
+
+        pub fn init(src: []const bun.OSPathChar, dest: []const bun.OSPathChar, basename: []const bun.OSPathChar, queue: *Queue) *@This() {
+            const allocation_size =
+                (src.len) + 1 + (dest.len) + 1;
+
+            const combined = bun.default_allocator.alloc(u16, allocation_size) catch bun.outOfMemory();
+            var remaining = combined;
+            @memcpy(remaining[0..src.len], src);
+            remaining[src.len] = 0;
+            const src_ = remaining[0..src.len :0];
+            remaining = remaining[src.len + 1 ..];
+
+            @memcpy(remaining[0..dest.len], dest);
+            remaining[dest.len] = 0;
+            const dest_ = remaining[0..dest.len :0];
+            remaining = remaining[dest.len + 1 ..];
+
+            return @This().new(.{
+                .bytes = combined,
+                .src = src_,
+                .dest = dest_,
+                .basename = @truncate(basename.len),
+                .queue = queue,
+            });
+        }
+
+        pub fn runFromThreadPool(task: *bun.JSC.WorkPoolTask) void {
+            var iter = @fieldParentPtr(@This(), "task", task);
+            if (iter.run()) |err| {
+                iter.err = err;
+                iter.queue.errored_task = iter;
+                if (iter.queue.remaining.fetchSub(1, .Monotonic) < 5) {
+                    _ = iter.queue.wake_value.fetchAdd(1, .Monotonic);
+                    bun.Futex.wake(&iter.queue.wake_value, 1);
+                }
+
+                return;
+            }
+            if (iter.queue.remaining.fetchSub(1, .Monotonic) < 5) {
+                _ = iter.queue.wake_value.fetchAdd(1, .Monotonic);
+                bun.Futex.wake(&iter.queue.wake_value, 1);
+            }
+            iter.deinit();
+        }
+
+        pub fn deinit(task: *@This()) void {
+            bun.default_allocator.free(task.bytes);
+            task.destroy();
+        }
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn run(task: *@This()) ?anyerror {
+            const src = task.src;
+            const dest = task.dest;
+
+            if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                return null;
+            }
+
+            dest[dest.len - task.basename - 1] = 0;
+            const dirpath = dest[0 .. dest.len - task.basename - 1 :0];
+            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, dirpath, 0, false).unwrap() catch {};
+            dest[dest.len - task.basename - 1] = std.fs.path.sep;
+            if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                return null;
+            }
+
+            if (PackageManager.verbose_install) {
+                const once_log = struct {
+                    var once = false;
+
+                    pub fn get() bool {
+                        const prev = once;
+                        once = true;
+                        return !prev;
+                    }
+                }.get();
+
+                if (once_log) {
+                    Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
+                        bun.fmt.fmtOSPath(src, .{}),
+                        bun.fmt.fmtOSPath(dest, .{}),
+                    });
+                }
+            }
+
+            if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
+                return null;
+            }
+
+            return bun.errnoToZigErr(bun.windows.getLastErrno());
+        }
+    };
+
     fn installWithHardlink(this: *PackageInstall) !Result {
         var state = InstallDirState{};
         const res = this.initInstallDir(&state);
@@ -1518,6 +1644,10 @@ pub const PackageInstall = struct {
                 head2: if (Environment.isWindows) []u16 else void,
             ) !u32 {
                 var real_file_count: u32 = 0;
+                var queue = if (Environment.isWindows) HardLinkWindowsInstallTask.Queue{
+                    .thread_pool = &PackageManager.instance.thread_pool,
+                } else {};
+
                 while (try walker.next()) |entry| {
                     if (comptime Environment.isPosix) {
                         switch (entry.kind) {
@@ -1556,42 +1686,18 @@ pub const PackageInstall = struct {
                         head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
                         const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
 
-                        if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
-                            continue;
+                        queue.push(HardLinkWindowsInstallTask.init(src, dest, entry.basename, &queue));
+                        real_file_count += 1;
+                    }
+                }
+
+                if (comptime Environment.isWindows) {
+                    queue.wait();
+
+                    if (queue.errored_task) |task| {
+                        if (task.err) |err| {
+                            return err;
                         }
-
-                        dest[dest.len - entry.basename.len - 1] = 0;
-                        const dirpath = dest[0 .. dest.len - entry.basename.len - 1 :0];
-                        _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, dirpath, 0, false).unwrap() catch {};
-                        dest[dest.len - entry.basename.len - 1] = std.fs.path.sep;
-                        if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
-                            continue;
-                        }
-
-                        if (PackageManager.verbose_install) {
-                            const once_log = struct {
-                                var once = false;
-
-                                pub fn get() bool {
-                                    const prev = once;
-                                    once = true;
-                                    return !prev;
-                                }
-                            }.get();
-
-                            if (once_log) {
-                                Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
-                                    bun.fmt.fmtOSPath(src, .{}),
-                                    bun.fmt.fmtOSPath(dest, .{}),
-                                });
-                            }
-                        }
-
-                        if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
-                            continue;
-                        }
-
-                        return bun.errnoToZigErr(bun.windows.getLastErrno());
                     }
                 }
 
@@ -6874,6 +6980,12 @@ pub const PackageManager = struct {
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
+
+        if (Environment.isWindows) {
+            // On Windows, I/O seems to block on doing nothing for longer.
+            // so let's double the thread count.
+            cpu_count *= 2;
+        }
 
         if (env.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {

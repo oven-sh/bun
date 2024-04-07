@@ -512,5 +512,7 @@ it("should link dependency without crashing", async () => {
     "[] done",
     "",
   ]);
+
+  // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
 });

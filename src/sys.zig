@@ -753,7 +753,7 @@ pub fn normalizePathWindows(
     else
         dir_fd.cast();
 
-    const base_path = w.GetFinalPathNameByHandle(base_fd, w.GetFinalPathNameByHandleFormat{}, buf) catch {
+    const base_path = bun.windows.GetFinalPathNameByHandle(base_fd, w.GetFinalPathNameByHandleFormat{}, buf) catch {
         return .{ .err = .{
             .errno = @intFromEnum(bun.C.E.BADFD),
             .syscall = .open,
@@ -1853,7 +1853,11 @@ pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe
             .result => {
                 return Maybe(void).success;
             },
-            .err => {},
+            .err => |err| {
+                if (err.getErrno() == .EXIST) {
+                    return .{ .err = err };
+                }
+            },
         }
     }
 
@@ -1941,21 +1945,26 @@ pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: u
     }
 }
 
+pub fn unlinkW(from: [:0]const u16) Maybe(void) {
+    if (windows.DeleteFileW(from.ptr) != 0) {
+        return .{ .err = Error.fromCode(bun.windows.getLastErrno(), .unlink) };
+    }
+
+    return Maybe(void).success;
+}
+
 pub fn unlink(from: [:0]const u8) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        var w_buf: bun.WPathBuffer = undefined;
+        return unlinkW(bun.strings.toNTPath(&w_buf, from));
+    }
+
     while (true) {
-        if (bun.Environment.isWindows) {
-            if (sys.unlink(from) != 0) {
-                const last_error = kernel32.GetLastError();
-                const errno = Syscall.getErrno(@as(u16, @intFromEnum(last_error)));
-                if (errno == .INTR) continue;
-                return .{ .err = Syscall.Error.fromCode(errno, .unlink) };
-            }
-        } else {
-            if (Maybe(void).errnoSys(sys.unlink(from), .unlink)) |err| {
-                if (err.getErrno() == .INTR) continue;
-                return err;
-            }
+        if (Maybe(void).errnoSys(sys.unlink(from), .unlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
         }
+
         log("unlink({s}) = 0", .{from});
         return Maybe(void).success;
     }
@@ -2013,7 +2022,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
     switch (comptime builtin.os.tag) {
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
-            const wide_slice = std.os.windows.GetFinalPathNameByHandle(fd.cast(), .{}, wide_buf[0..]) catch {
+            const wide_slice = bun.windows.GetFinalPathNameByHandle(fd.cast(), .{}, wide_buf[0..]) catch {
                 return Maybe([]u8){ .err = .{ .errno = @intFromEnum(bun.C.SystemErrno.EBADF), .syscall = .GetFinalPathNameByHandle } };
             };
 
@@ -2775,6 +2784,21 @@ pub const File = struct {
 
     pub fn getPath(this: File, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
         return getFdPath(this.handle, out_buffer);
+    }
+
+    /// 1. Normalize the file path
+    /// 2. Open a file for reading
+    /// 2. Read the file to a buffer
+    /// 3. Return the File handle and the buffer
+    pub fn readFromUserInput(dir_fd: anytype, input_path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
+        var buf: bun.PathBuffer = undefined;
+        const normalized = bun.path.joinAbsStringBufZ(
+            bun.fs.FileSystem.instance.top_level_dir,
+            &buf,
+            &.{input_path},
+            .loose,
+        );
+        return readFrom(dir_fd, normalized, allocator);
     }
 
     /// 1. Open a file for reading

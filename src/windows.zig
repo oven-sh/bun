@@ -3350,3 +3350,12 @@ pub extern "kernel32" fn CreateDirectoryExW(
     lpNewDirectory: [*:0]const u16,
     lpSecurityAttributes: ?*win32.SECURITY_ATTRIBUTES,
 ) callconv(windows.WINAPI) BOOL;
+
+pub fn GetFinalPathNameByHandle(
+    hFile: HANDLE,
+    fmt: std.os.windows.GetFinalPathNameByHandleFormat,
+    out_buffer: []u16,
+) std.os.windows.GetFinalPathNameByHandleError![]u16 {
+    bun.sys.syslog("GetFinalPathNameByHandle({*p})", .{hFile});
+    return std.os.windows.GetFinalPathNameByHandle(hFile, fmt, out_buffer);
+}

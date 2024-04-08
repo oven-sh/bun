@@ -25,7 +25,7 @@ const sockaddr_un = std.os.linux.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
 
-pub const log = bun.Output.scoped(.uv, false);
+pub const log = bun.Output.scoped(.uv, true);
 
 pub const CHAR = u8;
 pub const SHORT = c_short;

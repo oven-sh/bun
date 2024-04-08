@@ -749,6 +749,16 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     }
 }
 
+pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
+    if (comptime Environment.isWindows) {
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
+        return res.asDir();
+    } else {
+        const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return fd.asDir();
+    }
+}
+
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
@@ -1254,7 +1264,7 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
-        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]);
+        const wide_slice = try windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]);
         const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
         return buf[0..res.written];
     }
@@ -1292,7 +1302,7 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
-        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, buf);
+        const wide_slice = try windows.GetFinalPathNameByHandle(fd, .{}, buf);
 
         return wide_slice;
     }
@@ -3047,3 +3057,5 @@ pub fn SliceIterator(comptime T: type) type {
         }
     };
 }
+
+pub const Futex = @import("./futex.zig");

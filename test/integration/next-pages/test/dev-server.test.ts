@@ -88,7 +88,7 @@ beforeAll(async () => {
 
   const install = Bun.spawnSync([bunExe(), "i"], {
     cwd: root,
-    env: bunEnv,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install") },
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",

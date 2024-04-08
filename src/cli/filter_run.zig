@@ -36,6 +36,7 @@ const FilterArg = @import("filter_arg.zig");
 const ScriptConfig = struct {
     package_json_path: []u8,
     package_name: []const u8,
+    script_name: []const u8,
     script_content: []const u8,
     combined: [:0]const u8,
 };
@@ -49,6 +50,7 @@ pub const ProcessHandle = struct {
     stdout: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
     stderr: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
     buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    done: bool = false,
 
     pub fn onReadChunk(this: *This, chunk: []const u8, hasMore: bun.io.ReadState) bool {
         _ = hasMore;
@@ -70,6 +72,8 @@ pub const ProcessHandle = struct {
 
     pub fn onProcessExit(this: *This, proc: *bun.spawn.Process, _: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
         this.state.live_processes -= 1;
+        this.done = true;
+        this.state.redraw() catch {};
         // TODO figure out how to deinit process
         // actually - we can just leak it
         _ = proc;
@@ -111,12 +115,14 @@ const State = struct {
         }
         var i: usize = data.len;
         var lines: usize = 0;
-        while (i > 0 and lines < max_lines) : (i -= 1) {
+        while (i > 0) : (i -= 1) {
             if (data[i - 1] == '\n') {
                 lines += 1;
+                if (lines >= max_lines) {
+                    break;
+                }
             }
         }
-        i += 1;
         const content = if (i >= data.len) &.{} else data[i..];
         var elided: usize = 0;
         while (i > 0) : (i -= 1) {
@@ -129,20 +135,34 @@ const State = struct {
 
     pub fn redraw(this: *This) !void {
         this.draw_buf.clearRetainingCapacity();
-        // try this.draw_buf.appendSlice("\x1b[H\x1b[2J");
-        try this.draw_buf.writer().print("\r\x1b[{d}H", .{this.last_lines_written});
+        if (this.last_lines_written > 0) {
+            // move cursor to the beginning of the line and clear it
+            try this.draw_buf.appendSlice("\x1b[0G\x1b[K");
+            for (0..this.last_lines_written) |_| {
+                // move cursor up and clear the line
+                try this.draw_buf.appendSlice("\x1b[1A\x1b[K");
+            }
+        }
         for (this.handles) |*handle| {
-            const e = elide(handle.buffer.items, 5);
+            const e = elide(handle.buffer.items, 10);
+            try this.draw_buf.writer().print("{s} {s}$ {s}\n", .{ handle.config.package_name, handle.config.script_name, handle.config.script_content });
             if (e.elided_count > 0) {
                 try this.draw_buf.writer().print(
-                    "Package: {s}\n[{d} lines elided]\n{s}\n\n",
-                    .{ handle.config.package_name, e.elided_count, e.content },
+                    "│ [{d} lines elided]\n",
+                    .{e.elided_count},
                 );
+            }
+            var content = e.content;
+            while (std.mem.indexOfScalar(u8, content, '\n')) |i| {
+                const line = content[0 .. i + 1];
+                try this.draw_buf.appendSlice("│ ");
+                try this.draw_buf.appendSlice(line);
+                content = content[i + 1 ..];
+            }
+            if (handle.done) {
+                try this.draw_buf.appendSlice("└─ Done\n");
             } else {
-                try this.draw_buf.writer().print(
-                    "Package: {s}\n{s}\n\n",
-                    .{ handle.config.package_name, e.content },
-                );
+                try this.draw_buf.appendSlice("└─ Running...\n");
             }
         }
         this.last_lines_written = 0;
@@ -227,6 +247,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         try scripts.append(.{
             .package_json_path = try ctx.allocator.dupe(u8, package_json_path),
             .package_name = pkgjson.name,
+            .script_name = script_name,
             .script_content = copy_script.items,
             .combined = combined,
         });

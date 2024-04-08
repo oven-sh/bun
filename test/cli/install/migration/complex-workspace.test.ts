@@ -44,7 +44,7 @@ test("the install succeeds", async () => {
   var subprocess = Bun.spawn([bunExe(), "reset.ts"], {
     env: bunEnv,
     cwd,
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["inherit", "inherit", "inherit"],
   });
   await subprocess.exited;
   if (subprocess.exitCode != 0) {
@@ -55,7 +55,7 @@ test("the install succeeds", async () => {
   subprocess = Bun.spawn([bunExe(), "install"], {
     env: bunEnv,
     cwd,
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["inherit", "inherit", "inherit"],
   });
 
   await subprocess.exited;

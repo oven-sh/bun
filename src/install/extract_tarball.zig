@@ -31,7 +31,7 @@ integrity: Integrity = .{},
 url: strings.StringOrTinyString,
 package_manager: *PackageManager,
 
-pub inline fn run(this: ExtractTarball, bytes: []const u8) !Install.ExtractData {
+pub inline fn run(this: *const ExtractTarball, bytes: []const u8) !Install.ExtractData {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {
         if (!this.integrity.verify(bytes)) {
             this.package_manager.log.addErrorFmt(

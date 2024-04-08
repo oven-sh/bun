@@ -873,6 +873,8 @@ pub const PackageInstall = struct {
     package_version: string,
     file_count: u32 = 0,
 
+    const debug = Output.scoped(.install, true);
+
     pub const Summary = struct {
         fail: u32 = 0,
         success: u32 = 0,
@@ -947,54 +949,21 @@ pub const PackageInstall = struct {
     // 1. verify that .bun-tag exists (was it installed from bun?)
     // 2. check .bun-tag against the resolved version
     fn verifyGitResolution(this: *PackageInstall, repo: *const Repository, buf: []const u8) bool {
-        const allocator = this.allocator;
-
-        var total: usize = 0;
-        var read: usize = 0;
-
         bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ ".bun-tag");
         this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len] = 0;
         const bun_tag_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len :0];
         defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
-        const bun_tag_file = this.destination_dir.openFileZ(bun_tag_path, .{ .mode = .read_only }) catch return false;
-        defer bun_tag_file.close();
+        var git_tag_stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+        const allocator = git_tag_stack_fallback.get();
 
-        var body_pool = Npm.Registry.BodyPool.get(allocator);
-        var mutable: MutableString = body_pool.data;
-        defer {
-            body_pool.data = mutable;
-            Npm.Registry.BodyPool.release(body_pool);
-        }
+        const bun_tag_file = File.readFrom(
+            this.destination_dir,
+            bun_tag_path,
+            allocator,
+        ).unwrap() catch return false;
+        defer allocator.free(bun_tag_file);
 
-        mutable.reset();
-
-        mutable.list.expandToCapacity();
-
-        // this file is pretty small
-        read = bun_tag_file.read(mutable.list.items[total..]) catch return false;
-        var remain = mutable.list.items[@min(total, read)..];
-        if (read > 0 and remain.len < 1024) {
-            mutable.growBy(4096) catch return false;
-            mutable.list.expandToCapacity();
-        }
-
-        // never read more than 2048 bytes. it should never be 2048 bytes.
-        while (read > 0 and total < 2048) : (read = bun_tag_file.read(remain) catch return false) {
-            total += read;
-
-            mutable.list.expandToCapacity();
-            remain = mutable.list.items[total..];
-
-            if (remain.len < 1024) {
-                mutable.growBy(4096) catch return false;
-            }
-            mutable.list.expandToCapacity();
-            remain = mutable.list.items[total..];
-        }
-
-        mutable.list.expandToCapacity();
-
-        return strings.eqlLong(repo.resolved.slice(buf), mutable.list.items[0..total], true);
+        return strings.eqlLong(repo.resolved.slice(buf), bun_tag_file, true);
     }
 
     pub fn verify(
@@ -1148,8 +1117,18 @@ pub const PackageInstall = struct {
     pub const Step = enum {
         copyfile,
         opening_cache_dir,
+        opening_dest_dir,
         copying_files,
         linking,
+
+        pub fn name(this: Step) []const u8 {
+            return switch (this) {
+                .copyfile, .copying_files => "copying files from cache to destination",
+                .opening_cache_dir => "opening cache/package/version dir",
+                .opening_dest_dir => "opening node_modules/package dir",
+                .linking => "linking bins",
+            };
+        }
     };
 
     var supported_method: Method = if (Environment.isMac)
@@ -1219,7 +1198,7 @@ pub const PackageInstall = struct {
         };
 
         var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
+            .fail = .{ .err = err, .step = .opening_dest_dir },
         };
 
         defer subdir.close();
@@ -1316,7 +1295,7 @@ pub const PackageInstall = struct {
             }) catch |err| {
                 state.cached_package_dir.close();
                 state.walker.deinit();
-                return Result.fail(err, .copying_files);
+                return Result.fail(err, .opening_dest_dir);
             };
             return Result.success();
         }
@@ -1327,7 +1306,7 @@ pub const PackageInstall = struct {
             const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
             state.cached_package_dir.close();
             state.walker.deinit();
-            return Result.fail(err, .copying_files);
+            return Result.fail(err, .opening_dest_dir);
         }
 
         var i: usize = dest_path_length;
@@ -1347,6 +1326,7 @@ pub const PackageInstall = struct {
             state.walker.deinit();
             return Result.fail(err, .copying_files);
         };
+        state.to_copy_buf = state.buf[fullpath.len..];
 
         const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);
         if (cache_path_length == 0) {
@@ -1364,9 +1344,8 @@ pub const PackageInstall = struct {
         } else {
             to_copy_buf2 = state.buf2[cache_path.len..];
         }
-        state.to_copy_buf = state.buf[fullpath.len..];
-        state.to_copy_buf2 = to_copy_buf2;
 
+        state.to_copy_buf2 = to_copy_buf2;
         return Result.success();
     }
 
@@ -1596,10 +1575,27 @@ pub const PackageInstall = struct {
                 return null;
             }
 
+            switch (bun.windows.GetLastError()) {
+                .ALREADY_EXISTS, .FILE_EXISTS, .CANNOT_MAKE => {
+                    // Race condition: this shouldn't happen
+                    if (comptime Environment.isDebug)
+                        debug(
+                            "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
+                            .{bun.fmt.fmtPath(u16, dest, .{})},
+                        );
+                    _ = bun.windows.DeleteFileW(dest.ptr);
+                    if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                        return null;
+                    }
+                },
+                else => {},
+            }
+
             dest[dest.len - task.basename - 1] = 0;
             const dirpath = dest[0 .. dest.len - task.basename - 1 :0];
             _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, dirpath, 0, false).unwrap() catch {};
             dest[dest.len - task.basename - 1] = std.fs.path.sep;
+
             if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
                 return null;
             }
@@ -1714,6 +1710,11 @@ pub const PackageInstall = struct {
             state.to_copy_buf2,
             if (Environment.isWindows) &state.buf2 else void{},
         ) catch |err| {
+            if (comptime Environment.isDebug) {
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
+            }
             if (comptime Environment.isWindows) {
                 if (err == error.FailedToCopyFile) {
                     return Result.fail(err, .copying_files);
@@ -1891,7 +1892,16 @@ pub const PackageInstall = struct {
         // } else {
         //     this.destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
         // }
-        this.destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
+        var rand_path_buf: [48]u8 = undefined;
+        const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
+        switch (bun.sys.renameat(bun.toFD(this.destination_dir), this.destination_dir_subpath, bun.toFD(this.destination_dir), temp_path)) {
+            .err => {
+                // if it fails, that means the directory doesn't exist or was inaccessible
+            },
+            .result => {
+                this.destination_dir.deleteTree(temp_path) catch {};
+            },
+        }
     }
 
     pub fn isDanglingSymlink(path: [:0]const u8) bool {
@@ -2011,7 +2021,16 @@ pub const PackageInstall = struct {
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
             switch (bun.sys.symlinkOrJunctionOnWindows(to_path_z, dest_z)) {
-                .err => |err| {
+                .err => |err_| brk: {
+                    var err = err_;
+                    if (err.getErrno() == .EXIST) {
+                        _ = bun.sys.unlink(to_path_z);
+                        switch (bun.sys.symlinkOrJunctionOnWindows(to_path_z, dest_z)) {
+                            .err => |e| err = e,
+                            .result => break :brk,
+                        }
+                    }
+
                     return Result{
                         .fail = .{
                             .err = bun.errnoToZigErr(err.errno),
@@ -2197,7 +2216,18 @@ const NodeModulesFolder = struct {
             return root;
         }
 
-        const out = try root.makeOpenPath(this.path.items, .{ .iterate = true, .access_sub_paths = true });
+        const out = brk: {
+            if (comptime Environment.isPosix) {
+                break :brk try root.makeOpenPath(this.path.items, .{ .iterate = true, .access_sub_paths = true });
+            }
+
+            try bun.MakePath.makePath(u8, root, this.path.items);
+            break :brk (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
+                .can_rename_or_delete = false,
+                .create = true,
+                .read_only = false,
+            }).unwrap()).asDir();
+        };
         this.fd = bun.toFD(out.fd);
         return out;
     }
@@ -9215,8 +9245,8 @@ pub const PackageManager = struct {
                                 },
                                 else => {
                                     Output.prettyErrorln(
-                                        "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
-                                        .{ @errorName(cause.err), this.names[package_id].slice(buf) },
+                                        "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r> ({s})",
+                                        .{ @errorName(cause.err), this.names[package_id].slice(buf), result.fail.step.name() },
                                     );
                                     this.summary.fail += 1;
                                 },
@@ -9274,8 +9304,8 @@ pub const PackageManager = struct {
                                 this.summary.fail += 1;
                             } else {
                                 Output.prettyErrorln(
-                                    "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
-                                    .{ @errorName(cause.err), this.names[package_id].slice(buf) },
+                                    "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r> ({s})",
+                                    .{ @errorName(cause.err), this.names[package_id].slice(buf), result.fail.step.name() },
                                 );
                                 this.summary.fail += 1;
                             }

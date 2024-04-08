@@ -1737,7 +1737,11 @@ pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe
             .result => {
                 return Maybe(void).success;
             },
-            .err => {},
+            .err => |err| {
+                if (err.getErrno() == .EXIST) {
+                    return .{ .err = err };
+                }
+            },
         }
     }
 
@@ -1825,21 +1829,26 @@ pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: u
     }
 }
 
+pub fn unlinkW(from: [:0]const u16) Maybe(void) {
+    if (windows.DeleteFileW(from.ptr) != 0) {
+        return .{ .err = Error.fromCode(bun.windows.getLastErrno(), .unlink) };
+    }
+
+    return Maybe(void).success;
+}
+
 pub fn unlink(from: [:0]const u8) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        var w_buf: bun.WPathBuffer = undefined;
+        return unlinkW(bun.strings.toNTPath(&w_buf, from));
+    }
+
     while (true) {
-        if (bun.Environment.isWindows) {
-            if (sys.unlink(from) != 0) {
-                const last_error = kernel32.GetLastError();
-                const errno = Syscall.getErrno(@as(u16, @intFromEnum(last_error)));
-                if (errno == .INTR) continue;
-                return .{ .err = Syscall.Error.fromCode(errno, .unlink) };
-            }
-        } else {
-            if (Maybe(void).errnoSys(sys.unlink(from), .unlink)) |err| {
-                if (err.getErrno() == .INTR) continue;
-                return err;
-            }
+        if (Maybe(void).errnoSys(sys.unlink(from), .unlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
         }
+
         log("unlink({s}) = 0", .{from});
         return Maybe(void).success;
     }

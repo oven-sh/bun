@@ -43,19 +43,13 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     @memcpy(buf[0..dirname.len], dirname);
 
-    const cwd = std.fs.cwd();
-
     npm: {
         const npm_lockfile_name = "package-lock.json";
         @memcpy(buf[dirname.len .. dirname.len + npm_lockfile_name.len], npm_lockfile_name);
         buf[dirname.len + npm_lockfile_name.len] = 0;
         const lockfile_path = buf[0 .. dirname.len + npm_lockfile_name.len :0];
         var timer = std.time.Timer.start() catch unreachable;
-        const file = cwd.openFileZ(lockfile_path, .{ .mode = .read_only }) catch break :npm;
-        defer file.close();
-        const data = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
-            return LoadFromDiskResult{ .err = .{ .step = .migrating, .value = err } };
-        };
+        const data = bun.sys.File.readFrom(std.fs.cwd(), lockfile_path, allocator).unwrap() catch break :npm;
         const lockfile = migrateNPMLockfile(this, allocator, log, data, lockfile_path) catch |err| {
             if (err == error.NPMLockfileVersionMismatch) {
                 Output.prettyErrorln(

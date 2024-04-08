@@ -9221,7 +9221,7 @@ pub const PackageManager = struct {
                                 };
                                 if (!Singleton.node_modules_is_ok) {
                                     if (!Environment.isWindows) {
-                                        const stat = bun.sys.fstat(bun.toFD(this.node_modules_folder.fd)).unwrap() catch |err| {
+                                        const stat = bun.sys.fstat(bun.toFD(destination_dir)).unwrap() catch |err| {
                                             Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
                                                 this.names[package_id].slice(buf),
                                             });

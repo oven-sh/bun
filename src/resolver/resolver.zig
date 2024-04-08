@@ -36,7 +36,7 @@ const JSC = bun.JSC;
 const allocators = @import("../allocators.zig");
 const Msg = logger.Msg;
 const Path = Fs.Path;
-
+const debuglog = Output.scoped(.Resolver, true);
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Dependency = @import("../install/dependency.zig");
 const Install = @import("../install/install.zig");
@@ -2112,7 +2112,7 @@ pub const Resolver = struct {
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter = true;
         var in_place: ?*Fs.FileSystem.DirEntry = null;
-        const open_dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
+        const open_dir = bun.openDirForIteration(std.fs.cwd(), dir_path) catch |err| {
             // TODO: handle this error better
             r.log.addErrorFmt(
                 null,
@@ -2628,8 +2628,16 @@ pub const Resolver = struct {
             };
 
             if (rfs.entries.get(top)) |top_entry| {
-                bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].safe_path = top_entry.entries.dir;
-                bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].fd = top_entry.entries.fd;
+                switch (top_entry.*) {
+                    .entries => {
+                        bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].safe_path = top_entry.entries.dir;
+                        bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].fd = top_entry.entries.fd;
+                    },
+                    .err => |err| {
+                        debuglog("Failed to load DirEntry {s}  {s} - {s}", .{ top, @errorName(err.original_err), @errorName(err.canonical_error) });
+                        break;
+                    },
+                }
             }
             i += 1;
         }
@@ -2645,8 +2653,16 @@ pub const Resolver = struct {
                     .fd = .zero,
                 };
                 if (rfs.entries.get(top)) |top_entry| {
-                    bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].safe_path = top_entry.entries.dir;
-                    bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].fd = top_entry.entries.fd;
+                    switch (top_entry.*) {
+                        .entries => {
+                            bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].safe_path = top_entry.entries.dir;
+                            bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].fd = top_entry.entries.fd;
+                        },
+                        .err => |err| {
+                            debuglog("Failed to load DirEntry {s}  {s} - {s}", .{ top, @errorName(err.original_err), @errorName(err.canonical_error) });
+                            return err.canonical_error;
+                        },
+                    }
                 }
 
                 i += 1;

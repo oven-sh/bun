@@ -186,7 +186,9 @@ private:
     }
 };
 
+#if OS(WINDOWS)
 extern "C" void Bun__setCTRLHandler(BOOL add);
+#endif
 
 const ClassInfo TTYWrapObject::s_info = {
     "LibuvStreamWrap"_s,

@@ -79,7 +79,7 @@ pub fn endsWithExtension(str: []const u8) bool {
     const file_ext = str[str.len - 3 ..];
     inline for (win_extensions) |ext| {
         comptime std.debug.assert(ext.len == 3);
-        if (bun.strings.eqlComptimeCheckLenWithType(u8, file_ext, ext, false)) return true;
+        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(file_ext, ext)) return true;
     }
     return false;
 }

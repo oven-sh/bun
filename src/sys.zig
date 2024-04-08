@@ -161,7 +161,7 @@ pub const O = switch (Environment.os) {
     },
 };
 
-pub const S =  if (Environment.isLinux) linux.S else if (Environment.isPosix) std.posix.S else struct {};
+pub const S = if (Environment.isLinux) linux.S else if (Environment.isPosix) std.posix.S else struct {};
 
 const statSym = if (use_libc)
     C.stat

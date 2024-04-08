@@ -23,7 +23,6 @@ const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
 
-const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const Path = bun.path;
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
@@ -219,10 +218,11 @@ const NetworkTask = struct {
         git_checkout: void,
         local_tarball: void,
     },
+    next: ?*NetworkTask = null,
 
     pub fn notify(this: *NetworkTask, _: anytype) void {
         defer this.package_manager.wake();
-        this.package_manager.network_channel.writeItem(this) catch {};
+        this.package_manager.async_network_task_queue.push(this);
     }
 
     // We must use a less restrictive Accept header value
@@ -588,6 +588,7 @@ const Task = struct {
     id: u64,
     err: ?anyerror = null,
     package_manager: *PackageManager,
+    next: ?*Task = null,
 
     /// An ID that lets us register a callback without keeping the same pointer around
     pub const Id = struct {
@@ -643,8 +644,8 @@ const Task = struct {
                 const body = this.request.package_manifest.network.response_buffer.move();
 
                 defer {
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     bun.default_allocator.free(body);
+                    this.package_manager.resolve_tasks.push(this);
                 }
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
@@ -686,7 +687,7 @@ const Task = struct {
                 const bytes = this.request.extract.network.response_buffer.move();
 
                 defer {
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    this.package_manager.resolve_tasks.push(this);
                     bun.default_allocator.free(bytes);
                 }
 
@@ -735,7 +736,7 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_clone = bun.invalid_fd };
-                    manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    manager.resolve_tasks.push(this);
                     return;
                 };
 
@@ -744,7 +745,7 @@ const Task = struct {
                     .git_clone = bun.toFD(dir.fd),
                 };
                 this.status = Status.success;
-                manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                manager.resolve_tasks.push(this);
             },
             .git_checkout => {
                 const manager = this.package_manager;
@@ -761,7 +762,7 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_checkout = .{} };
-                    manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    manager.resolve_tasks.push(this);
                     return;
                 };
 
@@ -769,7 +770,7 @@ const Task = struct {
                     .git_checkout = data,
                 };
                 this.status = Status.success;
-                manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                manager.resolve_tasks.push(this);
             },
             .local_tarball => {
                 const result = readAndExtract(
@@ -785,13 +786,13 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .extract = .{} };
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    this.package_manager.resolve_tasks.push(this);
                     return;
                 };
 
                 this.data = .{ .extract = result };
                 this.status = Status.success;
-                this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                this.package_manager.resolve_tasks.push(this);
             },
         }
     }
@@ -1541,22 +1542,11 @@ pub const PackageInstall = struct {
         err: ?anyerror = null,
 
         pub const Queue = NewTaskQueue(@This());
-
-        // Assumption: only one is ever run at a time.
-        // We don't run `bun install` on multiple threads concurrently, anyway.
         var queue: Queue = undefined;
-
         pub fn getQueue() *Queue {
-            queue = .{
-                // This is actually a different threadpool than the PackageManager one
-                // it has to be.
-                // The problem is:
-                // - NetworkTask will potentially block the thread pool while reading events
-                // - if all the threads are blocked, this thread is not doing anything to unblock them because it's just waiting on a value
-                // - so we have to use a different threadpool (or wake up the event loop through another mechanism)
-                .thread_pool = JSC.WorkPool.get(),
+            queue = Queue{
+                .thread_pool = &PackageManager.instance.thread_pool,
             };
-
             return &queue;
         }
 
@@ -2236,9 +2226,9 @@ const TaskCallbackContext = union(Tag) {
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
 const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
 
-// Windows seems to stack overflow in debug builds due to the size of these allocations.
-const TaskChannel = sync.Channel(Task, .{ .Static = 4096 / (if (Environment.isWindows) 16 else 1) });
-const NetworkChannel = sync.Channel(*NetworkTask, .{ .Static = 8192 / (if (Environment.isWindows) 16 else 1) });
+const PreallocatedTaskStore = bun.HiveArray(Task, 512).Fallback;
+const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 1024).Fallback;
+const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 
 const ThreadPool = bun.ThreadPool;
 const PackageManifestMap = std.HashMapUnmanaged(PackageNameHash, Npm.PackageManifest, IdentityContext(PackageNameHash), 80);
@@ -2265,7 +2255,7 @@ pub const PackageManager = struct {
     root_dir: *Fs.FileSystem.DirEntry,
     allocator: std.mem.Allocator,
     log: *logger.Log,
-    resolve_tasks: TaskChannel,
+    resolve_tasks: ResolveTaskQueue = .{},
     timestamp_for_manifest_cache_control: u32 = 0,
     extracted_count: u32 = 0,
     default_features: Features = .{},
@@ -2300,13 +2290,14 @@ pub const PackageManager = struct {
     git_repositories: RepositoryMap = .{},
 
     network_dedupe_map: NetworkTaskQueue = .{},
-    network_channel: NetworkChannel = NetworkChannel.init(),
+    async_network_task_queue: AsyncNetworkTaskQueue = .{},
     network_tarball_batch: ThreadPool.Batch = .{},
     network_resolve_batch: ThreadPool.Batch = .{},
     network_task_fifo: NetworkQueue = undefined,
-    preallocated_network_tasks: PreallocatedNetworkTasks = .{ .buffer = undefined, .len = 0 },
     pending_tasks: u32 = 0,
     total_tasks: u32 = 0,
+    preallocated_network_tasks: PreallocatedNetworkTasks = PreallocatedNetworkTasks.init(bun.default_allocator),
+    preallocated_resolve_tasks: PreallocatedTaskStore = PreallocatedTaskStore.init(bun.default_allocator),
 
     /// items are only inserted into this if they took more than 500ms
     lifecycle_script_time_log: LifecycleScriptTimeLog = .{},
@@ -2345,9 +2336,10 @@ pub const PackageManager = struct {
     // actually have scripts to run, and we add them to this list
     trusted_deps_to_add_to_package_json: std.ArrayListUnmanaged(string) = .{},
 
-    const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     pub var verbose_install = false;
+
+    pub const AsyncNetworkTaskQueue = bun.UnboundedQueue(NetworkTask, .next);
 
     pub const ScriptRunEnvironment = struct {
         root_dir_info: *DirInfo,
@@ -3039,13 +3031,7 @@ pub const PackageManager = struct {
     pub var instance: PackageManager = undefined;
 
     pub fn getNetworkTask(this: *PackageManager) *NetworkTask {
-        if (this.preallocated_network_tasks.len + 1 < this.preallocated_network_tasks.buffer.len) {
-            const len = this.preallocated_network_tasks.len;
-            this.preallocated_network_tasks.len += 1;
-            return &this.preallocated_network_tasks.buffer[len];
-        }
-
-        return this.allocator.create(NetworkTask) catch @panic("Memory allocation failure creating NetworkTask!");
+        return this.preallocated_network_tasks.get();
     }
 
     fn allocGitHubURL(this: *const PackageManager, repository: *const Repository) string {
@@ -3779,7 +3765,7 @@ pub const PackageManager = struct {
         name: strings.StringOrTinyString,
         network_task: *NetworkTask,
     ) *ThreadPool.Task {
-        var task = this.allocator.create(Task) catch unreachable;
+        var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
             .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
@@ -3801,7 +3787,7 @@ pub const PackageManager = struct {
         tarball: ExtractTarball,
         network_task: *NetworkTask,
     ) *ThreadPool.Task {
-        var task = this.allocator.create(Task) catch unreachable;
+        var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
             .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
@@ -3825,7 +3811,7 @@ pub const PackageManager = struct {
         name: string,
         repository: *const Repository,
     ) *ThreadPool.Task {
-        var task = this.allocator.create(Task) catch unreachable;
+        var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
             .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
@@ -3859,7 +3845,7 @@ pub const PackageManager = struct {
         resolution: Resolution,
         resolved: string,
     ) *ThreadPool.Task {
-        var task = this.allocator.create(Task) catch unreachable;
+        var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
             .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
@@ -3900,7 +3886,7 @@ pub const PackageManager = struct {
         path: string,
         resolution: Resolution,
     ) *ThreadPool.Task {
-        var task = this.allocator.create(Task) catch unreachable;
+        var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
             .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
@@ -5080,10 +5066,13 @@ pub const PackageManager = struct {
 
         var timestamp_this_tick: ?u32 = null;
 
-        while (manager.network_channel.tryReadItem() catch null) |task_| {
-            var task: *NetworkTask = task_;
+        var network_tasks_batch = manager.async_network_task_queue.popBatch();
+        var network_tasks_iter = network_tasks_batch.iterator();
+        while (network_tasks_iter.next()) |task| {
             if (comptime Environment.allow_assert) std.debug.assert(manager.pending_tasks > 0);
             manager.pending_tasks -|= 1;
+            // We cannot free the network task at the end of this scope.
+            // It may continue to be referenced in a future task.
 
             switch (task.callback) {
                 .package_manifest => |manifest_req| {
@@ -5402,11 +5391,13 @@ pub const PackageManager = struct {
             }
         }
 
-        while (manager.resolve_tasks.tryReadItem() catch null) |task_| {
+        var resolve_tasks_batch = manager.resolve_tasks.popBatch();
+        var resolve_tasks_iter = resolve_tasks_batch.iterator();
+        while (resolve_tasks_iter.next()) |task| {
             if (comptime Environment.allow_assert) std.debug.assert(manager.pending_tasks > 0);
+            defer manager.preallocated_resolve_tasks.put(task);
             manager.pending_tasks -|= 1;
 
-            var task: Task = task_;
             if (task.log.msgs.items.len > 0) {
                 switch (Output.enable_ansi_colors) {
                     inline else => |enable_ansi_colors| {
@@ -5417,6 +5408,7 @@ pub const PackageManager = struct {
 
             switch (task.tag) {
                 .package_manifest => {
+                    defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);
                     if (task.status == .fail) {
                         const name = task.request.package_manifest.name;
                         const err = task.err orelse error.Failed;
@@ -5463,6 +5455,13 @@ pub const PackageManager = struct {
                     }
                 },
                 .extract, .local_tarball => {
+                    defer {
+                        switch (task.tag) {
+                            .extract => manager.preallocated_network_tasks.put(task.request.extract.network),
+                            else => {},
+                        }
+                    }
+
                     const tarball = switch (task.tag) {
                         .extract => task.request.extract.tarball,
                         .local_tarball => task.request.local_tarball.tarball,
@@ -7096,7 +7095,7 @@ pub const PackageManager = struct {
             .thread_pool = ThreadPool.init(.{
                 .max_threads = cpu_count,
             }),
-            .resolve_tasks = TaskChannel.init(),
+            .resolve_tasks = .{},
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
             .workspaces = workspaces,
@@ -7189,7 +7188,6 @@ pub const PackageManager = struct {
             .thread_pool = ThreadPool.init(.{
                 .max_threads = cpu_count,
             }),
-            .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = undefined,
             .event_loop = .{

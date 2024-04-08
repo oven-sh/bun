@@ -625,20 +625,20 @@ const Task = struct {
                 return hasher.final();
             }
 
+            // These cannot change:
+            // We persist them to the filesystem.
             pub fn forGitClone(url: string) IDType {
                 var hasher = Hasher.init(0);
-                hasher.update("git-clone:");
                 hasher.update(url);
-                return hasher.final();
+                return @as(u64, 4 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
             }
 
             pub fn forGitCheckout(url: string, resolved: string) IDType {
                 var hasher = Hasher.init(0);
-                hasher.update("git-checkout:");
                 hasher.update(url);
                 hasher.update("@");
                 hasher.update(resolved);
-                return hasher.final();
+                return @as(u64, 5 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
             }
         };
     }

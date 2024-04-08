@@ -1537,13 +1537,30 @@ pub const PackageInstall = struct {
         src: [:0]bun.OSPathChar,
         dest: [:0]bun.OSPathChar,
         basename: u16,
-        queue: *Queue,
         task: bun.JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
         err: ?anyerror = null,
 
         pub const Queue = NewTaskQueue(@This());
 
-        pub fn init(src: []const bun.OSPathChar, dest: []const bun.OSPathChar, basename: []const bun.OSPathChar, queue: *Queue) *@This() {
+        // Assumption: only one is ever run at a time.
+        // We don't run `bun install` on multiple threads concurrently, anyway.
+        var queue: Queue = undefined;
+
+        pub fn getQueue() *Queue {
+            queue = .{
+                // This is actually a different threadpool than the PackageManager one
+                // it has to be.
+                // The problem is:
+                // - NetworkTask will potentially block the thread pool while reading events
+                // - if all the threads are blocked, this thread is not doing anything to unblock them because it's just waiting on a value
+                // - so we have to use a different threadpool (or wake up the event loop through another mechanism)
+                .thread_pool = JSC.WorkPool.get(),
+            };
+
+            return &queue;
+        }
+
+        pub fn init(src: []const bun.OSPathChar, dest: []const bun.OSPathChar, basename: []const bun.OSPathChar) *@This() {
             const allocation_size =
                 (src.len) + 1 + (dest.len) + 1;
 
@@ -1564,13 +1581,11 @@ pub const PackageInstall = struct {
                 .src = src_,
                 .dest = dest_,
                 .basename = @truncate(basename.len),
-                .queue = queue,
             });
         }
 
         pub fn runFromThreadPool(task: *bun.JSC.WorkPoolTask) void {
             var iter = @fieldParentPtr(@This(), "task", task);
-            var queue = iter.queue;
             defer queue.completeOne();
             if (iter.run()) |err| {
                 iter.err = err;
@@ -1646,9 +1661,7 @@ pub const PackageInstall = struct {
                 head2: if (Environment.isWindows) []u16 else void,
             ) !u32 {
                 var real_file_count: u32 = 0;
-                var queue = if (Environment.isWindows) HardLinkWindowsInstallTask.Queue{
-                    .thread_pool = &PackageManager.instance.thread_pool,
-                } else {};
+                var queue = if (Environment.isWindows) HardLinkWindowsInstallTask.getQueue() else {};
 
                 while (try walker.next()) |entry| {
                     if (comptime Environment.isPosix) {
@@ -1688,7 +1701,7 @@ pub const PackageInstall = struct {
                         head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
                         const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
 
-                        queue.push(HardLinkWindowsInstallTask.init(src, dest, entry.basename, &queue));
+                        queue.push(HardLinkWindowsInstallTask.init(src, dest, entry.basename));
                         real_file_count += 1;
                     }
                 }

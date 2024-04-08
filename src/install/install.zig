@@ -774,7 +774,7 @@ const Task = struct {
             .local_tarball => {
                 const result = readAndExtract(
                     manager.allocator,
-                    this.request.local_tarball.tarball,
+                    &this.request.local_tarball.tarball,
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
@@ -795,8 +795,8 @@ const Task = struct {
         }
     }
 
-    fn readAndExtract(allocator: std.mem.Allocator, tarball: ExtractTarball) !ExtractData {
-        const bytes = try bun.sys.File.readFrom(std.fs.cwd(), &try std.os.toPosixPath(tarball.url.slice()), allocator).unwrap();
+    fn readAndExtract(allocator: std.mem.Allocator, tarball: *const ExtractTarball) !ExtractData {
+        const bytes = try bun.sys.File.readFromUserInput(std.fs.cwd(), tarball.url.slice(), allocator).unwrap();
         defer allocator.free(bytes);
         return tarball.run(bytes);
     }
@@ -3782,7 +3782,7 @@ pub const PackageManager = struct {
 
     fn enqueueExtractNPMPackage(
         this: *PackageManager,
-        tarball: ExtractTarball,
+        tarball: *const ExtractTarball,
         network_task: *NetworkTask,
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
@@ -3793,7 +3793,7 @@ pub const PackageManager = struct {
             .request = .{
                 .extract = .{
                     .network = network_task,
-                    .tarball = tarball,
+                    .tarball = tarball.*,
                 },
             },
             .id = network_task.task_id,
@@ -4846,14 +4846,14 @@ pub const PackageManager = struct {
 
     const GitResolver = struct {
         resolved: string,
-        resolution: Resolution,
+        resolution: *const Resolution,
 
         pub fn count(this: @This(), comptime Builder: type, builder: Builder, _: JSAst.Expr) void {
             builder.count(this.resolved);
         }
 
         pub fn resolve(this: @This(), comptime Builder: type, builder: Builder, _: JSAst.Expr) !Resolution {
-            var resolution = this.resolution;
+            var resolution = this.resolution.*;
             resolution.value.github.resolved = builder.append(String, this.resolved);
             return resolution;
         }
@@ -4861,14 +4861,14 @@ pub const PackageManager = struct {
 
     const TarballResolver = struct {
         url: string,
-        resolution: Resolution,
+        resolution: *const Resolution,
 
         pub fn count(this: @This(), comptime Builder: type, builder: Builder, _: JSAst.Expr) void {
             builder.count(this.url);
         }
 
         pub fn resolve(this: @This(), comptime Builder: type, builder: Builder, _: JSAst.Expr) !Resolution {
-            var resolution = this.resolution;
+            var resolution = this.resolution.*;
             switch (resolution.tag) {
                 .local_tarball => {
                     resolution.value.local_tarball = builder.append(String, this.url);
@@ -4886,8 +4886,8 @@ pub const PackageManager = struct {
     fn processExtractedTarballPackage(
         manager: *PackageManager,
         package_id: *PackageID,
-        resolution: Resolution,
-        data: ExtractData,
+        resolution: *const Resolution,
+        data: *const ExtractData,
         comptime log_level: Options.LogLevel,
     ) ?Lockfile.Package {
         switch (resolution.tag) {
@@ -5073,7 +5073,7 @@ pub const PackageManager = struct {
             // It may continue to be referenced in a future task.
 
             switch (task.callback) {
-                .package_manifest => |manifest_req| {
+                .package_manifest => |*manifest_req| {
                     const name = manifest_req.name;
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
@@ -5270,7 +5270,7 @@ pub const PackageManager = struct {
 
                     manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
                 },
-                .extract => |extract| {
+                .extract => |*extract| {
                     const response = task.http.response orelse {
                         const err = task.http.err orelse error.TarballFailedToDownload;
 
@@ -5305,7 +5305,7 @@ pub const PackageManager = struct {
                                 extract_ctx,
                                 package_id,
                                 extract.name.slice(),
-                                extract.resolution,
+                                &extract.resolution,
                                 err,
                                 task.url_buf,
                             );
@@ -5344,7 +5344,7 @@ pub const PackageManager = struct {
                                 extract_ctx,
                                 package_id,
                                 extract.name.slice(),
-                                extract.resolution,
+                                &extract.resolution,
                                 err,
                                 task.url_buf,
                             );
@@ -5435,9 +5435,9 @@ pub const PackageManager = struct {
                         }
                         continue;
                     }
-                    const manifest = task.data.package_manifest;
+                    const manifest = &task.data.package_manifest;
 
-                    _ = try manager.manifests.getOrPutValue(manager.allocator, manifest.pkg.name.hash, manifest);
+                    _ = try manager.manifests.getOrPutValue(manager.allocator, manifest.pkg.name.hash, manifest.*);
 
                     const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
                     const dependency_list = dependency_list_entry.value_ptr.*;
@@ -5461,14 +5461,14 @@ pub const PackageManager = struct {
                     }
 
                     const tarball = switch (task.tag) {
-                        .extract => task.request.extract.tarball,
-                        .local_tarball => task.request.local_tarball.tarball,
+                        .extract => &task.request.extract.tarball,
+                        .local_tarball => &task.request.local_tarball.tarball,
                         else => unreachable,
                     };
                     const dependency_id = tarball.dependency_id;
                     var package_id = manager.lockfile.buffers.resolutions.items[dependency_id];
                     const alias = tarball.name.slice();
-                    const resolution = tarball.resolution;
+                    const resolution = &tarball.resolution;
 
                     if (task.status == .fail) {
                         const err = task.err orelse error.TarballFailedToExtract;
@@ -5505,7 +5505,7 @@ pub const PackageManager = struct {
                     bun.Analytics.Features.extracted_packages += 1;
 
                     // GitHub and tarball URL dependencies are not fully resolved until after the tarball is downloaded & extracted.
-                    if (manager.processExtractedTarballPackage(&package_id, resolution, task.data.extract, comptime log_level)) |pkg| brk: {
+                    if (manager.processExtractedTarballPackage(&package_id, resolution, &task.data.extract, comptime log_level)) |pkg| brk: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
                         // TODO: move this into a separate function
@@ -5560,7 +5560,7 @@ pub const PackageManager = struct {
                         if (ExtractCompletionContext == *PackageInstaller) {
                             extract_ctx.fixCachedLockfilePackageSlices();
                         }
-                        callbacks.onExtract(extract_ctx, dependency_id, task.data.extract, comptime log_level);
+                        callbacks.onExtract(extract_ctx, dependency_id, &task.data.extract, comptime log_level);
                     }
 
                     if (comptime log_level.showProgress()) {
@@ -5571,7 +5571,9 @@ pub const PackageManager = struct {
                     }
                 },
                 .git_clone => {
-                    const name = task.request.git_clone.name;
+                    const clone = &task.request.git_clone;
+                    const name = clone.name.slice();
+                    const url = clone.url.slice();
 
                     if (task.status == .fail) {
                         const err = task.err orelse error.Failed;
@@ -5579,15 +5581,15 @@ pub const PackageManager = struct {
                         if (@TypeOf(callbacks.onPackageManifestError) != void) {
                             callbacks.onPackageManifestError(
                                 extract_ctx,
-                                name.slice(),
+                                name,
                                 err,
-                                task.request.git_clone.url.slice(),
+                                url,
                             );
                         } else if (comptime log_level != .silent) {
                             const fmt = "\n<r><red>error<r>: {s} cloning repository for <b>{s}<r>";
                             const error_name = @errorName(err);
 
-                            const args = .{ error_name, name.slice() };
+                            const args = .{ error_name, name };
                             if (comptime log_level.showProgress()) {
                                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
                             } else {
@@ -5609,13 +5611,15 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
-                            manager.setNodeName(manager.downloads_node.?, name.slice(), ProgressStrings.download_emoji, true);
+                            manager.setNodeName(manager.downloads_node.?, name, ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
                         }
                     }
                 },
                 .git_checkout => {
-                    const alias = task.request.git_checkout.name;
+                    const git_checkout = &task.request.git_checkout;
+                    const alias = &git_checkout.name;
+                    const resolution = &git_checkout.resolution;
                     var package_id: PackageID = invalid_package_id;
 
                     if (task.status == .fail) {
@@ -5641,8 +5645,8 @@ pub const PackageManager = struct {
 
                     if (manager.processExtractedTarballPackage(
                         &package_id,
-                        task.request.git_checkout.resolution,
-                        task.data.git_checkout,
+                        resolution,
+                        &task.data.git_checkout,
                         comptime log_level,
                     )) |pkg| brk: {
                         var any_root = false;
@@ -5681,8 +5685,8 @@ pub const PackageManager = struct {
                         }
                         callbacks.onExtract(
                             extract_ctx,
-                            task.request.git_checkout.dependency_id,
-                            task.data.git_checkout,
+                            git_checkout.dependency_id,
+                            &task.data.git_checkout,
                             comptime log_level,
                         );
                     }
@@ -8760,7 +8764,7 @@ pub const PackageManager = struct {
         pub fn installEnqueuedPackages(
             this: *PackageInstaller,
             dependency_id: DependencyID,
-            data: ExtractData,
+            data: *const ExtractData,
             comptime log_level: Options.LogLevel,
         ) void {
             const package_id = this.lockfile.buffers.resolutions.items[dependency_id];

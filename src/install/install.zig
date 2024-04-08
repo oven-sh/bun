@@ -220,6 +220,8 @@ const NetworkTask = struct {
     },
     next: ?*NetworkTask = null,
 
+    pub const DedupeMap = std.HashMap(u64, void, IdentityContext(u64), 80);
+
     pub fn notify(this: *NetworkTask, _: anytype) void {
         defer this.package_manager.wake();
         this.package_manager.async_network_task_queue.push(this);
@@ -591,44 +593,56 @@ const Task = struct {
     next: ?*Task = null,
 
     /// An ID that lets us register a callback without keeping the same pointer around
-    pub const Id = struct {
-        pub fn forNPMPackage(package_name: string, package_version: Semver.Version) u64 {
-            var hasher = bun.Wyhash11.init(0);
-            hasher.update(package_name);
-            hasher.update("@");
-            hasher.update(std.mem.asBytes(&package_version));
-            return @as(u64, 0 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
-        }
+    pub fn NewID(comptime Hasher: type, comptime IDType: type) type {
+        return struct {
+            pub fn forNPMPackage(package_name: string, package_version: Semver.Version) IDType {
+                var hasher = Hasher.init(0);
+                hasher.update("npm-package:");
+                hasher.update(package_name);
+                hasher.update("@");
+                hasher.update(std.mem.asBytes(&package_version));
+                return hasher.final();
+            }
 
-        pub fn forBinLink(package_id: PackageID) u64 {
-            const hash = bun.Wyhash11.hash(0, std.mem.asBytes(&package_id));
-            return @as(u64, 1 << 61) | @as(u64, @as(u61, @truncate(hash)));
-        }
+            pub fn forBinLink(package_id: PackageID) IDType {
+                var hasher = Hasher.init(0);
+                hasher.update("bin-link:");
+                hasher.update(std.mem.asBytes(&package_id));
+                return hasher.final();
+            }
 
-        pub fn forManifest(name: string) u64 {
-            return @as(u64, 2 << 61) | @as(u64, @as(u61, @truncate(bun.Wyhash11.hash(0, name))));
-        }
+            pub fn forManifest(name: string) IDType {
+                var hasher = Hasher.init(0);
+                hasher.update("manifest:");
+                hasher.update(name);
+                return hasher.final();
+            }
 
-        pub fn forTarball(url: string) u64 {
-            var hasher = bun.Wyhash11.init(0);
-            hasher.update(url);
-            return @as(u64, 3 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
-        }
+            pub fn forTarball(url: string) IDType {
+                var hasher = Hasher.init(0);
+                hasher.update("tarball:");
+                hasher.update(url);
+                return hasher.final();
+            }
 
-        pub fn forGitClone(url: string) u64 {
-            var hasher = bun.Wyhash11.init(0);
-            hasher.update(url);
-            return @as(u64, 4 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
-        }
+            pub fn forGitClone(url: string) IDType {
+                var hasher = Hasher.init(0);
+                hasher.update("git-clone:");
+                hasher.update(url);
+                return hasher.final();
+            }
 
-        pub fn forGitCheckout(url: string, resolved: string) u64 {
-            var hasher = bun.Wyhash11.init(0);
-            hasher.update(url);
-            hasher.update("@");
-            hasher.update(resolved);
-            return @as(u64, 5 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
-        }
-    };
+            pub fn forGitCheckout(url: string, resolved: string) IDType {
+                var hasher = Hasher.init(0);
+                hasher.update("git-checkout:");
+                hasher.update(url);
+                hasher.update("@");
+                hasher.update(resolved);
+                return hasher.final();
+            }
+        };
+    }
+    pub const Id = NewID(bun.Wyhash11, u64);
 
     pub fn callback(task: *ThreadPool.Task) void {
         Output.Source.configureThread();
@@ -2315,7 +2329,7 @@ pub const PackageManager = struct {
     folders: FolderResolution.Map = .{},
     git_repositories: RepositoryMap = .{},
 
-    network_dedupe_map: NetworkTaskQueue = .{},
+    network_dedupe_map: NetworkTask.DedupeMap = NetworkTask.DedupeMap.init(bun.default_allocator),
     async_network_task_queue: AsyncNetworkTaskQueue = .{},
     network_tarball_batch: ThreadPool.Batch = .{},
     network_resolve_batch: ThreadPool.Batch = .{},
@@ -2364,7 +2378,6 @@ pub const PackageManager = struct {
 
     any_failed_to_install: bool = false,
 
-    const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     pub var verbose_install = false;
 
     pub const AsyncNetworkTaskQueue = bun.UnboundedQueue(NetworkTask, .next);
@@ -3482,6 +3495,11 @@ pub const PackageManager = struct {
         };
     }
 
+    pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64) bool {
+        const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
+        return gpe.found_existing;
+    }
+
     pub fn generateNetworkTaskForTarball(
         this: *PackageManager,
         task_id: u64,
@@ -3489,8 +3507,7 @@ pub const PackageManager = struct {
         dependency_id: DependencyID,
         package: Lockfile.Package,
     ) !?*NetworkTask {
-        const dedupe_entry = try this.network_dedupe_map.getOrPut(this.allocator, task_id);
-        if (dedupe_entry.found_existing) {
+        if (this.hasCreatedNetworkTask(task_id)) {
             return null;
         }
 
@@ -4251,8 +4268,7 @@ pub const PackageManager = struct {
                                 );
 
                             if (!dependency.behavior.isPeer() or install_peer) {
-                                const network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
-                                if (!network_entry.found_existing) {
+                                if (!this.hasCreatedNetworkTask(task_id)) {
                                     if (this.options.enable.manifest_cache) {
                                         if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name_str) catch null) |manifest_| {
                                             const manifest: Npm.PackageManifest = manifest_;
@@ -4394,8 +4410,7 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    const network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, checkout_id, .{});
-                    if (network_entry.found_existing) return;
+                    if (this.hasCreatedNetworkTask(checkout_id)) return;
 
                     this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(
                         checkout_id,
@@ -4412,8 +4427,7 @@ pub const PackageManager = struct {
 
                     if (dependency.behavior.isPeer()) return;
 
-                    const network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, clone_id, .{});
-                    if (network_entry.found_existing) return;
+                    if (this.hasCreatedNetworkTask(clone_id)) return;
 
                     this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep)));
                 }
@@ -4647,8 +4661,7 @@ pub const PackageManager = struct {
 
                 switch (version.value.tarball.uri) {
                     .local => {
-                        const network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
-                        if (network_entry.found_existing) return;
+                        if (this.hasCreatedNetworkTask(task_id)) return;
 
                         this.task_batch.push(ThreadPool.Batch.from(this.enqueueLocalTarball(
                             task_id,

@@ -1637,7 +1637,7 @@ pub const PackageInstall = struct {
                 return null;
             }
 
-            return bun.errnoToZigErr(bun.windows.getLastErrno());
+            return bun.windows.getLastError();
         }
     };
 

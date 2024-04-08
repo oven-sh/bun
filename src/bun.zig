@@ -748,6 +748,16 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     }
 }
 
+pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
+    if (comptime Environment.isWindows) {
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
+        return res.asDir();
+    } else {
+        const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return fd.asDir();
+    }
+}
+
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();

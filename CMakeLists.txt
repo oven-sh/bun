@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.2")
+set(Bun_VERSION "1.1.3")
 set(WEBKIT_TAG e3a2d89a0b1644cc8d5c245bd2ffee4d4bd6c1d5)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -39,7 +39,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 
         # TODO(@paperdave): Remove this
         # it is enabled for the time being to make sure to catch more bugs in the experimental windows builds
-        set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
+	set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
     else()
         if(ZIG_OPTIMIZE STREQUAL "Debug")
             set(bun "bun-debug")

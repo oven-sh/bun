@@ -186,6 +186,8 @@ private:
     }
 };
 
+extern "C" void Bun__setCTRLHandler(BOOL add);
+
 const ClassInfo TTYWrapObject::s_info = {
     "LibuvStreamWrap"_s,
 
@@ -251,6 +253,10 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     }
 
 #if OS(WINDOWS)
+    if (mode.toInt32(globalObject) == 0) {
+        Bun__setCTRLHandler(1);
+    }
+
     int err = uv_tty_set_mode(ttyWrap->handle->tty(), mode.toInt32(globalObject));
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.

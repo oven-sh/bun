@@ -84,8 +84,8 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
 
 AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::JSValue reason)
     : ContextDestructionObserver(context)
+    , m_reason(reason)
     , m_aborted(aborted == Aborted::Yes)
-    , m_reason(context->vm(), reason)
 {
     ASSERT(reason);
 }
@@ -103,13 +103,12 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     m_aborted = true;
 
     ASSERT(reason);
-    auto& vm = scriptExecutionContext()->vm();
-    m_reason.set(vm, reason);
+    m_reason.setWeakly(reason);
 
     Ref protectedThis { *this };
     auto algorithms = std::exchange(m_algorithms, {});
     for (auto& algorithm : algorithms)
-        algorithm(reason);
+        algorithm.second(reason);
 
     auto callbacks = std::exchange(m_native_callbacks, {});
     for (auto callback : callbacks) {
@@ -140,21 +139,15 @@ void AbortSignal::signalFollow(AbortSignal& signal)
         return;
 
     if (signal.aborted()) {
-        signalAbort(signal.reason());
+        signalAbort(signal.reason().getValue());
         return;
     }
 
     ASSERT(!m_followingSignal);
     m_followingSignal = signal;
-    signal.addAlgorithm([weakThis = WeakPtr { this }](JSC::JSValue reason) {
-        if (weakThis) {
-            if (reason.isEmpty() || reason.isUndefined()) {
-                weakThis->signalAbort(weakThis->m_followingSignal ? weakThis->m_followingSignal->reason()
-                                                                  : JSC::jsUndefined());
-            } else {
-                weakThis->signalAbort(reason);
-            }
-        }
+    signal.addAlgorithm([weakThis = WeakPtr { *this }](JSC::JSValue reason) {
+        if (RefPtr signal = weakThis.get())
+            signal->signalAbort(reason);
     });
 }
 
@@ -163,16 +156,33 @@ void AbortSignal::eventListenersDidChange()
     m_hasAbortEventListener = hasEventListeners(eventNames().abortEvent);
 }
 
-bool AbortSignal::whenSignalAborted(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
+uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
 {
     if (signal.aborted()) {
-        algorithm->handleEvent(signal.m_reason.get());
-        return true;
+        algorithm->handleEvent(signal.m_reason.getValue());
+        return 0;
     }
-    signal.addAlgorithm([algorithm = WTFMove(algorithm)](JSC::JSValue value) mutable {
+    return signal.addAlgorithm([algorithm = WTFMove(algorithm)](JSC::JSValue value) mutable {
         algorithm->handleEvent(value);
     });
-    return false;
+}
+
+void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t algorithmIdentifier)
+{
+    signal.removeAlgorithm(algorithmIdentifier);
+}
+
+uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
+{
+    m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTFMove(algorithm)));
+    return m_algorithmIdentifier;
+}
+
+void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
+{
+    m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
+        return pair.first == algorithmIdentifier;
+    });
 }
 
 void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)
@@ -182,7 +192,7 @@ void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)
 
     auto& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    throwException(&lexicalGlobalObject, scope, m_reason.get());
+    throwException(&lexicalGlobalObject, scope, m_reason.getValue());
 }
 
 } // namespace WebCore

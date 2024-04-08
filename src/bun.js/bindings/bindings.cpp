@@ -5261,7 +5261,7 @@ extern "C" bool WebCore__AbortSignal__aborted(WebCore__AbortSignal* arg0)
 extern "C" JSC__JSValue WebCore__AbortSignal__abortReason(WebCore__AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
-    return JSC::JSValue::encode(abortSignal->reason());
+    return JSC::JSValue::encode(abortSignal->reason().getValue());
 }
 
 extern "C" WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal* arg0)
@@ -5288,7 +5288,7 @@ extern "C" WebCore__AbortSignal* WebCore__AbortSignal__addListener(WebCore__Abor
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
 
     if (abortSignal->aborted()) {
-        callback(ctx, JSC::JSValue::encode(abortSignal->reason()));
+        callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue()));
         return arg0;
     }
 

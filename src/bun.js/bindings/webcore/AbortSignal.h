@@ -50,13 +50,14 @@ public:
     static Ref<AbortSignal> abort(JSDOMGlobalObject&, ScriptExecutionContext&, JSC::JSValue reason);
     static Ref<AbortSignal> timeout(ScriptExecutionContext&, uint64_t milliseconds);
 
-    static bool whenSignalAborted(AbortSignal&, Ref<AbortAlgorithm>&&);
+    static uint32_t addAbortAlgorithmToSignal(AbortSignal&, Ref<AbortAlgorithm>&&);
+    static void removeAbortAlgorithmFromSignal(AbortSignal&, uint32_t algorithmIdentifier);
 
     void signalAbort(JSC::JSValue reason);
     void signalFollow(AbortSignal&);
 
     bool aborted() const { return m_aborted; }
-    JSValue reason() const { return m_reason.get(); }
+    const JSValueInWrappedObject& reason() const { return m_reason; }
 
     bool hasActiveTimeoutTimer() const { return m_hasActiveTimeoutTimer; }
     bool hasAbortEventListener() const { return m_hasAbortEventListener; }
@@ -64,8 +65,9 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
 
-    using Algorithm = Function<void(JSValue)>;
-    void addAlgorithm(Algorithm&& algorithm) { m_algorithms.append(WTFMove(algorithm)); }
+    using Algorithm = Function<void(JSC::JSValue reason)>;
+    uint32_t addAlgorithm(Algorithm&&);
+    void removeAlgorithm(uint32_t);
     void cleanNativeBindings(void* ref);
     void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }
 
@@ -88,10 +90,11 @@ private:
     void eventListenersDidChange() final;
 
     bool m_aborted { false };
-    Vector<Algorithm, 2> m_algorithms;
+    Vector<std::pair<uint32_t, Algorithm>> m_algorithms;
+    uint32_t m_algorithmIdentifier { 0 };
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
     WeakPtr<AbortSignal> m_followingSignal;
-    JSC::Strong<JSC::Unknown> m_reason;
+    JSValueInWrappedObject m_reason;
     bool m_hasActiveTimeoutTimer { false };
     bool m_hasAbortEventListener { false };
 };

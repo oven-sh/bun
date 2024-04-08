@@ -245,7 +245,6 @@ export function readableStreamPipeToWritableStream(
 
   source.$disturbed = true;
 
-  pipeState.finalized = false;
   pipeState.shuttingDown = false;
   pipeState.promiseCapability = $newPromiseCapability(Promise);
   pipeState.pendingReadPromiseCapability = $newPromiseCapability(Promise);
@@ -254,8 +253,6 @@ export function readableStreamPipeToWritableStream(
 
   if (signal !== undefined) {
     const algorithm = reason => {
-      if (pipeState.finalized) return;
-
       $pipeToShutdownWithAction(
         pipeState,
         () => {
@@ -290,7 +287,9 @@ export function readableStreamPipeToWritableStream(
         reason,
       );
     };
-    if ($whenSignalAborted(signal, algorithm)) return pipeState.promiseCapability.promise;
+    pipeState.abortAlgorithmIdentifier = $addAbortAlgorithmToSignal(signal, algorithm);
+    if (!pipeState.abortAlgorithmIdentifier) return pipeState.promiseCapability.promise;
+    pipeState.signal = signal;
   }
 
   $pipeToErrorsMustBePropagatedForward(pipeState);
@@ -480,8 +479,7 @@ export function pipeToFinalize(pipeState) {
   $writableStreamDefaultWriterRelease(pipeState.writer);
   $readableStreamReaderGenericRelease(pipeState.reader);
 
-  // Instead of removing the abort algorithm as per spec, we make it a no-op which is equivalent.
-  pipeState.finalized = true;
+  if (pipeState.signal) $removeAbortAlgorithmFromSignal(pipeState.signal, pipeState.abortAlgorithmIdentifier);
 
   if (arguments.length > 1) pipeState.promiseCapability.reject.$call(undefined, arguments[1]);
   else pipeState.promiseCapability.resolve.$call();

@@ -30,8 +30,6 @@
     PrivateIdentifier,
     PublicIdentifier
 ] interface AbortSignal : EventTarget {
-    [PrivateIdentifier] static boolean whenSignalAborted(AbortSignal object, AbortAlgorithm algorithm);
-
     [NewObject, CallWith=CurrentScriptExecutionContext&CurrentGlobalObject] static AbortSignal abort(optional any reason);
     [Exposed=(Window, Worker), NewObject, CallWith=CurrentScriptExecutionContext] static AbortSignal timeout([EnforceRange] unsigned long long milliseconds);
 

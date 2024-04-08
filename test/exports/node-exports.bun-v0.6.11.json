@@ -7408,8 +7408,7 @@
         "AbortController": "function",
         "AbortSignal": {
           "abort": "function",
-          "timeout": "function",
-          "whenSignalAborted": "function"
+          "timeout": "function"
         },
         "Blob": "function",
         "Buffer": {

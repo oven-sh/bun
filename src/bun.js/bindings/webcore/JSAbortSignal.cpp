@@ -59,7 +59,6 @@ using namespace JSC;
 
 // Functions
 
-static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalConstructorFunction_whenSignalAborted);
 static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalConstructorFunction_abort);
 static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalConstructorFunction_timeout);
 static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_throwIfAborted);
@@ -109,7 +108,6 @@ using JSAbortSignalDOMConstructor = JSDOMConstructorNotConstructable<JSAbortSign
 /* Hash table for constructor */
 
 static const HashTableValue JSAbortSignalConstructorTableValues[] = {
-    { "whenSignalAborted"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsAbortSignalConstructorFunction_whenSignalAborted, 2 } },
     { "abort"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsAbortSignalConstructorFunction_abort, 0 } },
     { "timeout"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsAbortSignalConstructorFunction_timeout, 1 } },
 };
@@ -150,7 +148,6 @@ void JSAbortSignalPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
-    putDirect(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().whenSignalAbortedPrivateName(), JSFunction::create(vm, globalObject(), 0, String(), jsAbortSignalConstructorFunction_whenSignalAborted, ImplementationVisibility::Public), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -242,28 +239,6 @@ static inline bool setJSAbortSignal_onabortSetter(JSGlobalObject& lexicalGlobalO
 JSC_DEFINE_CUSTOM_SETTER(setJSAbortSignal_onabort, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSAbortSignal>::set<setJSAbortSignal_onabortSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
-}
-
-static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_whenSignalAbortedBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
-    if (UNLIKELY(callFrame->argumentCount() < 2))
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto object = convert<IDLInterface<AbortSignal>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "object", "AbortSignal", "whenSignalAborted", "AbortSignal"); });
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto algorithm = convert<IDLCallbackFunction<JSAbortAlgorithm>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeFunctionError(lexicalGlobalObject, scope, 1, "algorithm", "AbortSignal", "whenSignalAborted"); });
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, AbortSignal::whenSignalAborted(*object, algorithm.releaseNonNull()))));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsAbortSignalConstructorFunction_whenSignalAborted, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSAbortSignal>::callStatic<jsAbortSignalConstructorFunction_whenSignalAbortedBody, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, *callFrame, "whenSignalAborted");
 }
 
 static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_abortBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)

@@ -39,7 +39,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 
         # TODO(@paperdave): Remove this
         # it is enabled for the time being to make sure to catch more bugs in the experimental windows builds
-	set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
+        set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
     else()
         if(ZIG_OPTIMIZE STREQUAL "Debug")
             set(bun "bun-debug")

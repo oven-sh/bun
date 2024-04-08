@@ -148,6 +148,15 @@ pub const Source = struct {
         pub var console_codepage = @as(u32, 0);
         pub var console_output_codepage = @as(u32, 0);
 
+        pub export fn Bun__restoreWindowsStdio() callconv(.C) void {
+            restore();
+        }
+        comptime {
+            if (Environment.isWindows) {
+                _ = &Bun__restoreWindowsStdio;
+            }
+        }
+
         pub fn restore() void {
             const peb = std.os.windows.peb();
             const stdout = peb.ProcessParameters.hStdOutput;

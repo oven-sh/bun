@@ -28,6 +28,7 @@ beforeAll(async () => {
   await new Promise<void>(done => {
     verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
       if (msg.verdaccio_started) {
+        console.log("Verdaccio started");
         done();
       }
     });
@@ -40,6 +41,7 @@ afterAll(() => {
 
 beforeEach(async () => {
   packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));
+  env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   await writeFile(
     join(packageDir, "bunfig.toml"),
     `

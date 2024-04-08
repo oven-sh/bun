@@ -2723,6 +2723,7 @@ pub const Resolver = struct {
                     // ignore them during path resolution.
                     error.ENOENT,
                     error.ENOTDIR,
+                    error.EISDIR,
                     error.IsDir,
                     error.NotDir,
                     error.FileNotFound,

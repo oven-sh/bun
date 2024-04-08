@@ -550,7 +550,7 @@ pub const StandaloneModuleGraph = struct {
             bun.toFD(root_dir.fd),
             bun.sliceTo(&(try std.os.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
-            if (err == error.IsDir) {
+            if (err == error.IsDir or err == error.EISDIR) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
             } else {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) });

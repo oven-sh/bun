@@ -2629,40 +2629,54 @@ pub const PackageManager = struct {
                 this.drainDependencyList();
 
                 switch (this.options.log_level) {
-                    inline else => |log_level| {
+                    inline else => |log_levela| {
                         const Closure = struct {
-                            err: ?anyerror = null,
-                            manager: *PackageManager,
-                            pub fn isDone(closure: *@This()) bool {
-                                var manager = closure.manager;
-                                if (manager.pending_tasks > 0) {
-                                    manager.runTasks(
-                                        void,
-                                        {},
-                                        .{
-                                            .onExtract = {},
-                                            .onResolve = {},
-                                            .onPackageManifestError = {},
-                                            .onPackageDownloadError = {},
-                                        },
-                                        false,
-                                        log_level,
-                                    ) catch |err| {
-                                        closure.err = err;
-                                        return true;
-                                    };
+                            // https://github.com/ziglang/zig/issues/19586
+                            pub fn issue_19586_workaround(comptime log_level: Options.LogLevel) type {
+                                return struct {
+                                    err: ?anyerror = null,
+                                    manager: *PackageManager,
+                                    pub fn isDone(closure: *@This()) bool {
+                                        var manager = closure.manager;
+                                        if (manager.pending_tasks > 0) {
+                                            manager.runTasks(
+                                                void,
+                                                {},
+                                                .{
+                                                    .onExtract = {},
+                                                    .onResolve = {},
+                                                    .onPackageManifestError = {},
+                                                    .onPackageDownloadError = {},
+                                                },
+                                                false,
+                                                log_level,
+                                            ) catch |err| {
+                                                closure.err = err;
+                                                return true;
+                                            };
 
-                                    if (PackageManager.verbose_install and manager.pending_tasks > 0) {
-                                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
+                                            if (PackageManager.verbose_install and manager.pending_tasks > 0) {
+                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
+                                            }
+                                        }
+
+                                        return manager.pending_tasks == 0;
                                     }
-                                }
-
-                                return manager.pending_tasks == 0;
+                                };
                             }
-                        };
+                        }.issue_19586_workaround(log_levela);
+
+                        if (comptime log_levela.showProgress()) {
+                            this.startProgressBarIfNone();
+                        }
 
                         var closure = Closure{ .manager = this };
                         this.sleepUntil(&closure, &Closure.isDone);
+
+                        if (comptime log_levela.showProgress()) {
+                            this.endProgressBar();
+                            Output.flush();
+                        }
 
                         if (closure.err) |err| {
                             return .{ .failure = err };

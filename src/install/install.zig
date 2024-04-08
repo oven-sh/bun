@@ -1509,12 +1509,21 @@ pub const PackageInstall = struct {
             thread_pool: *ThreadPool,
             wake_value: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
+            pub fn completeOne(this: *@This()) void {
+                @fence(.Release);
+                if (this.remaining.fetchSub(1, .Monotonic) == 1) {
+                    _ = this.wake_value.fetchAdd(1, .Monotonic);
+                    bun.Futex.wake(&this.wake_value, std.math.maxInt(u32));
+                }
+            }
+
             pub fn push(this: *@This(), task: *TaskType) void {
                 _ = this.remaining.fetchAdd(1, .Monotonic);
                 this.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
             }
 
             pub fn wait(this: *@This()) void {
+                @fence(.Acquire);
                 this.wake_value.store(0, .Monotonic);
                 while (this.remaining.load(.Monotonic) > 0) {
                     bun.Futex.wait(&this.wake_value, 0, std.time.ns_per_ms * 5) catch {};
@@ -1561,19 +1570,12 @@ pub const PackageInstall = struct {
 
         pub fn runFromThreadPool(task: *bun.JSC.WorkPoolTask) void {
             var iter = @fieldParentPtr(@This(), "task", task);
+            var queue = iter.queue;
+            defer queue.completeOne();
             if (iter.run()) |err| {
                 iter.err = err;
-                iter.queue.errored_task = iter;
-                if (iter.queue.remaining.fetchSub(1, .Monotonic) < 5) {
-                    _ = iter.queue.wake_value.fetchAdd(1, .Monotonic);
-                    bun.Futex.wake(&iter.queue.wake_value, 1);
-                }
-
+                queue.errored_task = iter;
                 return;
-            }
-            if (iter.queue.remaining.fetchSub(1, .Monotonic) < 5) {
-                _ = iter.queue.wake_value.fetchAdd(1, .Monotonic);
-                bun.Futex.wake(&iter.queue.wake_value, 1);
             }
             iter.deinit();
         }
@@ -2168,16 +2170,46 @@ pub const PackageInstall = struct {
     }
 };
 
+const NodeModulesFolder = struct {
+    fd: ?bun.FileDescriptor = null,
+    tree_id: Lockfile.Tree.Id = 0,
+    path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+
+    pub fn deinit(this: *NodeModulesFolder) void {
+        if (this.fd) |fd| {
+            this.fd = null;
+            if (std.fs.cwd().fd == fd.cast()) {
+                return;
+            }
+
+            _ = bun.sys.close(fd);
+        }
+
+        this.path.clearAndFree();
+    }
+
+    pub fn dir(this: *NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
+        if (this.fd) |fd| {
+            return fd.asDir();
+        }
+
+        if (root.fd == std.fs.cwd().fd) {
+            this.fd = bun.toFD(std.fs.cwd());
+            return root;
+        }
+
+        const out = try root.makeOpenPath(this.path.items, .{ .iterate = true, .access_sub_paths = true });
+        this.fd = bun.toFD(out.fd);
+        return out;
+    }
+};
+
 pub const Resolution = @import("./resolution.zig").Resolution;
 const Progress = std.Progress;
 const TaggedPointer = @import("../tagged_pointer.zig");
 const TaskCallbackContext = union(Tag) {
     dependency: DependencyID,
-    node_modules_folder: struct {
-        fd: bun.FileDescriptor,
-        tree_id: Lockfile.Tree.Id,
-        node_modules_folder_path: std.ArrayList(u8),
-    },
+    node_modules_folder: NodeModulesFolder,
     root_dependency: DependencyID,
     root_request_id: PackageID,
     pub const Tag = enum {
@@ -2494,6 +2526,11 @@ pub const PackageManager = struct {
         this.event_loop.tickOnce(this);
     }
 
+    pub fn sleepUntil(this: *PackageManager, closure: anytype, comptime isDoneFn: anytype) void {
+        Output.flush();
+        this.event_loop.tick(closure, isDoneFn);
+    }
+
     pub fn sleep(this: *PackageManager) void {
         Output.flush();
         this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
@@ -2560,29 +2597,42 @@ pub const PackageManager = struct {
 
                 switch (this.options.log_level) {
                     inline else => |log_level| {
-                        if (log_level.showProgress()) this.startProgressBarIfNone();
-                        while (this.pending_tasks > 0) {
-                            this.runTasks(
-                                void,
-                                {},
-                                .{
-                                    .onExtract = {},
-                                    .onResolve = {},
-                                    .onPackageManifestError = {},
-                                    .onPackageDownloadError = {},
-                                },
-                                false,
-                                log_level,
-                            ) catch |err| {
-                                return .{ .failure = err };
-                            };
+                        const Closure = struct {
+                            err: ?anyerror = null,
+                            manager: *PackageManager,
+                            pub fn isDone(closure: *@This()) bool {
+                                var manager = closure.manager;
+                                if (manager.pending_tasks > 0) {
+                                    manager.runTasks(
+                                        void,
+                                        {},
+                                        .{
+                                            .onExtract = {},
+                                            .onResolve = {},
+                                            .onPackageManifestError = {},
+                                            .onPackageDownloadError = {},
+                                        },
+                                        false,
+                                        log_level,
+                                    ) catch |err| {
+                                        closure.err = err;
+                                        return true;
+                                    };
 
-                            if (PackageManager.verbose_install and this.pending_tasks > 0) {
-                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
+                                    if (PackageManager.verbose_install and manager.pending_tasks > 0) {
+                                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
+                                    }
+                                }
+
+                                return manager.pending_tasks == 0;
                             }
+                        };
 
-                            if (this.pending_tasks > 0)
-                                this.sleep();
+                        var closure = Closure{ .manager = this };
+                        this.sleepUntil(&closure, &Closure.isDone);
+
+                        if (closure.err) |err| {
+                            return .{ .failure = err };
                         }
                     },
                 }
@@ -6981,12 +7031,6 @@ pub const PackageManager = struct {
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
-        if (Environment.isWindows) {
-            // On Windows, I/O seems to block on doing nothing for longer.
-            // so let's double the thread count.
-            cpu_count *= 2;
-        }
-
         if (env.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
                 cpu_count = @min(cpu_count, cpu_count_);
@@ -8503,8 +8547,7 @@ pub const PackageManager = struct {
         progress: *std.Progress,
 
         // relative paths from `nextNodeModulesFolder` will be copied into this list.
-        node_modules_folder_path: std.ArrayList(u8),
-        node_modules_folder: std.fs.Dir,
+        node_modules: NodeModulesFolder,
 
         skip_verify_installed_version_number: bool,
         skip_delete: bool,
@@ -8682,7 +8725,7 @@ pub const PackageManager = struct {
             this.completed_trees.deinit(allocator);
             allocator.free(this.tree_install_counts);
             this.tree_ids_to_trees_the_id_depends_on.deinit(allocator);
-            this.node_modules_folder_path.deinit();
+            this.node_modules.deinit();
             this.trusted_dependencies_from_update_requests.deinit(allocator);
         }
 
@@ -8718,18 +8761,38 @@ pub const PackageManager = struct {
                 var callbacks = removed.value;
                 defer callbacks.deinit(this.manager.allocator);
 
-                const prev_node_modules_folder = this.node_modules_folder;
-                defer this.node_modules_folder = prev_node_modules_folder;
+                const prev_node_modules = this.node_modules;
+                defer this.node_modules = prev_node_modules;
                 const prev_tree_id = this.current_tree_id;
                 defer this.current_tree_id = prev_tree_id;
-                const prev_node_modules_folder_path = this.node_modules_folder_path;
-                defer this.node_modules_folder_path = prev_node_modules_folder_path;
-                for (callbacks.items) |cb| {
-                    this.node_modules_folder = cb.node_modules_folder.fd.asDir();
+
+                if (callbacks.items.len == 0) {
+                    debug("Unexpected state: no callbacks for async task.", .{});
+                    return;
+                }
+
+                for (callbacks.items) |*cb| {
+                    this.node_modules = cb.node_modules_folder;
+                    var dir = this.node_modules.dir(this.root_node_modules_folder) catch |err| {
+                        if (log_level != .silent) {
+                            Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{ name, bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}) });
+                        }
+                        this.summary.fail += 1;
+                        continue;
+                    };
+                    defer dir.close();
+                    this.node_modules.fd = null;
                     this.current_tree_id = cb.node_modules_folder.tree_id;
-                    this.node_modules_folder_path = cb.node_modules_folder.node_modules_folder_path;
-                    this.installPackageWithNameAndResolution(dependency_id, package_id, log_level, name, resolution);
-                    cb.node_modules_folder.node_modules_folder_path.deinit();
+                    cb.node_modules_folder = .{};
+                    this.installPackageWithNameAndResolution(
+                        dependency_id,
+                        package_id,
+                        log_level,
+                        name,
+                        resolution,
+                        dir,
+                    );
+                    this.node_modules.deinit();
                 }
             }
         }
@@ -8739,6 +8802,7 @@ pub const PackageManager = struct {
             alias: string,
             package_id: PackageID,
             resolution_tag: Resolution.Tag,
+            node_modules_folder: std.fs.Dir,
             comptime log_level: Options.LogLevel,
         ) usize {
             if (comptime Environment.allow_assert) {
@@ -8759,7 +8823,7 @@ pub const PackageManager = struct {
                     this.lockfile.allocator,
                     &string_builder,
                     this.manager.log,
-                    this.node_modules_folder,
+                    node_modules_folder,
                     alias,
                 ) catch |err| {
                     if (comptime log_level != .silent) {
@@ -8802,7 +8866,7 @@ pub const PackageManager = struct {
 
             if (scripts.preinstall.isEmpty() and scripts.install.isEmpty()) {
                 const binding_dot_gyp_path = Path.joinAbsStringZ(
-                    this.node_modules_folder_path.items,
+                    this.node_modules.path.items,
                     &[_]string{
                         alias,
                         "binding.gyp",
@@ -8822,6 +8886,7 @@ pub const PackageManager = struct {
             comptime log_level: Options.LogLevel,
             name: string,
             resolution: *const Resolution,
+            destination_dir: std.fs.Dir,
         ) void {
             const buf = this.lockfile.buffers.string_bytes.items;
 
@@ -8835,11 +8900,12 @@ pub const PackageManager = struct {
             var resolution_buf: [512]u8 = undefined;
             const extern_string_buf = this.lockfile.buffers.extern_strings.items;
             const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
+
             var installer = PackageInstall{
                 .progress = this.progress,
                 .cache_dir = undefined,
                 .cache_dir_subpath = undefined,
-                .destination_dir = this.node_modules_folder,
+                .destination_dir = destination_dir,
                 .destination_dir_subpath = destination_dir_subpath,
                 .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
                 .allocator = this.lockfile.allocator,
@@ -8980,12 +9046,12 @@ pub const PackageManager = struct {
                             if (!task_queue.found_existing) {
                                 var bin_linker = Bin.Linker{
                                     .bin = bin,
-                                    .package_installed_node_modules = bun.toFD(this.node_modules_folder.fd),
+                                    .package_installed_node_modules = bun.toFD(destination_dir),
                                     .global_bin_path = this.options.bin_path,
                                     .global_bin_dir = this.options.global_bin_dir,
 
                                     // .destination_dir_subpath = destination_dir_subpath,
-                                    .root_node_modules_folder = bun.toFD(this.root_node_modules_folder.fd),
+                                    .root_node_modules_folder = bun.toFD(this.root_node_modules_folder),
                                     .package_name = strings.StringOrTinyString.init(alias),
                                     .string_buf = buf,
                                     .extern_string_buf = extern_string_buf,
@@ -9027,6 +9093,7 @@ pub const PackageManager = struct {
                             if (this.enqueueLifecycleScripts(
                                 alias,
                                 log_level,
+                                destination_dir,
                                 package_id,
                                 resolution,
                             )) {
@@ -9045,7 +9112,7 @@ pub const PackageManager = struct {
                         if (resolution.tag != .workspace and !is_trusted and this.lockfile.packages.items(.meta)[package_id].hasInstallScript()) {
                             // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
                             // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
-                            const count = this.getInstalledPackageScriptsCount(alias, package_id, resolution.tag, log_level);
+                            const count = this.getInstalledPackageScriptsCount(alias, package_id, resolution.tag, destination_dir, log_level);
                             if (count > 0) {
                                 if (comptime log_level.isVerbose()) {
                                     Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
@@ -9067,9 +9134,9 @@ pub const PackageManager = struct {
                         if (cause.isPackageMissingFromCache()) {
                             const context: TaskCallbackContext = .{
                                 .node_modules_folder = .{
-                                    .fd = bun.toFD(this.node_modules_folder.fd),
+                                    .fd = null,
                                     .tree_id = this.current_tree_id,
-                                    .node_modules_folder_path = this.node_modules_folder_path.clone() catch bun.outOfMemory(),
+                                    .path = this.node_modules.path.clone() catch bun.outOfMemory(),
                                 },
                             };
                             switch (resolution.tag) {
@@ -9211,6 +9278,7 @@ pub const PackageManager = struct {
                     if (this.enqueueLifecycleScripts(
                         alias,
                         log_level,
+                        destination_dir,
                         package_id,
                         resolution,
                     )) {
@@ -9235,6 +9303,7 @@ pub const PackageManager = struct {
             this: *PackageInstaller,
             folder_name: string,
             comptime log_level: Options.LogLevel,
+            node_modules_folder: std.fs.Dir,
             package_id: PackageID,
             resolution: *const Resolution,
         ) bool {
@@ -9242,8 +9311,8 @@ pub const PackageManager = struct {
             const scripts_list = scripts.getList(
                 this.manager.log,
                 this.lockfile,
-                this.node_modules_folder,
-                this.node_modules_folder_path.items,
+                node_modules_folder,
+                this.node_modules.path.items,
                 folder_name,
                 resolution,
             ) catch |err| {
@@ -9298,6 +9367,7 @@ pub const PackageManager = struct {
         pub fn installPackage(
             this: *PackageInstaller,
             dependency_id: DependencyID,
+            destination_dir: std.fs.Dir,
             comptime log_level: Options.LogLevel,
         ) void {
             const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
@@ -9314,7 +9384,7 @@ pub const PackageManager = struct {
             const name = this.lockfile.str(&this.names[package_id]);
             const resolution = &this.resolutions[package_id];
 
-            this.installPackageWithNameAndResolution(dependency_id, package_id, log_level, name, resolution);
+            this.installPackageWithNameAndResolution(dependency_id, package_id, log_level, name, resolution, destination_dir);
         }
     };
 
@@ -9673,14 +9743,17 @@ pub const PackageManager = struct {
                     .resolutions = parts.items(.resolution),
                     .lockfile = this.lockfile,
                     .node = &install_node,
-                    .node_modules_folder = node_modules_folder,
-                    .node_modules_folder_path = std.ArrayList(u8).fromOwnedSlice(
-                        this.allocator,
-                        try this.allocator.dupe(
-                            u8,
-                            strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
+                    .node_modules = .{
+                        .fd = bun.toFD(node_modules_folder.fd),
+                        .path = std.ArrayList(u8).fromOwnedSlice(
+                            this.allocator,
+                            try this.allocator.dupe(
+                                u8,
+                                strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
+                            ),
                         ),
-                    ),
+                        .tree_id = 0,
+                    },
                     .progress = progress,
                     .skip_verify_installed_version_number = skip_verify_installed_version_number,
                     .skip_delete = skip_delete,
@@ -9700,31 +9773,24 @@ pub const PackageManager = struct {
                 };
             };
 
-            try installer.node_modules_folder_path.append(std.fs.path.sep);
+            try installer.node_modules.path.append(std.fs.path.sep);
 
             // installer.printTreeDeps();
 
             defer installer.deinit();
 
             while (iterator.nextNodeModulesFolder(&installer.completed_trees)) |node_modules| {
-                installer.node_modules_folder_path.items.len = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir).len + 1;
-                try installer.node_modules_folder_path.appendSlice(node_modules.relative_path);
-
-                // We deliberately do not close this folder.
-                // If the package hasn't been downloaded, we will need to install it later
-                // We use this file descriptor to know where to put it.
-                installer.node_modules_folder = bun.MakePath.makeOpenPath(cwd, node_modules.relative_path, .{ .access_sub_paths = true, .iterate = true }) catch brk: {
-                    // Avoid extra mkdir() syscall
-                    //
-                    // note: this will recursively delete any dangling symlinks
-                    // in the next.js repo, it encounters a dangling symlink in node_modules/@next/codemod/node_modules/cheerio
-                    try bun.makePath(cwd, bun.span(node_modules.relative_path));
-                    break :brk try bun.openDir(cwd, node_modules.relative_path);
-                };
-
+                installer.node_modules.path.items.len = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir).len + 1;
+                try installer.node_modules.path.appendSlice(node_modules.relative_path);
+                installer.node_modules.tree_id = node_modules.tree_id;
                 var remaining = node_modules.dependencies;
-
                 installer.current_tree_id = node_modules.tree_id;
+
+                var destination_dir = try installer.node_modules.dir(node_modules_folder);
+                defer {
+                    installer.node_modules.fd = null;
+                    destination_dir.close();
+                }
 
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(node_modules.dependencies.len == this.lockfile.buffers.trees.items[installer.current_tree_id].dependencies.len);
@@ -9738,7 +9804,7 @@ pub const PackageManager = struct {
                 while (remaining.len > unroll_count) {
                     comptime var i: usize = 0;
                     inline while (i < unroll_count) : (i += 1) {
-                        installer.installPackage(remaining[i], comptime log_level);
+                        installer.installPackage(remaining[i], destination_dir, comptime log_level);
                     }
                     remaining = remaining[unroll_count..];
 
@@ -9764,7 +9830,7 @@ pub const PackageManager = struct {
                 }
 
                 for (remaining) |dependency_id| {
-                    installer.installPackage(dependency_id, log_level);
+                    installer.installPackage(dependency_id, destination_dir, log_level);
                 }
 
                 try this.runTasks(
@@ -9785,24 +9851,52 @@ pub const PackageManager = struct {
             }
 
             while (this.pending_tasks > 0 and installer.options.do.install_packages) {
-                try this.runTasks(
-                    *PackageInstaller,
-                    &installer,
-                    .{
-                        .onExtract = PackageInstaller.installEnqueuedPackages,
-                        .onResolve = {},
-                        .onPackageManifestError = {},
-                        .onPackageDownloadError = {},
-                    },
-                    true,
-                    log_level,
-                );
+                const Closure = struct {
+                    installer: *PackageInstaller,
+                    err: ?anyerror = null,
+                    manager: *PackageManager,
 
-                if (PackageManager.verbose_install and PackageManager.instance.pending_tasks > 0) {
-                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
+                    pub fn isDone(closure: *@This()) bool {
+                        closure.manager.runTasks(
+                            *PackageInstaller,
+                            closure.installer,
+                            .{
+                                .onExtract = PackageInstaller.installEnqueuedPackages,
+                                .onResolve = {},
+                                .onPackageManifestError = {},
+                                .onPackageDownloadError = {},
+                            },
+                            true,
+                            log_level,
+                        ) catch |err| {
+                            closure.err = err;
+                        };
+
+                        if (closure.err != null) {
+                            return true;
+                        }
+
+                        if (PackageManager.verbose_install and PackageManager.instance.pending_tasks > 0) {
+                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
+                        }
+
+                        return closure.manager.pending_tasks == 0 and closure.manager.hasNoMorePendingLifecycleScripts();
+                    }
+                };
+
+                var closure = Closure{
+                    .installer = &installer,
+                    .manager = this,
+                };
+
+                // Whenever the event loop wakes up, we need to call `runTasks`
+                // If we call sleep() instead of sleepUntil(), it will wait forever until there are no more lifecycle scripts
+                // which means it will not call runTasks until _all_ current lifecycle scripts have finished running
+                this.sleepUntil(&closure, &Closure.isDone);
+
+                if (closure.err) |err| {
+                    return err;
                 }
-
-                this.sleep();
             } else {
                 this.tickLifecycleScripts();
             }
@@ -10186,56 +10280,77 @@ pub const PackageManager = struct {
                 Output.flush();
             }
 
-            while (manager.pending_tasks > 0) {
-                try manager.runTasks(
-                    *PackageManager,
-                    manager,
-                    .{
-                        .onExtract = {},
-                        .onResolve = {},
-                        .onPackageManifestError = {},
-                        .onPackageDownloadError = {},
-                        .progress_bar = true,
-                    },
-                    false,
-                    log_level,
-                );
+            const runAndWaitFn = struct {
+                pub fn runAndWaitFn(comptime check_peers: bool) *const fn (*PackageManager) anyerror!void {
+                    return struct {
+                        manager: *PackageManager,
+                        err: ?anyerror = null,
+                        pub fn isDone(closure: *@This()) bool {
+                            var this = closure.manager;
+                            if (comptime check_peers)
+                                this.processPeerDependencyList() catch |err| {
+                                    closure.err = err;
+                                    return true;
+                                };
 
-                if (PackageManager.verbose_install and manager.pending_tasks > 0) {
-                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
+                            this.drainDependencyList();
+
+                            this.runTasks(
+                                *PackageManager,
+                                this,
+                                .{
+                                    .onExtract = {},
+                                    .onResolve = {},
+                                    .onPackageManifestError = {},
+                                    .onPackageDownloadError = {},
+                                    .progress_bar = true,
+                                },
+                                check_peers,
+                                log_level,
+                            ) catch |err| {
+                                closure.err = err;
+                                return true;
+                            };
+
+                            if (comptime check_peers) {
+                                if (this.peer_dependencies.readableLength() > 0) {
+                                    return false;
+                                }
+                            }
+
+                            const pending_tasks = this.pending_tasks;
+
+                            if (PackageManager.verbose_install and pending_tasks > 0) {
+                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{pending_tasks});
+                            }
+
+                            return pending_tasks == 0;
+                        }
+
+                        pub fn runAndWait(this: *PackageManager) !void {
+                            var closure = @This(){
+                                .manager = this,
+                            };
+
+                            this.sleepUntil(&closure, &@This().isDone);
+
+                            if (closure.err) |err| {
+                                return err;
+                            }
+                        }
+                    }.runAndWait;
                 }
+            }.runAndWaitFn;
 
-                if (manager.pending_tasks > 0)
-                    manager.sleep();
+            const waitForEverythingExceptPeers = runAndWaitFn(false);
+            const waitForPeers = runAndWaitFn(true);
+
+            if (manager.pending_tasks > 0) {
+                try waitForEverythingExceptPeers(manager);
             }
 
             if (manager.options.do.install_peer_dependencies) {
-                while (manager.pending_tasks > 0 or manager.peer_dependencies.readableLength() > 0) {
-                    try manager.processPeerDependencyList();
-
-                    manager.drainDependencyList();
-
-                    try manager.runTasks(
-                        *PackageManager,
-                        manager,
-                        .{
-                            .onExtract = {},
-                            .onResolve = {},
-                            .onPackageManifestError = {},
-                            .onPackageDownloadError = {},
-                            .progress_bar = true,
-                        },
-                        true,
-                        log_level,
-                    );
-
-                    if (PackageManager.verbose_install and manager.pending_tasks > 0) {
-                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
-                    }
-
-                    if (manager.pending_tasks > 0)
-                        manager.sleep();
-                }
+                try waitForPeers(manager);
             }
 
             if (comptime log_level.showProgress()) {

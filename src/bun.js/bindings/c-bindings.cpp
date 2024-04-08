@@ -404,6 +404,25 @@ extern "C" void onExitSignal(int sig)
 }
 #endif
 
+#if OS(WINDOWS)
+extern "C" void Bun__restoreWindowsStdio();
+BOOL WINAPI Ctrlhandler(DWORD signal)
+{
+
+    if (signal == CTRL_C_EVENT) {
+        Bun__restoreWindowsStdio();
+        SetConsoleCtrlHandler(Ctrlhandler, FALSE);
+    }
+
+    return FALSE;
+}
+
+extern "C" void Bun__setCTRLHandler(BOOL add)
+{
+    SetConsoleCtrlHandler(Ctrlhandler, add);
+}
+#endif
+
 extern "C" void bun_initialize_process()
 {
     // Disable printf() buffering. We buffer it ourselves.
@@ -517,6 +536,9 @@ extern "C" void bun_initialize_process()
             }
         }
     }
+
+    // add ctrl+c handler on windows
+    Bun__setCTRLHandler(1);
 #endif
 
     atexit(Bun__onExit);

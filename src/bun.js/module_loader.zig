@@ -912,7 +912,7 @@ pub const ModuleLoader = struct {
                 this: *Queue,
                 package_id: Install.PackageID,
                 name: []const u8,
-                resolution: Install.Resolution,
+                resolution: *const Install.Resolution,
                 err: anyerror,
                 url: []const u8,
             ) void {
@@ -932,7 +932,7 @@ pub const ModuleLoader = struct {
                             record_ids[import_id],
                             .{
                                 .name = name,
-                                .resolution = resolution,
+                                .resolution = resolution.*,
                                 .err = err,
                                 .url = url,
                             },

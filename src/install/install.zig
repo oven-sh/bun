@@ -2637,47 +2637,49 @@ pub const PackageManager = struct {
             };
         }
 
+        const NewClosure = struct {
+            // https://github.com/ziglang/zig/issues/19586
+            pub fn issue_19586_workaround(comptime log_level: Options.LogLevel) type {
+                return struct {
+                    err: ?anyerror = null,
+                    manager: *PackageManager,
+                    pub fn isDone(closure: *@This()) bool {
+                        var manager = closure.manager;
+                        if (manager.pending_tasks > 0) {
+                            manager.runTasks(
+                                void,
+                                {},
+                                comptime .{
+                                    .onExtract = {},
+                                    .onResolve = {},
+                                    .onPackageManifestError = {},
+                                    .onPackageDownloadError = {},
+                                },
+                                false,
+                                comptime log_level,
+                            ) catch |err| {
+                                closure.err = err;
+                                return true;
+                            };
+
+                            if (PackageManager.verbose_install and manager.pending_tasks > 0) {
+                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
+                            }
+                        }
+
+                        return manager.pending_tasks == 0;
+                    }
+                };
+            }
+        }.issue_19586_workaround;
+
         const resolution_id = switch (this.lockfile.buffers.resolutions.items[dep_id]) {
             invalid_package_id => brk: {
                 this.drainDependencyList();
 
                 switch (this.options.log_level) {
                     inline else => |log_levela| {
-                        const Closure = struct {
-                            // https://github.com/ziglang/zig/issues/19586
-                            pub fn issue_19586_workaround(comptime log_level: Options.LogLevel) type {
-                                return struct {
-                                    err: ?anyerror = null,
-                                    manager: *PackageManager,
-                                    pub fn isDone(closure: *@This()) bool {
-                                        var manager = closure.manager;
-                                        if (manager.pending_tasks > 0) {
-                                            manager.runTasks(
-                                                void,
-                                                {},
-                                                .{
-                                                    .onExtract = {},
-                                                    .onResolve = {},
-                                                    .onPackageManifestError = {},
-                                                    .onPackageDownloadError = {},
-                                                },
-                                                false,
-                                                log_level,
-                                            ) catch |err| {
-                                                closure.err = err;
-                                                return true;
-                                            };
-
-                                            if (PackageManager.verbose_install and manager.pending_tasks > 0) {
-                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
-                                            }
-                                        }
-
-                                        return manager.pending_tasks == 0;
-                                    }
-                                };
-                            }
-                        }.issue_19586_workaround(log_levela);
+                        const Closure = comptime NewClosure(log_levela);
 
                         if (comptime log_levela.showProgress()) {
                             this.startProgressBarIfNone();
@@ -5154,7 +5156,7 @@ pub const PackageManager = struct {
                             }
                             manager.enqueueNetworkTask(task);
 
-                            if (manager.options.log_level.isVerbose()) {
+                            if (comptime log_level.isVerbose()) {
                                 manager.log.addWarningFmt(
                                     null,
                                     logger.Loc.Empty,
@@ -5287,9 +5289,9 @@ pub const PackageManager = struct {
                     }
 
                     if (comptime log_level.isVerbose()) {
-                        Output.prettyError("    ", .{});
+                        Output.prettyError("  ", .{});
                         Output.printElapsed(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms);
-                        Output.prettyError("\n <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
+                        Output.prettyError("<r> <d>fetch <r><cyan>{s}<d>.json<r> <d>{d}<r>\n", .{ name.slice(), response.status_code });
                         Output.flush();
                     }
 
@@ -5343,7 +5345,7 @@ pub const PackageManager = struct {
                             }
                             manager.enqueueNetworkTask(task);
 
-                            if (manager.options.log_level.isVerbose()) {
+                            if (log_level.isVerbose()) {
                                 manager.log.addWarningFmt(
                                     null,
                                     logger.Loc.Empty,
@@ -5427,9 +5429,9 @@ pub const PackageManager = struct {
                     }
 
                     if (comptime log_level.isVerbose()) {
-                        Output.prettyError("    ", .{});
-                        Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms)));
-                        Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
+                        Output.prettyError("  ", .{});
+                        Output.printElapsed(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms);
+                        Output.prettyError(" <d>fetch <r><cyan>{s}<d>@{}.tgz<r> <d>{d}<r>\n", .{ extract.name.slice(), extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto), response.status_code });
                         Output.flush();
                     }
 
@@ -7237,6 +7239,10 @@ pub const PackageManager = struct {
         manager.* = PackageManager{
             .options = .{
                 .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
+                .log_level = switch (log.level) {
+                    .info, .verbose, .debug => .verbose,
+                    .err, .warn => .default,
+                },
             },
             .network_task_fifo = NetworkQueue.init(),
             .allocator = allocator,
@@ -7261,7 +7267,11 @@ pub const PackageManager = struct {
             manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             manager.root_progress_node = manager.progress.start("", 0);
         } else {
-            manager.options.log_level = .default_no_progress;
+            if (manager.options.log_level == .verbose) {
+                manager.options.log_level = .verbose_no_progress;
+            } else if (manager.options.log_level == .default) {
+                manager.options.log_level = .default_no_progress;
+            }
         }
 
         if (!manager.options.enable.cache) {

@@ -56,7 +56,7 @@ pub const ProcessHandle = struct {
         _ = hasMore;
         // std.debug.print("read chunk: {s}\n", .{chunk});
         this.buffer.appendSlice(chunk) catch bun.outOfMemory();
-        this.state.redraw() catch {};
+        this.state.redraw(false) catch {};
 
         return true;
     }
@@ -73,7 +73,7 @@ pub const ProcessHandle = struct {
     pub fn onProcessExit(this: *This, proc: *bun.spawn.Process, _: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
         this.state.live_processes -= 1;
         this.done = true;
-        this.state.redraw() catch {};
+        this.state.redraw(false) catch {};
         // TODO figure out how to deinit process
         // actually - we can just leak it
         _ = proc;
@@ -97,7 +97,7 @@ const State = struct {
     draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     last_lines_written: usize = 0,
 
-    pub fn isDone(this: *anyopaque) bool {
+    pub fn isDone(this: *This) bool {
         const state = bun.cast(*const @This(), this);
         return state.live_processes == 0;
     }
@@ -107,18 +107,19 @@ const State = struct {
         elided_count: usize,
     };
 
-    fn elide(data_: []const u8, max_lines: usize) ElideResult {
+    fn elide(data_: []const u8, max_lines: ?usize) ElideResult {
         var data = data_;
         if (data.len == 0) return ElideResult{ .content = &.{}, .elided_count = 0 };
         if (data[data.len - 1] == '\n') {
             data = data[0 .. data.len - 1];
         }
+        if (max_lines == null) return ElideResult{ .content = data, .elided_count = 0 };
         var i: usize = data.len;
         var lines: usize = 0;
         while (i > 0) : (i -= 1) {
             if (data[i - 1] == '\n') {
                 lines += 1;
-                if (lines >= max_lines) {
+                if (lines >= max_lines.?) {
                     break;
                 }
             }
@@ -133,7 +134,7 @@ const State = struct {
         return ElideResult{ .content = content, .elided_count = elided };
     }
 
-    pub fn redraw(this: *This) !void {
+    pub fn redraw(this: *This, is_abort: bool) !void {
         this.draw_buf.clearRetainingCapacity();
         if (this.last_lines_written > 0) {
             // move cursor to the beginning of the line and clear it
@@ -144,7 +145,7 @@ const State = struct {
             }
         }
         for (this.handles) |*handle| {
-            const e = elide(handle.buffer.items, 10);
+            const e = elide(handle.buffer.items, if (is_abort) null else 10);
             try this.draw_buf.writer().print("{s} {s}$ {s}\n", .{ handle.config.package_name, handle.config.script_name, handle.config.script_content });
             if (e.elided_count > 0) {
                 try this.draw_buf.writer().print(
@@ -172,6 +173,33 @@ const State = struct {
             }
         }
         try std.io.getStdOut().writeAll(this.draw_buf.items);
+    }
+};
+
+const AbortHandler = struct {
+    const This = @This();
+
+    var should_abort = false;
+
+    pub fn abortHandler(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+        _ = sig;
+        _ = info;
+        should_abort = true;
+    }
+
+    pub fn install() void {
+        const action = std.os.Sigaction{
+            .handler = .{ .sigaction = AbortHandler.abortHandler },
+            .mask = std.os.empty_sigset,
+            .flags = std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND,
+        };
+        // if we can't set the handler, we just ignore it
+        std.os.sigaction(std.os.SIG.ABRT, &action, null) catch |err| {
+            if (Environment.isDebug) {
+                Output.warn("Failed to set abort handler: {s}\n", .{@errorName(err)});
+            }
+        };
+        std.debug.print("Installed abort handler\n", .{});
     }
 };
 
@@ -315,7 +343,14 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             try process.watch(event_loop).unwrap();
         }
 
-        event_loop.tick(&state, State.isDone);
+        AbortHandler.install();
+
+        while (!state.isDone() and !AbortHandler.should_abort) {
+            event_loop.tickOnce(&state);
+        }
+        if (AbortHandler.should_abort) {
+            state.redraw(true) catch {};
+        }
 
         Global.exit(0);
     } else {

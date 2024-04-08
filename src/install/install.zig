@@ -635,26 +635,29 @@ const Task = struct {
         defer Output.flush();
 
         var this = @fieldParentPtr(Task, "threadpool_task", task);
-
-        defer this.package_manager.wake();
+        const manager = this.package_manager;
+        defer {
+            manager.resolve_tasks.push(this);
+            manager.wake();
+        }
 
         switch (this.tag) {
             .package_manifest => {
                 const allocator = bun.default_allocator;
-                const body = this.request.package_manifest.network.response_buffer.move();
+                var manifest = &this.request.package_manifest;
+                const body = manifest.network.response_buffer.move();
 
                 defer {
                     bun.default_allocator.free(body);
-                    this.package_manager.resolve_tasks.push(this);
                 }
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
-                    this.request.package_manifest.network.http.response.?,
+                    manifest.network.http.response.?,
                     body,
                     &this.log,
-                    this.request.package_manifest.name.slice(),
-                    this.request.package_manifest.network.callback.package_manifest.loaded_manifest,
-                    this.package_manager,
+                    manifest.name.slice(),
+                    manifest.network.callback.package_manifest.loaded_manifest,
+                    manager,
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
@@ -668,9 +671,9 @@ const Task = struct {
                 };
 
                 switch (package_manifest) {
-                    .fresh, .cached => |manifest| {
+                    .fresh, .cached => |result| {
                         this.status = Status.success;
-                        this.data = .{ .package_manifest = manifest };
+                        this.data = .{ .package_manifest = result };
                         return;
                     },
                     .not_found => {
@@ -687,7 +690,6 @@ const Task = struct {
                 const bytes = this.request.extract.network.response_buffer.move();
 
                 defer {
-                    this.package_manager.resolve_tasks.push(this);
                     bun.default_allocator.free(bytes);
                 }
 
@@ -710,7 +712,6 @@ const Task = struct {
                 this.status = Status.success;
             },
             .git_clone => {
-                const manager = this.package_manager;
                 const name = this.request.git_clone.name.slice();
                 const url = this.request.git_clone.url.slice();
                 const dir = brk: {
@@ -736,7 +737,7 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_clone = bun.invalid_fd };
-                    manager.resolve_tasks.push(this);
+
                     return;
                 };
 
@@ -745,24 +746,23 @@ const Task = struct {
                     .git_clone = bun.toFD(dir.fd),
                 };
                 this.status = Status.success;
-                manager.resolve_tasks.push(this);
             },
             .git_checkout => {
-                const manager = this.package_manager;
+                const git_checkout = &this.request.git_checkout;
                 const data = Repository.checkout(
                     manager.allocator,
                     manager.env,
                     manager.log,
                     manager.getCacheDirectory(),
-                    this.request.git_checkout.repo_dir.asDir(),
-                    this.request.git_checkout.name.slice(),
-                    this.request.git_checkout.url.slice(),
-                    this.request.git_checkout.resolved.slice(),
+                    git_checkout.repo_dir.asDir(),
+                    git_checkout.name.slice(),
+                    git_checkout.url.slice(),
+                    git_checkout.resolved.slice(),
                 ) catch |err| {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_checkout = .{} };
-                    manager.resolve_tasks.push(this);
+
                     return;
                 };
 
@@ -770,11 +770,10 @@ const Task = struct {
                     .git_checkout = data,
                 };
                 this.status = Status.success;
-                manager.resolve_tasks.push(this);
             },
             .local_tarball => {
                 const result = readAndExtract(
-                    this.package_manager.allocator,
+                    manager.allocator,
                     this.request.local_tarball.tarball,
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
@@ -786,21 +785,18 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .extract = .{} };
-                    this.package_manager.resolve_tasks.push(this);
+
                     return;
                 };
 
                 this.data = .{ .extract = result };
                 this.status = Status.success;
-                this.package_manager.resolve_tasks.push(this);
             },
         }
     }
 
     fn readAndExtract(allocator: std.mem.Allocator, tarball: ExtractTarball) !ExtractData {
-        const file = try std.fs.cwd().openFile(tarball.url.slice(), .{ .mode = .read_only });
-        defer file.close();
-        const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+        const bytes = try bun.sys.File.readFrom(std.fs.cwd(), &try std.os.toPosixPath(tarball.url.slice()), allocator).unwrap();
         defer allocator.free(bytes);
         return tarball.run(bytes);
     }

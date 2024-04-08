@@ -4,7 +4,7 @@
 export SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 export BUN_BASE_DIR=${BUN_BASE_DIR:-$(cd $SCRIPT_DIR && cd .. && pwd)}
 export BUN_DEPS_DIR=${BUN_DEPS_DIR:-$BUN_BASE_DIR/src/deps/}
-export BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR:-$BUN_BASE_DIR/src/deps/}
+export BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR:-$BUN_BASE_DIR/src/deps/$CMAKE_BUILD_TYPE}
 
 # this compiler detection could be better
 export CC=${CC:-$(which clang-16 || which clang || which cc)}
@@ -23,7 +23,7 @@ export CMAKE_FLAGS=(
   -DCMAKE_CXX_COMPILER="${CXX}"
   -DCMAKE_C_FLAGS="$CFLAGS"
   -DCMAKE_CXX_FLAGS="$CXXFLAGS"
-  -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE"
 )
 
 if [[ $(uname -s) == 'Darwin' ]]; then

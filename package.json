@@ -20,7 +20,8 @@
     "@typescript-eslint/parser": "^5.31.0"
   },
   "scripts": {
-    "setup": "./scripts/setup.sh",
+    "setup": "CMAKE_BUILD_TYPE=Debug ./scripts/setup.sh",
+    "setup:release": "CMAKE_BUILD_TYPE=Release ./scripts/setup.sh",
     "build": "if [ ! -e build ]; then bun setup; fi && ninja -C build",
     "build:valgrind": "cmake . -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-valgrind && ninja -Cbuild-valgrind",
     "build:release": "cmake . -DCMAKE_BUILD_TYPE=Release -GNinja -Bbuild-release && ninja -Cbuild-release",

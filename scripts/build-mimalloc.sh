@@ -10,7 +10,6 @@ cd $BUN_DEPS_DIR/mimalloc
 rm -rf CMakeCache* CMakeFiles
 
 cmake "${CMAKE_FLAGS[@]}" . \
-    -DCMAKE_BUILD_TYPE=Release \
     -DMI_SKIP_COLLECT_ON_EXIT=1 \
     -DMI_BUILD_SHARED=OFF \
     -DMI_BUILD_STATIC=ON \

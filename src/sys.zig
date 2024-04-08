@@ -2676,9 +2676,13 @@ pub const File = struct {
     /// 3. Return the File handle and the buffer
     pub fn readFromUserInput(dir_fd: anytype, input_path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
         var buf: bun.PathBuffer = undefined;
-        const normalized = bun.path.normalizeBuf(input_path, &buf, .auto);
-        buf[normalized.len] = 0;
-        return readFrom(dir_fd, buf[0..normalized.len :0], allocator);
+        const normalized = bun.path.joinAbsStringBufZ(
+            bun.fs.FileSystem.instance.top_level_dir,
+            &buf,
+            &.{input_path},
+            .loose,
+        );
+        return readFrom(dir_fd, normalized, allocator);
     }
 
     /// 1. Open a file for reading

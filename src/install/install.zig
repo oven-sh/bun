@@ -796,7 +796,7 @@ const Task = struct {
     }
 
     fn readAndExtract(allocator: std.mem.Allocator, tarball: *const ExtractTarball) !ExtractData {
-        const bytes = try bun.sys.File.readFromUserInput(std.fs.cwd(), tarball.url.slice(), allocator).unwrap();
+        const bytes = try File.readFromUserInput(std.fs.cwd(), tarball.url.slice(), allocator).unwrap();
         defer allocator.free(bytes);
         return tarball.run(bytes);
     }

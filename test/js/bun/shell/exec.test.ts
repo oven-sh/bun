@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { $ } from "bun";
+import { describe, test, expect } from "bun:test";
 import { TestBuilder } from "./test_builder";
 import { bunEnv } from "harness";
 
@@ -54,6 +55,8 @@ describe("bun exec", () => {
       ["exit",   1, "exit: numeric argument required\n", ""],
       ["true",   0, "", ""],
       ["false",  1, "", ""],
+      // ["yes",    1, "", ""],
+      ["seq",    1, "seq: invalid argument\n", ""],
     ] as const;
     for (const [item, exitCode, stderr, stdout] of programs) {
       TestBuilder.command`${BUN} exec ${`${item} --help`}`
@@ -63,5 +66,11 @@ describe("bun exec", () => {
         .stdout(stdout)
         .runAsTest(item);
     }
+  });
+
+  test("bun works even when not in PATH", async () => {
+    const val = await $`bun exec 'bun'`.env({ ...bunEnv, PATH: "" }).nothrow();
+    expect(val.stderr.toString()).not.toContain("bun: command not found: bun");
+    expect(val.stdout.toString()).toContain("Bun is a fast JavaScript runtime");
   });
 });

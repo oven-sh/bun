@@ -1,4 +1,4 @@
-import { $, file } from "bun";
+import { $ } from "bun";
 import { test, expect } from "bun:test";
 
 test("$ with Bun.file prints the path", async () => {

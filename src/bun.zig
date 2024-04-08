@@ -754,7 +754,7 @@ pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openatA(toFD(dir.fd), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
         return fd.asDir();
     }
 }

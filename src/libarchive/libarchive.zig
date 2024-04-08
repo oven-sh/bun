@@ -594,7 +594,7 @@ pub const Archive = struct {
                                     switch (err) {
                                         error.AccessDenied, error.FileNotFound => {
                                             dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
+                                            break :brk try std.posix.symlinkatZ(link_target, dir_fd, pathname);
                                         },
                                         else => {
                                             return err;

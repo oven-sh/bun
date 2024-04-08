@@ -1500,22 +1500,22 @@ pub const PackageInstall = struct {
             wake_value: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
             pub fn completeOne(this: *@This()) void {
-                @fence(.Release);
-                if (this.remaining.fetchSub(1, .Monotonic) == 1) {
-                    _ = this.wake_value.fetchAdd(1, .Monotonic);
+                @fence(.release);
+                if (this.remaining.fetchSub(1, .monotonic) == 1) {
+                    _ = this.wake_value.fetchAdd(1, .monotonic);
                     bun.Futex.wake(&this.wake_value, std.math.maxInt(u32));
                 }
             }
 
             pub fn push(this: *@This(), task: *TaskType) void {
-                _ = this.remaining.fetchAdd(1, .Monotonic);
+                _ = this.remaining.fetchAdd(1, .monotonic);
                 this.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
             }
 
             pub fn wait(this: *@This()) void {
-                @fence(.Acquire);
-                this.wake_value.store(0, .Monotonic);
-                while (this.remaining.load(.Monotonic) > 0) {
+                @fence(.acquire);
+                this.wake_value.store(0, .monotonic);
+                while (this.remaining.load(.monotonic) > 0) {
                     bun.Futex.wait(&this.wake_value, 0, std.time.ns_per_ms * 5) catch {};
                 }
             }
@@ -1564,7 +1564,7 @@ pub const PackageInstall = struct {
         }
 
         pub fn runFromThreadPool(task: *bun.JSC.WorkPoolTask) void {
-            var iter = @fieldParentPtr(@This(), "task", task);
+            var iter: *@This() = @fieldParentPtr("task", task);
             defer queue.completeOne();
             if (iter.run()) |err| {
                 iter.err = err;

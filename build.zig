@@ -19,7 +19,7 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 const pathRel = fs.path.relative;
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.12.0-dev.3533+e5d900268";
+const recommended_zig_version = "0.12.0-dev.3594+355cceebc";
 
 comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {

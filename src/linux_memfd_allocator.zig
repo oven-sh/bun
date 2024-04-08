@@ -139,7 +139,7 @@ pub const LinuxMemFdAllocator = struct {
             const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .monotonic)}) catch "";
 
             // Using huge pages was slower.
-            const code = std.posix.system.memfd_create(label.ptr, std.os.linux.MFD.CLOEXEC | 0);
+            const code = std.c.memfd_create(label.ptr, std.os.linux.MFD.CLOEXEC | 0);
 
             bun.sys.syslog("memfd_create({s}) = {d}", .{ label, code });
             break :brk code;

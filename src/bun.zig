@@ -1823,7 +1823,6 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
         ref_count: u32,
         allocator: *HiveAllocator,
         value: T,
-
         pub fn init(value: T, allocator: *HiveAllocator) !*@This() {
             var this = try allocator.tryGet();
             this.allocator = allocator;
@@ -1942,7 +1941,6 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
             std.fs.File => @enumFromInt(fd.handle),
             std.fs.Dir => @enumFromInt(@as(i32, @intCast(fd.fd))),
             c_int, i32, u32, comptime_int => @enumFromInt(fd),
-            usize, i64 => @enumFromInt(@as(i32, @intCast(fd))),
             else => @compileError("bun.toFD() not implemented for: " ++ @typeName(T)),
         };
     }

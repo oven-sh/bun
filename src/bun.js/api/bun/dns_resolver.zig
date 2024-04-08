@@ -120,13 +120,21 @@ const LibInfo = struct {
             return promise_value;
         }
         std.debug.assert(request.backend.libinfo.machport != null);
-        request.backend.libinfo.file_poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
+        request.backend.libinfo.file_poll = bun.Async.FilePoll.init(
+            this.vm,
+            bun.toFD(std.math.maxInt(i32) - 1),
+            .{},
+            GetAddrInfoRequest,
+            request,
+        );
+
+        const fd = bun.toFD(@as(i32, @intCast(@intFromPtr(request.backend.libinfo.machport))));
         std.debug.assert(
             request.backend.libinfo.file_poll.?.registerWithFd(
                 this.vm.event_loop_handle.?,
                 .machport,
                 .one_shot,
-                bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
+                fd,
             ) == .result,
         );
 

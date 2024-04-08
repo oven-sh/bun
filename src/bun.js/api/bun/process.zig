@@ -1212,7 +1212,7 @@ pub fn spawnProcessPosix(
 
     for (0..3) |i| {
         const stdio = stdios[i];
-        const fileno = bun.toFD(i);
+        const fileno = bun.toFD(@as(i32, @intCast(i)));
         const flag = if (i == 0) @as(u32, bun.O.RDONLY) else @as(u32, bun.O.WRONLY);
 
         switch (stdio_options[i]) {
@@ -1249,7 +1249,7 @@ pub fn spawnProcessPosix(
                         };
 
                         // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
-                        const rc = std.os.linux.memfd_create(label, 0);
+                        const rc = std.c.memfd_create(label, 0);
                         if (bun.C.getErrno(rc) != .SUCCESS) {
                             break :use_memfd;
                         }
@@ -1341,7 +1341,7 @@ pub fn spawnProcessPosix(
     }
 
     for (options.extra_fds, 0..) |ipc, i| {
-        const fileno = bun.toFD(3 + i);
+        const fileno = bun.toFD(@as(i32, @intCast(3 + i)));
 
         switch (ipc) {
             .dup2 => @panic("TODO dup2 extra fd"),

@@ -110,7 +110,7 @@ pub const Stdio = union(enum) {
         };
 
         // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
-        const rc = std.os.linux.memfd_create(label, 0);
+        const rc = std.c.memfd_create(label, 0);
 
         log("memfd_create({s}) = {d}", .{ label, rc });
 

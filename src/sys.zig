@@ -33,7 +33,7 @@ pub const syslog = log;
 const use_libc = !(Environment.isLinux and Environment.isX64);
 
 pub const system = switch (Environment.os) {
-    .linux => linux,
+    .linux => std.c,
     .mac => bun.AsyncIO.system,
     else => @compileError("not implemented"),
 };
@@ -161,9 +161,7 @@ pub const O = switch (Environment.os) {
     },
 };
 
-pub const S = struct {
-    pub usingnamespace if (Environment.isLinux) linux.S else if (Environment.isPosix) std.posix.S else struct {};
-};
+pub const S =  if (Environment.isLinux) linux.S else if (Environment.isPosix) std.posix.S else struct {};
 
 const statSym = if (use_libc)
     C.stat
@@ -1177,7 +1175,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
         if (comptime Environment.allow_assert)
             log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
         return switch (Syscall.getErrno(rc)) {
-            .SUCCESS => .{ .result = bun.toFD(rc) },
+            .SUCCESS => .{ .result = bun.toFD(@as(i32, @intCast(rc))) },
             .INTR => continue,
             else => |err| {
                 return .{

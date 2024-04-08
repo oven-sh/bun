@@ -50,7 +50,7 @@ pub const ProcessHandle = struct {
     stdout: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
     stderr: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
     buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
-    done: bool = false,
+    status: bun.spawn.Status = .running,
 
     pub fn onReadChunk(this: *This, chunk: []const u8, hasMore: bun.io.ReadState) bool {
         _ = hasMore;
@@ -70,9 +70,9 @@ pub const ProcessHandle = struct {
         _ = err;
     }
 
-    pub fn onProcessExit(this: *This, proc: *bun.spawn.Process, _: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
+    pub fn onProcessExit(this: *This, proc: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
         this.state.live_processes -= 1;
-        this.done = true;
+        this.status = status;
         this.state.redraw(false) catch {};
         // TODO figure out how to deinit process
         // actually - we can just leak it
@@ -87,6 +87,10 @@ pub const ProcessHandle = struct {
         return this.state.event_loop.loop;
     }
 };
+
+fn fmt(comptime str: []const u8) []const u8 {
+    return Output.prettyFmt(str, true);
+}
 
 const State = struct {
     const This = @This();
@@ -136,7 +140,7 @@ const State = struct {
 
     pub fn redraw(this: *This, is_abort: bool) !void {
         this.draw_buf.clearRetainingCapacity();
-        if (this.last_lines_written > 0) {
+        if (this.last_lines_written > 0 and Output.enable_ansi_colors) {
             // move cursor to the beginning of the line and clear it
             try this.draw_buf.appendSlice("\x1b[0G\x1b[K");
             for (0..this.last_lines_written) |_| {
@@ -146,24 +150,36 @@ const State = struct {
         }
         for (this.handles) |*handle| {
             const e = elide(handle.buffer.items, if (is_abort) null else 10);
-            try this.draw_buf.writer().print("{s} {s}$ {s}\n", .{ handle.config.package_name, handle.config.script_name, handle.config.script_content });
+            try this.draw_buf.writer().print(fmt("<b>{s}<r> $ <d>{s}<r>\n"), .{ handle.config.package_name, handle.config.script_content });
             if (e.elided_count > 0) {
                 try this.draw_buf.writer().print(
-                    "│ [{d} lines elided]\n",
+                    fmt("<cyan>│<r> <d>[{d} lines elided]<r>\n"),
                     .{e.elided_count},
                 );
             }
             var content = e.content;
             while (std.mem.indexOfScalar(u8, content, '\n')) |i| {
                 const line = content[0 .. i + 1];
-                try this.draw_buf.appendSlice("│ ");
+                try this.draw_buf.appendSlice(fmt("<cyan>│<r> "));
                 try this.draw_buf.appendSlice(line);
                 content = content[i + 1 ..];
             }
-            if (handle.done) {
-                try this.draw_buf.appendSlice("└─ Done\n");
-            } else {
-                try this.draw_buf.appendSlice("└─ Running...\n");
+            try this.draw_buf.appendSlice(fmt("<cyan>└─<r> "));
+            switch (handle.status) {
+                .running => try this.draw_buf.appendSlice(fmt("<cyan>Running...<r>\n")),
+                .exited => |exited| {
+                    if (exited.code == 0) {
+                        try this.draw_buf.appendSlice(fmt("<cyan>Done<r>\n"));
+                    } else {
+                        try this.draw_buf.writer().print(fmt("<red>Exited with code {d}<r>\n"), .{exited.code});
+                    }
+                },
+                .signaled => |code| {
+                    try this.draw_buf.writer().print(fmt("<cyan>Signaled with code {d}<r>\n"), .{code});
+                },
+                .err => {
+                    try this.draw_buf.appendSlice(fmt("<red>Error<r>\n"));
+                },
             }
         }
         this.last_lines_written = 0;
@@ -173,6 +189,13 @@ const State = struct {
             }
         }
         try std.io.getStdOut().writeAll(this.draw_buf.items);
+    }
+
+    pub fn abort(this: *This) void {
+        for (this.handles) |*handle| {
+            // if we get an error here we simply ignore it
+            _ = handle.process.kill(std.os.SIG.ABRT);
+        }
     }
 };
 
@@ -213,7 +236,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     // 2. read workspace configuration
     // 3. get list of packages that match the configuration
     // 4. spawn the scripts and get their respective process handles
-    // 5. concurrently read from the output fds and print them to stdout/stderr
+    // 5. concurrently read from the output fds and print them to stdout
     // 6. once all processes have exited, exit
 
     const fsinstance = try bun.fs.FileSystem.init(null);
@@ -345,10 +368,15 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
         AbortHandler.install();
 
-        while (!state.isDone() and !AbortHandler.should_abort) {
+        var aborted = false;
+        while (!state.isDone()) {
+            if (AbortHandler.should_abort and !aborted) {
+                aborted = true;
+                state.abort();
+            }
             event_loop.tickOnce(&state);
         }
-        if (AbortHandler.should_abort) {
+        if (aborted) {
             state.redraw(true) catch {};
         }
 

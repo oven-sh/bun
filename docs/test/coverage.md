@@ -57,7 +57,7 @@ coverageThreshold = { lines = 0.9, functions = 0.9 }
 
 ### Sourcemaps
 
-Internally, Bun transpiles all files by default, so Bun automatically generates an internal [source map](https://web.dev/source-maps/) that maps lines of your original source code onto Bun's internal representation. If for any reason you want to disable this, set `test.coverageIgnoreSourcemaps` to `false`; this will rarely be desirable outside of advanced use cases.
+Internally, Bun transpiles all files by default, so Bun automatically generates an internal [source map](https://web.dev/source-maps/) that maps lines of your original source code onto Bun's internal representation. If for any reason you want to disable this, set `test.coverageIgnoreSourcemaps` to `true`; this will rarely be desirable outside of advanced use cases.
 
 ```toml
 [test]

@@ -1317,118 +1317,20 @@ pub const RunCommand = struct {
         }
     };
 
-    pub fn execAll(ctx: Command.Context, comptime bin_dirs_only: bool) !void {
-        // without filters just behave like normal exec
-        if (ctx.filters.len == 0) {
-            const res = try exec(ctx, bin_dirs_only, true, false);
-            res.exit();
+    pub fn exec(
+        ctx: Command.Context,
+        comptime bin_dirs_only: bool,
+        comptime log_errors: bool,
+        comptime did_try_open_with_bun_js: bool,
+    ) !noreturn {
+        if (ctx.filters.len > 0) {
+            try @import("filter_run.zig").runScriptsWithFilter(ctx);
         }
-
-        const fsinstance = try bun.fs.FileSystem.init(null);
-        const olddir = fsinstance.top_level_dir;
-        defer {
-            // change back to the original directory once we're done
-            fsinstance.top_level_dir = olddir;
-            switch (bun.sys.chdir(olddir)) {
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s} due to error {}<r>", .{ olddir, err });
-                    Global.crash();
-                },
-                .result => {},
-            }
-        }
-
-        var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, olddir);
-        defer filter_instance.deinit();
-
-        var patterns = std.ArrayList([]u8).init(ctx.allocator);
-        defer {
-            for (patterns.items) |path| {
-                ctx.allocator.free(path);
-            }
-            patterns.deinit();
-        }
-
-        var root_buf: bun.PathBuffer = undefined;
-        const resolve_root = try FilterArg.getCandidatePackagePatterns(ctx.allocator, ctx.log, &patterns, olddir, &root_buf);
-
-        var package_json_iter = try FilterArg.PackageFilterIterator.init(ctx.allocator, patterns.items, resolve_root);
-        defer package_json_iter.deinit();
-
-        var arena = std.heap.ArenaAllocator.init(ctx.allocator);
-        var arena_alloc = arena.allocator();
-
-        var ok = true;
-        var any_match = false;
-        while (try package_json_iter.next()) |package_json_path| {
-            const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
-            const path = strings.withoutTrailingSlash(dirpath);
-            const matches = matches: {
-                if (filter_instance.has_name_filters) {
-                    // TODO load name from package.json
-
-                    const json_file = try std.fs.cwd().openFile(
-                        package_json_path,
-                        .{ .mode = .read_only },
-                    );
-                    defer json_file.close();
-
-                    const json_stat_size = try json_file.getEndPos();
-                    const json_buf = try arena_alloc.alloc(u8, json_stat_size + 64);
-                    defer _ = arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
-
-                    const json_len = try json_file.preadAll(json_buf, 0);
-                    const json_source = bun.logger.Source.initPathString(path, json_buf[0..json_len]);
-
-                    var parser = try json_parser.PackageJSONVersionChecker.init(arena_alloc, &json_source, ctx.log);
-                    _ = parser.parseExpr() catch {
-                        Output.warn("Failed to parse package.json in {s}\n", .{package_json_path});
-                        continue;
-                    };
-                    if (!parser.has_found_name) {
-                        Output.warn("Failed to find package name in {s}\n", .{package_json_path});
-                        continue;
-                    }
-                    break :matches filter_instance.matchesPathName(path, parser.found_name);
-                } else {
-                    break :matches filter_instance.matchesPath(path);
-                }
-            };
-
-            if (!matches) continue;
-            any_match = true;
-            Output.prettyErrorln("<d><b>In <r><yellow><d>{s}<r>:", .{path});
-            // flush outputs to ensure that stdout and stderr are in the correct order for each of the paths
-            Output.flush();
-            switch (bun.sys.chdir(path)) {
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s} due to error {}<r>", .{ path, err });
-                    Global.crash();
-                },
-                .result => {},
-            }
-            fsinstance.top_level_dir = path;
-
-            // TODO is this necessary? which assignment is correct here?
-            fsinstance.fs.cwd = path;
-            const res = exec(ctx, bin_dirs_only, true, true) catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
-                continue;
-            };
-            ok = ok and res.isOk();
-        }
-
-        if (!any_match) {
-            Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
-            Global.exit(1);
-        }
-
-        if (!ok) {
-            Global.exit(1);
-        }
+        const res = try runGeneric(ctx, bin_dirs_only, log_errors, did_try_open_with_bun_js);
+        res.exit();
     }
 
-    pub fn exec(
+    fn runGeneric(
         ctx_: Command.Context,
         comptime bin_dirs_only: bool,
         comptime log_errors: bool,

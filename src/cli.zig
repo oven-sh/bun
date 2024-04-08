@@ -1710,7 +1710,7 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
 
                 if (ctx.positionals.len > 0) {
-                    try RunCommand.execAll(ctx, false);
+                    try RunCommand.exec(ctx, false, true, false);
                 }
             },
             .RunAsNodeCommand => {

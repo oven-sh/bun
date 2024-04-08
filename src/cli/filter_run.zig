@@ -1,0 +1,329 @@
+const bun = @import("root").bun;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const std = @import("std");
+const JSC = bun.JSC;
+const Fs = @import("../fs.zig");
+const RunCommand = @import("run_command.zig").RunCommand;
+
+const lex = bun.js_lexer;
+const logger = bun.logger;
+const clap = bun.clap;
+const CLI = bun.CLI;
+const Arguments = CLI.Arguments;
+const Command = CLI.Command;
+
+const options = @import("../options.zig");
+const js_parser = bun.js_parser;
+const json_parser = bun.JSON;
+const js_printer = bun.js_printer;
+const js_ast = bun.JSAst;
+const linker = @import("../linker.zig");
+
+const sync = @import("../sync.zig");
+const Api = @import("../api/schema.zig").Api;
+const resolve_path = @import("../resolver/resolve_path.zig");
+const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
+const bundler = bun.bundler;
+
+const DotEnv = @import("../env_loader.zig");
+
+const PackageManager = @import("../install/install.zig").PackageManager;
+const Lockfile = @import("../install/lockfile.zig");
+const FilterArg = @import("filter_arg.zig");
+
+const ScriptConfig = struct {
+    package_json_path: []u8,
+    package_name: []const u8,
+    script_content: []const u8,
+    combined: [:0]const u8,
+};
+
+pub const ProcessHandle = struct {
+    const This = @This();
+
+    state: *State,
+    config: *ScriptConfig,
+    process: *bun.spawn.Process,
+    stdout: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
+    stderr: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
+    buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+
+    pub fn onReadChunk(this: *This, chunk: []const u8, hasMore: bun.io.ReadState) bool {
+        _ = hasMore;
+        // std.debug.print("read chunk: {s}\n", .{chunk});
+        this.buffer.appendSlice(chunk) catch bun.outOfMemory();
+        this.state.redraw() catch {};
+
+        return true;
+    }
+
+    pub fn onReaderDone(this: *This) void {
+        _ = this;
+    }
+
+    pub fn onReaderError(this: *This, err: bun.sys.Error) void {
+        _ = this;
+        _ = err;
+    }
+
+    pub fn onProcessExit(this: *This, proc: *bun.spawn.Process, _: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
+        this.state.live_processes -= 1;
+        // TODO figure out how to deinit process
+        // actually - we can just leak it
+        _ = proc;
+    }
+
+    pub fn eventLoop(this: *This) *bun.JSC.MiniEventLoop {
+        return this.state.event_loop;
+    }
+
+    pub fn loop(this: *This) *bun.uws.Loop {
+        return this.state.event_loop.loop;
+    }
+};
+
+const State = struct {
+    const This = @This();
+
+    handles: []ProcessHandle,
+    event_loop: *bun.JSC.MiniEventLoop,
+    live_processes: usize,
+    draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    last_lines_written: usize = 0,
+
+    pub fn isDone(this: *anyopaque) bool {
+        const state = bun.cast(*const @This(), this);
+        return state.live_processes == 0;
+    }
+
+    const ElideResult = struct {
+        content: []const u8,
+        elided_count: usize,
+    };
+
+    fn elide(data_: []const u8, max_lines: usize) ElideResult {
+        var data = data_;
+        if (data.len == 0) return ElideResult{ .content = &.{}, .elided_count = 0 };
+        if (data[data.len - 1] == '\n') {
+            data = data[0 .. data.len - 1];
+        }
+        var i: usize = data.len;
+        var lines: usize = 0;
+        while (i > 0 and lines < max_lines) : (i -= 1) {
+            if (data[i - 1] == '\n') {
+                lines += 1;
+            }
+        }
+        i += 1;
+        const content = if (i >= data.len) &.{} else data[i..];
+        var elided: usize = 0;
+        while (i > 0) : (i -= 1) {
+            if (data[i - 1] == '\n') {
+                elided += 1;
+            }
+        }
+        return ElideResult{ .content = content, .elided_count = elided };
+    }
+
+    pub fn redraw(this: *This) !void {
+        this.draw_buf.clearRetainingCapacity();
+        // try this.draw_buf.appendSlice("\x1b[H\x1b[2J");
+        try this.draw_buf.writer().print("\r\x1b[{d}H", .{this.last_lines_written});
+        for (this.handles) |*handle| {
+            const e = elide(handle.buffer.items, 5);
+            if (e.elided_count > 0) {
+                try this.draw_buf.writer().print(
+                    "Package: {s}\n[{d} lines elided]\n{s}\n\n",
+                    .{ handle.config.package_name, e.elided_count, e.content },
+                );
+            } else {
+                try this.draw_buf.writer().print(
+                    "Package: {s}\n{s}\n\n",
+                    .{ handle.config.package_name, e.content },
+                );
+            }
+        }
+        this.last_lines_written = 0;
+        for (this.draw_buf.items) |c| {
+            if (c == '\n') {
+                this.last_lines_written += 1;
+            }
+        }
+        try std.io.getStdOut().writeAll(this.draw_buf.items);
+    }
+};
+
+pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
+    const script_name = if (ctx.positionals.len > 1) ctx.positionals[1] else brk: {
+        Output.prettyErrorln("<r><red>error<r>: No script name provided", .{});
+        break :brk Global.exit(1);
+    };
+
+    // 1. find package.json at workspace root
+    // 2. read workspace configuration
+    // 3. get list of packages that match the configuration
+    // 4. spawn the scripts and get their respective process handles
+    // 5. concurrently read from the output fds and print them to stdout/stderr
+    // 6. once all processes have exited, exit
+
+    const fsinstance = try bun.fs.FileSystem.init(null);
+
+    // these things are leaked because we are going to exit
+    var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, fsinstance.top_level_dir);
+    var patterns = std.ArrayList([]u8).init(ctx.allocator);
+
+    var root_buf: bun.PathBuffer = undefined;
+    const resolve_root = try FilterArg.getCandidatePackagePatterns(ctx.allocator, ctx.log, &patterns, fsinstance.top_level_dir, &root_buf);
+
+    var this_bundler: bundler.Bundler = undefined;
+    _ = try RunCommand.configureEnvForRun(ctx, &this_bundler, null, true, false);
+
+    var package_json_iter = try FilterArg.PackageFilterIterator.init(ctx.allocator, patterns.items, resolve_root);
+    defer package_json_iter.deinit();
+
+    var scripts = std.ArrayList(ScriptConfig).init(ctx.allocator);
+    while (try package_json_iter.next()) |package_json_path| {
+        const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
+        const path = bun.strings.withoutTrailingSlash(dirpath);
+
+        const dir_info = this_bundler.resolver.readDirInfo(path) catch |err| {
+            Output.warn("Failed to read directory info for {s}: {s}\n", .{ path, @errorName(err) });
+            continue;
+        } orelse continue;
+
+        const pkgjson = dir_info.enclosing_package_json orelse continue;
+
+        const matches = if (filter_instance.has_name_filters)
+            filter_instance.matchesPathName(path, pkgjson.name)
+        else
+            filter_instance.matchesPath(path);
+
+        if (!matches) continue;
+
+        const pkgscripts = pkgjson.scripts orelse continue;
+        const content = pkgscripts.get(script_name) orelse continue;
+
+        // we leak this
+        var copy_script = try std.ArrayList(u8).initCapacity(ctx.allocator, content.len);
+        try RunCommand.replacePackageManagerRun(&copy_script, content);
+
+        // and this, too
+        var combined_len = content.len;
+        for (ctx.passthrough) |p| {
+            combined_len += p.len + 1;
+        }
+        var combined = try ctx.allocator.allocSentinel(u8, combined_len, 0);
+        bun.copy(u8, combined, content);
+        var remaining_script_buf = combined[content.len..];
+        for (ctx.passthrough) |part| {
+            const p = part;
+            remaining_script_buf[0] = ' ';
+            bun.copy(u8, remaining_script_buf[1..], p);
+            remaining_script_buf = remaining_script_buf[p.len + 1 ..];
+        }
+
+        try scripts.append(.{
+            .package_json_path = try ctx.allocator.dupe(u8, package_json_path),
+            .package_name = pkgjson.name,
+            .script_content = copy_script.items,
+            .combined = combined,
+        });
+    }
+
+    if (scripts.items.len == 0) {
+        Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+        Global.exit(1);
+    }
+
+    if (Environment.isPosix) {
+        const event_loop = bun.JSC.MiniEventLoop.initGlobal(this_bundler.env);
+        const shell_bin: [:0]const u8 = RunCommand.findShell(this_bundler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell;
+        const envp = try this_bundler.env.map.createNullDelimitedEnvMap(ctx.allocator);
+
+        var state = State{
+            .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
+            .event_loop = event_loop,
+            .live_processes = scripts.items.len,
+        };
+
+        for (scripts.items, 0..) |*script, i| {
+            var argv = [_:null]?[*:0]const u8{ shell_bin, "-c", script.combined, null };
+            const spawn_options = bun.spawn.PosixSpawnOptions{
+                .stdin = .ignore,
+                .stdout = .buffer,
+                .stderr = .buffer,
+                .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
+                .stream = true,
+            };
+
+            const spawned = try (try bun.spawn.spawnProcessPosix(&spawn_options, argv[0..], envp)).unwrap();
+            state.handles[i] = ProcessHandle{
+                .state = &state,
+                .config = script,
+                .process = spawned.toProcess(event_loop, false),
+            };
+
+            const handle = &state.handles[i];
+            handle.stdout.setParent(handle);
+            handle.stderr.setParent(handle);
+
+            if (spawned.stdout) |stdout| {
+                if (!spawned.memfds[1]) {
+                    try handle.stdout.start(stdout, true).unwrap();
+                } else {
+                    handle.stdout.startMemfd(stdout);
+                }
+            }
+            if (spawned.stderr) |stderr| {
+                if (!spawned.memfds[2]) {
+                    try handle.stderr.start(stderr, true).unwrap();
+                } else {
+                    handle.stderr.startMemfd(stderr);
+                }
+            }
+
+            var process = spawned.toProcess(
+                event_loop,
+                false,
+            );
+
+            process.setExitHandler(handle);
+
+            try process.watch(event_loop).unwrap();
+        }
+
+        event_loop.tick(&state, State.isDone);
+
+        Global.exit(0);
+    } else {
+        // const interpreters = try ctx.allocator.alloc(bun.shell.Interpreter, scripts.items.len);
+
+        // for (scripts.items) |script| {
+        // Output.prettyln("<d>Running script <b>{s}<r> in package <b>{s}<r>", .{ script.script_content, script.package_name });
+        // Output.flush();
+
+        // Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
+        // Output.flush();
+
+        // const code = bun.shell.Interpreter.initAndRunFromSource(ctx, loop, name, combined_script) catch |err| {
+        //     if (!silent) {
+        //         Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+        //     }
+        //     return ExecResult.failure;
+        // };
+
+        // if (code > 0) {
+        //     if (code != 2 and !silent) {
+        //         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
+        //         Output.flush();
+        //     }
+
+        //     return ExecResult.withCode(code);
+        // }
+        // }
+
+        Global.exit(0);
+    }
+}

@@ -1,16 +1,38 @@
-
 #include "root.h"
+
+#include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/DOMJITAbstractHeap.h>
+#include <JavaScriptCore/DFGAbstractHeap.h>
+#include <JavaScriptCore/ExceptionScope.h>
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/JSArrayBufferViewInlines.h>
+#include <JavaScriptCore/JSBase.h>
+#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/LazyClassStructure.h>
+#include <JavaScriptCore/LazyClassStructureInlines.h>
+#include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/Assertions.h>
+#include <wtf/GetPtr.h>
+#include <wtf/PointerPreparations.h>
+#include <wtf/URL.h>
+#include <wtf/text/WTFString.h>
 
 #include "JSBuffer.h"
 
-#include "JavaScriptCore/ArgList.h"
-#include "JavaScriptCore/ExceptionScope.h"
-
 #include "ActiveDOMObject.h"
+#include "DOMJITIDLConvert.h"
+#include "DOMJITIDLType.h"
+#include "DOMJITIDLTypeFilter.h"
+#include "DOMJITHelpers.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
-// #include "JSBlob.h"
+#include "JSBufferEncodingType.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -24,27 +46,7 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 
-#include <JavaScriptCore/JSFunction.h>
-#include <JavaScriptCore/InternalFunction.h>
-#include <JavaScriptCore/LazyClassStructure.h>
-#include <JavaScriptCore/LazyClassStructureInlines.h>
-#include <JavaScriptCore/FunctionPrototype.h>
-
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
-#include <wtf/text/WTFString.h>
-#include <JavaScriptCore/BuiltinNames.h>
-
-#include "JSBufferEncodingType.h"
-#include "wtf/Assertions.h"
-#include <JavaScriptCore/JSBase.h>
 #if ENABLE(MEDIA_SOURCE)
 #include "BufferMediaSource.h"
 #include "JSMediaSource.h"
@@ -54,16 +56,6 @@
 #include "musl-memmem.h"
 #include <windows.h>
 #endif
-
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
-#include <JavaScriptCore/DFGAbstractHeap.h>
-
-// #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
-#include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
 using namespace JSC;
 using namespace WebCore;
@@ -880,9 +872,9 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSBufferPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSBufferPrototype* ptr = new (NotNull, JSC::allocateCell<JSBufferPrototype>(vm)) JSBufferPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
+        JSBufferPrototype* prototype = new (NotNull, JSC::allocateCell<JSBufferPrototype>(vm)) JSBufferPrototype(vm, globalObject, structure);
+        prototype->finishCreation(vm, globalObject);
+        return prototype;
     }
 
     DECLARE_INFO;
@@ -2013,11 +2005,12 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "writeBigUint64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigUInt64LECodeGenerator, 1 } },
       };
 
-void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
+void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject*)
 {
     Base::finishCreation(vm);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     reifyStaticProperties(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
+    putAllPrivateAliasesWithoutTransition(vm);
 }
 
 const ClassInfo JSBufferPrototype::s_info = {
@@ -2050,6 +2043,8 @@ void JSBufferConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, J
     Base::finishCreation(vm, 3, "Buffer"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     prototype->putDirect(vm, vm.propertyNames->speciesSymbol, this, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
 }
 
 JSC::Structure* createBufferStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

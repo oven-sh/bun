@@ -122,7 +122,7 @@ export function setupReadableStreamDefaultController(
   underlyingSource,
   size,
   highWaterMark,
-  startMethod,
+  _startMethod,
   pullMethod,
   cancelMethod,
 ) {
@@ -134,15 +134,15 @@ export function setupReadableStreamDefaultController(
     $isReadableStream,
   );
 
-  var asyncContext = stream.$asyncContext;
+  const newAsyncContextData = stream.$asyncContextData;
   const pullAlgorithm = () => $promiseInvokeOrNoopMethod(underlyingSource, pullMethod, [controller]);
-  const cancelAlgorithm = asyncContext
+  const cancelAlgorithm = newAsyncContextData
     ? reason => {
-        var prev = $getInternalField($asyncContext, 0);
-        $putInternalField($asyncContext, 0, asyncContext);
+        const oldAsyncContextData = $getInternalField($asyncContextTuple, 0);
+        $putInternalField($asyncContextTuple, 0, newAsyncContextData);
         // this does not throw, but can returns a rejected promise
-        var result = $promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);
-        $putInternalField($asyncContext, 0, prev);
+        const result = $promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);
+        $putInternalField($asyncContextTuple, 0, oldAsyncContextData);
         return result;
       }
     : reason => $promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);
@@ -652,7 +652,7 @@ export function readDirectStream(stream, sink, underlyingSource) {
     highWaterMark: !highWaterMark || highWaterMark < 64 ? 64 : highWaterMark,
   });
 
-  $startDirectStream.$call(sink, stream, underlyingSource.pull, close, stream.$asyncContext);
+  $startDirectStream.$call(sink, stream, underlyingSource.pull, close, stream.$asyncContextData);
 
   $putByIdDirectPrivate(stream, "reader", {});
 
@@ -709,7 +709,7 @@ export async function readStreamIntoSink(stream, sink, isNative) {
         stream,
         undefined,
         () => !didThrow && stream.$state !== $streamClosed && $markPromiseAsHandled(stream.cancel()),
-        stream.$asyncContext,
+        stream.$asyncContextData,
       );
 
     sink.start({ highWaterMark: highWaterMark || 0 });
@@ -835,10 +835,11 @@ export function onPullDirectStream(controller) {
   var deferClose;
   var deferFlush;
 
-  var asyncContext = stream.$asyncContext;
-  if (asyncContext) {
-    var prev = $getInternalField($asyncContext, 0);
-    $putInternalField($asyncContext, 0, asyncContext);
+  let oldAsyncContextData;
+  const newAsyncContextData = stream.$asyncContextData;
+  if (newAsyncContextData) {
+    oldAsyncContextData = $getInternalField($asyncContextTuple, 0);
+    $putInternalField($asyncContextTuple, 0, newAsyncContextData);
   }
 
   // Direct streams allow $pull to be called multiple times, unlike the spec.
@@ -864,8 +865,8 @@ export function onPullDirectStream(controller) {
     deferFlush = controller._deferFlush;
     controller._deferFlush = controller._deferClose = 0;
 
-    if (asyncContext) {
-      $putInternalField($asyncContext, 0, prev);
+    if (newAsyncContextData) {
+      $putInternalField($asyncContextTuple, 0, oldAsyncContextData);
     }
   }
 

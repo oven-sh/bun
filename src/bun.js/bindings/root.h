@@ -43,8 +43,6 @@
 #define JSC_MAC_VERSION_TBA 0
 #define JSC_IOS_VERSION_TBA 0
 
-#include <wtf/ExportMacros.h>
-
 #define JS_EXPORT_PRIVATE
 
 #ifdef __cplusplus
@@ -52,8 +50,6 @@
 #undef delete
 #include <wtf/FastMalloc.h>
 #endif
-
-#include <wtf/DisallowCType.h>
 
 /* Disabling warning C4206: nonstandard extension used: translation unit is empty.
    By design, we rely on #define flags to make some translation units empty.
@@ -67,12 +63,14 @@
 #define WEBCORE_EXPORT JS_EXPORT_PRIVATE
 #endif
 
-#include <wtf/PlatformCallingConventions.h>
-#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/HandleSet.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSCJSValue.h>
+#include <wtf/DisallowCType.h>
+#include <wtf/ExportMacros.h>
 #include <wtf/IsoMalloc.h>
 #include <wtf/IsoMallocInlines.h>
-#include <JavaScriptCore/HandleSet.h>
+#include <wtf/PlatformCallingConventions.h>
 
 #define ENABLE_WEB_CRYPTO 1
 #define USE_OPENSSL 1

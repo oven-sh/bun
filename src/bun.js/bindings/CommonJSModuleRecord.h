@@ -1,8 +1,9 @@
 #pragma once
-#include "JavaScriptCore/JSGlobalObject.h"
 #include "root.h"
 #include "headers-handwritten.h"
-#include "wtf/NakedPtr.h"
+
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <wtf/NakedPtr.h>
 
 namespace Zig {
 class GlobalObject;

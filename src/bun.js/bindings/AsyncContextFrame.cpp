@@ -1,7 +1,7 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
-#include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/Bun_InternalFieldTuple.h>
 
 using namespace JSC;
 using namespace WebCore;
@@ -10,11 +10,11 @@ const ClassInfo AsyncContextFrame::s_info = { "AsyncContextFrame"_s, &Base::s_in
 
 AsyncContextFrame* AsyncContextFrame::create(VM& vm, JSC::Structure* structure, JSValue callback, JSValue context)
 {
-    AsyncContextFrame* asyncContextData = new (NotNull, allocateCell<AsyncContextFrame>(vm)) AsyncContextFrame(vm, structure);
-    asyncContextData->finishCreation(vm);
-    asyncContextData->callback.set(vm, asyncContextData, callback);
-    asyncContextData->context.set(vm, asyncContextData, context);
-    return asyncContextData;
+    AsyncContextFrame* asyncContextFrame = new (NotNull, allocateCell<AsyncContextFrame>(vm)) AsyncContextFrame(vm, structure);
+    asyncContextFrame->finishCreation(vm);
+    asyncContextFrame->callback.set(vm, asyncContextFrame, callback);
+    asyncContextFrame->context.set(vm, asyncContextFrame, context);
+    return asyncContextFrame;
 }
 
 AsyncContextFrame* AsyncContextFrame::create(JSGlobalObject* global, JSValue callback, JSValue context)
@@ -22,11 +22,11 @@ AsyncContextFrame* AsyncContextFrame::create(JSGlobalObject* global, JSValue cal
     auto& vm = global->vm();
     ASSERT(callback.isCallable());
     auto* structure = jsCast<Zig::GlobalObject*>(global)->AsyncContextFrameStructure();
-    AsyncContextFrame* asyncContextData = new (NotNull, allocateCell<AsyncContextFrame>(vm)) AsyncContextFrame(vm, structure);
-    asyncContextData->finishCreation(vm);
-    asyncContextData->callback.set(vm, asyncContextData, callback);
-    asyncContextData->context.set(vm, asyncContextData, context);
-    return asyncContextData;
+    AsyncContextFrame* asyncContextFrame = new (NotNull, allocateCell<AsyncContextFrame>(vm)) AsyncContextFrame(vm, structure);
+    asyncContextFrame->finishCreation(vm);
+    asyncContextFrame->callback.set(vm, asyncContextFrame, callback);
+    asyncContextFrame->context.set(vm, asyncContextFrame, context);
+    return asyncContextFrame;
 }
 
 JSC::Structure* AsyncContextFrame::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -36,10 +36,10 @@ JSC::Structure* AsyncContextFrame::createStructure(JSC::VM& vm, JSC::JSGlobalObj
 
 JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject, JSValue callback)
 {
-    JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+    JSValue asyncContextData = globalObject->asyncContextTuple()->getInternalField(0);
 
     // If there is no async context, do not snapshot the callback.
-    if (context.isUndefined()) {
+    if (asyncContextData.isUndefined()) {
         return callback;
     }
 
@@ -49,7 +49,7 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
         vm,
         jsCast<Zig::GlobalObject*>(globalObject)->AsyncContextFrameStructure(),
         callback,
-        context);
+        asyncContextData);
 }
 
 template<typename Visitor>
@@ -73,17 +73,17 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     if (!functionObject.isCell())                                            \
         return jsUndefined();                                                \
     auto& vm = global->vm();                                                 \
-    JSValue restoreAsyncContext;                                             \
-    InternalFieldTuple* asyncContextData = nullptr;                          \
+    JSValue oldAsyncContextData;                                             \
+    InternalFieldTuple* asyncContextTuple = nullptr;                         \
     if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(functionObject)) { \
         functionObject = jsCast<JSC::JSObject*>(wrapper->callback.get());    \
-        asyncContextData = global->m_asyncContextData.get();                 \
-        restoreAsyncContext = asyncContextData->getInternalField(0);         \
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());   \
+        asyncContextTuple = global->asyncContextTuple();                     \
+        oldAsyncContextData = asyncContextTuple->getInternalField(0);        \
+        asyncContextTuple->putInternalField(vm, 0, wrapper->context.get());  \
     }                                                                        \
     auto result = JSC::profiledCall(__VA_ARGS__);                            \
-    if (asyncContextData) {                                                  \
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);      \
+    if (asyncContextTuple) {                                                 \
+        asyncContextTuple->putInternalField(vm, 0, oldAsyncContextData);     \
     }                                                                        \
     return result;
 

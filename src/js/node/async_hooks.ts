@@ -3,12 +3,12 @@
 // The other functions are deprecated anyways, and would impact performance too much.
 // API: https://nodejs.org/api/async_hooks.html
 //
-// JSC has been patched to include a special global variable $asyncContext which is set to
+// JSC has been patched to include a special global variable $asyncContextTuple which is set to
 // a constant InternalFieldTuple<[AsyncContextData, never]>. `get` and `set` read/write to the
 // first element of this tuple. Inside of PromiseOperations.js, we "snapshot" the context (store it
 // in the promise reaction) and then just before we call .then, we restore it.
 //
-// This means context tracking is *kind-of* manual. If we recieve a callback in native code
+// This means context tracking is *kind-of* manual. If we receive a callback in native code
 // - In Zig, call jsValue.withAsyncContextIfNeeded(); which returns another JSValue. Store that and
 //   then run .$call() on it later.
 // - In C++, call AsyncContextFrame::withAsyncContextIfNeeded(jsValue). Then to call it,
@@ -61,14 +61,14 @@ function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
 }
 
 function get(): ReadonlyArray<any> | undefined {
-  $debug("get", debugFormatContextValue($getInternalField($asyncContext, 0)));
-  return $getInternalField($asyncContext, 0);
+  $debug("get", debugFormatContextValue($getInternalField($asyncContextTuple, 0)));
+  return $getInternalField($asyncContextTuple, 0);
 }
 
-function set(contextValue: ReadonlyArray<any> | undefined) {
-  $assert(assertValidAsyncContextArray(contextValue));
-  $debug("set", debugFormatContextValue(contextValue));
-  return $putInternalField($asyncContext, 0, contextValue);
+function set(asyncContextData: ReadonlyArray<any> | undefined) {
+  $assert(assertValidAsyncContextArray(asyncContextData));
+  $debug("set", debugFormatContextValue(asyncContextData));
+  return $putInternalField($asyncContextTuple, 0, asyncContextData);
 }
 
 class AsyncLocalStorage {

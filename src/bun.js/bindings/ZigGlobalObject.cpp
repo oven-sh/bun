@@ -1,156 +1,142 @@
 
 #include "root.h"
 #include "ZigGlobalObject.h"
+
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/Bun_InternalFieldTuple.h>
+#include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/CallData.h>
+#include <JavaScriptCore/CallFrameInlines.h>
+#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/ClassInfo.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/DeferredWorkTimer.h>
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/ExceptionScope.h>
+#include <JavaScriptCore/FunctionConstructor.h>
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
-#include "helpers.h"
+#include <JavaScriptCore/HashMapImpl.h>
+#include <JavaScriptCore/HashMapImplInlines.h>
+#include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/InitializeThreading.h>
+#include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSCallbackConstructor.h>
+#include <JavaScriptCore/JSCallbackObject.h>
+#include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/JSGlobalProxyInlines.h>
+#include <JavaScriptCore/JSMicrotask.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include <JavaScriptCore/JSModuleNamespaceObjectInlines.h>
+#include <JavaScriptCore/JSModuleRecord.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSScriptFetchParameters.h>
+#include <JavaScriptCore/JSSet.h>
+#include <JavaScriptCore/JSSourceCode.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/JSValueInternal.h>
+#include <JavaScriptCore/JSVirtualMachineInternal.h>
+#include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/LazyClassStructure.h>
+#include <JavaScriptCore/LazyClassStructureInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/OptionsList.h>
+#include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/ScriptExecutable.h>
+#include <JavaScriptCore/ScriptFetchParameters.h>
+#include <JavaScriptCore/SourceOrigin.h>
+#include <JavaScriptCore/StackFrame.h>
+#include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/WasmFaultSignalHandler.h>
+#include <unicode/uidna.h>
+#include <wtf/Assertions.h>
+#include <wtf/Gigacage.h>
+#include <wtf/URL.h>
+#include <wtf/URLParser.h>
+#include <wtf/text/Base64.h>
+#include <wtf/text/ExternalStringImpl.h>
+#include <wtf/text/StringCommon.h>
+#include <wtf/text/StringImpl.h>
+#include <wtf/text/StringView.h>
+#include <wtf/text/WTFString.h>
+
+#include "AsyncContextFrame.h"
 #include "BunClientData.h"
-#include "JavaScriptCore/JSCJSValue.h"
-#include "JavaScriptCore/AggregateError.h"
-#include "JavaScriptCore/JSObjectInlines.h"
-#include "JavaScriptCore/InternalFieldTuple.h"
-#include "JavaScriptCore/BytecodeIndex.h"
-#include "JavaScriptCore/CallFrameInlines.h"
-#include "JavaScriptCore/ClassInfo.h"
-#include "JavaScriptCore/CodeBlock.h"
-#include "JavaScriptCore/Completion.h"
-#include "JavaScriptCore/Error.h"
-#include "JavaScriptCore/ErrorInstance.h"
-#include "JavaScriptCore/Exception.h"
-#include "JavaScriptCore/ExceptionScope.h"
-#include "JavaScriptCore/FunctionConstructor.h"
-#include "JavaScriptCore/HashMapImpl.h"
-#include "JavaScriptCore/HashMapImplInlines.h"
-#include "JavaScriptCore/Heap.h"
-#include "JavaScriptCore/Identifier.h"
-#include "JavaScriptCore/InitializeThreading.h"
-#include "JavaScriptCore/IteratorOperations.h"
-#include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSGlobalProxyInlines.h"
-#include "JavaScriptCore/JSCallbackConstructor.h"
-#include "JavaScriptCore/JSCallbackObject.h"
-#include "JavaScriptCore/JSCast.h"
-#include "JavaScriptCore/JSClassRef.h"
-#include "JavaScriptCore/JSMicrotask.h"
+#include "BunObject.h"
+#include "BunPlugin.h"
+#include "BunProcess.h"
+#include "BunWorkerGlobalScope.h"
 #include "ConsoleObject.h"
-// #include "JavaScriptCore/JSContextInternal.h"
-#include "JavaScriptCore/CatchScope.h"
-#include "JavaScriptCore/DeferredWorkTimer.h"
-#include "JavaScriptCore/JSInternalPromise.h"
-#include "JavaScriptCore/JSLock.h"
-#include "JavaScriptCore/JSMap.h"
-#include "JavaScriptCore/JSModuleLoader.h"
-#include "JavaScriptCore/JSModuleNamespaceObject.h"
-#include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
-#include "JavaScriptCore/JSModuleRecord.h"
-#include "JavaScriptCore/JSNativeStdFunction.h"
-#include "JavaScriptCore/JSObject.h"
-#include "JavaScriptCore/JSPromise.h"
-#include "JavaScriptCore/JSSet.h"
-#include "JavaScriptCore/JSSourceCode.h"
-#include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/JSValueInternal.h"
-#include "JavaScriptCore/JSVirtualMachineInternal.h"
-#include "JavaScriptCore/JSWeakMap.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/OptionsList.h"
-#include "JavaScriptCore/ParserError.h"
-#include "JavaScriptCore/ScriptExecutable.h"
-#include "JavaScriptCore/SourceOrigin.h"
-#include "JavaScriptCore/StackFrame.h"
-#include "JavaScriptCore/StackVisitor.h"
-#include "JavaScriptCore/VM.h"
-#include "JavaScriptCore/WasmFaultSignalHandler.h"
-#include "wtf/Assertions.h"
-#include "wtf/Gigacage.h"
-#include "wtf/URL.h"
-#include "wtf/text/ExternalStringImpl.h"
-#include "wtf/text/StringCommon.h"
-#include "wtf/text/StringImpl.h"
-#include "wtf/text/StringView.h"
-#include "wtf/text/WTFString.h"
-#include "JavaScriptCore/JSScriptFetchParameters.h"
-#include "JavaScriptCore/ScriptFetchParameters.h"
-
-#include "wtf/text/Base64.h"
-// #include "JavaScriptCore/CachedType.h"
-#include "JavaScriptCore/JSCallbackObject.h"
-#include "JavaScriptCore/JSClassRef.h"
-#include "JavaScriptCore/CallData.h"
-#include "GCDefferalContext.h"
-
-#include "BunClientData.h"
-
-#include "ZigSourceProvider.h"
-
-#include "JSDOMURL.h"
-#include "JSURLSearchParams.h"
-#include "JSDOMException.h"
-#include "JSEventTarget.h"
-#include "JSEventEmitter.h"
+#include "DOMIsoSubspaces.h"
 #include "EventTargetConcrete.h"
-#include "JSAbortSignal.h"
-#include "JSCustomEvent.h"
-#include "JSAbortController.h"
+#include "JS2Native.h"
+#include "JSDOMException.h"
+#include "JSDOMFile.h"
+#include "JSDOMURL.h"
+#include "JSEnvironmentVariableMap.h"
 #include "JSEvent.h"
-#include "JSErrorEvent.h"
+#include "JSEventEmitter.h"
+#include "JSEventTarget.h"
+#include "JSAbortController.h"
+#include "JSAbortSignal.h"
+#include "JSBroadcastChannel.h"
 #include "JSCloseEvent.h"
+#include "JSCustomEvent.h"
 #include "JSFetchHeaders.h"
+#include "JSFFIFunction.h"
+#include "JSMessageChannel.h"
+#include "JSMessagePort.h"
+#include "JSBroadcastChannel.h"
+#include "JSBuffer.h"
+#include "JSBufferList.h"
+#include "JSErrorEvent.h"
+#include "JSFetchHeaders.h"
+#include "JSNextTickQueue.h"
 #include "JSStringDecoder.h"
 #include "JSReadableState.h"
 #include "JSReadableHelper.h"
 #include "JSPerformance.h"
-#include "Performance.h"
+#include "JSPerformanceEntry.h"
+#include "JSPerformanceMark.h"
+#include "JSPerformanceMeasure.h"
 #include "JSPerformanceObserver.h"
 #include "JSPerformanceObserverEntryList.h"
-#include "JSPerformanceEntry.h"
-#include "JSPerformanceMeasure.h"
-#include "JSPerformanceMark.h"
-#include "BunProcess.h"
-#include "AsyncContextFrame.h"
-
-#include "WebCoreJSBuiltins.h"
-#include "JSBuffer.h"
-#include "JSBufferList.h"
-#include "JSFFIFunction.h"
-#include "JavaScriptCore/InternalFunction.h"
-#include "JavaScriptCore/LazyClassStructure.h"
-#include "JavaScriptCore/LazyClassStructureInlines.h"
-#include "JavaScriptCore/FunctionPrototype.h"
-#include "JavaScriptCore/GetterSetter.h"
-#include "napi.h"
+#include "JSWorker.h"
 #include "JSSQLStatement.h"
+#include "JSURLSearchParams.h"
 #include "ModuleLoader.h"
+#include "NodeHTTP.h"
+#include "NodeTTYModule.h"
 #include "NodeVM.h"
+#include "Performance.h"
+#include "ProcessBindingConstants.h"
 #include "ProcessIdentifier.h"
 #include "SerializedScriptValue.h"
-#include "NodeTTYModule.h"
-
+#include "WebCoreJSBuiltins.h"
 #include "ZigGeneratedClasses.h"
-#include "JavaScriptCore/DateInstance.h"
-
-#include "JS2Native.h"
-
-#include "BunPlugin.h"
-#include "JSEnvironmentVariableMap.h"
-#include "DOMIsoSubspaces.h"
-#include "BunWorkerGlobalScope.h"
-#include "JSWorker.h"
-#include "JSMessageChannel.h"
-#include "JSMessagePort.h"
-#include "JSBroadcastChannel.h"
-
-#include "JSDOMFile.h"
-
-#include "ProcessBindingConstants.h"
+#include "ZigSourceProvider.h"
+#include "helpers.h"
+#include "napi.h"
+#include "napi_external.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
-#include "JavaScriptCore/RemoteInspectorServer.h"
+#include <JavaScriptCore/RemoteInspectorServer.h>
 #endif
 
-#include "BunObject.h"
-#include "JSNextTickQueue.h"
-#include "NodeHTTP.h"
-#include "napi_external.h"
 using namespace Bun;
 
 extern "C" JSC__JSValue Bun__NodeUtil__jsParseArgs(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -176,42 +162,31 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include <dlfcn.h>
 #endif
 
-#include "IDLTypes.h"
-
-#include "JSAbortAlgorithm.h"
-#include "JSDOMAttribute.h"
-#include "JSByteLengthQueuingStrategy.h"
-#include "JSCountQueuingStrategy.h"
-#include "JSReadableByteStreamController.h"
-#include "JSReadableStream.h"
-#include "JSReadableStreamBYOBReader.h"
-#include "JSReadableStreamBYOBRequest.h"
-#include "JSReadableStreamDefaultController.h"
-#include "JSReadableStreamDefaultReader.h"
-#include "JSTransformStream.h"
-#include "JSTransformStreamDefaultController.h"
-#include "JSWritableStream.h"
-#include "JSWritableStreamDefaultController.h"
-#include "JSWritableStreamDefaultWriter.h"
-#include "JavaScriptCore/BuiltinNames.h"
-#include "JSTextEncoder.h"
-#include "StructuredClone.h"
-#include "JSWebSocket.h"
-#include "JSMessageEvent.h"
-#include "JSEventListener.h"
-
-#include "ReadableStream.h"
-#include "JSSink.h"
-#include "ImportMetaObject.h"
-
+#include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
+#include <wtf/RAMSize.h>
+#include <wtf/text/Base64.h>
+#include <wtf/text/Base64.h>
+#include <wtf/text/Base64.h>
+#include <wtf/text/Base64.h>
+
+#include "AddEventListenerOptions.h"
+#include "CallSite.h"
+#include "CallSitePrototype.h"
+#include "CommonJSModuleRecord.h"
 #include "DOMJITIDLConvert.h"
 #include "DOMJITIDLType.h"
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
-#include <JavaScriptCore/DFGAbstractHeap.h>
-
-#include "JSDOMFormData.h"
+#include "ErrorStackTrace.h"
+#include "IDLTypes.h"
+#include "ImportMetaObject.h"
+#include "JSAbortAlgorithm.h"
+#include "JSByteLengthQueuingStrategy.h"
+#include "JSCountQueuingStrategy.h"
+#include "JSCryptoKey.h"
+#include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
@@ -222,21 +197,33 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
-#include "AddEventListenerOptions.h"
+#include "JSDOMFormData.h"
+#include "JSEventListener.h"
+#include "JSMessageEvent.h"
+#include "JSReadableByteStreamController.h"
+#include "JSReadableStream.h"
+#include "JSReadableStreamBYOBReader.h"
+#include "JSReadableStreamBYOBRequest.h"
+#include "JSReadableStreamDefaultController.h"
+#include "JSReadableStreamDefaultReader.h"
+#include "JSSink.h"
 #include "JSSocketAddress.h"
-
-#include "ErrorStackTrace.h"
-#include "CallSite.h"
-#include "CallSitePrototype.h"
-#include "DOMWrapperWorld-class.h"
-#include "CommonJSModuleRecord.h"
-#include <wtf/RAMSize.h>
-#include <wtf/text/Base64.h>
-#include "simdutf.h"
-#include "libusockets.h"
+#include "JSSubtleCrypto.h"
+#include "JSTextEncoder.h"
+#include "JSTransformStream.h"
+#include "JSTransformStreamDefaultController.h"
+#include "JSWebSocket.h"
+#include "JSWritableStream.h"
+#include "JSWritableStreamDefaultController.h"
+#include "JSWritableStreamDefaultWriter.h"
 #include "KeyObject.h"
+#include "ProcessBindingTTYWrap.h"
+#include "ReadableStream.h"
+#include "StructuredClone.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
+#include "libusockets.h"
+#include "simdutf.h"
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
@@ -246,8 +233,6 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 // for sysconf
 #include <unistd.h>
 #endif
-
-#include "ProcessBindingTTYWrap.h"
 
 // #include <iostream>
 static bool has_loaded_jsc = false;
@@ -717,7 +702,7 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 static void cleanupAsyncHooksData(JSC::VM& vm)
 {
     auto* globalObject = Bun__getDefaultGlobal();
-    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+    globalObject->asyncContextTuple()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
     if (!globalObject->m_nextTickQueue) {
         vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
@@ -1297,10 +1282,10 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     }
 
     Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
-    JSC::JSValue asyncContext = global->m_asyncContextData.get()->getInternalField(0);
+    JSC::JSValue asyncContextData = global->asyncContextTuple()->getInternalField(0);
 
     // This is a JSC builtin function
-    globalObject->queueMicrotask(global->performMicrotaskFunction(), job, asyncContext,
+    globalObject->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextData,
         JSC::JSValue {}, JSC::JSValue {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -2262,13 +2247,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
     JSValue result;
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
 
-    JSValue restoreAsyncContext = {};
-    InternalFieldTuple* asyncContextData = nullptr;
-    auto setAsyncContext = callframe->argument(1);
-    if (!setAsyncContext.isUndefined()) {
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, setAsyncContext);
+    JSValue oldAsyncContextData = {};
+    InternalFieldTuple* asyncContextTuple = nullptr;
+    auto newAsyncContextData = callframe->argument(1);
+    if (!newAsyncContextData.isUndefined()) {
+        asyncContextTuple = globalObject->asyncContextTuple();
+        oldAsyncContextData = asyncContextTuple->getInternalField(0);
+        asyncContextTuple->putInternalField(vm, 0, newAsyncContextData);
     }
 
     size_t argCount = callframe->argumentCount();
@@ -2288,8 +2273,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
 
     JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
 
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    if (asyncContextTuple) {
+        asyncContextTuple->putInternalField(vm, 0, oldAsyncContextData);
     }
 
     if (auto* exception = exceptionPtr.get()) {
@@ -2329,19 +2314,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
         thisValue = callframe->argument(3);
     }
 
-    JSValue restoreAsyncContext = {};
-    InternalFieldTuple* asyncContextData = nullptr;
-    auto setAsyncContext = callframe->argument(2);
-    if (!setAsyncContext.isUndefined()) {
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, setAsyncContext);
+    JSValue oldAsyncContextData = {};
+    InternalFieldTuple* asyncContextTuple = nullptr;
+    auto newAsyncContextData = callframe->argument(2);
+    if (!newAsyncContextData.isUndefined()) {
+        asyncContextTuple = globalObject->asyncContextTuple();
+        oldAsyncContextData = asyncContextTuple->getInternalField(0);
+        asyncContextTuple->putInternalField(vm, 0, newAsyncContextData);
     }
 
     JSC::call(globalObject, job, callData, thisValue, arguments, exceptionPtr);
 
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    if (asyncContextTuple) {
+        asyncContextTuple->putInternalField(vm, 0, oldAsyncContextData);
     }
 
     if (auto* exception = exceptionPtr.get()) {

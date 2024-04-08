@@ -1,18 +1,19 @@
 #include "root.h"
 
-#include "JavaScriptCore/JSCJSValueInlines.h"
-#include "JavaScriptCore/JSInternalPromise.h"
-#include "JavaScriptCore/LazyPropertyInlines.h"
-#include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
+#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/Structure.h>
+#include <JavaScriptCore/Weak.h>
 
 #include "JSNextTickQueue.h"
-#include <JavaScriptCore/JSGlobalObject.h>
-#include <JavaScriptCore/Structure.h>
-#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
+
+#include "BunClientData.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
-#include "BunClientData.h"
 
 namespace Bun {
 
@@ -84,7 +85,7 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 
     if (!isEmpty()) {
         if (mustResetContext) {
-            globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+            globalObject->asyncContextTuple()->putInternalField(vm, 0, jsUndefined());
         }
         auto* drainFn = internalField(2).get().getObject();
 

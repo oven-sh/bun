@@ -1,72 +1,84 @@
 
 #include "root.h"
-
-#include "JavaScriptCore/JSCJSValue.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/DeleteAllCodeEffort.h"
-
 #include "headers.h"
-
-#include "BunClientData.h"
-#include "GCDefferalContext.h"
-
-#include "JavaScriptCore/AggregateError.h"
-#include "JavaScriptCore/BytecodeIndex.h"
-#include "JavaScriptCore/CodeBlock.h"
-#include "JavaScriptCore/Completion.h"
-#include "JavaScriptCore/ErrorInstance.h"
-#include "JavaScriptCore/ExceptionHelpers.h"
-#include "JavaScriptCore/ExceptionScope.h"
-#include "JavaScriptCore/FunctionConstructor.h"
-#include "JavaScriptCore/HeapSnapshotBuilder.h"
-#include "JavaScriptCore/Identifier.h"
-#include "JavaScriptCore/IteratorOperations.h"
-#include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSArrayBuffer.h"
-#include "JavaScriptCore/JSArrayInlines.h"
-#include "JavaScriptCore/ErrorInstanceInlines.h"
-
-#include "JavaScriptCore/JSCallbackObject.h"
-#include "JavaScriptCore/JSClassRef.h"
-#include "JavaScriptCore/JSInternalPromise.h"
-#include "JavaScriptCore/JSMap.h"
-#include "JavaScriptCore/JSModuleLoader.h"
-#include "JavaScriptCore/JSModuleRecord.h"
-#include "JavaScriptCore/JSNativeStdFunction.h"
-#include "JavaScriptCore/JSONObject.h"
-#include "JavaScriptCore/JSObject.h"
-#include "JavaScriptCore/JSSet.h"
-#include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/ProxyObject.h"
-#include "JavaScriptCore/Microtask.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/ParserError.h"
-#include "JavaScriptCore/ScriptExecutable.h"
-#include "JavaScriptCore/StackFrame.h"
-#include "JavaScriptCore/StackVisitor.h"
-#include "JavaScriptCore/VM.h"
-#include "JavaScriptCore/WasmFaultSignalHandler.h"
-#include "JavaScriptCore/Watchdog.h"
-#include "ZigGlobalObject.h"
 #include "helpers.h"
-#include "JavaScriptCore/JSObjectInlines.h"
 
-#include "wtf/Assertions.h"
-#include "wtf/text/ExternalStringImpl.h"
-#include "wtf/text/StringCommon.h"
-#include "wtf/text/StringImpl.h"
-#include "wtf/text/StringView.h"
-#include "wtf/text/WTFString.h"
-#include "JavaScriptCore/FunctionPrototype.h"
-#include "JSFetchHeaders.h"
-#include "FetchHeaders.h"
-#include "DOMURL.h"
-#include "JSDOMURL.h"
-
-#include <string_view>
 #include <bun-uws/src/App.h>
 #include <bun-usockets/src/internal/internal.h>
+
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/Bun_InternalFieldTuple.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/CustomGetterSetter.h>
+#include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/DeleteAllCodeEffort.h>
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/ErrorInstanceInlines.h>
+#include <JavaScriptCore/ExceptionHelpers.h>
+#include <JavaScriptCore/ExceptionScope.h>
+#include <JavaScriptCore/FunctionConstructor.h>
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/HashMapImpl.h>
+#include <JavaScriptCore/HashMapImplInlines.h>
+#include <JavaScriptCore/HeapSnapshotBuilder.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSArrayInlines.h>
+#include <JavaScriptCore/JSCallbackObject.h>
+#include <JavaScriptCore/JSClassRef.h>
+#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleRecord.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/JSONObject.h>
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSSet.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/ProxyObject.h>
+#include <JavaScriptCore/Microtask.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/RegExpObject.h>
+#include <JavaScriptCore/ScriptExecutable.h>
+#include <JavaScriptCore/StackFrame.h>
+#include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/TestRunnerUtils.h>
+#include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/WasmFaultSignalHandler.h>
+#include <JavaScriptCore/Watchdog.h>
+
+#include <string_view>
+
+#include <wtf/Assertions.h>
+#include <wtf/Scope.h>
+#include <wtf/text/AtomString.h>
+#include <wtf/text/ExternalStringImpl.h>
+#include <wtf/text/StringCommon.h>
+#include <wtf/text/StringImpl.h>
+#include <wtf/text/StringToIntegerConversion.h>
+#include <wtf/text/StringView.h>
+#include <wtf/text/WTFString.h>
+
+#include "webcore/JSAbortSignal.h"
+
+#include "AsyncContextFrame.h"
+#include "DOMFormData.h"
+#include "DOMURL.h"
+#include "BunClientData.h"
+#include "FetchHeaders.h"
+#include "GCDefferalContext.h"
+#include "HTTPHeaderNames.h"
 #include "IDLTypes.h"
+#include "JSAbortAlgorithm.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
@@ -78,38 +90,17 @@
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
 #include "JSDOMExceptionHandling.h"
+#include "JSDOMFormData.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMIterator.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
-
-#include "wtf/text/AtomString.h"
-#include "wtf/Scope.h"
-#include "HTTPHeaderNames.h"
 #include "JSDOMPromiseDeferred.h"
-#include "JavaScriptCore/TestRunnerUtils.h"
-#include "JavaScriptCore/DateInstance.h"
-#include "JavaScriptCore/RegExpObject.h"
-#include "JavaScriptCore/PropertyNameArray.h"
-#include "JavaScriptCore/HashMapImpl.h"
-#include "JavaScriptCore/HashMapImplInlines.h"
-#include "webcore/JSAbortSignal.h"
-#include "JSAbortAlgorithm.h"
-
-#include "DOMFormData.h"
-#include "JSDOMFormData.h"
-#include "ZigGeneratedClasses.h"
-#include "JavaScriptCore/JSMapInlines.h"
-
-#include <JavaScriptCore/JSWeakMap.h>
+#include "JSDOMURL.h"
+#include "JSDOMWrapperCache.h"
+#include "JSFetchHeaders.h"
 #include "JSURLSearchParams.h"
-
-#include "AsyncContextFrame.h"
-#include "JavaScriptCore/InternalFieldTuple.h"
-#include "wtf/text/StringToIntegerConversion.h"
-
-#include "JavaScriptCore/GetterSetter.h"
-#include "JavaScriptCore/CustomGetterSetter.h"
+#include "ZigGeneratedClasses.h"
+#include "ZigGlobalObject.h"
 
 static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
 {
@@ -2181,13 +2172,13 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
     JSC::JSValue jsObject = JSValue::decode(object);
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
-    JSValue restoreAsyncContext;
-    InternalFieldTuple* asyncContextData = nullptr;
+    JSValue oldAsyncContextData;
+    InternalFieldTuple* asyncContextTuple = nullptr;
     if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(jsObject)) {
         jsObject = jsCast<JSC::JSObject*>(wrapper->callback.get());
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
+        asyncContextTuple = globalObject->asyncContextTuple();
+        oldAsyncContextData = asyncContextTuple->getInternalField(0);
+        asyncContextTuple->putInternalField(vm, 0, wrapper->context.get());
     }
 
     if (!jsThisObject)
@@ -2204,8 +2195,8 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList, returnedException);
 
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    if (asyncContextTuple) {
+        asyncContextTuple->putInternalField(vm, 0, oldAsyncContextData);
     }
 
     if (returnedException.get()) {
@@ -2969,7 +2960,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__J
         globalObject->queueMicrotask(
             globalObject->performMicrotaskFunction(),
             globalObject->rejectPromiseFunction(),
-            globalObject->m_asyncContextData.get()->getInternalField(0),
+            globalObject->asyncContextTuple()->getInternalField(0),
             promise,
             value);
         RETURN_IF_EXCEPTION(scope, void());
@@ -5194,7 +5185,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     JSValue microtaskArgs[] = {
         JSValue::decode(JSValue1),
-        globalObject->m_asyncContextData.get()->getInternalField(0),
+        globalObject->asyncContextTuple()->getInternalField(0),
         JSValue::decode(JSValue3),
         JSValue::decode(JSValue4)
     };

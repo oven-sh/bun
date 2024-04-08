@@ -42,7 +42,7 @@ my $hasSetter = "false";
 my $includeBuiltin = 0;
 my $inside = 0;
 my $name;
-my $pefectHashSize;
+my $perfectHashSize;
 my $compactSize;
 my $compactHashSizeMask;
 my $banner = 0;
@@ -58,14 +58,14 @@ while (<IN>) {
     chomp;
     s/^\s+//;
     next if /^\#|^$/; # Comment or blank line. Do nothing.
-    if (/^\@begin/ && !$inside) {
+    if (!$inside && /^\@begin/) {
         if (/^\@begin\s*([:_\w]+)\s*\d*\s*$/) {
             $inside = 1;
             $name = $1;
         } else {
             print STDERR "WARNING: \@begin without table name, skipping $_\n";
         }
-    } elsif (/^\@end\s*$/ && $inside) {
+    } elsif ($inside && /^\@end\s*$/) {
         output();
 
         @keys = ();
@@ -74,12 +74,14 @@ while (<IN>) {
         $includeBuiltin = 0;
 
         $inside = 0;
-    } elsif (/^(\S+)\s*(\S+)\s*([\w\|]*)\s*(\w*)\s*(\w*)\s*$/ && $inside) {
+    } elsif ($inside && /^(\S+)\s*(\S+)\s*(\S*)\s*(\S*)\s*(\S*)\s*(\S*)\s*$/) {
         my $key = $1;
         my $val = $2;
         my $att = $3;
         my $param = $4;
         my $intrinsic = $5;
+        # Adds support for marking entries as conditional, e.g. "#if USE(BUN_JSC_ADDITIONS)"
+        my $if = $6;
 
         push(@keys, $key);
         push(@attrs, length($att) > 0 ? $att : "None");
@@ -89,31 +91,34 @@ while (<IN>) {
         }
 
         if ($att =~ m/Function/) {
-            push(@values, { "type" => "PropertyAttribute::Function", "function" => $val, "params" => (length($param) ? $param : ""), "intrinsic" => (length($intrinsic) ? $intrinsic : "NoIntrinsic") });
+            push(@values, { "type" => "PropertyAttribute::Function", "function" => $val, "params" => (length($param) ? $param : ""), "intrinsic" => length($intrinsic) ? $intrinsic : "NoIntrinsic", "if" => $if });
             #printf STDERR "WARNING: Number of arguments missing for $key/$val\n" if (length($param) == 0);
-        } elsif ($att =~ m/CellProperty/) {
-            my $property = $val;
-            push(@values, { "type" => "PropertyAttribute::CellProperty", "property" => $property });
-        } elsif ($att =~ m/ClassStructure/) {
-            my $property = $val;
-            push(@values, { "type" => "PropertyAttribute::ClassStructure", "property" => $property });
-        } elsif ($att =~ m/PropertyCallback/) {
-            my $cback = $val;
-            push(@values, { "type" => "PropertyAttribute::PropertyCallback", "cback" => $cback });
-        } elsif (length($att)) {
-            my $get = $val;
-            my $put = "0";
-            my $type = "PropertyAttribute::Property";
-            if ($att =~ m/Builtin/) {
-                $type = "PropertyAttribute::BuiltinAccessor";
-            }
-            if (!($att =~ m/ReadOnly/)) {
-                $put = "set" . jsc_ucfirst($val);
-            }
-            $hasSetter = "true";
-            push(@values, { "type" => $type, "get" => $get, "put" => $put });
         } else {
-            push(@values, { "type" => "Lexer", "value" => $val });
+            $if = $intrinsic;
+            if ($att =~ m/CellProperty/) {
+                my $property = $val;
+                push(@values, { "type" => "PropertyAttribute::CellProperty", "property" => $property, "if" => (length($if) ? $if : "") });
+            } elsif ($att =~ m/ClassStructure/) {
+                my $property = $val;
+                push(@values, { "type" => "PropertyAttribute::ClassStructure", "property" => $property, "if" => (length($if) ? $if : "") });
+            } elsif ($att =~ m/PropertyCallback/) {
+                my $cback = $val;
+                push(@values, { "type" => "PropertyAttribute::PropertyCallback", "cback" => $cback, "if" => (length($if) ? $if : "") });
+            } elsif (length($att)) {
+                my $get = $val;
+                my $put = "0";
+                my $type = "PropertyAttribute::Property";
+                if ($att =~ m/Builtin/) {
+                    $type = "PropertyAttribute::BuiltinAccessor";
+                }
+                if (!($att =~ m/ReadOnly/)) {
+                    $put = "set" . jsc_ucfirst($val);
+                }
+                $hasSetter = "true";
+                push(@values, { "type" => $type, "get" => $get, "put" => $put, "if" => (length($if) ? $if : "") });
+            } else {
+                push(@values, { "type" => "Lexer", "value" => $val, "if" => (length($if) ? $if : "") });
+            }
         }
     } elsif ($inside) {
         die "invalid data {" . $_ . "}";
@@ -137,10 +142,10 @@ sub jsc_ucfirst($)
 
 sub ceilingToPowerOf2
 {
-    my ($pefectHashSize) = @_;
+    my ($perfectHashSize) = @_;
 
     my $powerOf2 = 1;
-    while ($pefectHashSize > $powerOf2) {
+    while ($perfectHashSize > $powerOf2) {
         $powerOf2 <<= 1;
     }
 
@@ -151,10 +156,10 @@ sub calcPerfectHashSize($)
 {
     my ($isMac) = @_;
 tableSizeLoop:
-    for ($pefectHashSize = ceilingToPowerOf2(scalar @keys); ; $pefectHashSize += $pefectHashSize) {
+    for ($perfectHashSize = ceilingToPowerOf2(scalar @keys); ; $perfectHashSize += $perfectHashSize) {
         my @table = ();
         foreach my $key (@keys) {
-            my $h = hashValue($key, $isMac) % $pefectHashSize;
+            my $h = hashValue($key, $isMac) % $perfectHashSize;
             next tableSizeLoop if $table[$h];
             $table[$h] = 1;
         }
@@ -474,7 +479,12 @@ sub output() {
             my $secondValue = "";
             my $hasSecondValue = 1;
             my $intrinsic = "NoIntrinsic";
+            my $if = $values[$i]{"if"};
 
+            if ($if ne "") {
+                # Adds support for marking entries as conditional, e.g. "#if USE(BUN_JSC_ADDITIONS)"
+                $hashTableString .= "$if\n";
+            }
             if ($values[$i]{"type"} eq "PropertyAttribute::Function") {
                 $typeTag = "NativeFunction";
                 $firstValue = $values[$i]{"function"};
@@ -514,6 +524,10 @@ sub output() {
             }
             else {
                 $hashTableString .= "   { \"$key\"_s, $attributes, $intrinsic, { HashTableValue::" . $typeTag . "Type, $firstValue" . ($hasSecondValue ? ", " . $secondValue : "") . " } },\n";
+            }
+            if ($if ne "") {
+                # Closes the conditional block, e.g. "#if USE(BUN_JSC_ADDITIONS)"
+                $hashTableString .= "#endif\n";
             }
             $i++;
         }

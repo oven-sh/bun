@@ -1,23 +1,20 @@
 #include "root.h"
-
-#include "JavaScriptCore/ArgList.h"
 #include "headers.h"
-#include "ConsoleObject.h"
 
+#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/ConsoleClient.h>
 #include <JavaScriptCore/ConsoleMessage.h>
+#include <JavaScriptCore/InspectorConsoleAgent.h>
+#include <JavaScriptCore/InspectorDebuggerAgent.h>
+#include <JavaScriptCore/InspectorScriptProfilerAgent.h>
+#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
+#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include <wtf/text/WTFString.h>
 
-#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/ConsoleClient.h>
-
+#include "ConsoleObject.h"
 #include "GCDefferalContext.h"
-#include <JavaScriptCore/InspectorScriptProfilerAgent.h>
-#include <JavaScriptCore/InspectorDebuggerAgent.h>
-#include <JavaScriptCore/InspectorConsoleAgent.h>
 
 namespace Bun {
 using namespace JSC;

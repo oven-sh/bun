@@ -1,8 +1,10 @@
 #include "JSSocketAddress.h"
+
+#include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/JSObjectInlines.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/JSCast.h"
 
 using namespace JSC;
 

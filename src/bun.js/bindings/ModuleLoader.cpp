@@ -1,17 +1,17 @@
 #include "root.h"
-#include "headers-handwritten.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "ModuleLoader.h"
-#include "JavaScriptCore/Identifier.h"
-#include "ZigGlobalObject.h"
+
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
-
-#include "ZigSourceProvider.h"
-
+#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -23,17 +23,13 @@
 #include <JavaScriptCore/StackVisitor.h>
 
 #include "EventEmitter.h"
-#include "JSEventEmitter.h"
-
-#include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/Completion.h>
-#include <JavaScriptCore/JSModuleNamespaceObject.h>
-#include <JavaScriptCore/JSMap.h>
-#include <JavaScriptCore/JSMapInlines.h>
+#include "ModuleLoader.h"
+#include "NativeModuleImpl.h"
+#include "ZigGlobalObject.h"
+#include "ZigSourceProvider.h"
+#include "headers-handwritten.h"
 
 #include "../modules/_NativeModule.h"
-#include "NativeModuleImpl.h"
-
 #include "../modules/ObjectModule.h"
 #include "wtf/Assertions.h"
 

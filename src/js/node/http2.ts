@@ -25,8 +25,7 @@ const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 const bunHTTP2WantTrailers = Symbol.for("::bunhttp2WantTrailers::");
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 
-const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
-const FunctionPrototypeBind = primordials.FunctionPrototypeBind;
+const { FunctionPrototypeBind, ReflectGetPrototypeOf } = primordials;
 
 const proxySocketHandler = {
   get(session, prop) {

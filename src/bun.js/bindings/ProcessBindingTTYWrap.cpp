@@ -1,29 +1,28 @@
 #include "mimalloc.h"
 #include "root.h"
 
-#include "JavaScriptCore/JSDestructibleObject.h"
-#include "JavaScriptCore/ExceptionScope.h"
-#include "JavaScriptCore/Identifier.h"
-
+#include <JavaScriptCore/ExceptionScope.h>
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
-#include "ProcessBindingTTYWrap.h"
 #include "NodeTTYModule.h"
+#include "ProcessBindingTTYWrap.h"
 #include "WebCoreJSBuiltins.h"
-#include <JavaScriptCore/FunctionPrototype.h>
 
 #ifndef WIN32
 #include <errno.h>
 #include <dlfcn.h>
-#include <sys/ioctl.h>
-#include <termios.h>
 #include <netdb.h>
-#include <unistd.h>
+#include <sys/ioctl.h>
 #include <sys/utsname.h>
+#include <termios.h>
+#include <unistd.h>
 #else
-#include <uv.h>
-#include <io.h>
 #include <fcntl.h>
+#include <io.h>
+#include <uv.h>
 
 #endif
 

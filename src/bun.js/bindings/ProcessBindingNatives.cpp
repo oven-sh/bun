@@ -1,7 +1,7 @@
 // Modelled off of https://github.com/nodejs/node/blob/main/src/node_constants.cc
 // Note that if you change any of this code, you probably also have to change NodeConstantsModule.h
 #include "ProcessBindingNatives.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/ObjectConstructor.h>
 
 namespace Bun {
 using namespace JSC;

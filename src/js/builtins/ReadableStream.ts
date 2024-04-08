@@ -49,7 +49,7 @@ export function initializeReadableStream(
   $putByIdDirectPrivate(this, "readableStreamController", null);
   this.$bunNativePtr = $getByIdDirectPrivate(underlyingSource, "bunNativePtr") ?? undefined;
 
-  $putByIdDirectPrivate(this, "asyncContext", $getInternalField($asyncContext, 0));
+  $putByIdDirectPrivate(this, "asyncContextData", $getInternalField($asyncContextTuple, 0));
 
   const isDirect = underlyingSource.type === "direct";
   // direct streams are always lazy

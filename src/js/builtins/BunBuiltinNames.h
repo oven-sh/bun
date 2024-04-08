@@ -20,6 +20,103 @@ namespace WebCore {
 using namespace JSC;
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
+    /* Buffer */ \
+    macro(alloc) \
+    macro(allocUnsafe) \
+    macro(allocUnsafeSlow) \
+    macro(compare) \
+    macro(copyBytesFrom) \
+    macro(isBuffer) \
+    macro(isEncoding) \
+    macro(poolSize) \
+    /* Buffer.prototype */ \
+    macro(asciiSlice) \
+    macro(asciiWrite) \
+    macro(base64Slice) \
+    macro(base64Write) \
+    macro(base64urlSlice) \
+    macro(base64urlWrite) \
+    macro(copy) \
+    macro(equals) \
+    macro(hexSlice) \
+    macro(hexWrite) \
+    macro(inspect) \
+    macro(lastIndexOf) \
+    macro(latin1Slice) \
+    macro(latin1Write) \
+    macro(offset) \
+    macro(parent) \
+    macro(readBigInt64BE) \
+    macro(readBigInt64LE) \
+    macro(readBigUInt64BE) \
+    macro(readBigUInt64LE) \
+    macro(readBigUint64BE) \
+    macro(readBigUint64LE) \
+    macro(readDoubleBE) \
+    macro(readDoubleLE) \
+    macro(readFloatBE) \
+    macro(readFloatLE) \
+    macro(readInt16BE) \
+    macro(readInt16LE) \
+    macro(readInt32BE) \
+    macro(readInt32LE) \
+    macro(readInt8) \
+    macro(readIntBE) \
+    macro(readIntLE) \
+    macro(readUInt16BE) \
+    macro(readUInt16LE) \
+    macro(readUInt32BE) \
+    macro(readUInt32LE) \
+    macro(readUInt8) \
+    macro(readUIntBE) \
+    macro(readUIntLE) \
+    macro(readUint16BE) \
+    macro(readUint16LE) \
+    macro(readUint32BE) \
+    macro(readUint32LE) \
+    macro(readUint8) \
+    macro(readUintBE) \
+    macro(readUintLE) \
+    macro(swap16) \
+    macro(swap32) \
+    macro(swap64) \
+    macro(ucs2Slice) \
+    macro(ucs2Write) \
+    macro(utf8Slice) \
+    macro(utf8Write) \
+    macro(write) \
+    macro(writeBigInt64BE) \
+    macro(writeBigInt64LE) \
+    macro(writeBigUInt64BE) \
+    macro(writeBigUInt64LE) \
+    macro(writeBigUint64BE) \
+    macro(writeBigUint64LE) \
+    macro(writeDoubleBE) \
+    macro(writeDoubleLE) \
+    macro(writeFloatBE) \
+    macro(writeFloatLE) \
+    macro(writeInt16BE) \
+    macro(writeInt16LE) \
+    macro(writeInt32BE) \
+    macro(writeInt32LE) \
+    macro(writeInt8) \
+    macro(writeIntBE) \
+    macro(writeIntLE) \
+    macro(writeUInt16BE) \
+    macro(writeUInt16LE) \
+    macro(writeUInt32BE) \
+    macro(writeUInt32LE) \
+    macro(writeUInt8) \
+    macro(writeUIntBE) \
+    macro(writeUIntLE) \
+    macro(writeUint16BE) \
+    macro(writeUint16LE) \
+    macro(writeUint32BE) \
+    macro(writeUint32LE) \
+    macro(writeUint8) \
+    macro(writeUintBE) \
+    macro(writeUintLE) \
+    /* Misc */ \
     macro(__esModule) \
     macro(_events) \
     macro(abortAlgorithm) \
@@ -239,7 +336,6 @@ using namespace JSC;
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
-    macro(write) \
     macro(writeAlgorithm) \
     macro(writer) \
     macro(writeRequests) \

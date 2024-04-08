@@ -1,28 +1,32 @@
 #include "root.h"
 
-#include "JSMockFunction.h"
-#include <JavaScriptCore/JSPromise.h>
-#include "ZigGlobalObject.h"
-#include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/Completion.h>
-#include <JavaScriptCore/ObjectConstructor.h>
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
-#include "BunClientData.h"
-#include <JavaScriptCore/LazyProperty.h>
-#include <JavaScriptCore/JSCJSValueInlines.h>
-#include <JavaScriptCore/JSInternalPromise.h>
-#include <JavaScriptCore/LazyPropertyInlines.h>
-#include <JavaScriptCore/VMTrapsInlines.h>
-#include <JavaScriptCore/Weak.h>
-#include <JavaScriptCore/GetterSetter.h>
-#include <JavaScriptCore/WeakMapImpl.h>
-#include <JavaScriptCore/WeakMapImplInlines.h>
-#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/DateConstructor.h>
 #include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakMapImpl.h>
+#include <JavaScriptCore/WeakMapImplInlines.h>
+
+#include "JSMockFunction.h"
+
+#include "BunClientData.h"
 #include "BunPlugin.h"
+#include "ExtendedDOMClientIsoSubspaces.h"
+#include "ExtendedDOMIsoSubspaces.h"
+#include "ZigGlobalObject.h"
+
 namespace Bun {
 
 /**
@@ -82,7 +86,7 @@ extern "C" JSC::EncodedJSValue JSMock__jsUseRealTimers(JSC::JSGlobalObject* glob
 
 extern "C" JSC::EncodedJSValue JSMock__jsNow(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
-    return JSValue::encode(jsNumber(globalObject->jsDateNow()));
+    return JSValue::encode(dateNowImpl(globalObject));
 }
 extern "C" JSC::EncodedJSValue JSMock__jsSetSystemTime(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {

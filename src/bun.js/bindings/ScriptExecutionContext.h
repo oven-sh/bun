@@ -1,9 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include "ActiveDOMObject.h"
-#include "ContextDestructionObserver.h"
-#include "BunBroadcastChannelRegistry.h"
+
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -11,8 +9,12 @@
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/CompletionHandler.h>
-#include "CachedScript.h"
 #include <wtf/URL.h>
+
+#include "ActiveDOMObject.h"
+#include "BunBroadcastChannelRegistry.h"
+#include "CachedScript.h"
+#include "ContextDestructionObserver.h"
 
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>

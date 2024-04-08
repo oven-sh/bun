@@ -1,18 +1,22 @@
+#include "headers.h"
+
+#include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/StrongInlines.h>
+
 #include "JSReadableHelper.h"
-#include "JSReadableState.h"
+
+#include "BunClientData.h"
+#include "JSDOMAttribute.h"
+#include "JSDOMConvertEnumeration.h"
+#include "JSDOMOperation.h"
 #include "JSBufferList.h"
 #include "JSBuffer.h"
 #include "JSEventEmitter.h"
+#include "JSReadableState.h"
 #include "JSStringDecoder.h"
-#include "JavaScriptCore/Lookup.h"
-#include "JavaScriptCore/ObjectConstructor.h"
 #include "ZigGlobalObject.h"
-#include "JSDOMOperation.h"
-#include "JSDOMAttribute.h"
-#include "headers.h"
-#include "JSDOMConvertEnumeration.h"
-#include "JavaScriptCore/StrongInlines.h"
-#include "BunClientData.h"
+
 
 namespace WebCore {
 using namespace JSC;

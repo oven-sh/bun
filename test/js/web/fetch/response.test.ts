@@ -7,7 +7,7 @@ test("zero args returns an otherwise empty 200 response", () => {
 });
 
 test("calling cancel() on response body doesn't throw", () => {
-  expect(() => new Response('').body?.cancel()).not.toThrow();
+  expect(() => new Response("").body?.cancel()).not.toThrow();
 });
 
 test("undefined args don't throw", () => {

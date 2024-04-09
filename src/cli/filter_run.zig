@@ -88,6 +88,15 @@ pub const ProcessHandle = struct {
     }
 };
 
+pub const InterpreterHandle = struct {
+    const This = @This();
+
+    state: *State,
+    config: *ScriptConfig,
+    buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    done: bool = false,
+};
+
 fn fmt(comptime str: []const u8) []const u8 {
     return Output.prettyFmt(str, true);
 }
@@ -175,7 +184,7 @@ const State = struct {
                     }
                 },
                 .signaled => |code| {
-                    try this.draw_buf.writer().print(fmt("<cyan>Signaled with code {d}<r>\n"), .{code});
+                    try this.draw_buf.writer().print(fmt("<red>Signaled with code {s}<r>\n"), .{@tagName(code)});
                 },
                 .err => {
                     try this.draw_buf.appendSlice(fmt("<red>Error<r>\n"));
@@ -204,25 +213,41 @@ const AbortHandler = struct {
 
     var should_abort = false;
 
-    pub fn abortHandler(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+    fn posixSignalHandler(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
         _ = sig;
         _ = info;
         should_abort = true;
     }
 
+    fn windowsCtrlHandler(dwCtrlType: std.os.windows.DWORD) callconv(std.os.windows.WINAPI) std.os.windows.BOOL {
+        if (dwCtrlType == std.os.windows.CTRL_C_EVENT) {
+            should_abort = true;
+            return std.os.windows.TRUE;
+        }
+        return std.os.windows.FALSE;
+    }
+
     pub fn install() void {
-        const action = std.os.Sigaction{
-            .handler = .{ .sigaction = AbortHandler.abortHandler },
-            .mask = std.os.empty_sigset,
-            .flags = std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND,
-        };
-        // if we can't set the handler, we just ignore it
-        std.os.sigaction(std.os.SIG.ABRT, &action, null) catch |err| {
-            if (Environment.isDebug) {
-                Output.warn("Failed to set abort handler: {s}\n", .{@errorName(err)});
+        if (Environment.isPosix) {
+            const action = std.os.Sigaction{
+                .handler = .{ .sigaction = AbortHandler.posixSignalHandler },
+                .mask = std.os.empty_sigset,
+                .flags = std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND,
+            };
+            // if we can't set the handler, we just ignore it
+            std.os.sigaction(std.os.SIG.INT, &action, null) catch |err| {
+                if (Environment.isDebug) {
+                    Output.warn("Failed to set abort handler: {s}\n", .{@errorName(err)});
+                }
+            };
+        } else {
+            const res = bun.windows.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
+            if (res == 0) {
+                if (Environment.isDebug) {
+                    Output.warn("Failed to set abort handler\n", .{});
+                }
             }
-        };
-        std.debug.print("Installed abort handler\n", .{});
+        }
     }
 };
 
@@ -309,38 +334,48 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         Global.exit(1);
     }
 
-    if (Environment.isPosix) {
-        const event_loop = bun.JSC.MiniEventLoop.initGlobal(this_bundler.env);
-        const shell_bin: [:0]const u8 = RunCommand.findShell(this_bundler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell;
-        const envp = try this_bundler.env.map.createNullDelimitedEnvMap(ctx.allocator);
+    const event_loop = bun.JSC.MiniEventLoop.initGlobal(this_bundler.env);
+    const shell_bin: [:0]const u8 = if (Environment.isPosix)
+        RunCommand.findShell(this_bundler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
+    else
+        bun.selfExePath() catch return error.MissingShell;
+    const envp = try this_bundler.env.map.createNullDelimitedEnvMap(ctx.allocator);
 
-        var state = State{
-            .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
-            .event_loop = event_loop,
-            .live_processes = scripts.items.len,
+    var state = State{
+        .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
+        .event_loop = event_loop,
+        .live_processes = scripts.items.len,
+    };
+
+    for (scripts.items, 0..) |*script, i| {
+        var argv = [_:null]?[*:0]const u8{ shell_bin, if (Environment.isPosix) "-c" else "exec", script.combined, null };
+
+        const spawn_options = bun.spawn.SpawnOptions{
+            .stdin = .ignore,
+            .stdout = if (Environment.isPosix) .buffer else .{ .buffer = bun.default_allocator.create(bun.windows.libuv.Pipe) },
+            .stderr = if (Environment.isPosix) .buffer else .{ .buffer = bun.default_allocator.create(bun.windows.libuv.Pipe) },
+            .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
+            .windows = if (Environment.isWindows) .{ .loop = JSC.EventLoopHandle.init(&event_loop) } else {},
+            .stream = false,
         };
 
-        for (scripts.items, 0..) |*script, i| {
-            var argv = [_:null]?[*:0]const u8{ shell_bin, "-c", script.combined, null };
-            const spawn_options = bun.spawn.PosixSpawnOptions{
-                .stdin = .ignore,
-                .stdout = .buffer,
-                .stderr = .buffer,
-                .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
-                .stream = true,
-            };
+        const spawned = try (try bun.spawn.spawnProcess(&spawn_options, argv[0..], envp)).unwrap();
+        state.handles[i] = ProcessHandle{
+            .state = &state,
+            .config = script,
+            .process = spawned.toProcess(event_loop, false),
+        };
 
-            const spawned = try (try bun.spawn.spawnProcessPosix(&spawn_options, argv[0..], envp)).unwrap();
-            state.handles[i] = ProcessHandle{
-                .state = &state,
-                .config = script,
-                .process = spawned.toProcess(event_loop, false),
-            };
+        const handle = &state.handles[i];
+        handle.stdout.setParent(handle);
+        handle.stderr.setParent(handle);
 
-            const handle = &state.handles[i];
-            handle.stdout.setParent(handle);
-            handle.stderr.setParent(handle);
+        if (Environment.isWindows) {
+            handle.stdout.source = .{ .pipe = spawn_options.stdout.buffer };
+            handle.stderr.source = .{ .pipe = spawn_options.stderr.buffer };
+        }
 
+        if (Environment.isPosix) {
             if (spawned.stdout) |stdout| {
                 if (!spawned.memfds[1]) {
                     try handle.stdout.start(stdout, true).unwrap();
@@ -355,59 +390,34 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
                     handle.stderr.startMemfd(stderr);
                 }
             }
-
-            var process = spawned.toProcess(
-                event_loop,
-                false,
-            );
-
-            process.setExitHandler(handle);
-
-            try process.watch(event_loop).unwrap();
+        } else {
+            try handle.stdout.startWithCurrentPipe().unwrap();
+            try handle.stderr.startWithCurrentPipe().unwrap();
         }
 
-        AbortHandler.install();
+        var process = spawned.toProcess(
+            event_loop,
+            false,
+        );
 
-        var aborted = false;
-        while (!state.isDone()) {
-            if (AbortHandler.should_abort and !aborted) {
-                aborted = true;
-                state.abort();
-            }
-            event_loop.tickOnce(&state);
-        }
-        if (aborted) {
-            state.redraw(true) catch {};
-        }
+        process.setExitHandler(handle);
 
-        Global.exit(0);
-    } else {
-        // const interpreters = try ctx.allocator.alloc(bun.shell.Interpreter, scripts.items.len);
-
-        // for (scripts.items) |script| {
-        // Output.prettyln("<d>Running script <b>{s}<r> in package <b>{s}<r>", .{ script.script_content, script.package_name });
-        // Output.flush();
-
-        // Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
-        // Output.flush();
-
-        // const code = bun.shell.Interpreter.initAndRunFromSource(ctx, loop, name, combined_script) catch |err| {
-        //     if (!silent) {
-        //         Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
-        //     }
-        //     return ExecResult.failure;
-        // };
-
-        // if (code > 0) {
-        //     if (code != 2 and !silent) {
-        //         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
-        //         Output.flush();
-        //     }
-
-        //     return ExecResult.withCode(code);
-        // }
-        // }
-
-        Global.exit(0);
+        try process.watch(event_loop).unwrap();
     }
+
+    AbortHandler.install();
+
+    var aborted = false;
+    while (!state.isDone()) {
+        if (AbortHandler.should_abort and !aborted) {
+            aborted = true;
+            state.abort();
+        }
+        event_loop.tickOnce(&state);
+    }
+    if (aborted) {
+        state.redraw(true) catch {};
+    }
+
+    Global.exit(0);
 }

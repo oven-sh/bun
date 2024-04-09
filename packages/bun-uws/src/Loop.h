@@ -15,13 +15,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #ifndef UWS_LOOP_H
 #define UWS_LOOP_H
 
 /* The loop is lazily created per-thread and run with run() */
 
 #include "LoopData.h"
+#include "AsyncSocket.h"
 #include <libusockets.h>
 #include <iostream>
 
@@ -57,6 +58,15 @@ private:
 
         for (auto &p : loopData->postHandlers) {
             p.second((Loop *) loop);
+        }
+
+        /* auto-uncork corked socket if needed*/
+        if (loopData->corkOffset && loopData->corkedSocket != nullptr) {
+            if(loopData->corkedSocketIsSSL) {
+                ((AsyncSocket<true> *) loopData->corkedSocket)->uncork();
+            } else {
+                ((AsyncSocket<false> *) loopData->corkedSocket)->uncork();
+            }
         }
     }
 

@@ -2709,7 +2709,7 @@ pub const JSGlobalObject = extern struct {
         got: usize,
     ) JSC.JSValue {
         return JSC.toTypeErrorWithCode(
-            "NOT_ENOUGH_ARGUMENTS",
+            @tagName(JSC.Node.ErrorCode.ERR_MISSING_ARGS),
             "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.",
             .{ expected, got },
             this,

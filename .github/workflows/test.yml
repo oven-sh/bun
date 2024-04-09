@@ -19,6 +19,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           run-id: ${{ inputs.run-id || '8623134412' }}
-          pattern: bun-*
+          # pattern: bun-*
       - run: |
           ls -la

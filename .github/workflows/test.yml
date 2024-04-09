@@ -1,0 +1,24 @@
+name: Test
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.run-id || github.run_id }}
+  cancel-in-progress: true
+
+on:
+  push:
+  workflow_call:
+    inputs:
+      run-id:
+        type: string
+        required: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run-id || '8623134412' }}
+          pattern: bun-*
+      - run: |
+          ls -la

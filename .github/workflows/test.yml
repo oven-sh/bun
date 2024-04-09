@@ -20,6 +20,6 @@ jobs:
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run-id || '8623134412' }}
-          # pattern: bun-*
+          pattern: bun-{darwin,linux,windows}-{x64,aarch64}{,-baseline}
       - run: |
           ls -la

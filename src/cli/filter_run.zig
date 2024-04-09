@@ -5,6 +5,8 @@ const Environment = bun.Environment;
 const std = @import("std");
 const Fs = @import("../fs.zig");
 const RunCommand = @import("run_command.zig").RunCommand;
+const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
+const SemverString = @import("../install/semver.zig").String;
 
 const CLI = bun.CLI;
 const Command = CLI.Command;
@@ -19,20 +21,74 @@ const ScriptConfig = struct {
     script_name: []const u8,
     script_content: []const u8,
     combined: [:0]const u8,
+    deps: DependencyMap,
 };
 
 pub const ProcessHandle = struct {
     const This = @This();
 
-    state: *State,
     config: *ScriptConfig,
-    process: *bun.spawn.Process,
+    state: *State,
+
     stdout: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
     stderr: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
     buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
-    status: bun.spawn.Status = .running,
-    start_time: ?std.time.Instant,
+
+    process: ?struct {
+        ptr: *bun.spawn.Process,
+        status: bun.spawn.Status = .running,
+    } = null,
+    options: bun.spawn.SpawnOptions,
+
+    start_time: ?std.time.Instant = null,
     end_time: ?std.time.Instant = null,
+
+    remaining_dependencies: usize = 0,
+    dependents: std.ArrayList(*This) = std.ArrayList(*This).init(bun.default_allocator),
+
+    fn start(this: *This) !void {
+        const handle = this;
+
+        var argv = [_:null]?[*:0]const u8{ this.state.shell_bin, if (Environment.isPosix) "-c" else "exec", this.config.combined, null };
+
+        this.start_time = std.time.Instant.now() catch null;
+        var spawned = try (try bun.spawn.spawnProcess(&this.options, argv[0..], this.state.envp)).unwrap();
+        var process = spawned.toProcess(this.state.event_loop, false);
+
+        handle.stdout.setParent(handle);
+        handle.stderr.setParent(handle);
+
+        if (Environment.isWindows) {
+            handle.stdout.source = .{ .pipe = this.spawn_options.stdout.buffer };
+            handle.stderr.source = .{ .pipe = this.spawn_options.stderr.buffer };
+        }
+
+        if (Environment.isPosix) {
+            if (spawned.stdout) |stdout| {
+                if (!spawned.memfds[1]) {
+                    try handle.stdout.start(stdout, true).unwrap();
+                } else {
+                    handle.stdout.startMemfd(stdout);
+                }
+            }
+            if (spawned.stderr) |stderr| {
+                if (!spawned.memfds[2]) {
+                    try handle.stderr.start(stderr, true).unwrap();
+                } else {
+                    handle.stderr.startMemfd(stderr);
+                }
+            }
+        } else {
+            try handle.stdout.startWithCurrentPipe().unwrap();
+            try handle.stderr.startWithCurrentPipe().unwrap();
+        }
+
+        process.setExitHandler(handle);
+
+        try process.watch(this.state.event_loop).unwrap();
+
+        this.process = .{ .ptr = process };
+    }
 
     pub fn onReadChunk(this: *This, chunk: []const u8, hasMore: bun.io.ReadState) bool {
         _ = hasMore;
@@ -50,8 +106,7 @@ pub const ProcessHandle = struct {
     }
 
     pub fn onProcessExit(this: *This, proc: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
-        this.state.live_processes -= 1;
-        this.status = status;
+        this.process.?.status = status;
         this.end_time = std.time.Instant.now() catch null;
         // We just leak the process because we're going to exit anyway after all processes are done
         _ = proc;
@@ -67,15 +122,6 @@ pub const ProcessHandle = struct {
     }
 };
 
-pub const InterpreterHandle = struct {
-    const This = @This();
-
-    state: *State,
-    config: *ScriptConfig,
-    buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
-    done: bool = false,
-};
-
 fn fmt(comptime str: []const u8) []const u8 {
     return Output.prettyFmt(str, true);
 }
@@ -85,14 +131,17 @@ const State = struct {
 
     handles: []ProcessHandle,
     event_loop: *bun.JSC.MiniEventLoop,
-    live_processes: usize,
+    remaining_scripts: usize,
     // buffer for batched output
     draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     last_lines_written: usize = 0,
     pretty_output: bool,
+    shell_bin: [:0]const u8,
+    envp: [:null]?[*:0]u8,
+    aborted: bool = false,
 
     pub fn isDone(this: *This) bool {
-        return this.live_processes == 0;
+        return this.remaining_scripts == 0;
     }
 
     const ElideResult = struct {
@@ -131,6 +180,18 @@ const State = struct {
     }
 
     fn processExit(this: *This, handle: *ProcessHandle) !void {
+        this.remaining_scripts -= 1;
+        if (!this.aborted) {
+            for (handle.dependents.items) |dependent| {
+                dependent.remaining_dependencies -= 1;
+                if (dependent.remaining_dependencies == 0) {
+                    dependent.start() catch {
+                        Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
+                        Global.exit(1);
+                    };
+                }
+            }
+        }
         if (this.pretty_output) {
             this.redraw(false) catch {};
         } else {
@@ -141,7 +202,7 @@ const State = struct {
                 handle.buffer.clearRetainingCapacity();
             }
             // print exit status
-            switch (handle.status) {
+            switch (handle.process.?.status) {
                 .exited => |exited| {
                     try this.draw_buf.writer().print("{s}: Exited with code {d}\n", .{ handle.config.package_name, exited.code });
                 },
@@ -193,6 +254,11 @@ const State = struct {
             }
         }
         for (this.handles) |*handle| {
+            // if the process hasn't started yet, we don't print anything
+            // TODO we could print a message like "Waiting..."
+            if (handle.process == null) {
+                continue;
+            }
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
             const e = elide(handle.buffer.items, if (is_abort) null else 10);
             try this.draw_buf.writer().print(fmt("<b>{s}<r> $ <d>{s}<r>\n"), .{ handle.config.package_name, handle.config.script_content });
@@ -215,7 +281,7 @@ const State = struct {
                 try this.draw_buf.append('\n');
             }
             try this.draw_buf.appendSlice(fmt("<cyan>└─<r> "));
-            switch (handle.status) {
+            switch (handle.process.?.status) {
                 .running => try this.draw_buf.appendSlice(fmt("<cyan>Running...<r>\n")),
                 .exited => |exited| {
                     if (exited.code == 0) {
@@ -247,14 +313,17 @@ const State = struct {
 
     pub fn abort(this: *This) void {
         // we perform an abort by sending SIGINT to all processes
+        this.aborted = true;
         for (this.handles) |*handle| {
-            // if we get an error here we simply ignore it
-            _ = handle.process.kill(std.os.SIG.INT);
+            if (handle.process) |*proc| {
+                // if we get an error here we simply ignore it
+                _ = proc.ptr.kill(std.os.SIG.INT);
+            }
         }
     }
 
-    pub fn finalize(this: *This, aborted: bool) void {
-        if (aborted) {
+    pub fn finalize(this: *This) void {
+        if (this.aborted) {
             this.redraw(true) catch {};
         }
     }
@@ -340,16 +409,21 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
     // Get list of packages that match the configuration
     var scripts = std.ArrayList(ScriptConfig).init(ctx.allocator);
+    // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
     while (try package_json_iter.next()) |package_json_path| {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
 
-        const dir_info = this_bundler.resolver.readDirInfo(path) catch |err| {
-            Output.warn("Failed to read directory info for {s}: {s}\n", .{ path, @errorName(err) });
-            continue;
-        } orelse continue;
+        // const dir_info = this_bundler.resolver.readDirInfo(path) catch |err| {
+        //     Output.warn("Failed to read directory info for {s}: {s}\n", .{ path, @errorName(err) });
+        //     continue;
+        // } orelse continue;
 
-        const pkgjson = dir_info.enclosing_package_json orelse continue;
+        // const pkgjson = dir_info.enclosing_package_json orelse continue;
+        const pkgjson = bun.PackageJSON.parse(&this_bundler.resolver, dirpath, .zero, null, .include_scripts, .main, .no_hash) orelse {
+            Output.warn("Failed to read package.json\n", .{});
+            continue;
+        };
 
         const matches = if (filter_instance.has_name_filters)
             filter_instance.matchesPathName(path, pkgjson.name)
@@ -381,11 +455,13 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         }
 
         try scripts.append(.{
+            // const res = try scripts.getOrPut(pkgjson.name, .{
             .package_json_path = try ctx.allocator.dupe(u8, package_json_path),
             .package_name = pkgjson.name,
             .script_name = script_name,
             .script_content = copy_script.items,
             .combined = combined,
+            .deps = pkgjson.dependencies,
         });
     }
 
@@ -399,87 +475,86 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         RunCommand.findShell(this_bundler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
     else
         bun.selfExePath() catch return error.MissingShell;
-    const envp = try this_bundler.env.map.createNullDelimitedEnvMap(ctx.allocator);
 
     var state = State{
         .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
         .event_loop = event_loop,
-        .live_processes = scripts.items.len,
+        .remaining_scripts = scripts.items.len,
         .pretty_output = if (Environment.isWindows) windowsIsTerminal() else Output.enable_ansi_colors_stdout,
+        .shell_bin = shell_bin,
+        .envp = try this_bundler.env.map.createNullDelimitedEnvMap(ctx.allocator),
     };
 
-    // Spawn the scripts and get their respective process handles
+    // initialize the handles
+    var map = bun.StringHashMap(*ProcessHandle).init(ctx.allocator);
     for (scripts.items, 0..) |*script, i| {
-        var argv = [_:null]?[*:0]const u8{ shell_bin, if (Environment.isPosix) "-c" else "exec", script.combined, null };
-
-        const spawn_options = bun.spawn.SpawnOptions{
-            .stdin = .ignore,
-            .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
-            .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
-            .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
-            .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) } else {},
-            .stream = false,
-        };
-
-        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, argv[0..], envp)).unwrap();
-        var process = spawned.toProcess(event_loop, false);
         state.handles[i] = ProcessHandle{
             .state = &state,
             .config = script,
-            .process = process,
-            .start_time = std.time.Instant.now() catch null,
+            .options = .{
+                .stdin = .ignore,
+                .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
+                .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
+                .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
+                .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) } else {},
+                .stream = false,
+            },
         };
-
-        const handle = &state.handles[i];
-        handle.stdout.setParent(handle);
-        handle.stderr.setParent(handle);
-
-        if (Environment.isWindows) {
-            handle.stdout.source = .{ .pipe = spawn_options.stdout.buffer };
-            handle.stderr.source = .{ .pipe = spawn_options.stderr.buffer };
-        }
-
-        if (Environment.isPosix) {
-            if (spawned.stdout) |stdout| {
-                if (!spawned.memfds[1]) {
-                    try handle.stdout.start(stdout, true).unwrap();
-                } else {
-                    handle.stdout.startMemfd(stdout);
-                }
-            }
-            if (spawned.stderr) |stderr| {
-                if (!spawned.memfds[2]) {
-                    try handle.stderr.start(stderr, true).unwrap();
-                } else {
-                    handle.stderr.startMemfd(stderr);
-                }
-            }
+        const res = try map.getOrPut(script.package_name);
+        if (res.found_existing) {
+            Output.prettyErrorln("<r><red>error<r>: Duplicate package name: {s}", .{script.package_name});
+            Global.exit(1);
         } else {
-            try handle.stdout.startWithCurrentPipe().unwrap();
-            try handle.stderr.startWithCurrentPipe().unwrap();
+            res.value_ptr.* = &state.handles[i];
         }
+    }
+    // compute dependencies (TODO: maybe we should do this only in a workspace?)
+    for (state.handles) |*handle| {
+        var iter = handle.config.deps.map.iterator();
+        while (iter.next()) |entry| {
+            var alloc = std.heap.stackFallback(256, ctx.allocator);
+            const buf = try alloc.get().alloc(u8, entry.key_ptr.len());
+            defer alloc.get().free(buf);
+            const name = entry.key_ptr.slice(buf);
+            // is it a workspace dependency?
+            if (map.get(name)) |dep| {
+                // const buf2 = try alloc.get().alloc(u8, dep.config.package_name.len);
+                // const sem_string = SemverString.init(buf2, dep.config.package_name);
+                // if (handle.config.deps.map.get(sem_string)) |_| {
+                //     continue;
+                // }
+                try dep.dependents.append(handle);
+                handle.remaining_dependencies += 1;
+            }
+        }
+    }
+    // TODO find cycles
 
-        process.setExitHandler(handle);
-
-        try process.watch(event_loop).unwrap();
+    // start inital scripts
+    for (state.handles) |*handle| {
+        if (handle.remaining_dependencies == 0) {
+            handle.start() catch {
+                // todo this should probably happen in "start"
+                Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
+                Global.exit(1);
+            };
+        }
     }
 
     AbortHandler.install();
 
-    var aborted = false;
     while (!state.isDone()) {
-        if (AbortHandler.should_abort and !aborted) {
+        if (AbortHandler.should_abort and !state.aborted) {
             // We uninstall the custom abort handler so that if the user presses Ctrl+C again,
             // the process is aborted immediately and doesn't wait for the event loop to tick.
             // This can be useful if one of the processes is stuck and doesn't react to SIGINT.
             AbortHandler.uninstall();
-            aborted = true;
             state.abort();
         }
         event_loop.tickOnce(&state);
     }
 
-    state.finalize(aborted);
+    state.finalize();
 
     Global.exit(0);
 }

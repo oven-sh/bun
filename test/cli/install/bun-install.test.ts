@@ -23,11 +23,8 @@ expect.extend({
   toHaveWorkspaceLink: async function (package_dir: string, [link, real]: [string, string]) {
     const isWindows = process.platform === "win32";
     if (!isWindows) {
-      // expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBeWorkspaceLink(join("..", "bar"));
-      // expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
     } else {
-      // expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, real));
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, real));
     }
   },
@@ -6040,9 +6037,34 @@ it("should handle --cwd", async () => {
 });
 
 it("should handle --frozen-lockfile", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));
+
   await writeFile(
     join(package_dir, "package.json"),
-    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+  );
+
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
+  // change version of baz in package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { baz: "0.0.5" },
+    }),
   );
 
   const { stderr, exited } = spawn({
@@ -6061,16 +6083,43 @@ it("should handle --frozen-lockfile", async () => {
 });
 
 it("should handle frozenLockfile in config file", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));
+
   await writeFile(
     join(package_dir, "package.json"),
-    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
   );
+
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
   await writeFile(
     join(package_dir, "bunfig.toml"),
     `
 [install]
 frozenLockfile = true
+registry = "${root_url}"
 `,
+  );
+
+  // change version of baz in package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { baz: "0.0.5" },
+    }),
   );
 
   const { stderr, exited } = spawn({

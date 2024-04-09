@@ -136,7 +136,7 @@ pub const Run = struct {
         try bundle.runEnvLoader(false);
         const mini = JSC.MiniEventLoop.initGlobal(bundle.env);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
-        return try bun.shell.Interpreter.initAndRunFromFile(mini, entry_path);
+        return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
 
     pub fn boot(ctx_: Command.Context, entry_path: string) !void {
@@ -147,7 +147,7 @@ pub const Run = struct {
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
         }
 
-        if (strings.endsWithComptime(entry_path, comptime if (Environment.isWindows) ".sh" else ".bun.sh")) {
+        if (strings.endsWithComptime(entry_path, ".sh")) {
             const exit_code = try bootBunShell(&ctx, entry_path);
             Global.exitWide(exit_code);
             return;

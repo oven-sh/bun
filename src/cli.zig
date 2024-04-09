@@ -21,6 +21,8 @@ const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 
+const debug = Output.scoped(.CLI, true);
+
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
@@ -97,6 +99,7 @@ pub const ShellCompletions = @import("./cli/shell_completions.zig");
 pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -966,6 +969,7 @@ pub const HelpCommand = struct {
         \\  <b><magenta>test<r>                           Run unit tests with Bun
         \\  <b><magenta>x<r>         <d>{s:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
         \\  <b><magenta>repl<r>                           Start a REPL session with Bun
+        \\  <b><magenta>exec<r>                           Run a shell script directly with Bun
         \\
         \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
@@ -1033,6 +1037,7 @@ pub const HelpCommand = struct {
 
         Output.flush();
     }
+
     pub fn execWithReason(_: std.mem.Allocator, comptime reason: Reason) void {
         @setCold(true);
         printWithReason(reason, false);
@@ -1040,6 +1045,7 @@ pub const HelpCommand = struct {
         if (reason == .invalid_command) {
             std.process.exit(1);
         }
+        std.process.exit(0);
     }
 };
 
@@ -1218,10 +1224,16 @@ pub const Command = struct {
     };
 
     pub fn isBunX(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "bunx") or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug"));
+        if (Environment.isWindows) {
+            return strings.endsWithComptime(argv0, "bunx.exe");
+        }
+        return strings.endsWithComptime(argv0, "bunx");
     }
 
     pub fn isNode(argv0: []const u8) bool {
+        if (Environment.isWindows) {
+            return strings.endsWithComptime(argv0, "node.exe");
+        }
         return strings.endsWithComptime(argv0, "node");
     }
 
@@ -1230,13 +1242,7 @@ pub const Command = struct {
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
-        const without_exe = if (Environment.isWindows)
-            strings.withoutSuffixComptime(argv0, ".exe")
-        else
-            argv0;
-
-        // symlink is argv[0]
-        if (isBunX(without_exe)) {
+        if (isBunX(argv0)) {
             // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
             // want to recursively run bunx. so this check lets us peek back into bun install.
             if (args_iter.next()) |next| {
@@ -1251,7 +1257,7 @@ pub const Command = struct {
             return .BunxCommand;
         }
 
-        if (isNode(without_exe)) {
+        if (isNode(argv0)) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;
@@ -1306,6 +1312,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("run") => .RunCommand,
             RootCommandMatcher.case("help") => .HelpCommand,
+
+            RootCommandMatcher.case("exec") => .ExecCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1386,6 +1394,8 @@ pub const Command = struct {
             );
             return;
         }
+
+        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv(), ", ")});
 
         const tag = which();
 
@@ -1832,7 +1842,7 @@ pub const Command = struct {
                     });
                     Global.exit(1);
                 } else if (ctx.positionals.len > 0) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>File not found \"{s}\"<r>", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>File not found: \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
@@ -1845,6 +1855,13 @@ pub const Command = struct {
                 }
                 Output.flush();
                 try HelpCommand.exec(allocator);
+            },
+            .ExecCommand => {
+                var ctx = try Command.Context.create(allocator, log, .RunCommand);
+
+                if (ctx.positionals.len > 1) {
+                    try ExecCommand.exec(&ctx);
+                } else Tag.printHelp(.ExecCommand, true);
             },
         }
     }
@@ -1970,6 +1987,7 @@ pub const Command = struct {
         UpgradeCommand,
         ReplCommand,
         ReservedCommand,
+        ExecCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return comptime &switch (cmd) {
@@ -2168,6 +2186,21 @@ pub const Command = struct {
                 },
                 Command.Tag.InstallCompletionsCommand => {
                     Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
+                    Output.flush();
+                },
+                Command.Tag.ExecCommand => {
+                    Output.pretty(
+                        \\<b>Usage: bun exec <r><cyan>\<script\><r>
+                        \\
+                        \\Execute a shell script directly from Bun.
+                        \\
+                        \\<b><red>Note<r>: If executing this from a shell, make sure to escape the string!
+                        \\
+                        \\<b>Examples<d>:<r>
+                        \\  <b>bunx exec "echo hi"<r>
+                        \\  <b>bunx exec "echo \"hey friends\"!"<r>
+                        \\
+                    , .{});
                     Output.flush();
                 },
                 else => {

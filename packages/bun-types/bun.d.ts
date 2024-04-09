@@ -43,8 +43,9 @@ declare module "bun" {
    *
    * @param {string} command The name of the executable or script
    * @param {string} options.PATH Overrides the PATH environment variable
+   * @param {string} options.cwd When given a relative path, use this path to join it.
    */
-  function which(command: string, options?: { PATH?: string }): string | null;
+  function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
 
   /**
    * Get the column count of a string as it would be displayed in a terminal.
@@ -276,12 +277,16 @@ declare module "bun" {
     blob(): Promise<Blob>;
 
     /**
-     * Configure the shell to not throw an exception on non-zero exit codes.
+     * Configure the shell to not throw an exception on non-zero exit codes. Throwing can be re-enabled with `.throws(true)`.
+     *
+     * By default, the shell with throw an exception on commands which return non-zero exit codes.
      */
     nothrow(): this;
 
     /**
      * Configure whether or not the shell should throw an exception on non-zero exit codes.
+     *
+     * By default, this is configured to `true`.
      */
     throws(shouldThrow: boolean): this;
   }
@@ -2987,12 +2992,19 @@ declare module "bun" {
   }
 
   /**
-   * Nanoseconds since Bun.js was started as an integer.
+   * Returns the number of nanoseconds since the process was started.
    *
-   * This uses a high-resolution monotonic system timer.
+   * This function uses a high-resolution monotonic system timer to provide precise time measurements.
+   * In JavaScript, numbers are represented as double-precision floating-point values (IEEE 754),
+   * which can safely represent integers up to 2^53 - 1 (Number.MAX_SAFE_INTEGER).
    *
-   * After 14 weeks of consecutive uptime, this function
-   * wraps
+   * Due to this limitation, while the internal counter may continue beyond this point,
+   * the precision of the returned value will degrade after 14.8 weeks of uptime (when the nanosecond
+   * count exceeds Number.MAX_SAFE_INTEGER). Beyond this point, the function will continue to count but
+   * with reduced precision, which might affect time calculations and comparisons in long-running applications.
+   *
+   * @returns {number} The number of nanoseconds since the process was started, with precise values up to
+   * Number.MAX_SAFE_INTEGER.
    */
   function nanoseconds(): number;
 

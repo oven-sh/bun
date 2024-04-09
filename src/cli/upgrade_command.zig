@@ -493,7 +493,7 @@ pub const UpgradeCommand = struct {
             }
 
             if (!Environment.is_canary) {
-                Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+                Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>v{s}<r>\n", .{ version.name().?, Global.package_json_version });
             } else {
                 Output.prettyErrorln("<r><b>Downgrading from Bun <blue>{s}-canary<r> to Bun <cyan>v{s}<r><r>\n", .{ Global.package_json_version, version.name().? });
             }
@@ -612,7 +612,7 @@ pub const UpgradeCommand = struct {
                 }
 
                 if (comptime Environment.isPosix) {
-                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", "unzip") orelse {
+                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
                         save_dir.deleteFileZ(tmpname) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
                         Global.exit(1);
@@ -657,8 +657,21 @@ pub const UpgradeCommand = struct {
                         },
                     );
 
+                    var buf: bun.PathBuffer = undefined;
+                    const powershell_path =
+                        bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse
+                        hardcoded_system_powershell: {
+                        const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
+                        const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
+                        if (bun.sys.exists(hardcoded_system_powershell)) {
+                            break :hardcoded_system_powershell hardcoded_system_powershell;
+                        }
+                        Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
+                        Global.exit(1);
+                    };
+
                     var unzip_argv = [_]string{
-                        "powershell.exe",
+                        powershell_path,
                         "-NoProfile",
                         "-ExecutionPolicy",
                         "Bypass",
@@ -666,24 +679,26 @@ pub const UpgradeCommand = struct {
                         unzip_script,
                     };
 
-                    var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
+                    _ = (bun.spawnSync(&.{
+                        .argv = &unzip_argv,
 
-                    unzip_process.cwd = tmpdir_path;
-                    unzip_process.stdin_behavior = .Inherit;
-                    unzip_process.stdout_behavior = .Inherit;
-                    unzip_process.stderr_behavior = .Inherit;
+                        .envp = null,
+                        .cwd = tmpdir_path,
 
-                    const unzip_result = unzip_process.spawnAndWait() catch |err| {
-                        save_dir.deleteFileZ(tmpname) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
+                        .stderr = .inherit,
+                        .stdout = .inherit,
+                        .stdin = .inherit,
+
+                        .windows = if (Environment.isWindows) .{
+                            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                        } else {},
+                    }) catch |err| {
+                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
+                        Global.exit(1);
+                    }).unwrap() catch |err| {
+                        Output.prettyErrorln("<r><red>error:<r> Failed to run Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
                         Global.exit(1);
                     };
-
-                    if (unzip_result.Exited != 0) {
-                        Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
-                        save_dir.deleteFileZ(tmpname) catch {};
-                        Global.exit(1);
-                    }
                 }
             }
             {
@@ -949,46 +964,12 @@ pub const UpgradeCommand = struct {
 
             if (Environment.isWindows) {
                 if (outdated_filename) |to_remove| {
-                    current_executable_buf[target_dir_.len] = '\\';
-                    const delete_old_script = try std.fmt.allocPrint(
-                        ctx.allocator,
-                        // What is this?
-                        // 1. spawns powershell
-                        // 2. waits for all processes with the same path as the current executable to exit (including the current process)
-                        // 3. deletes the old executable
-                        //
-                        // probably possible to hit a race condition, but i think the worst case is simply the file not getting deleted.
-                        //
-                        // in that edge case, the next time you upgrade it will simply override itself, fixing the bug.
-                        //
-                        // -NoNewWindow doesnt work, will keep the parent alive it seems
-                        // -WindowStyle Hidden seems to just do nothing, not sure why.
-                        // Using -WindowStyle Minimized seems to work, but you can spot a powershell icon appear in your taskbar for about ~1 second
-                        //
-                        // Alternative: we could simply do nothing and leave the `.outdated` file.
-                        \\Start-Process powershell.exe -WindowStyle Minimized -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-Command",'&{{$ErrorActionPreference=''SilentlyContinue''; Get-Process|Where-Object{{ $_.Path -eq ''{s}'' }}|Wait-Process; Remove-Item -Path ''{s}'' -Force }};'; exit
-                    ,
-                        .{
-                            destination_executable,
-                            to_remove,
-                        },
-                    );
-
-                    var delete_argv = [_]string{
-                        "powershell.exe",
-                        "-NoProfile",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-Command",
-                        delete_old_script,
-                    };
-
-                    _ = std.ChildProcess.run(.{
-                        .allocator = ctx.allocator,
-                        .argv = &delete_argv,
-                        .cwd = tmpdir_path,
-                        .max_output_bytes = 512,
-                    }) catch {};
+                    // TODO: this file gets left on disk
+                    //
+                    // We should remove it, however we cannot remove an exe that is still running.
+                    // A prior approach was to spawn a subprocess to remove the file, but that
+                    // would open a terminal window, which steals user focus (even if minimized).
+                    _ = to_remove;
                 }
             }
         }

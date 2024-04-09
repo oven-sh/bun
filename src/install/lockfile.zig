@@ -90,7 +90,7 @@ const zero_hash = std.mem.zeroes(MetaHash);
 pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);
 pub const TrustedDependenciesSet = std.ArrayHashMapUnmanaged(TruncatedPackageNameHash, void, ArrayIdentityContext, false);
 pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Version, ArrayIdentityContext.U64, false);
-
+const File = bun.sys.File;
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
 // Serialized data
@@ -194,28 +194,23 @@ pub const LoadFromDiskResult = union(enum) {
 pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
     if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
 
-    var file = if (filename.len > 0)
-        std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
-            return switch (err) {
-                error.FileNotFound => {
-                    // Attempt to load from "package-lock.json", "yarn.lock", etc.
-                    return migration.detectAndLoadOtherLockfile(
-                        this,
-                        allocator,
-                        log,
-                        filename,
-                    );
-                },
-                error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
-                else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
-            };
-        }
+    const buf = (if (filename.len > 0)
+        File.readFrom(std.fs.cwd(), filename, allocator).unwrap()
     else
-        std.io.getStdIn();
-
-    defer file.close();
-    const buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
-        return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
+        File.from(std.io.getStdIn()).readToEnd(allocator).unwrap()) catch |err| {
+        return switch (err) {
+            error.EACCESS, error.EPERM, error.ENOENT => {
+                // Attempt to load from "package-lock.json", "yarn.lock", etc.
+                return migration.detectAndLoadOtherLockfile(
+                    this,
+                    allocator,
+                    log,
+                    filename,
+                );
+            },
+            error.EINVAL, error.ENOTDIR, error.EISDIR => LoadFromDiskResult{ .not_found = {} },
+            else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
+        };
     };
 
     return this.loadFromBytes(buf, allocator, log);
@@ -1615,73 +1610,67 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         };
         std.debug.assert(FileSystem.instance_loaded);
     }
-    var tmpname_buf: [512]u8 = undefined;
-    tmpname_buf[0..9].* = ".bunlockb".*;
-    var tmpfile = FileSystem.RealFS.Tmpfile{};
-    var base64_bytes: [16]u8 = undefined;
-    std.crypto.random.bytes(&base64_bytes);
 
-    const tmpname__ = std.fmt.bufPrint(tmpname_buf[9..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
-    tmpname_buf[tmpname__.len + 9] = 0;
-    const tmpname = tmpname_buf[0 .. tmpname__.len + 9 :0];
+    var bytes = std.ArrayList(u8).init(bun.default_allocator);
+    defer bytes.deinit();
 
-    tmpfile.create(&FileSystem.instance.fs, tmpname) catch |err| {
-        Output.prettyErrorln("<r><red>error:<r> failed to open lockfile: {s}", .{@errorName(err)});
-        Global.crash();
-    };
-
-    const file = tmpfile.fd.asFile();
     {
-        var bytes = std.ArrayList(u8).init(bun.default_allocator);
-        defer bytes.deinit();
         var total_size: usize = 0;
         var end_pos: usize = 0;
         Lockfile.Serializer.save(this, &bytes, &total_size, &end_pos) catch |err| {
-            tmpfile.dir().deleteFileZ(tmpname) catch {};
-            Output.prettyErrorln("<r><red>error:<r> failed to serialize lockfile: {s}", .{@errorName(err)});
+            Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };
         if (bytes.items.len >= end_pos)
             bytes.items[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
+    }
 
-        var node_fs: bun.JSC.Node.NodeFS = undefined;
-        switch (node_fs.writeFile(
-            .{
-                .file = .{
-                    .fd = bun.toFD(file.handle),
-                },
-                .dirfd = bun.invalid_fd,
-                .data = .{ .string = .{ .utf8 = bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes.items) } },
-            },
-            .sync,
-        )) {
-            .err => |e| {
-                tmpfile.dir().deleteFileZ(tmpname) catch {};
-                Output.prettyErrorln("<r><red>error:<r> failed to write lockfile\n{}", .{e});
+    var tmpname_buf: [512]u8 = undefined;
+    var base64_bytes: [8]u8 = undefined;
+    bun.rand(&base64_bytes);
+    const tmpname = std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+
+    const file = switch (File.openat(std.fs.cwd(), tmpname, std.os.O.CREAT | std.os.O.WRONLY, 0o777)) {
+        .err => |err| {
+            Output.err(err, "failed to create temporary file to save lockfile\n{}", .{});
+            Global.crash();
+        },
+        .result => |f| f,
+    };
+
+    switch (file.writeAll(bytes.items)) {
+        .err => |e| {
+            file.close();
+            _ = bun.sys.unlink(tmpname);
+            Output.err(e, "failed to write lockfile\n{}", .{});
+            Global.crash();
+        },
+        .result => {},
+    }
+
+    if (comptime Environment.isPosix) {
+        // chmod 777 on posix
+        switch (bun.sys.fchmod(file.handle, 0o777)) {
+            .err => |err| {
+                file.close();
+                _ = bun.sys.unlink(tmpname);
+                Output.err(err, "failed to change lockfile permissions\n{}", .{});
                 Global.crash();
             },
             .result => {},
         }
     }
 
-    // chmod 777
-    switch (bun.sys.fchmod(tmpfile.fd, 0o777)) {
-        .err => |err| {
-            tmpfile.dir().deleteFileZ(tmpname) catch {};
-            Output.prettyErrorln("<r><red>error:<r> failed to change lockfile permissions: {s}", .{@tagName(err.getErrno())});
-            Global.crash();
-        },
-        .result => {},
-    }
+    file.closeAndMoveTo(tmpname, filename) catch |err| {
+        // note: file is already closed here.
+        _ = bun.sys.unlink(tmpname);
 
-    tmpfile.promoteToCWD(tmpname, filename) catch |err| {
         if (comptime Environment.allow_assert) {
             if (@errorReturnTrace()) |trace| {
                 std.debug.dumpStackTrace(trace.*);
             }
         }
-        tmpfile.dir().deleteFileZ(tmpname) catch {};
-        Output.prettyErrorln("<r><red>error:<r> failed to save lockfile: {s}", .{@errorName(err)});
+        Output.err(err, "failed to replace old lockfile with new lockfile on disk", .{});
         Global.crash();
     };
 }
@@ -2675,19 +2664,8 @@ pub const Package = extern struct {
             const json = brk: {
                 const json_src = brk2: {
                     const json_path = bun.path.joinZ([_]string{ folder_name, "package.json" }, .auto);
-                    const json_file_fd = try bun.sys.openat(
-                        bun.toFD(node_modules.fd),
-                        json_path,
-                        std.os.O.RDONLY,
-                        0,
-                    ).unwrap();
-                    const json_file = json_file_fd.asFile();
-                    defer json_file.close();
-                    const json_stat_size = try json_file.getEndPos();
-                    const json_buf = try allocator.alloc(u8, json_stat_size + 64);
-                    errdefer allocator.free(json_buf);
-                    const json_len = try json_file.preadAll(json_buf, 0);
-                    break :brk2 logger.Source.initPathString(json_path, json_buf[0..json_len]);
+                    const buf = try bun.sys.File.readFrom(node_modules, json_path, allocator).unwrap();
+                    break :brk2 logger.Source.initPathString(json_path, buf);
                 };
 
                 initializeStore();
@@ -3410,12 +3388,7 @@ pub const Package = extern struct {
                                     &[_]string{ path, "package.json" },
                                     .auto,
                                 );
-                                var file = try bun.openFileZ(package_json_path, .{ .mode = .read_only });
-
-                                defer file.close();
-                                const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
-                                defer allocator.free(bytes);
-                                const source = logger.Source.initPathString(path, bytes);
+                                const source = try bun.sys.File.toSource(package_json_path, allocator).unwrap();
 
                                 var workspace = Package{};
                                 try workspace.parseMain(to_lockfile, allocator, log, source, Features.workspace);
@@ -3546,23 +3519,30 @@ pub const Package = extern struct {
         key_loc: logger.Loc,
         value_loc: logger.Loc,
     ) !?Dependency {
-        var external_version = string_builder.append(String, version);
+        const external_version = brk: {
+            if (comptime Environment.isWindows) {
+                switch (tag orelse Dependency.Version.Tag.infer(version)) {
+                    .workspace, .folder, .symlink, .tarball => {
+                        if (String.canInline(version)) {
+                            var copy = string_builder.append(String, version);
+                            bun.path.dangerouslyConvertPathToPosixInPlace(u8, &copy.bytes);
+                            break :brk copy;
+                        } else {
+                            const str_ = string_builder.append(String, version);
+                            const ptr = str_.ptr();
+                            bun.path.dangerouslyConvertPathToPosixInPlace(u8, lockfile.buffers.string_bytes.items[ptr.off..][0..ptr.len]);
+                            break :brk str_;
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            break :brk string_builder.append(String, version);
+        };
+
         const buf = lockfile.buffers.string_bytes.items;
         const sliced = external_version.sliced(buf);
-
-        if (comptime Environment.isWindows) {
-            switch (Dependency.Version.Tag.infer(sliced.slice)) {
-                .workspace, .folder, .symlink, .tarball => {
-                    if (external_version.isInline()) {
-                        bun.path.pathToPosixInPlace(u8, &external_version.bytes);
-                    } else {
-                        const ptr = external_version.ptr();
-                        bun.path.pathToPosixInPlace(u8, buf[ptr.off..][0..ptr.len]);
-                    }
-                },
-                else => {},
-            }
-        }
 
         var dependency_version = Dependency.parseWithOptionalTag(
             allocator,
@@ -3798,6 +3778,13 @@ pub const Package = extern struct {
             if (comptime Environment.allow_assert) {
                 std.debug.assert(!strings.containsChar(key, std.fs.path.sep_windows));
             }
+
+            if (comptime Environment.isDebug) {
+                if (!bun.sys.exists(key)) {
+                    Output.debugWarn("WorkspaceMap.insert: key {s} does not exist", .{key});
+                }
+            }
+
             const entry = try self.map.getOrPut(key);
             if (!entry.found_existing) {
                 entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
@@ -4132,7 +4119,7 @@ pub const Package = extern struct {
                         // entry_path is contained in filepath_buf so it is safe to constCast and
                         // replace path separators
                         const entry_slice = bun.span(entry_path);
-                        Path.pathToPosixInPlace(u8, @constCast(entry_slice));
+                        Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(entry_slice));
                         break :brk entry_slice;
                     };
 
@@ -4598,17 +4585,7 @@ pub const Package = extern struct {
                                 if (strings.eqlLong(value.name, entry.name, true)) {
                                     const note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
 
-                                    const note_src = src: {
-                                        var workspace_file = std.fs.openFileAbsoluteZ(note_abs_path, .{ .mode = .read_only }) catch {
-                                            break :src logger.Source.initEmptyFile(note_abs_path);
-                                        };
-                                        defer workspace_file.close();
-
-                                        // TODO: when are these bytes supposed to be freed?
-                                        const workspace_bytes = try workspace_file.readToEndAlloc(allocator, std.math.maxInt(usize));
-                                        // defer allocator.free(workspace_bytes);
-                                        break :src logger.Source.initPathString(note_abs_path, workspace_bytes);
-                                    };
+                                    const note_src = bun.sys.File.toSource(note_abs_path, allocator).unwrap() catch logger.Source.initEmptyFile(note_abs_path);
 
                                     notes[i] = .{
                                         .text = "Package name is also declared here",
@@ -4622,17 +4599,7 @@ pub const Package = extern struct {
 
                         const abs_path = Path.joinAbsStringZ(cwd, &.{ path, "package.json" }, .auto);
 
-                        const src = src: {
-                            var workspace_file = std.fs.openFileAbsoluteZ(abs_path, .{ .mode = .read_only }) catch {
-                                break :src logger.Source.initEmptyFile(abs_path);
-                            };
-                            defer workspace_file.close();
-
-                            // TODO: when are these bytes supposed to be freed?
-                            const workspace_bytes = try workspace_file.readToEndAlloc(allocator, std.math.maxInt(usize));
-                            // defer allocator.free(workspace_bytes);
-                            break :src logger.Source.initPathString(abs_path, workspace_bytes);
-                        };
+                        const src = bun.sys.File.toSource(abs_path, allocator).unwrap() catch logger.Source.initEmptyFile(abs_path);
 
                         log.addRangeErrorFmtWithNotes(
                             &src,
@@ -5926,21 +5893,12 @@ const default_trusted_dependencies = brk: {
 };
 
 pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
-    if (comptime FeatureFlags.breaking_changes_1_1_0) {
-        if (this.trusted_dependencies) |trusted_dependencies| {
-            const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
-            return trusted_dependencies.contains(hash);
-        }
-
-        return default_trusted_dependencies.has(name);
-    } else {
-        if (this.trusted_dependencies) |trusted_dependencies| {
-            const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
-            return trusted_dependencies.contains(hash) or default_trusted_dependencies.has(name);
-        }
-
-        return default_trusted_dependencies.has(name);
+    if (this.trusted_dependencies) |trusted_dependencies| {
+        const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
+        return trusted_dependencies.contains(hash);
     }
+
+    return default_trusted_dependencies.has(name);
 }
 
 pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependency, res: ?PackageID) !void {

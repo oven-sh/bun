@@ -18,6 +18,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/*.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -29,6 +30,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - ".github/workflows/*.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -59,6 +61,8 @@ jobs:
     steps:
       - run: git config --global core.autocrlf false && git config --global core.eol lf
       - uses: actions/checkout@v4
+      - name: Checkout submodules
+        run: git submodule update --init --recursive --depth=1 --progress --force
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -88,7 +92,7 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{ matrix.arch }}-windows-msvc
             GIT_SHA=${{ github.sha }}
-            CANARY=${{ env.canary == 'true' && steps.canary.outputs.canary_revision || '0' }}
+            CANARY=0
             ZIG_OPTIMIZE=ReleaseSafe
           # TODO(@paperdave): enable ASSERTIONS=1
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
@@ -245,7 +249,8 @@ jobs:
           # $env:AWS_SECRET_ACCESS_KEY="${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }}"
           # $SCCACHE="$PWD/${sczip}/${sczip}/sccache.exe"
 
-          $CANARY_REVISION = if (Test-Path build/.canary_revision) { Get-Content build/.canary_revision } else { "0" }
+          # $CANARY_REVISION = if (Test-Path build/.canary_revision) { Get-Content build/.canary_revision } else { "0" }
+          $CANARY_REVISION = 0
 
           .\scripts\env.ps1 ${{ matrix.cpu == 'nehalem' && '-Baseline' || '' }}
           .\scripts\update-submodules.ps1
@@ -310,7 +315,8 @@ jobs:
           .\scripts\update-submodules.ps1
           .\scripts\env.ps1 ${{ matrix.cpu == 'nehalem' && '-Baseline' || '' }}
           Set-Location build
-          $CANARY_REVISION = if (Test-Path build/.canary_revision) { Get-Content build/.canary_revision } else { "0" }
+          # $CANARY_REVISION = if (Test-Path build/.canary_revision) { Get-Content build/.canary_revision } else { "0" }
+          $CANARY_REVISION = 0
           cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
             -DNO_CODEGEN=1 `
             -DNO_CONFIGURE_DEPENDS=1 `
@@ -420,16 +426,13 @@ jobs:
       - uses: secondlife/setup-cygwin@v3
         with:
           packages: bash
-      - name: Install dependencies
-        run: |
-          # bun install --verbose
-          # bun install --cwd=test --verbose
-          # bun install --cwd=packages/bun-internal-test --verbose
-
-          npm install
-          cd test && npm install
-          cd ../packages/bun-internal-test && npm install
-          cd ../..
+      # Split these into multiple steps to make it clear which one fails
+      - name: Install dependencies (root)
+        run: bun install --verbose
+      - name: Install dependencies (test)
+        run: bun install --cwd=test --verbose
+      - name: Install dependencies (runner)
+        run: bun install --cwd=packages/bun-internal-test --verbose
       - id: test
         name: Run tests
         env:

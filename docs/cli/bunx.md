@@ -77,4 +77,4 @@ Bun automatically loads environment variables from `.env` files before running a
 2. `NODE_ENV` === `"production"` ? `.env.production` : `.env.development`
 3. `.env`
 
-To debug environment variables, run `bun run env` to view a list of resolved environment variables. -->
+To debug environment variables, run `bun --print process.env` to view a list of resolved environment variables. -->

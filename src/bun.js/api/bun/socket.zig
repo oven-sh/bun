@@ -2888,6 +2888,9 @@ fn NewSocket(comptime ssl: bool) type {
             // open is not immediately called because we need to set bunSocketInternal
             tls.markActive();
 
+            // we're unrefing the original instance and refing the TLS instance
+            tls.poll_ref.ref(this.handlers.vm);
+
             // mark both instances on socket data
             new_socket.ext(WrappedSocket).?.* = .{ .tcp = raw, .tls = tls };
 

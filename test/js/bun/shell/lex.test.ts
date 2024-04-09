@@ -70,7 +70,7 @@ describe("lex shell", () => {
       { "Text": "foo" },
       { "Var": "NICE" },
       { "Text": "good" },
-      { "Text": "NICE" },
+      { "DoubleQuotedText": "NICE" },
       { "Eof": {} },
     ];
     const result = JSON.parse(lex`echo foo"$NICE"good"NICE"`);
@@ -91,7 +91,7 @@ describe("lex shell", () => {
       { "Semicolon": {} },
       { "Text": "echo" },
       { "Delimit": {} },
-      { "Text": "NICE;" },
+      { "DoubleQuotedText": "NICE;" },
       { "Eof": {} },
     ];
     const result = JSON.parse(lex`echo foo; bar baz; echo "NICE;"`);
@@ -118,7 +118,7 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Text": "FULLNAME=" },
       { "Var": "NAME" },
-      { "Text": " radisic" },
+      { "DoubleQuotedText": " radisic" },
       { "Delimit": {} },
       { "Text": "LOL=" },
       { "Delimit": {} },
@@ -722,19 +722,15 @@ describe("lex shell", () => {
         .run();
     });
 
-    test("Unexpected ')'", async () => {
-      await TestBuilder.command`echo )`.error("Unexpected ')'").run();
-      await TestBuilder.command`echo (echo hi)`
-        .error(
-          "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.",
-        )
-        .run();
-      await TestBuilder.command`echo "()"`.stdout("()\n").run();
+    describe("Unexpected ')'", async () => {
+      TestBuilder.command`echo )`.error("Unexpected ')'").runAsTest("lone closing paren");
+      TestBuilder.command`echo (echo hi)`.error("Unexpected token: `(`").runAsTest("subshell in invalid position");
+      TestBuilder.command`echo "()"`.stdout("()\n").runAsTest("quoted parens");
     });
 
     test("Unexpected EOF", async () => {
       await TestBuilder.command`echo hi |`.error("Unexpected EOF").run();
-      await TestBuilder.command`echo hi &`.error("Unexpected EOF").run();
+      await TestBuilder.command`echo hi &`.error('Background commands "&" are not supported yet.').run();
     });
 
     test("Unclosed subshell", async () => {
@@ -753,11 +749,6 @@ describe("lex shell", () => {
         .run();
 
       await TestBuilder.command`echo hi && (echo uh oh`.error("Unclosed subshell").run();
-      await TestBuilder.command`echo hi && (echo uh oh)`
-        .error(
-          "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.",
-        )
-        .run();
     });
   });
 });

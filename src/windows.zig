@@ -2987,11 +2987,29 @@ pub extern fn LoadLibraryA(
 
 pub extern fn LoadLibraryExW([*:0]const u16, ?HANDLE, DWORD) ?*anyopaque;
 
-pub extern "kernel32" fn CreateHardLinkW(
-    newFileName: LPCWSTR,
-    existingFileName: LPCWSTR,
-    securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
-) BOOL;
+pub const CreateHardLinkW = struct {
+    pub fn wrapper(newFileName: LPCWSTR, existingFileName: LPCWSTR, securityAttributes: ?*win32.SECURITY_ATTRIBUTES) BOOL {
+        const run = struct {
+            pub extern "kernel32" fn CreateHardLinkW(
+                newFileName: LPCWSTR,
+                existingFileName: LPCWSTR,
+                securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
+            ) BOOL;
+        }.CreateHardLinkW;
+
+        const rc = run(newFileName, existingFileName, securityAttributes);
+        if (comptime Environment.isDebug)
+            bun.sys.syslog(
+                "CreateHardLinkW({}, {}) = {d}",
+                .{
+                    bun.fmt.fmtOSPath(std.mem.span(newFileName), .{}),
+                    bun.fmt.fmtOSPath(std.mem.span(existingFileName), .{}),
+                    if (rc == 0) @intFromEnum(Win32Error.get()) else 0,
+                },
+            );
+        return rc;
+    }
+}.wrapper;
 
 pub extern "kernel32" fn CopyFileW(
     source: LPCWSTR,
@@ -3010,6 +3028,10 @@ pub fn getLastErrno() bun.C.E {
     return (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
 }
 
+pub fn getLastError() anyerror {
+    return bun.errnoToZigErr(getLastErrno());
+}
+
 pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
     return switch (err) {
         .SUCCESS => .SUCCESS,
@@ -3022,7 +3044,12 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .OBJECT_NAME_NOT_FOUND => .NOENT,
         .NOT_A_DIRECTORY => .NOTDIR,
         .RETRY => .AGAIN,
+        .DIRECTORY_NOT_EMPTY => .EXIST,
         .FILE_TOO_LARGE => .@"2BIG",
+        .SHARING_VIOLATION => if (comptime Environment.isDebug) brk: {
+            bun.Output.debugWarn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE", .{});
+            break :brk .BUSY;
+        } else .BUSY,
         .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
             break :brk .INVAL;
@@ -3306,8 +3333,10 @@ pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
         .WSA_QOS_ESHAPERATEOBJ => error.WSA_QOS_ESHAPERATEOBJ,
         .WSA_QOS_RESERVED_PETYPE => error.WSA_QOS_RESERVED_PETYPE,
         _ => |t| {
-            if (Environment.isDebug) {
-                bun.Output.debugWarn("Unknown WinSockError: {d}", .{@intFromEnum(t)});
+            if (@intFromEnum(t) != 0) {
+                if (Environment.isDebug) {
+                    bun.Output.debugWarn("Unknown WinSockError: {d}", .{@intFromEnum(t)});
+                }
             }
         },
     };
@@ -3316,3 +3345,33 @@ pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
 pub fn WSAGetLastError() !void {
     return winSockErrorToZigError(std.os.windows.ws2_32.WSAGetLastError());
 }
+
+// BOOL CreateDirectoryExW(
+//   [in]           LPCWSTR               lpTemplateDirectory,
+//   [in]           LPCWSTR               lpNewDirectory,
+//   [in, optional] LPSECURITY_ATTRIBUTES lpSecurityAttributes
+// );
+pub extern "kernel32" fn CreateDirectoryExW(
+    lpTemplateDirectory: [*:0]const u16,
+    lpNewDirectory: [*:0]const u16,
+    lpSecurityAttributes: ?*win32.SECURITY_ATTRIBUTES,
+) callconv(windows.WINAPI) BOOL;
+
+pub fn GetFinalPathNameByHandle(
+    hFile: HANDLE,
+    fmt: std.os.windows.GetFinalPathNameByHandleFormat,
+    out_buffer: []u16,
+) std.os.windows.GetFinalPathNameByHandleError![]u16 {
+    bun.sys.syslog("GetFinalPathNameByHandle({*p})", .{hFile});
+    return std.os.windows.GetFinalPathNameByHandle(hFile, fmt, out_buffer);
+}
+
+pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
+pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
+pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
+
+// TODO: when https://github.com/ziglang/zig/pull/18692 merges, use std.os.windows for this
+pub extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
+pub extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
+pub extern fn GetConsoleOutputCP() u32;
+pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;

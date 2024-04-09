@@ -63,43 +63,19 @@ pub const BunxCommand = struct {
     const nanoseconds_cache_valid = seconds_cache_valid * 1000000000;
 
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
-        const target_package_json_fd = try std.os.openatZ(dir_fd.cast(), subpath_z, std.os.O.RDONLY, 0);
-        const target_package_json = std.fs.File{ .handle = target_package_json_fd };
-
-        const is_stale = is_stale: {
-            if (Environment.isWindows) {
-                var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
-                var info: std.os.windows.FILE_BASIC_INFORMATION = undefined;
-                const rc = std.os.windows.ntdll.NtQueryInformationFile(target_package_json_fd, &io_status_block, &info, @sizeOf(std.os.windows.FILE_BASIC_INFORMATION), .FileBasicInformation);
-                switch (rc) {
-                    .SUCCESS => {
-                        const time = std.os.windows.fromSysTime(info.LastWriteTime);
-                        const now = std.time.nanoTimestamp();
-                        break :is_stale (now - time > nanoseconds_cache_valid);
-                    },
-                    // treat failures to stat as stale
-                    else => break :is_stale true,
-                }
-            } else {
-                var stat: std.os.Stat = undefined;
-                const rc = std.c.fstat(target_package_json_fd, &stat);
-                if (rc != 0) {
-                    break :is_stale true;
-                }
-                break :is_stale std.time.timestamp() - stat.mtime().tv_sec > seconds_cache_valid;
-            }
-        };
-
-        if (is_stale) {
-            target_package_json.close();
-            // If delete fails, oh well. Hope installation takes care of it.
-            dir_fd.asDir().deleteTree(subpath_z) catch {};
-            return error.NeedToInstall;
-        }
+        const target_package_json_fd = try bun.sys.openat(dir_fd, subpath_z, std.os.O.RDONLY, 0).unwrap();
+        const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
 
         defer target_package_json.close();
 
-        const package_json_contents = try target_package_json.readToEndAlloc(bundler.allocator, std.math.maxInt(u32));
+        const package_json_read = target_package_json.readToEnd(bundler.allocator);
+
+        // TODO: make this better
+        if (package_json_read.err) |err| {
+            try (bun.JSC.Maybe(void){ .err = err }).unwrap();
+        }
+
+        const package_json_contents = package_json_read.bytes.items;
         const source = bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
 
         bun.JSAst.Expr.Data.Store.create(default_allocator);
@@ -134,9 +110,9 @@ pub const BunxCommand = struct {
         if (expr.asProperty("directories")) |dirs| {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
                 if (bin_prop.expr.asString(bundler.allocator)) |dir_name| {
-                    const bin_dir = try std.os.openat(dir_fd.cast(), dir_name, std.os.O.RDONLY, 0);
-                    defer std.os.close(bin_dir);
-                    const dir = std.fs.Dir{ .fd = bin_dir };
+                    const bin_dir = try bun.sys.openatA(dir_fd, dir_name, std.os.O.RDONLY | std.os.O.DIRECTORY, 0).unwrap();
+                    defer _ = bun.sys.close(bin_dir);
+                    const dir = std.fs.Dir{ .fd = bin_dir.cast() };
                     var iterator = bun.DirIterator.iterate(dir, .u8);
                     var entry = iterator.next();
                     while (true) : (entry = iterator.next()) {
@@ -159,17 +135,56 @@ pub const BunxCommand = struct {
 
     fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const subpath_z = std.fmt.bufPrintZ(&subpath, "node_modules/{s}/package.json", .{package_name}) catch unreachable;
+        const subpath_z = std.fmt.bufPrintZ(&subpath, bun.pathLiteral("node_modules/{s}/package.json"), .{package_name}) catch unreachable;
         return try getBinNameFromSubpath(bundler, dir_fd, subpath_z);
     }
 
-    fn getBinNameFromTempDirectory(bundler: *bun.Bundler, tempdir_name: []const u8, package_name: []const u8) ![]const u8 {
+    fn getBinNameFromTempDirectory(bundler: *bun.Bundler, tempdir_name: []const u8, package_name: []const u8, with_stale_check: bool) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+        if (with_stale_check) {
+            const subpath_z = std.fmt.bufPrintZ(
+                &subpath,
+                bun.pathLiteral("{s}/package.json"),
+                .{tempdir_name},
+            ) catch unreachable;
+            const target_package_json_fd = bun.sys.openat(bun.toFD(std.fs.cwd().fd), subpath_z, std.os.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
+            const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
+
+            const is_stale = is_stale: {
+                if (Environment.isWindows) {
+                    var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
+                    var info: std.os.windows.FILE_BASIC_INFORMATION = undefined;
+                    const rc = std.os.windows.ntdll.NtQueryInformationFile(target_package_json_fd.cast(), &io_status_block, &info, @sizeOf(std.os.windows.FILE_BASIC_INFORMATION), .FileBasicInformation);
+                    switch (rc) {
+                        .SUCCESS => {
+                            const time = std.os.windows.fromSysTime(info.LastWriteTime);
+                            const now = std.time.nanoTimestamp();
+                            break :is_stale (now - time > nanoseconds_cache_valid);
+                        },
+                        // treat failures to stat as stale
+                        else => break :is_stale true,
+                    }
+                } else {
+                    const stat = target_package_json.stat().unwrap() catch break :is_stale true;
+                    break :is_stale std.time.timestamp() - stat.mtime().tv_sec > seconds_cache_valid;
+                }
+            };
+
+            if (is_stale) {
+                _ = target_package_json.close();
+                // If delete fails, oh well. Hope installation takes care of it.
+                std.fs.cwd().deleteTree(tempdir_name) catch {};
+                return error.NeedToInstall;
+            }
+            _ = target_package_json.close();
+        }
+
         const subpath_z = std.fmt.bufPrintZ(
             &subpath,
-            "{s}/node_modules/{s}/package.json",
+            bun.pathLiteral("{s}/node_modules/{s}/package.json"),
             .{ tempdir_name, package_name },
         ) catch unreachable;
+
         return try getBinNameFromSubpath(bundler, bun.toFD(std.fs.cwd().fd), subpath_z);
     }
 
@@ -182,7 +197,7 @@ pub const BunxCommand = struct {
                 return error.NoBinFound;
             }
 
-            return getBinNameFromTempDirectory(bundler, tempdir_name, package_name) catch |err2| {
+            return getBinNameFromTempDirectory(bundler, tempdir_name, package_name, true) catch |err2| {
                 if (err2 == error.NoBinFound) {
                     return error.NoBinFound;
                 }
@@ -205,6 +220,7 @@ pub const BunxCommand = struct {
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
         var maybe_package_name: ?string = null;
         var verbose_install = false;
+        var silent_install = false;
         {
             var found_subcommand_name = false;
 
@@ -217,6 +233,8 @@ pub const BunxCommand = struct {
                 if (positional.len > 0 and positional[0] == '-') {
                     if (strings.eqlComptime(positional, "--verbose")) {
                         verbose_install = true;
+                    } else if (strings.eqlComptime(positional, "--silent")) {
+                        silent_install = true;
                     } else if (strings.eqlComptime(positional, "--bun") or strings.eqlComptime(positional, "-b")) {
                         ctx.debug.run_in_bun = true;
                     }
@@ -423,18 +441,11 @@ pub const BunxCommand = struct {
 
         debug("bunx_cache_dir: {s}", .{bunx_cache_dir});
 
-        const bin_extension = switch (Environment.os) {
-            .windows => ".exe",
-            .mac => "",
-            .linux => "",
-            .wasm => "",
-        };
-
         var absolute_in_cache_dir_buf: bun.PathBuffer = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(
             &absolute_in_cache_dir_buf,
             bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"),
-            .{ bunx_cache_dir, initial_bin_name, bin_extension },
+            .{ bunx_cache_dir, initial_bin_name, bun.exe_suffix },
         ) catch return error.PathTooLong;
 
         const passthrough = passthrough_list.items;
@@ -449,6 +460,7 @@ pub const BunxCommand = struct {
                 destination_ = bun.which(
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     initial_bin_name,
                 );
             }
@@ -459,6 +471,7 @@ pub const BunxCommand = struct {
             if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
+                if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                 absolute_in_cache_dir,
             )) |destination| {
                 const out = bun.asByteSlice(destination);
@@ -522,13 +535,14 @@ pub const BunxCommand = struct {
             if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bin_extension }) catch unreachable;
+                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
 
                     // Only use the system-installed version if there is no version specified
                     if (update_request.version.literal.isEmpty()) {
                         destination_ = bun.which(
                             &path_buf,
                             bunx_cache_dir,
+                            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                             package_name_for_bin,
                         );
                     }
@@ -536,6 +550,7 @@ pub const BunxCommand = struct {
                     if (destination_ orelse bun.which(
                         &path_buf,
                         bunx_cache_dir,
+                        if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                         absolute_in_cache_dir,
                     )) |destination| {
                         const out = bun.asByteSlice(destination);
@@ -559,7 +574,6 @@ pub const BunxCommand = struct {
                 }
             }
         }
-
         const bunx_install_dir = try std.fs.cwd().makeOpenPath(bunx_cache_dir, .{});
 
         create_package_json: {
@@ -569,7 +583,7 @@ pub const BunxCommand = struct {
             package_json.writeAll("{}\n") catch {};
         }
 
-        var args = std.BoundedArray([]const u8, 7).fromSlice(&.{
+        var args = std.BoundedArray([]const u8, 8).fromSlice(&.{
             try bun.selfExePath(),
             "add",
             install_param,
@@ -590,6 +604,11 @@ pub const BunxCommand = struct {
 
         if (verbose_install) {
             args.append("--verbose") catch
+                unreachable; // upper bound is known
+        }
+
+        if (silent_install) {
+            args.append("--silent") catch
                 unreachable; // upper bound is known
         }
 
@@ -642,7 +661,7 @@ pub const BunxCommand = struct {
             else => {},
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, initial_bin_name, bin_extension }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, initial_bin_name, bun.exe_suffix }) catch unreachable;
 
         // Similar to "npx":
         //
@@ -651,6 +670,7 @@ pub const BunxCommand = struct {
         if (bun.which(
             &path_buf,
             bunx_cache_dir,
+            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
@@ -668,13 +688,14 @@ pub const BunxCommand = struct {
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-        if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, result_package_name)) |package_name_for_bin| {
+        if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, result_package_name, false)) |package_name_for_bin| {
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bin_extension }) catch unreachable;
+                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
 
                 if (bun.which(
                     &path_buf,
                     bunx_cache_dir,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);

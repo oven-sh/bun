@@ -17,21 +17,6 @@
     },
     {
       "type": "process",
-      "label": "Setup Environment",
-      "dependsOn": ["Install Dependencies"],
-      "command": "scripts/setup.sh",
-      "windows": {
-        "command": "scripts/setup.ps1"
-      },
-      "icon": {
-        "id": "check"
-      },
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-    },
-    {
-      "type": "process",
       "label": "Build Bun",
       "dependsOn": ["Setup Environment"],
       "command": "bun",

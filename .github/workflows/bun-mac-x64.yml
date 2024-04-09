@@ -137,7 +137,6 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           mkdir -p $BUN_DEPS_OUT_DIR
-          bash ./scripts/clean-dependencies.sh
           bash ./scripts/all-dependencies.sh
 
       - name: Cache submodule dependencies

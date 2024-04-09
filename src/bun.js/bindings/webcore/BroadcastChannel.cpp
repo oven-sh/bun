@@ -72,7 +72,7 @@ static HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& ch
 //     return { WTFMove(topOrigin), WTFMove(securityOrigin) };
 // }
 
-class BroadcastChannel::MainThreadBridge : public ThreadSafeRefCounted<MainThreadBridge, WTF::DestructionThread::Main> {
+class BroadcastChannel::MainThreadBridge : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MainThreadBridge> {
 public:
     static Ref<MainThreadBridge> create(BroadcastChannel& channel, const String& name, ScriptExecutionContext& context)
     {
@@ -87,13 +87,15 @@ public:
     BroadcastChannelIdentifier identifier() const { return m_identifier; }
     ScriptExecutionContextIdentifier contextId() const { return m_contextId; }
 
+    using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref;
+    using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref;
+
 private:
     MainThreadBridge(BroadcastChannel&, const String& name, ScriptExecutionContext&);
 
     void ensureOnMainThread(Function<void(void*)>&&);
 
-    // WeakPtr<BroadcastChannel, WeakPtrImplWithEventTargetData> m_broadcastChannel;
-    WeakPtr<BroadcastChannel> m_broadcastChannel;
+    WeakPtr<BroadcastChannel, WeakPtrImplWithEventTargetData> m_broadcastChannel;
     const BroadcastChannelIdentifier m_identifier;
     const String m_name; // Main thread only.
     ScriptExecutionContextIdentifier m_contextId;

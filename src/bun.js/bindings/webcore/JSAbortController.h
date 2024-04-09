@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include "root.h"
-
 #include "AbortController.h"
 #include "JSDOMWrapper.h"
 #include <wtf/NeverDestroyed.h>
@@ -33,8 +31,9 @@ public:
     using Base = JSDOMWrapper<AbortController>;
     static JSAbortController* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<AbortController>&& impl)
     {
-        JSAbortController* ptr = new (NotNull, JSC::allocateCell<JSAbortController>(globalObject->vm())) JSAbortController(structure, *globalObject, WTFMove(impl));
-        ptr->finishCreation(globalObject->vm());
+        auto& vm = globalObject->vm();
+        JSAbortController* ptr = new (NotNull, JSC::allocateCell<JSAbortController>(vm)) JSAbortController(structure, *globalObject, WTFMove(impl));
+        ptr->finishCreation(vm);
         return ptr;
     }
 

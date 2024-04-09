@@ -33,8 +33,9 @@ public:
     using DOMWrapped = AbortSignal;
     static JSAbortSignal* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<AbortSignal>&& impl)
     {
-        JSAbortSignal* ptr = new (NotNull, JSC::allocateCell<JSAbortSignal>(globalObject->vm())) JSAbortSignal(structure, *globalObject, WTFMove(impl));
-        ptr->finishCreation(globalObject->vm());
+        auto& vm = globalObject->vm();
+        JSAbortSignal* ptr = new (NotNull, JSC::allocateCell<JSAbortSignal>(vm)) JSAbortSignal(structure, *globalObject, WTFMove(impl));
+        ptr->finishCreation(vm);
         return ptr;
     }
 
@@ -66,6 +67,9 @@ public:
     {
         return static_cast<AbortSignal&>(Base::wrapped());
     }
+
+    Ref<AbortSignal> protectedWrapped() const;
+
 protected:
     JSAbortSignal(JSC::Structure*, JSDOMGlobalObject&, Ref<AbortSignal>&&);
 

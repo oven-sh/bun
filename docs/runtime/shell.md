@@ -74,8 +74,8 @@ try {
   console.log(output);
 } catch (err) {
   console.log(`Failed with code ${err.exitCode}`);
-  console.log(output.stdout.toString());
-  console.log(output.stderr.toString());
+  console.log(err.stdout.toString());
+  console.log(err.stderr.toString());
 }
 ```
 

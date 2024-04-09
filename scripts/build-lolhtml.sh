@@ -3,5 +3,6 @@ set -euxo pipefail
 source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 
 cd $BUN_DEPS_DIR/lol-html/c-api
+rm -rf target
 cargo build --release
 cp target/release/liblolhtml.a $BUN_DEPS_OUT_DIR/liblolhtml.a

@@ -7,6 +7,7 @@ MIMALLOC_VALGRIND_ENABLED_FLAG=${MIMALLOC_VALGRIND_ENABLED_FLAG:-}
 
 cd $BUN_DEPS_DIR/mimalloc
 
+rm -f libmimalloc.a
 rm -rf CMakeCache* CMakeFiles
 
 cmake "${CMAKE_FLAGS[@]}" . \

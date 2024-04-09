@@ -10,8 +10,17 @@ cd $BUN_DEPS_DIR/mimalloc
 rm -f libmimalloc.a
 rm -rf CMakeCache* CMakeFiles
 
+sed -i '' '/set(mi_basename "${mi_basename/d' CMakeLists.txt
+
+CMAKE_FLAGS_EXTRA=""
+
+if [ "${CMAKE_BUILD_TYPE}x" = "Debugx" ]
+then
+    CMAKE_FLAGS_EXTRA="-DMI_DEBUG=1 -DMI_TRACK_VALGRIND=ON"
+fi
+
 cmake "${CMAKE_FLAGS[@]}" . \
-    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_BUILD_TYPE_LC=none \
     -DMI_SKIP_COLLECT_ON_EXIT=1 \
     -DMI_BUILD_SHARED=OFF \
     -DMI_BUILD_STATIC=ON \
@@ -22,6 +31,7 @@ cmake "${CMAKE_FLAGS[@]}" . \
     -DMI_USE_CXX=ON \
     -DMI_OVERRIDE=OFF \
     -DMI_OSX_ZONE=OFF \
+    ${CMAKE_FLAGS_EXTRA} \
     -GNinja
 
 ninja

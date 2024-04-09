@@ -65,11 +65,12 @@ pub const ProcessHandle = struct {
 
     fn handleChunkBasic(this: *This, chunk: []const u8) !void {
         var content = chunk;
+        this.state.draw_buf.clearRetainingCapacity();
         if (this.buffer.items.len > 0) {
             if (std.mem.indexOfScalar(u8, content, '\n')) |i| {
                 try this.buffer.appendSlice(content[0 .. i + 1]);
                 content = content[i + 1 ..];
-                try std.io.getStdOut().writer().print("{s}: {s}\n", .{ this.config.package_name, this.buffer.items });
+                try this.state.draw_buf.writer().print("{s}: {s}", .{ this.config.package_name, this.buffer.items });
                 this.buffer.clearRetainingCapacity();
             } else {
                 try this.buffer.appendSlice(content);
@@ -78,12 +79,13 @@ pub const ProcessHandle = struct {
         }
         while (std.mem.indexOfScalar(u8, content, '\n')) |i| {
             const line = content[0 .. i + 1];
-            try std.io.getStdOut().writer().print("{s}: {s}\n", .{ this.config.package_name, line });
+            try this.state.draw_buf.writer().print("{s}: {s}", .{ this.config.package_name, line });
             content = content[i + 1 ..];
         }
         if (content.len > 0) {
             try this.buffer.appendSlice(content);
         }
+        try std.io.getStdOut().writeAll(this.state.draw_buf.items);
     }
 
     pub fn onReaderDone(this: *This) void {
@@ -233,10 +235,14 @@ const State = struct {
 
     pub fn flush(this: *This) !void {
         if (this.pretty_output) return;
+        this.draw_buf.clearRetainingCapacity();
         for (this.handles) |*handle| {
-            try std.io.getStdOut().writer().print("{s}: {s}\n", .{ handle.config.package_name, handle.buffer.items });
-            handle.buffer.clearRetainingCapacity();
+            if (handle.buffer.items.len > 0) {
+                try this.draw_buf.writer().print("{s}: {s}\n", .{ handle.config.package_name, handle.buffer.items });
+                handle.buffer.clearRetainingCapacity();
+            }
         }
+        try std.io.getStdOut().writeAll(this.draw_buf.items);
     }
 
     pub fn abort(this: *This) void {
@@ -289,6 +295,11 @@ const AbortHandler = struct {
         }
     }
 };
+
+fn windowsIsTerminal() bool {
+    const res = bun.windows.GetFileType(bun.STDOUT_FD.cast());
+    return res == bun.windows.FILE_TYPE_CHAR;
+}
 
 pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     const script_name = if (ctx.positionals.len > 1) ctx.positionals[1] else brk: {
@@ -384,7 +395,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
         .event_loop = event_loop,
         .live_processes = scripts.items.len,
-        .pretty_output = Output.enable_ansi_colors_stdout,
+        .pretty_output = if (Environment.isWindows) windowsIsTerminal() else Output.enable_ansi_colors_stdout,
     };
 
     for (scripts.items, 0..) |*script, i| {

@@ -20,9 +20,6 @@ const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
-const Glob = @import("glob.zig");
-
-const Package = @import("install/lockfile.zig").Package;
 
 const debug = Output.scoped(.CLI, true);
 
@@ -37,6 +34,7 @@ const bundler = bun.bundler;
 const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
+const FilterRun = @import("./cli/filter_run.zig");
 
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
@@ -345,17 +343,16 @@ pub const Arguments = struct {
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         } else {
-            var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var cwd: []const u8 = undefined;
-            if (ctx.args.cwd_override) |cwd_val| {
-                cwd = cwd_val;
-            } else {
-                cwd = try bun.getcwd(&cwd_buf);
+            if (ctx.args.absolute_working_dir == null) {
+                var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const cwd = bun.getcwd(&secondbuf) catch return;
+
+                ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
             }
 
-            var parts = [_]string{ cwd, config_path_ };
+            var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
             config_path_ = resolve_path.joinAbsStringBuf(
-                cwd,
+                ctx.args.absolute_working_dir.?,
                 &config_buf,
                 &parts,
                 .auto,
@@ -412,8 +409,7 @@ pub const Arguments = struct {
             }
         }
 
-        var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var cwd: []const u8 = undefined;
+        var cwd: []u8 = undefined;
         if (args.option("--cwd")) |cwd_| {
             cwd = brk: {
                 var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -435,9 +431,8 @@ pub const Arguments = struct {
                 break :brk try allocator.dupe(u8, out);
             };
         } else {
-            cwd = try allocator.dupe(u8, try bun.getcwd(&cwd_buf));
+            cwd = try bun.getcwdAlloc(allocator);
         }
-        ctx.args.cwd_override = cwd;
 
         if (cmd == .RunCommand) {
             ctx.filters = args.options("--filter");
@@ -499,6 +494,7 @@ pub const Arguments = struct {
             ctx.test_options.only = args.flag("--only");
         }
 
+        ctx.args.absolute_working_dir = cwd;
         ctx.positionals = args.positionals();
 
         if (comptime Command.Tag.loads_config.get(cmd)) {
@@ -1715,8 +1711,19 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
 
+                if (ctx.filters.len > 0) {
+                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
+
                 if (ctx.positionals.len > 0) {
-                    try RunCommand.exec(ctx, false, true, false);
+                    if (try RunCommand.exec(ctx, false, true, false)) {
+                        return;
+                    }
+
+                    Global.exit(1);
                 }
             },
             .RunAsNodeCommand => {
@@ -1832,8 +1839,9 @@ pub const Command = struct {
                     if (ctx.filters.len > 0) {
                         Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
                     }
-                    const res = try RunCommand.exec(ctx, true, false, false);
-                    res.exit();
+                    if (try RunCommand.exec(ctx, true, false, true)) {
+                        return;
+                    }
 
                     Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Script not found \"{s}\"<r>", .{
                         ctx.positionals[0],

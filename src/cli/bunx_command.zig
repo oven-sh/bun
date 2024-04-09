@@ -516,7 +516,7 @@ pub const BunxCommand = struct {
                     }
                 }
 
-                const res = try Run.runBinary(
+                try Run.runBinary(
                     ctx,
                     try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                     destination,
@@ -525,7 +525,8 @@ pub const BunxCommand = struct {
                     passthrough,
                     null,
                 );
-                res.exit();
+                // runBinary is noreturn
+                @compileError("unreachable");
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -553,7 +554,7 @@ pub const BunxCommand = struct {
                         absolute_in_cache_dir,
                     )) |destination| {
                         const out = bun.asByteSlice(destination);
-                        const res = try Run.runBinary(
+                        try Run.runBinary(
                             ctx,
                             try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                             destination,
@@ -562,7 +563,8 @@ pub const BunxCommand = struct {
                             passthrough,
                             null,
                         );
-                        res.exit();
+                        // runBinary is noreturn
+                        @compileError("unreachable");
                     }
                 }
             } else |err| {
@@ -672,7 +674,7 @@ pub const BunxCommand = struct {
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
-            const res = try Run.runBinary(
+            try Run.runBinary(
                 ctx,
                 try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                 destination,
@@ -681,7 +683,8 @@ pub const BunxCommand = struct {
                 passthrough,
                 null,
             );
-            res.exit();
+            // runBinary is noreturn
+            @compileError("unreachable");
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -696,7 +699,7 @@ pub const BunxCommand = struct {
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);
-                    const res = try Run.runBinary(
+                    try Run.runBinary(
                         ctx,
                         try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                         destination,
@@ -705,7 +708,8 @@ pub const BunxCommand = struct {
                         passthrough,
                         null,
                     );
-                    res.exit();
+                    // runBinary is noreturn
+                    @compileError("unreachable");
                 }
             }
         } else |_| {}

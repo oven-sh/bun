@@ -371,11 +371,11 @@ describe("bunshell", () => {
   // bar
   //
   // I'm not sure why, this isn't documented behavior, so I'm choosing to ignore it.
-  describe('gnu_quote', () => {
-// An unfortunate consequence of our use of String.raw and tagged template
-// functions for the shell make it so that we have to use { raw: string } to do
-// backtick command substitution
-const BACKTICK = {raw: '`'}
+  describe("gnu_quote", () => {
+    // An unfortunate consequence of our use of String.raw and tagged template
+    // functions for the shell make it so that we have to use { raw: string } to do
+    // backtick command substitution
+    const BACKTICK = { raw: "`" };
 
     // Single Quote
     TestBuilder.command`
@@ -386,9 +386,10 @@ bar'
 echo 'foo\
 bar'
 `
-.stdout('foo\nbar\nfoo\nbar\nfoo\\\nbar\n').runAsTest('Single Quote')
+      .stdout("foo\nbar\nfoo\nbar\nfoo\\\nbar\n")
+      .runAsTest("Single Quote");
 
-TestBuilder.command`
+    TestBuilder.command`
 echo "foo
 bar"
 echo "foo
@@ -396,9 +397,10 @@ bar"
 echo "foo\
 bar"
 `
-.stdout('foo\nbar\nfoo\nbar\nfoobar\n').runAsTest('Double Quote');
+      .stdout("foo\nbar\nfoo\nbar\nfoobar\n")
+      .runAsTest("Double Quote");
 
-TestBuilder.command`
+    TestBuilder.command`
 echo ${BACKTICK}echo 'foo
 bar'${BACKTICK}
 echo ${BACKTICK}echo 'foo
@@ -406,14 +408,15 @@ bar'${BACKTICK}
 echo ${BACKTICK}echo 'foo\
 bar'${BACKTICK}
 `
-.stdout(`foo bar
+      .stdout(
+        `foo bar
 foo bar
-foobar\n`)
-.todo('insane backtick behavior')
-.runAsTest('Backslash Single Quote');
+foobar\n`,
+      )
+      .todo("insane backtick behavior")
+      .runAsTest("Backslash Single Quote");
 
-
-TestBuilder.command`
+    TestBuilder.command`
 echo "${BACKTICK}echo 'foo
 bar'${BACKTICK}"
 echo "${BACKTICK}echo 'foo
@@ -421,15 +424,17 @@ bar'${BACKTICK}"
 echo "${BACKTICK}echo 'foo\
 bar'${BACKTICK}"
 `
-.stdout(`foo
+      .stdout(
+        `foo
 bar
 foo
 bar
-foobar\n`)
-.todo('insane backtick behavior')
-.runAsTest('Double Quote Backslash Single Quote');
+foobar\n`,
+      )
+      .todo("insane backtick behavior")
+      .runAsTest("Double Quote Backslash Single Quote");
 
-TestBuilder.command`
+    TestBuilder.command`
 echo $(echo 'foo
 bar')
 echo $(echo 'foo
@@ -437,11 +442,14 @@ bar')
 echo $(echo 'foo\
 bar')
 `
-.stdout(`foo bar
+      .stdout(
+        `foo bar
 foo bar
-foo\\ bar\n`).runAsTest('Dollar Paren Single Quote');
+foo\\ bar\n`,
+      )
+      .runAsTest("Dollar Paren Single Quote");
 
-TestBuilder.command`
+    TestBuilder.command`
 echo "$(echo 'foo
 bar')"
 echo "$(echo 'foo
@@ -449,14 +457,17 @@ bar')"
 echo "$(echo 'foo\
 bar')"
 `
-.stdout(`foo
+      .stdout(
+        `foo
 bar
 foo
 bar
 foo\\
-bar\n`).runAsTest('Dollar Paren Double Quote');
+bar\n`,
+      )
+      .runAsTest("Dollar Paren Double Quote");
 
-TestBuilder.command`
+    TestBuilder.command`
 echo "$(echo 'foo
 bar')"
 echo "$(echo 'foo
@@ -464,47 +475,51 @@ bar')"
 echo "$(echo 'foo\
 bar')"
 `
-.stdout(`foo
+      .stdout(
+        `foo
 bar
 foo
 bar
 foo\\
-bar\n`).runAsTest('Double Quote Dollar Paren Single Quote');
+bar\n`,
+      )
+      .runAsTest("Double Quote Dollar Paren Single Quote");
+  });
 
-  })
+  describe("escaped_newline", () => {
+    const printArgs = /* ts */ `console.log(JSON.stringify(process.argv))`;
 
-  describe('escaped_newline', () => {
-    const printArgs = /* ts */`console.log(JSON.stringify(process.argv))`
-
-    TestBuilder.command/* sh */`${BUN} run ./code.ts hi hello \
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
     on a newline!
   `
-    .ensureTempDir()
-    .file('code.ts', printArgs)
-    .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!"]))
-    .runAsTest('single')
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!"]))
+      .runAsTest("single");
 
-    TestBuilder.command/* sh */`${BUN} run ./code.ts hi hello \
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
     on a newline! \
     and \
     a few \
     others!
   `
-    .ensureTempDir()
-    .file('code.ts', printArgs)
-    .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "and", "a",  "few", "others!"]))
-    .runAsTest('many')
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out =>
+        expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "and", "a", "few", "others!"]),
+      )
+      .runAsTest("many");
 
-    TestBuilder.command/* sh */`${BUN} run ./code.ts hi hello \
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
     on a newline! \
     ooga"
 booga"
   `
-    .ensureTempDir()
-    .file('code.ts', printArgs)
-    .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "ooga\nbooga"]))
-    .runAsTest('quotes')
-  })
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "ooga\nbooga"]))
+      .runAsTest("quotes");
+  });
 
   describe("glob expansion", () => {
     // Issue #8403: https://github.com/oven-sh/bun/issues/8403

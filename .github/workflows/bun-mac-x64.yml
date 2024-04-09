@@ -135,6 +135,7 @@ jobs:
         env:
           CPU_TARGET: ${{ matrix.cpu }}
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          CMAKE_BUILD_TYPE: Release
         run: |
           mkdir -p $BUN_DEPS_OUT_DIR
           bash ./scripts/all-dependencies.sh

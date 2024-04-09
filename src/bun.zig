@@ -2091,6 +2091,31 @@ pub const win32 = struct {
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
 
+    /// Returns the original mode
+    pub fn unsetStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+        const fd = stdio(i);
+        var original_mode: w.DWORD = 0;
+        if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
+            if (windows.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
+                return windows.getLastError();
+            }
+        } else return windows.getLastError();
+
+        return original_mode;
+    }
+
+    /// Returns the original mode
+    pub fn setStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+        const fd = stdio(i);
+        var original_mode: w.DWORD = 0;
+        if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
+            if (windows.SetConsoleMode(fd.cast(), original_mode | flags) == 0) {
+                return windows.getLastError();
+            }
+        } else return windows.getLastError();
+        return original_mode;
+    }
+
     const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
     // magic exit code to indicate to the watcher manager that the child process should be re-spawned
     // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself

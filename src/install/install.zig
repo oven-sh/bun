@@ -580,7 +580,7 @@ pub const PreinstallState = enum(u2) {
 
 /// Schedule long-running callbacks for a task
 /// Slow stuff is broken into tasks, each can run independently without locks
-const Task = struct {
+pub const Task = struct {
     tag: Tag,
     request: Request,
     data: Data,
@@ -2250,17 +2250,11 @@ const NodeModulesFolder = struct {
 pub const Resolution = @import("./resolution.zig").Resolution;
 const Progress = std.Progress;
 const TaggedPointer = @import("../tagged_pointer.zig");
-const TaskCallbackContext = union(Tag) {
+const TaskCallbackContext = union(enum) {
     dependency: DependencyID,
     node_modules_folder: NodeModulesFolder,
     root_dependency: DependencyID,
     root_request_id: PackageID,
-    pub const Tag = enum {
-        dependency,
-        node_modules_folder,
-        root_dependency,
-        root_request_id,
-    };
 };
 
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);

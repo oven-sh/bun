@@ -2841,7 +2841,26 @@ pub const Package = extern struct {
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
-        for (old_dependencies, dependencies) |old_dep, *new_dep| {
+        for (old_dependencies, this.dependencies.off.., dependencies, prev_len..) |old_dep, old_id, *new_dep, new_id| {
+
+            // If this dependency was enqueued before cleaning and still has an entry in
+            // the task queue, make sure the id is remapped
+            if (old_dep.version.tag.isNPM()) {
+                const dep_name = old_dep.name.slice(old_string_buf);
+                if (PackageManager.instance.task_queue.getEntry(Install.Task.Id.forManifest(dep_name))) |entry| {
+                    for (entry.value_ptr.items) |*task_list_item| {
+                        switch (task_list_item.*) {
+                            .dependency, .root_dependency => |*old_task_id| {
+                                if (old_task_id.* == old_id) {
+                                    old_task_id.* = @intCast(new_id);
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                }
+            }
+
             new_dep.* = try old_dep.clone(
                 old_string_buf,
                 *Lockfile.StringBuilder,

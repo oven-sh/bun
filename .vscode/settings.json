@@ -53,6 +53,7 @@
 
   // JavaScript
   "prettier.enable": true,
+  "prettier.configPath": "${workspaceFolder}/.prettierrc",
   "eslint.workingDirectories": ["${workspaceFolder}/packages/bun-types"],
   "[javascript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"

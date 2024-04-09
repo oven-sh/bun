@@ -54,7 +54,6 @@ pub const ProcessHandle = struct {
 
     pub fn onReadChunk(this: *This, chunk: []const u8, hasMore: bun.io.ReadState) bool {
         _ = hasMore;
-        // std.debug.print("read chunk: {s}\n", .{chunk});
         this.buffer.appendSlice(chunk) catch bun.outOfMemory();
         this.state.redraw(false) catch {};
 
@@ -74,8 +73,7 @@ pub const ProcessHandle = struct {
         this.state.live_processes -= 1;
         this.status = status;
         this.state.redraw(false) catch {};
-        // TODO figure out how to deinit process
-        // actually - we can just leak it
+        // We just leak the process because we're going to exit anyway after all processes are done
         _ = proc;
     }
 
@@ -173,6 +171,11 @@ const State = struct {
                 try this.draw_buf.appendSlice(line);
                 content = content[i + 1 ..];
             }
+            if (content.len > 0) {
+                try this.draw_buf.appendSlice(fmt("<cyan>│<r> "));
+                try this.draw_buf.appendSlice(content);
+                try this.draw_buf.append('\n');
+            }
             try this.draw_buf.appendSlice(fmt("<cyan>└─<r> "));
             switch (handle.status) {
                 .running => try this.draw_buf.appendSlice(fmt("<cyan>Running...<r>\n")),
@@ -203,7 +206,7 @@ const State = struct {
     pub fn abort(this: *This) void {
         for (this.handles) |*handle| {
             // if we get an error here we simply ignore it
-            _ = handle.process.kill(std.os.SIG.ABRT);
+            _ = handle.process.kill(std.os.SIG.INT);
         }
     }
 };
@@ -352,18 +355,19 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
-            .stdout = if (Environment.isPosix) .buffer else .{ .buffer = bun.default_allocator.create(bun.windows.libuv.Pipe) },
-            .stderr = if (Environment.isPosix) .buffer else .{ .buffer = bun.default_allocator.create(bun.windows.libuv.Pipe) },
+            .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
+            .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
             .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
-            .windows = if (Environment.isWindows) .{ .loop = JSC.EventLoopHandle.init(&event_loop) } else {},
+            .windows = if (Environment.isWindows) .{ .loop = JSC.EventLoopHandle.init(event_loop) } else {},
             .stream = false,
         };
 
-        const spawned = try (try bun.spawn.spawnProcess(&spawn_options, argv[0..], envp)).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, argv[0..], envp)).unwrap();
+        var process = spawned.toProcess(event_loop, false);
         state.handles[i] = ProcessHandle{
             .state = &state,
             .config = script,
-            .process = spawned.toProcess(event_loop, false),
+            .process = process,
         };
 
         const handle = &state.handles[i];
@@ -395,11 +399,6 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             try handle.stderr.startWithCurrentPipe().unwrap();
         }
 
-        var process = spawned.toProcess(
-            event_loop,
-            false,
-        );
-
         process.setExitHandler(handle);
 
         try process.watch(event_loop).unwrap();
@@ -415,9 +414,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         }
         event_loop.tickOnce(&state);
     }
-    if (aborted) {
-        state.redraw(true) catch {};
-    }
+    state.redraw(aborted) catch {};
 
     Global.exit(0);
 }

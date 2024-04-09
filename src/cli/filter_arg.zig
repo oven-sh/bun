@@ -39,12 +39,8 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
     var workdir = workdir_;
 
     while (true) : (workdir = std.fs.path.dirname(workdir) orelse break) {
-        const parent_trimmed = strings.withoutTrailingSlash(workdir);
         var name_buf: bun.PathBuffer = undefined;
-        @memcpy(name_buf[0..parent_trimmed.len], parent_trimmed);
-        name_buf[parent_trimmed.len..name_buf.len][0.."/package.json".len].* = "/package.json".*;
-        name_buf[parent_trimmed.len + "/package.json".len] = 0;
-        const json_path = name_buf[0 .. parent_trimmed.len + "/package.json".len];
+        const json_path: [:0]const u8 = bun.path.joinAbsStringBufZ(workdir, name_buf[0..], &.{"package.json"}, .auto);
 
         log.msgs.clearRetainingCapacity();
         log.errors = 0;
@@ -90,6 +86,8 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
                 },
             }
         }
+
+        const parent_trimmed = strings.withoutTrailingSlash(workdir);
         @memcpy(root_buf[0..parent_trimmed.len], parent_trimmed);
         return root_buf[0..parent_trimmed.len];
     }

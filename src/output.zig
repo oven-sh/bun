@@ -812,7 +812,7 @@ pub noinline fn printError(comptime fmt: string, args: anytype) void {
 pub const DebugTimer = struct {
     timer: @import("root").bun.DebugOnly(std.time.Timer) = undefined,
 
-    pub fn start() DebugTimer {
+    pub inline fn start() DebugTimer {
         if (comptime Environment.isDebug) {
             return DebugTimer{
                 .timer = std.time.Timer.start() catch unreachable,

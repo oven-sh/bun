@@ -352,22 +352,35 @@ describe("bunshell", () => {
   });
 
   describe("glob expansion", () => {
-    test("No matches should fail", async () => {
-      // Issue #8403: https://github.com/oven-sh/bun/issues/8403
-      await TestBuilder.command`ls *.sdfljsfsdf`.exitCode(1).stderr("bun: no matches found: *.sdfljsfsdf\n").run();
-    });
+    // Issue #8403: https://github.com/oven-sh/bun/issues/8403
+    TestBuilder.command`ls *.sdfljsfsdf`
+      .exitCode(1)
+      .stderr("bun: no matches found: *.sdfljsfsdf\n")
+      .runAsTest("No matches should fail");
 
-    test("Should work with a different cwd", async () => {
+    TestBuilder.command`FOO=*.lolwut; echo $FOO`
+      .stdout("*.lolwut\n")
+      .runAsTest("No matches in assignment position should print out pattern");
+
+    TestBuilder.command`FOO=hi*; echo $FOO`
+      .ensureTempDir()
+      .stdout("hi*\n")
+      .runAsTest("Trailing asterisk with no matches");
+
+    TestBuilder.command`touch hihello; touch hifriends; FOO=hi*; echo $FOO`
+      .ensureTempDir()
+      .stdout(s => expect(s).toBeOneOf(["hihello hifriends\n", "hifriends hihello\n"]))
+      .runAsTest("Trailing asterisk with matches, inline");
+
+    TestBuilder.command`ls *.js`
       // Calling `ensureTempDir()` changes the cwd here
-      await TestBuilder.command`ls *.js`
-        .ensureTempDir()
-        .file("foo.js", "foo")
-        .file("bar.js", "bar")
-        .stdout(out => {
-          expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"));
-        })
-        .run();
-    });
+      .ensureTempDir()
+      .file("foo.js", "foo")
+      .file("bar.js", "bar")
+      .stdout(out => {
+        expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"));
+      })
+      .runAsTest("Should work with a different cwd");
   });
 
   describe("brace expansion", () => {

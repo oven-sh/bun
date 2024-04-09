@@ -2992,12 +2992,19 @@ declare module "bun" {
   }
 
   /**
-   * Nanoseconds since Bun.js was started as an integer.
+   * Returns the number of nanoseconds since the process was started.
    *
-   * This uses a high-resolution monotonic system timer.
+   * This function uses a high-resolution monotonic system timer to provide precise time measurements.
+   * In JavaScript, numbers are represented as double-precision floating-point values (IEEE 754),
+   * which can safely represent integers up to 2^53 - 1 (Number.MAX_SAFE_INTEGER).
    *
-   * After 14 weeks of consecutive uptime, this function
-   * wraps
+   * Due to this limitation, while the internal counter may continue beyond this point,
+   * the precision of the returned value will degrade after 14.8 weeks of uptime (when the nanosecond
+   * count exceeds Number.MAX_SAFE_INTEGER). Beyond this point, the function will continue to count but
+   * with reduced precision, which might affect time calculations and comparisons in long-running applications.
+   *
+   * @returns {number} The number of nanoseconds since the process was started, with precise values up to
+   * Number.MAX_SAFE_INTEGER.
    */
   function nanoseconds(): number;
 

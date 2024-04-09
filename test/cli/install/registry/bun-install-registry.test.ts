@@ -28,6 +28,7 @@ beforeAll(async () => {
   await new Promise<void>(done => {
     verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
       if (msg.verdaccio_started) {
+        console.log("Verdaccio started");
         done();
       }
     });
@@ -40,6 +41,7 @@ afterAll(() => {
 
 beforeEach(async () => {
   packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));
+  env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   await writeFile(
     join(packageDir, "bunfig.toml"),
     `
@@ -623,6 +625,44 @@ test("package added after install", async () => {
     " 3 packages installed",
   ]);
   expect(await exited).toBe(0);
+});
+
+test("--production without a lockfile will install and not save lockfile", async () => {
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--production"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const out = await Bun.readableStreamToText(stdout);
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + no-deps@1.0.0",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+
+  expect(await exists(join(packageDir, "node_modules", "no-deps", "index.js"))).toBeTrue();
 });
 
 test("it should correctly link binaries after deleting node_modules", async () => {

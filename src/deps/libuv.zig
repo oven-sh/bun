@@ -25,7 +25,7 @@ const sockaddr_un = std.os.linux.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
 
-pub const log = bun.Output.scoped(.uv, false);
+pub const log = bun.Output.scoped(.uv, true);
 
 pub const CHAR = u8;
 pub const SHORT = c_short;
@@ -1532,15 +1532,32 @@ pub const struct_uv_fs_event_s = extern struct {
     u: union_unnamed_428,
     endgame_next: [*c]uv_handle_t,
     flags: c_uint,
-    path: [*]u8,
+    path: ?[*:0]u8,
     req: struct_uv_fs_event_req_s,
     dir_handle: HANDLE,
     req_pending: c_int,
     cb: uv_fs_event_cb,
-    filew: [*]WCHAR,
-    short_filew: [*]WCHAR,
-    dirw: [*]WCHAR,
+    filew: ?[*]WCHAR = null,
+    short_filew: ?[*]WCHAR = null,
+    dirw: ?[*]WCHAR = null,
     buffer: [*]u8,
+
+    pub fn isDir(this: *const uv_fs_event_t) bool {
+        return this.dirw != null;
+    }
+
+    pub fn hash(this: *const uv_fs_event_t, filename: []const u8, events: c_int, status: c_int) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        if (this.path) |path| {
+            hasher.update(bun.sliceTo(path, 0));
+        } else {
+            hasher.update("null");
+        }
+        hasher.update(std.mem.asBytes(&events));
+        hasher.update(filename);
+        hasher.update(std.mem.asBytes(&status));
+        return hasher.final();
+    }
 };
 const union_unnamed_432 = extern union {
     fd: c_int,

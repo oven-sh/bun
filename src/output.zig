@@ -136,17 +136,20 @@ pub const Source = struct {
     export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
 
     const WindowsStdio = struct {
-        const w = std.os.windows;
-
-        // TODO: when https://github.com/ziglang/zig/pull/18692 merges, use std.os.windows for this
-        extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
-        extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
-        extern fn GetConsoleOutputCP() u32;
-        pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+        const w = bun.windows;
 
         pub var console_mode = [3]?u32{ null, null, null };
         pub var console_codepage = @as(u32, 0);
         pub var console_output_codepage = @as(u32, 0);
+
+        pub export fn Bun__restoreWindowsStdio() callconv(.C) void {
+            restore();
+        }
+        comptime {
+            if (Environment.isWindows) {
+                _ = &Bun__restoreWindowsStdio;
+            }
+        }
 
         pub fn restore() void {
             const peb = std.os.windows.peb();
@@ -157,7 +160,7 @@ pub const Source = struct {
             const handles = &.{ &stdin, &stdout, &stderr };
             inline for (console_mode, handles) |mode, handle| {
                 if (mode) |m| {
-                    _ = SetConsoleMode(handle.*, m);
+                    _ = w.SetConsoleMode(handle.*, m);
                 }
             }
 
@@ -165,15 +168,15 @@ pub const Source = struct {
                 _ = w.kernel32.SetConsoleOutputCP(console_output_codepage);
 
             if (console_codepage != 0)
-                _ = SetConsoleCP(console_codepage);
+                _ = w.SetConsoleCP(console_codepage);
         }
 
         pub fn init() void {
-            bun.windows.libuv.uv_disable_stdio_inheritance();
+            w.libuv.uv_disable_stdio_inheritance();
 
-            const stdin = w.GetStdHandle(w.STD_INPUT_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
-            const stdout = w.GetStdHandle(w.STD_OUTPUT_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
-            const stderr = w.GetStdHandle(w.STD_ERROR_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
+            const stdin = std.os.windows.GetStdHandle(std.os.windows.STD_INPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
+            const stdout = std.os.windows.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
+            const stderr = std.os.windows.GetStdHandle(std.os.windows.STD_ERROR_HANDLE) catch w.INVALID_HANDLE_VALUE;
 
             bun.win32.STDERR_FD = if (stderr != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stderr) else bun.invalid_fd;
             bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
@@ -187,29 +190,25 @@ pub const Source = struct {
             _ = w.kernel32.SetConsoleOutputCP(CP_UTF8);
 
             console_codepage = w.kernel32.GetConsoleOutputCP();
-            _ = SetConsoleCP(CP_UTF8);
-
-            const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
-            const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
-            const ENABLE_PROCESSED_OUTPUT = 0x0001;
+            _ = w.SetConsoleCP(CP_UTF8);
 
             var mode: w.DWORD = undefined;
             if (w.kernel32.GetConsoleMode(stdin, &mode) != 0) {
                 console_mode[0] = mode;
                 bun_stdio_tty[0] = 1;
-                _ = SetConsoleMode(stdin, mode | ENABLE_VIRTUAL_TERMINAL_INPUT);
+                _ = w.SetConsoleMode(stdin, mode | w.ENABLE_VIRTUAL_TERMINAL_INPUT);
             }
 
             if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
                 console_mode[1] = mode;
                 bun_stdio_tty[1] = 1;
-                _ = SetConsoleMode(stdout, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_WRAP_AT_EOL_OUTPUT | mode);
+                _ = w.SetConsoleMode(stdout, w.ENABLE_PROCESSED_OUTPUT | std.os.windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING | w.ENABLE_WRAP_AT_EOL_OUTPUT | mode);
             }
 
             if (w.kernel32.GetConsoleMode(stderr, &mode) != 0) {
                 console_mode[2] = mode;
                 bun_stdio_tty[2] = 1;
-                _ = SetConsoleMode(stderr, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_WRAP_AT_EOL_OUTPUT | mode);
+                _ = w.SetConsoleMode(stderr, w.ENABLE_PROCESSED_OUTPUT | std.os.windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING | w.ENABLE_WRAP_AT_EOL_OUTPUT | mode);
             }
         }
     };
@@ -862,9 +861,15 @@ pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
 /// be a Zig error, or a string or enum. The error name is converted to a string and displayed
 /// in place of "error:", making it useful to print things like "EACCES: Couldn't open package.json"
 pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) void {
+    const T = @TypeOf(error_name);
+    const info = @typeInfo(T);
+
+    if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
+        prettyErrorln("<r><red>error:<r><d>:<r> " ++ fmt, args ++ .{error_name});
+        return;
+    }
+
     const display_name, const is_comptime_name = display_name: {
-        const T = @TypeOf(error_name);
-        const info = @typeInfo(T);
 
         // Zig string literals are of type *const [n:0]u8
         // we assume that no one will pass this type from not using a string literal.

@@ -99,6 +99,7 @@ console.log(stderr);
 The default handling of non-zero exit codes can be configured by calling `.nothrow()` or `.throws(boolean)` on the `$` function itself.
 
 ```js
+import { $ } from "bun";
 // shell promises will not throw, meaning you will have to
 // check for `exitCode` manually on every shell command.
 $.nothrow(); // equivilent to $.throws(false)
@@ -108,6 +109,8 @@ $.throws(true);
 
 // alias for $.nothrow()
 $.throws(false);
+
+await $`something-that-may-fail`; // No exception thrown
 ```
 
 ## Redirection
@@ -149,7 +152,7 @@ The following JavaScript objects are supported for redirection to:
 To redirect the output from JavaScript objects to stdin, use the `<` operator:
 
 ```js
-import { $, file } from "bun";
+import { $ } from "bun";
 
 const response = new Response("hello i am a response body");
 
@@ -396,6 +399,18 @@ For cross-platform compatibility, Bun Shell implements a set of builtin commands
 - `echo`: print text
 - `pwd`: print the working directory
 - `bun`: run bun in bun
+- `cat`
+- `touch`
+- `mkdir`
+- `which`
+- `mv`
+- `exit`
+- `true`
+- `false`
+- `yes`
+- `seq`
+- `dirname`
+- `basename`
 
 **Partially** implemented:
 
@@ -403,9 +418,7 @@ For cross-platform compatibility, Bun Shell implements a set of builtin commands
 
 **Not** implemented yet, but planned:
 
-- `mkdir`: create directories
-- `cp`: copy files and directories
-- `cat`: concatenate files
+- See https://github.com/oven-sh/bun/issues/9716 for the full list.
 
 ## Utilities
 

@@ -1236,11 +1236,17 @@ pub const Command = struct {
     };
 
     pub fn isBunX(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "bunx" ++ bun.exe_suffix);
+        if (Environment.isWindows) {
+            return strings.endsWithComptime(argv0, "bunx.exe");
+        }
+        return strings.endsWithComptime(argv0, "bunx");
     }
 
     pub fn isNode(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "node" ++ bun.exe_suffix);
+        if (Environment.isWindows) {
+            return strings.endsWithComptime(argv0, "node.exe");
+        }
+        return strings.endsWithComptime(argv0, "node");
     }
 
     pub fn which() Tag {

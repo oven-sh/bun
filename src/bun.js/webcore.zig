@@ -11,6 +11,7 @@ const bun = @import("root").bun;
 const string = bun.string;
 pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 pub const JSValue = @import("./bindings/bindings.zig").JSValue;
+const Environment = bun.Environment;
 
 pub const Lifetime = enum {
     clone,
@@ -201,7 +202,7 @@ pub const Prompt = struct {
         const has_default = arguments.len >= 2;
         // 4. Set default to the result of optionally truncating default.
         // *  We don't really need to do this.
-        const default = if (has_default) arguments[1] else JSC.JSValue.jsNull();
+        const default = if (has_default) arguments[1] else .null;
 
         if (has_message) {
             // 2. Set message to the result of normalizing newlines given message.
@@ -214,7 +215,7 @@ pub const Prompt = struct {
 
             output.writeAll(message.slice()) catch {
                 // 1. If we cannot show simple dialogs for this, then return null.
-                return JSC.JSValue.jsNull();
+                return .null;
             };
         }
 
@@ -226,7 +227,7 @@ pub const Prompt = struct {
         //    default.
         output.writeAll(if (has_message) " " else "Prompt ") catch {
             // 1. If we cannot show simple dialogs for this, then return false.
-            return JSC.JSValue.jsBoolean(false);
+            return .false;
         };
 
         if (has_default) {
@@ -235,7 +236,7 @@ pub const Prompt = struct {
 
             output.print("[{s}] ", .{default_string.slice()}) catch {
                 // 1. If we cannot show simple dialogs for this, then return false.
-                return JSC.JSValue.jsBoolean(false);
+                return .false;
             };
         }
 
@@ -243,29 +244,46 @@ pub const Prompt = struct {
         // *  Not relevant in a server context.
         bun.Output.flush();
 
+        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
+        // deleting the entire line
+        const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
+        else {};
+
+        defer if (comptime Environment.isWindows) {
+            if (original_mode) |mode| {
+                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+            }
+        };
+
         // 7. Pause while waiting for the user's response.
         const reader = bun.Output.buffered_stdin.reader();
-
+        var second_byte: ?u8 = null;
         const first_byte = reader.readByte() catch {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
-            return JSC.JSValue.jsNull();
+            return .null;
         };
 
         if (first_byte == '\n') {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
             return default;
+        } else if (first_byte == '\r') {
+            const second = reader.readByte() catch return .null;
+            second_byte = second;
+            if (second == '\n') return default;
         }
 
         var input = std.ArrayList(u8).initCapacity(allocator, 2048) catch {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
-            return JSC.JSValue.jsNull();
+            return .null;
         };
         defer input.deinit();
 
         input.appendAssumeCapacity(first_byte);
+        if (second_byte) |second| input.appendAssumeCapacity(second);
 
         // All of this code basically just first tries to load the input into a
         // buffer of size 2048. If that is too small, then increase the buffer
@@ -275,29 +293,38 @@ pub const Prompt = struct {
             if (e != error.StreamTooLong) {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
-                return JSC.JSValue.jsNull();
+                return .null;
             }
 
             input.ensureTotalCapacity(4096) catch {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
-                return JSC.JSValue.jsNull();
+                return .null;
             };
 
             readUntilDelimiterArrayListAppendAssumeCapacity(reader, &input, '\n', 4096) catch |e2| {
                 if (e2 != error.StreamTooLong) {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.
-                    return JSC.JSValue.jsNull();
+                    return .null;
                 }
 
                 readUntilDelimiterArrayListInfinity(reader, &input, '\n') catch {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.
-                    return JSC.JSValue.jsNull();
+                    return .null;
                 };
             };
         };
+
+        if (input.items.len > 0 and input.items[input.items.len - 1] == '\r') {
+            input.items.len -= 1;
+        }
+
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(input.items.len > 0);
+            std.debug.assert(input.items[input.items.len - 1] != '\r');
+        }
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.

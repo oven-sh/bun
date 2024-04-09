@@ -816,6 +816,50 @@ pub const AST = struct {
 
         pub const Tag = enum(u8) { simple, compound };
 
+        pub fn merge(this: Atom, right: Atom, allocator: Allocator) !Atom {
+            if (this == .simple and right == .simple) {
+                var atoms = try allocator.alloc(SimpleAtom, 2);
+                atoms[0] = this.simple;
+                atoms[1] = right.simple;
+                return .{ .compound = .{
+                    .atoms = atoms,
+                    .brace_expansion_hint = this.simple == .brace_begin or this.simple == .brace_end or right.simple == .brace_begin or right.simple == .brace_end,
+                    .glob_hint = this.simple == .asterisk or this.simple == .double_asterisk or right.simple == .asterisk or right.simple == .double_asterisk,
+                } };
+            }
+
+            if (this == .compound and right == .compound) {
+                var atoms = try allocator.alloc(SimpleAtom, this.compound.atoms.len + right.compound.atoms.len);
+                @memcpy(atoms[0..this.compound.atoms.len], this.compound.atoms);
+                @memcpy(atoms[this.compound.atoms.len .. this.compound.atoms.len + right.compound.atoms.len], right.compound.atoms);
+                return .{ .compound = .{
+                    .atoms = atoms,
+                    .brace_expansion_hint = this.compound.brace_expansion_hint or right.compound.brace_expansion_hint,
+                    .glob_hint = this.compound.glob_hint or right.compound.glob_hint,
+                } };
+            }
+
+            if (this == .simple) {
+                var atoms = try allocator.alloc(SimpleAtom, 1 + right.compound.atoms.len);
+                atoms[0] = this.simple;
+                @memcpy(atoms[1 .. right.compound.atoms.len + 1], right.compound.atoms);
+                return .{ .compound = .{
+                    .atoms = atoms,
+                    .brace_expansion_hint = this.simple == .brace_begin or this.simple == .brace_end or right.compound.brace_expansion_hint,
+                    .glob_hint = this.simple == .asterisk or this.simple == .double_asterisk or right.compound.glob_hint,
+                } };
+            }
+
+            var atoms = try allocator.alloc(SimpleAtom, 1 + this.compound.atoms.len);
+            @memcpy(atoms[0..this.compound.atoms.len], this.compound.atoms);
+            atoms[this.compound.atoms.len] = right.simple;
+            return .{ .compound = .{
+                .atoms = atoms,
+                .brace_expansion_hint = right.simple == .brace_begin or right.simple == .brace_end or this.compound.brace_expansion_hint,
+                .glob_hint = right.simple == .asterisk or right.simple == .double_asterisk or this.compound.glob_hint,
+            } };
+        }
+
         pub fn atomsLen(this: *const Atom) u32 {
             return switch (this.*) {
                 .simple => 1,
@@ -1104,7 +1148,7 @@ pub const Parser = struct {
 
     fn expectIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) Token {
         const tagname = comptime extractIfClauseTextToken(if_clause_token);
-        std.debug.assert(@as(TokenTag, self.peek()) == .Text);
+        if (bun.Environment.allow_assert) std.debug.assert(@as(TokenTag, self.peek()) == .Text);
         if (self.peek() == .Text and
             self.delimits(self.peek_n(1)) and
             std.mem.eql(u8, self.text(self.peek().Text), tagname))
@@ -1113,7 +1157,7 @@ pub const Parser = struct {
             _ = self.expect_delimit();
             return tok;
         }
-        unreachable;
+        @panic("Expected: " ++ @tagName(if_clause_token));
     }
 
     fn isIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) bool {
@@ -1500,7 +1544,7 @@ pub const Parser = struct {
                         }
 
                         if (eq_idx == txt.len - 1) {
-                            if (self.peek() == .Delimit) {
+                            if (self.delimits(self.peek())) {
                                 _ = self.expect_delimit();
                                 break :var_decl .{
                                     .label = label,
@@ -1518,10 +1562,25 @@ pub const Parser = struct {
                         }
 
                         const txt_value = txt[eq_idx + 1 .. txt.len];
-                        _ = self.expect_delimit();
+                        if (self.delimits(self.peek())) {
+                            _ = self.expect_delimit();
+                            break :var_decl .{
+                                .label = label,
+                                .value = .{ .simple = .{ .Text = txt_value } },
+                            };
+                        }
+
+                        const right = try self.parse_atom() orelse {
+                            try self.add_error("Expected an atom", .{});
+                            return ParseError.Expected;
+                        };
+                        const left: AST.Atom = .{
+                            .simple = .{ .Text = txt_value },
+                        };
+                        const merged = try AST.Atom.merge(left, right, self.alloc);
                         break :var_decl .{
                             .label = label,
-                            .value = .{ .simple = .{ .Text = txt_value } },
+                            .value = merged,
                         };
                     }
                     break :var_decl null;
@@ -1680,7 +1739,7 @@ pub const Parser = struct {
         return switch (atoms.items.len) {
             0 => null,
             1 => {
-                std.debug.assert(atoms.capacity == 1);
+                if (bun.Environment.allow_assert) std.debug.assert(atoms.capacity == 1);
                 return AST.Atom.new_simple(atoms.items[0]);
             },
             else => .{ .compound = .{
@@ -1713,22 +1772,20 @@ pub const Parser = struct {
     }
 
     fn expect(self: *Parser, toktag: TokenTag) Token {
-        std.debug.assert(toktag == @as(TokenTag, self.peek()));
+        if (bun.Environment.allow_assert) std.debug.assert(toktag == @as(TokenTag, self.peek()));
         if (self.check(toktag)) {
             return self.advance();
         }
-        unreachable;
+        @panic("Unexpected token");
     }
 
     fn expect_any(self: *Parser, toktags: []const TokenTag) Token {
-        // std.debug.assert(toktag == @as(TokenTag, self.peek()));
-
         const peeked = self.peek();
         for (toktags) |toktag| {
             if (toktag == @as(TokenTag, peeked)) return self.advance();
         }
 
-        unreachable;
+        @panic("Unexpected token");
     }
 
     fn delimits(self: *Parser, tok: Token) bool {
@@ -1736,11 +1793,11 @@ pub const Parser = struct {
     }
 
     fn expect_delimit(self: *Parser) Token {
-        std.debug.assert(self.delimits(self.peek()));
+        if (bun.Environment.allow_assert) std.debug.assert(self.delimits(self.peek()));
         if (self.check(.Delimit) or self.check(.Semicolon) or self.check(.Newline) or self.check(.Eof) or (self.inside_subshell != null and self.check(self.inside_subshell.?.closing_tok()))) {
             return self.advance();
         }
-        unreachable;
+        @panic("Expected a delimiter token");
     }
 
     fn match_if_clausetok(self: *Parser, toktag: IfClauseTok) bool {
@@ -2649,6 +2706,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .Comma,
                 .BraceEnd,
                 .CmdSubstEnd,
+                .Asterisk,
                 => true,
 
                 .Pipe,
@@ -2657,7 +2715,6 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .DoubleAmpersand,
                 .Redirect,
                 .Dollar,
-                .Asterisk,
                 .DoubleAsterisk,
                 .Eq,
                 .Semicolon,
@@ -3383,7 +3440,7 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
                         else => return .{ .char = char, .escaped = false },
                     }
                 },
-                else => unreachable,
+                .Single => unreachable,
             }
 
             return .{ .char = char, .escaped = true };
@@ -4397,7 +4454,7 @@ pub const TestingAPIs = struct {
 
         const script_ast = Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], jsstrings.items[0..], &out_parser, &out_lex_result) catch |err| {
             if (err == ParseError.Lex) {
-                std.debug.assert(out_lex_result != null);
+                if (bun.Environment.allow_assert) std.debug.assert(out_lex_result != null);
                 const str = out_lex_result.?.combineErrors(arena.allocator());
                 globalThis.throwPretty("{s}", .{str});
                 return .undefined;

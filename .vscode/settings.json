@@ -53,6 +53,7 @@
 
   // JavaScript
   "prettier.enable": true,
+  "prettier.configPath": "${workspaceFolder}/.prettierrc",
   "eslint.workingDirectories": ["${workspaceFolder}/packages/bun-types"],
   "[javascript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
@@ -118,20 +119,7 @@
     "**/*.xcworkspacedata": true,
     "**/*.xcscheme": true,
     "**/*.xcodeproj": true,
-    "src/bun.js/WebKit": true,
-    "src/deps/libarchive": true,
-    "src/deps/mimalloc": true,
-    "src/deps/s2n-tls": true,
-    "src/deps/boringssl": true,
-    "src/deps/openssl": true,
-    "src/deps/uws": true,
-    "src/deps/zlib": true,
-    "src/deps/lol-html": true,
-    "src/deps/c-ares": true,
-    "src/deps/tinycc": true,
-    "src/deps/zstd": true,
     "**/*.i": true,
-    "packages/bun-uws/fuzzing/seed-corpus": true
   },
   "files.associations": {
     "*.idl": "cpp"

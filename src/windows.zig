@@ -3026,6 +3026,10 @@ pub fn getLastErrno() bun.C.E {
     return (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
 }
 
+pub fn getLastError() anyerror {
+    return bun.errnoToZigErr(getLastErrno());
+}
+
 pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
     return switch (err) {
         .SUCCESS => .SUCCESS,
@@ -3359,3 +3363,13 @@ pub fn GetFinalPathNameByHandle(
     bun.sys.syslog("GetFinalPathNameByHandle({*p})", .{hFile});
     return std.os.windows.GetFinalPathNameByHandle(hFile, fmt, out_buffer);
 }
+
+pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
+pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
+pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
+
+// TODO: when https://github.com/ziglang/zig/pull/18692 merges, use std.os.windows for this
+pub extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
+pub extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
+pub extern fn GetConsoleOutputCP() u32;
+pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;

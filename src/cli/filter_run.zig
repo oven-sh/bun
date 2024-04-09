@@ -54,10 +54,36 @@ pub const ProcessHandle = struct {
 
     pub fn onReadChunk(this: *This, chunk: []const u8, hasMore: bun.io.ReadState) bool {
         _ = hasMore;
-        this.buffer.appendSlice(chunk) catch bun.outOfMemory();
-        this.state.redraw(false) catch {};
-
+        if (this.state.pretty_output) {
+            this.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            this.state.redraw(false) catch {};
+        } else {
+            this.handleChunkBasic(chunk) catch bun.outOfMemory();
+        }
         return true;
+    }
+
+    fn handleChunkBasic(this: *This, chunk: []const u8) !void {
+        var content = chunk;
+        if (this.buffer.items.len > 0) {
+            if (std.mem.indexOfScalar(u8, content, '\n')) |i| {
+                try this.buffer.appendSlice(content[0 .. i + 1]);
+                content = content[i + 1 ..];
+                try std.io.getStdOut().writer().print("{s}: {s}\n", .{ this.config.package_name, this.buffer.items });
+                this.buffer.clearRetainingCapacity();
+            } else {
+                try this.buffer.appendSlice(content);
+                return;
+            }
+        }
+        while (std.mem.indexOfScalar(u8, content, '\n')) |i| {
+            const line = content[0 .. i + 1];
+            try std.io.getStdOut().writer().print("{s}: {s}\n", .{ this.config.package_name, line });
+            content = content[i + 1 ..];
+        }
+        if (content.len > 0) {
+            try this.buffer.appendSlice(content);
+        }
     }
 
     pub fn onReaderDone(this: *This) void {
@@ -107,6 +133,7 @@ const State = struct {
     live_processes: usize,
     draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     last_lines_written: usize = 0,
+    pretty_output: bool,
 
     pub fn isDone(this: *This) bool {
         const state = bun.cast(*const @This(), this);
@@ -146,8 +173,9 @@ const State = struct {
     }
 
     pub fn redraw(this: *This, is_abort: bool) !void {
+        if (!this.pretty_output) return;
         this.draw_buf.clearRetainingCapacity();
-        if (this.last_lines_written > 0 and Output.enable_ansi_colors) {
+        if (this.last_lines_written > 0) {
             // move cursor to the beginning of the line and clear it
             try this.draw_buf.appendSlice("\x1b[0G\x1b[K");
             for (0..this.last_lines_written) |_| {
@@ -201,6 +229,14 @@ const State = struct {
             }
         }
         try std.io.getStdOut().writeAll(this.draw_buf.items);
+    }
+
+    pub fn flush(this: *This) !void {
+        if (this.pretty_output) return;
+        for (this.handles) |*handle| {
+            try std.io.getStdOut().writer().print("{s}: {s}\n", .{ handle.config.package_name, handle.buffer.items });
+            handle.buffer.clearRetainingCapacity();
+        }
     }
 
     pub fn abort(this: *This) void {
@@ -348,6 +384,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
         .event_loop = event_loop,
         .live_processes = scripts.items.len,
+        .pretty_output = Output.enable_ansi_colors_stdout,
     };
 
     for (scripts.items, 0..) |*script, i| {
@@ -414,7 +451,12 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         }
         event_loop.tickOnce(&state);
     }
-    state.redraw(aborted) catch {};
+
+    if (state.pretty_output) {
+        state.redraw(aborted) catch {};
+    } else {
+        state.flush() catch {};
+    }
 
     Global.exit(0);
 }

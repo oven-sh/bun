@@ -17,7 +17,9 @@ try {
     throw "Failed to patch deflate.h"
   }
 
+  Remove-Item -Force -Recurse -ErrorAction SilentlyContinue build
   Set-Location (mkdir -Force build)
+
   # https://github.com/cloudflare/zlib/pull/57
   Set-Content -Path "..\CMakeLists.txt" -Value (get-content -Path "..\CMakeLists.txt" | Select-String -Pattern 'CMAKE_DEBUG_POSTFIX' -NotMatch)
   

@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 
 Push-Location (Join-Path $BUN_DEPS_DIR 'boringssl')
 try {
+  Remove-Item -Force -Recurse -ErrorAction SilentlyContinue build
   Set-Location (mkdir -Force build)
   
   # still use -DCMAKE_BUILD_TYPE=Release unconditionally here because it fails otherwise

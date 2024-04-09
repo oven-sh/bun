@@ -34,6 +34,7 @@ if (!(Test-Path -PathType Container $Source)) {
 if(!($CloneOnly)) { 
   Push-Location $Source
   try {
+    Remove-Item -Force -Recurse -ErrorAction SilentlyContinue build
     $null = mkdir build -ErrorAction SilentlyContinue
     Set-Location build
     

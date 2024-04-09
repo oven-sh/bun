@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 
 Push-Location (Join-Path $BUN_DEPS_DIR 'base64')
 try {
+  Remove-Item -Force -Recurse -ErrorAction SilentlyContinue build
   Set-Location (mkdir -Force build)
 
   Run cmake @CMAKE_FLAGS -DBASE64_WERROR=0 ..

@@ -16,12 +16,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download bun
+        uses: actions/download-artifact@v4
         with:
           pattern: bun-{darwin,linux,windows}-{x64,aarch64}{,-baseline}
-          path: /usr/local/bin
+          path: ${{ runner.temp }}
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run-id || '8623134412' }}
-      - run: |
+      - name: Unzip bun
+        run: |
+          unzip -d /usr/local/bin ${{ runner.temp }}/bun-*.zip
           which bun
       

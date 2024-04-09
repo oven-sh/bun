@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,54 +23,46 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#include "AbortController.h"
+#pragma once
 
-#include "AbortSignal.h"
-#include "DOMException.h"
-#include "JSDOMException.h"
-#include <wtf/IsoMallocInlines.h>
 #include "WebCoreOpaqueRoot.h"
-#include "WebCoreOpaqueRootInlines.h"
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(AbortController);
-
-Ref<AbortController> AbortController::create(ScriptExecutionContext& context)
+template<typename Visitor>
+ALWAYS_INLINE void addWebCoreOpaqueRoot(Visitor& visitor, WebCoreOpaqueRoot root)
 {
-    return adoptRef(*new AbortController(context));
+    visitor.addOpaqueRoot(root.pointer());
 }
 
-AbortController::AbortController(ScriptExecutionContext& context)
-    : m_signal(AbortSignal::create(&context))
+template<typename Visitor, typename ImplType>
+ALWAYS_INLINE void addWebCoreOpaqueRoot(Visitor& visitor, ImplType* impl)
 {
+    addWebCoreOpaqueRoot(visitor, root(impl));
 }
 
-AbortController::~AbortController() = default;
-
-AbortSignal& AbortController::signal()
+template<typename Visitor, typename ImplType>
+ALWAYS_INLINE void addWebCoreOpaqueRoot(Visitor& visitor, ImplType& impl)
 {
-    return m_signal.get();
+    addWebCoreOpaqueRoot(visitor, root(&impl));
 }
 
-void AbortController::abort(JSDOMGlobalObject& globalObject, JSC::JSValue reason)
+template<typename Visitor>
+ALWAYS_INLINE bool containsWebCoreOpaqueRoot(Visitor& visitor, WebCoreOpaqueRoot root)
 {
-    ASSERT(reason);
-    if (reason.isUndefined())
-        reason = toJS(&globalObject, &globalObject, DOMException::create(ExceptionCode::AbortError));
-
-    protectedSignal()->signalAbort(reason);
+    return visitor.containsOpaqueRoot(root.pointer());
 }
 
-WebCoreOpaqueRoot AbortController::opaqueRoot()
+template<typename Visitor, typename ImplType>
+ALWAYS_INLINE bool containsWebCoreOpaqueRoot(Visitor& visitor, ImplType& impl)
 {
-    return root(&signal());
+    return containsWebCoreOpaqueRoot(visitor, root(&impl));
 }
 
-Ref<AbortSignal> AbortController::protectedSignal() const
+template<typename Visitor, typename ImplType>
+ALWAYS_INLINE bool containsWebCoreOpaqueRoot(Visitor& visitor, ImplType* impl)
 {
-    return m_signal;
+    return containsWebCoreOpaqueRoot(visitor, root(impl));
 }
 
-}
+} // namespace WebCore

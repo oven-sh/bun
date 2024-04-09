@@ -3,34 +3,14 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const std = @import("std");
-const JSC = bun.JSC;
 const Fs = @import("../fs.zig");
 const RunCommand = @import("run_command.zig").RunCommand;
 
-const lex = bun.js_lexer;
-const logger = bun.logger;
-const clap = bun.clap;
 const CLI = bun.CLI;
-const Arguments = CLI.Arguments;
 const Command = CLI.Command;
 
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
-const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
-
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const bundler = bun.bundler;
 
-const DotEnv = @import("../env_loader.zig");
-
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Lockfile = @import("../install/lockfile.zig");
 const FilterArg = @import("filter_arg.zig");
 
 const ScriptConfig = struct {
@@ -51,41 +31,13 @@ pub const ProcessHandle = struct {
     stderr: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
     buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     status: bun.spawn.Status = .running,
+    start_time: ?std.time.Instant,
+    end_time: ?std.time.Instant = null,
 
     pub fn onReadChunk(this: *This, chunk: []const u8, hasMore: bun.io.ReadState) bool {
         _ = hasMore;
-        if (this.state.pretty_output) {
-            this.buffer.appendSlice(chunk) catch bun.outOfMemory();
-            this.state.redraw(false) catch {};
-        } else {
-            this.handleChunkBasic(chunk) catch bun.outOfMemory();
-        }
+        this.state.readChunk(this, chunk) catch {};
         return true;
-    }
-
-    fn handleChunkBasic(this: *This, chunk: []const u8) !void {
-        var content = chunk;
-        this.state.draw_buf.clearRetainingCapacity();
-        if (this.buffer.items.len > 0) {
-            if (std.mem.indexOfScalar(u8, content, '\n')) |i| {
-                try this.buffer.appendSlice(content[0 .. i + 1]);
-                content = content[i + 1 ..];
-                try this.state.draw_buf.writer().print("{s}: {s}", .{ this.config.package_name, this.buffer.items });
-                this.buffer.clearRetainingCapacity();
-            } else {
-                try this.buffer.appendSlice(content);
-                return;
-            }
-        }
-        while (std.mem.indexOfScalar(u8, content, '\n')) |i| {
-            const line = content[0 .. i + 1];
-            try this.state.draw_buf.writer().print("{s}: {s}", .{ this.config.package_name, line });
-            content = content[i + 1 ..];
-        }
-        if (content.len > 0) {
-            try this.buffer.appendSlice(content);
-        }
-        try std.io.getStdOut().writeAll(this.state.draw_buf.items);
     }
 
     pub fn onReaderDone(this: *This) void {
@@ -100,9 +52,10 @@ pub const ProcessHandle = struct {
     pub fn onProcessExit(this: *This, proc: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
         this.state.live_processes -= 1;
         this.status = status;
-        this.state.redraw(false) catch {};
+        this.end_time = std.time.Instant.now() catch null;
         // We just leak the process because we're going to exit anyway after all processes are done
         _ = proc;
+        this.state.processExit(this) catch {};
     }
 
     pub fn eventLoop(this: *This) *bun.JSC.MiniEventLoop {
@@ -133,13 +86,13 @@ const State = struct {
     handles: []ProcessHandle,
     event_loop: *bun.JSC.MiniEventLoop,
     live_processes: usize,
+    // buffer for batched output
     draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     last_lines_written: usize = 0,
     pretty_output: bool,
 
     pub fn isDone(this: *This) bool {
-        const state = bun.cast(*const @This(), this);
-        return state.live_processes == 0;
+        return this.live_processes == 0;
     }
 
     const ElideResult = struct {
@@ -147,13 +100,67 @@ const State = struct {
         elided_count: usize,
     };
 
+    fn readChunk(this: *This, handle: *ProcessHandle, chunk: []const u8) !void {
+        if (this.pretty_output) {
+            handle.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            this.redraw(false) catch {};
+        } else {
+            var content = chunk;
+            this.draw_buf.clearRetainingCapacity();
+            if (handle.buffer.items.len > 0) {
+                if (std.mem.indexOfScalar(u8, content, '\n')) |i| {
+                    try handle.buffer.appendSlice(content[0 .. i + 1]);
+                    content = content[i + 1 ..];
+                    try this.draw_buf.writer().print("{s}: {s}", .{ handle.config.package_name, handle.buffer.items });
+                    handle.buffer.clearRetainingCapacity();
+                } else {
+                    try handle.buffer.appendSlice(content);
+                    return;
+                }
+            }
+            while (std.mem.indexOfScalar(u8, content, '\n')) |i| {
+                const line = content[0 .. i + 1];
+                try this.draw_buf.writer().print("{s}: {s}", .{ handle.config.package_name, line });
+                content = content[i + 1 ..];
+            }
+            if (content.len > 0) {
+                try handle.buffer.appendSlice(content);
+            }
+            this.flushDrawBuf();
+        }
+    }
+
+    fn processExit(this: *This, handle: *ProcessHandle) !void {
+        if (this.pretty_output) {
+            this.redraw(false) catch {};
+        } else {
+            this.draw_buf.clearRetainingCapacity();
+            // flush any remaining buffer
+            if (handle.buffer.items.len > 0) {
+                try this.draw_buf.writer().print("{s}: {s}\n", .{ handle.config.package_name, handle.buffer.items });
+                handle.buffer.clearRetainingCapacity();
+            }
+            // print exit status
+            switch (handle.status) {
+                .exited => |exited| {
+                    try this.draw_buf.writer().print("{s}: Exited with code {d}\n", .{ handle.config.package_name, exited.code });
+                },
+                .signaled => |signal| {
+                    try this.draw_buf.writer().print("{s}: Signaled with code {s}\n", .{ handle.config.package_name, @tagName(signal) });
+                },
+                else => {},
+            }
+            this.flushDrawBuf();
+        }
+    }
+
     fn elide(data_: []const u8, max_lines: ?usize) ElideResult {
         var data = data_;
-        if (data.len == 0) return ElideResult{ .content = &.{}, .elided_count = 0 };
+        if (data.len == 0) return .{ .content = &.{}, .elided_count = 0 };
         if (data[data.len - 1] == '\n') {
             data = data[0 .. data.len - 1];
         }
-        if (max_lines == null) return ElideResult{ .content = data, .elided_count = 0 };
+        if (max_lines == null) return .{ .content = data, .elided_count = 0 };
         var i: usize = data.len;
         var lines: usize = 0;
         while (i > 0) : (i -= 1) {
@@ -171,10 +178,10 @@ const State = struct {
                 elided += 1;
             }
         }
-        return ElideResult{ .content = content, .elided_count = elided };
+        return .{ .content = content, .elided_count = elided };
     }
 
-    pub fn redraw(this: *This, is_abort: bool) !void {
+    fn redraw(this: *This, is_abort: bool) !void {
         if (!this.pretty_output) return;
         this.draw_buf.clearRetainingCapacity();
         if (this.last_lines_written > 0) {
@@ -186,6 +193,7 @@ const State = struct {
             }
         }
         for (this.handles) |*handle| {
+            // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
             const e = elide(handle.buffer.items, if (is_abort) null else 10);
             try this.draw_buf.writer().print(fmt("<b>{s}<r> $ <d>{s}<r>\n"), .{ handle.config.package_name, handle.config.script_content });
             if (e.elided_count > 0) {
@@ -230,25 +238,24 @@ const State = struct {
                 this.last_lines_written += 1;
             }
         }
-        try std.io.getStdOut().writeAll(this.draw_buf.items);
+        this.flushDrawBuf();
     }
 
-    pub fn flush(this: *This) !void {
-        if (this.pretty_output) return;
-        this.draw_buf.clearRetainingCapacity();
-        for (this.handles) |*handle| {
-            if (handle.buffer.items.len > 0) {
-                try this.draw_buf.writer().print("{s}: {s}\n", .{ handle.config.package_name, handle.buffer.items });
-                handle.buffer.clearRetainingCapacity();
-            }
-        }
-        try std.io.getStdOut().writeAll(this.draw_buf.items);
+    fn flushDrawBuf(this: *This) void {
+        std.io.getStdOut().writeAll(this.draw_buf.items) catch {};
     }
 
     pub fn abort(this: *This) void {
+        // we perform an abort by sending SIGINT to all processes
         for (this.handles) |*handle| {
             // if we get an error here we simply ignore it
             _ = handle.process.kill(std.os.SIG.INT);
+        }
+    }
+
+    pub fn finalize(this: *This, aborted: bool) void {
+        if (aborted) {
+            this.redraw(true) catch {};
         }
     }
 };
@@ -294,6 +301,14 @@ const AbortHandler = struct {
             }
         }
     }
+
+    pub fn uninstall() void {
+        // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
+        if (Environment.isWindows) {
+            // restores default Ctrl+C behavior
+            _ = bun.windows.SetConsoleCtrlHandler(null, std.os.windows.FALSE);
+        }
+    }
 };
 
 fn windowsIsTerminal() bool {
@@ -307,19 +322,13 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         break :brk Global.exit(1);
     };
 
-    // 1. find package.json at workspace root
-    // 2. read workspace configuration
-    // 3. get list of packages that match the configuration
-    // 4. spawn the scripts and get their respective process handles
-    // 5. concurrently read from the output fds and print them to stdout
-    // 6. once all processes have exited, exit
-
     const fsinstance = try bun.fs.FileSystem.init(null);
 
     // these things are leaked because we are going to exit
     var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, fsinstance.top_level_dir);
     var patterns = std.ArrayList([]u8).init(ctx.allocator);
 
+    // Find package.json at workspace root
     var root_buf: bun.PathBuffer = undefined;
     const resolve_root = try FilterArg.getCandidatePackagePatterns(ctx.allocator, ctx.log, &patterns, fsinstance.top_level_dir, &root_buf);
 
@@ -329,6 +338,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     var package_json_iter = try FilterArg.PackageFilterIterator.init(ctx.allocator, patterns.items, resolve_root);
     defer package_json_iter.deinit();
 
+    // Get list of packages that match the configuration
     var scripts = std.ArrayList(ScriptConfig).init(ctx.allocator);
     while (try package_json_iter.next()) |package_json_path| {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
@@ -398,6 +408,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .pretty_output = if (Environment.isWindows) windowsIsTerminal() else Output.enable_ansi_colors_stdout,
     };
 
+    // Spawn the scripts and get their respective process handles
     for (scripts.items, 0..) |*script, i| {
         var argv = [_:null]?[*:0]const u8{ shell_bin, if (Environment.isPosix) "-c" else "exec", script.combined, null };
 
@@ -406,7 +417,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
             .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
             .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
-            .windows = if (Environment.isWindows) .{ .loop = JSC.EventLoopHandle.init(event_loop) } else {},
+            .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) } else {},
             .stream = false,
         };
 
@@ -416,6 +427,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             .state = &state,
             .config = script,
             .process = process,
+            .start_time = std.time.Instant.now() catch null,
         };
 
         const handle = &state.handles[i];
@@ -457,17 +469,17 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     var aborted = false;
     while (!state.isDone()) {
         if (AbortHandler.should_abort and !aborted) {
+            // We uninstall the custom abort handler so that if the user presses Ctrl+C again,
+            // the process is aborted immediately and doesn't wait for the event loop to tick.
+            // This can be useful if one of the processes is stuck and doesn't react to SIGINT.
+            AbortHandler.uninstall();
             aborted = true;
             state.abort();
         }
         event_loop.tickOnce(&state);
     }
 
-    if (state.pretty_output) {
-        state.redraw(aborted) catch {};
-    } else {
-        state.flush() catch {};
-    }
+    state.finalize(aborted);
 
     Global.exit(0);
 }

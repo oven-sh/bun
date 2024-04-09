@@ -204,7 +204,6 @@ pub const PackageFilterIterator = struct {
     iter: GlobWalker.Iterator = undefined,
     valid: bool = false,
 
-    // TODO check if keeping the arena alloctor around is sound - GlobWalker copies the allocator, so it might get out of sync or leak memory
     arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
 
@@ -240,30 +239,12 @@ pub const PackageFilterIterator = struct {
 
     fn initWalker(self: *PackageFilterIterator) !void {
         const pattern = self.patterns[self.pattern_idx];
-        var arena = self.arena;
+        var arena = std.heap.ArenaAllocator.init(self.arena.allocator());
+        errdefer arena.deinit();
         const cwd = try arena.allocator().dupe(u8, self.root_dir);
-        const walker_init_res = try self.walker.initWithCwd(&arena, pattern, cwd, true, true, false, true, true);
-        switch (walker_init_res) {
-            .err => |err| {
-                // TODO
-                // return err;
-                _ = err;
-                Global.crash();
-            },
-            else => {},
-        }
+        try (try self.walker.initWithCwd(&arena, pattern, cwd, true, true, false, true, true)).unwrap();
         self.iter = GlobWalker.Iterator{ .walker = &self.walker };
-
-        const iter_init_res = try self.iter.init();
-        switch (iter_init_res) {
-            .err => |err| {
-                // TODO
-                // return err;
-                _ = err;
-                Global.crash();
-            },
-            else => {},
-        }
+        try (try self.iter.init()).unwrap();
     }
 
     fn deinitWalker(self: *PackageFilterIterator) void {

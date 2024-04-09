@@ -161,6 +161,7 @@ jobs:
           $Nasm = (Get-ChildItem "nasm")
           $env:Path += ";${Nasm}"
           $env:BUN_DEPS_OUT_DIR = (mkdir -Force "./bun-deps")
+          $env:CMAKE_BUILD_TYPE = "Release"
           .\scripts\all-dependencies.ps1
 
       - name: Upload Dependencies

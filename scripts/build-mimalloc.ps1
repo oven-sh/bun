@@ -17,7 +17,7 @@ try {
     -DMI_OVERRIDE=OFF `
     -DMI_OSX_ZONE=OFF
 
-  Run cmake --build . --clean-first --config Release
+  Run cmake --build . --clean-first
 
   Copy-Item mimalloc-static.lib $BUN_DEPS_OUT_DIR/mimalloc.lib
 

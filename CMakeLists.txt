@@ -1392,11 +1392,16 @@ else()
         winmm
         bcrypt
         ntdll
-        ucrt
         userenv
         dbghelp
         wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     )
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        target_link_libraries(${bun} PRIVATE ucrtd)
+    elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+        target_link_libraries(${bun} PRIVATE ucrt)
+    endif()
 endif()
 
 if(WIN32)

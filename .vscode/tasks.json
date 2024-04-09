@@ -33,5 +33,23 @@
         "reevaluateOnRerun": true,
       },
     },
+    {
+      "type": "process",
+      "label": "Windows: Build Bun",
+      "dependsOn": ["Setup Environment"],
+      "command": "bun",
+      "args": ["run", "build:windows"],
+      "icon": {
+        "id": "gear"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBuildCommand": true,
+      "runOptions": {
+        "instanceLimit": 1,
+        "reevaluateOnRerun": true,
+      },
+    },
   ]
 }

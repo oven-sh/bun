@@ -20,7 +20,7 @@ try {
   Set-Location (mkdir -Force build)
   
   Run cmake .. @CMAKE_FLAGS
-  Run cmake --build . --clean-first --config Release
+  Run cmake --build . --clean-first
 
   Copy-Item zlib.lib $BUN_DEPS_OUT_DIR
 

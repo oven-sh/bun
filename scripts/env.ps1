@@ -24,9 +24,10 @@ if($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
   throw "Visual Studio environment is targetting 32 bit. This configuration is definetly a mistake."
 }
 
+$CMAKE_BUILD_TYPE = "Debug"
 $BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $ScriptDir '..' }
 $BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }
-$BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { $BUN_DEPS_DIR }
+$BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { Join-Path $BUN_DEPS_DIR $CMAKE_BUILD_TYPE }
 
 $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-WmiObject -Class Win32_Processor).NumberOfCores }
 
@@ -45,7 +46,7 @@ if ($Baseline) {
 
 $CMAKE_FLAGS = @(
   "-GNinja",
-  "-DCMAKE_BUILD_TYPE=Release",
+  "-DCMAKE_BUILD_TYPE=$CMAKE_BUILD_TYPE",
   "-DCMAKE_C_COMPILER=$CC",
   "-DCMAKE_CXX_COMPILER=$CXX",
   "-DCMAKE_C_FLAGS=`"$CFLAGS`"",

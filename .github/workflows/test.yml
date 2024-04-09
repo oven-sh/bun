@@ -18,6 +18,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          github-token: ${{ github.token }}
           run-id: ${{ inputs.run-id || '8623134412' }}
           # pattern: bun-*
       - run: |

@@ -1354,16 +1354,14 @@ export function readableStreamCancel(stream, reason) {
   if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
   $readableStreamClose(stream);
 
-  var controller = $getByIdDirectPrivate(stream, "readableStreamController");
-  var cancel = controller.$cancel;
-  if (cancel) {
-    return cancel(controller, reason).$then(function () {});
-  }
+  const controller = $getByIdDirectPrivate(stream, "readableStreamController");
+  if (controller === null) return Promise.$resolve();
 
-  var close = controller.close;
-  if (close) {
-    return Promise.$resolve(controller.close(reason));
-  }
+  const cancel = controller.$cancel;
+  if (cancel) return cancel(controller, reason).$then(function () {});
+
+  const close = controller.close;
+  if (close) return Promise.$resolve(controller.close(reason));
 
   $throwTypeError("ReadableStreamController has no cancel or close method");
 }

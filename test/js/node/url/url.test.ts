@@ -77,5 +77,5 @@ it("URL constructor throws ERR_MISSING_ARGS", () => {
   }
 
   // @ts-expect-error
-  expect(err?.code ).toEqual("ERR_MISSING_ARGS");
-}) 
+  expect(err?.code).toEqual("ERR_MISSING_ARGS");
+});

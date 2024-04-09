@@ -191,7 +191,7 @@ import { $ } from "bun";
 await $`bun run index.ts 2> errors.txt`;
 ```
 
-### Example: Redirect stdout -> stderr
+### Example: Redirect stderr -> stdout
 
 ```js
 import { $ } from "bun";
@@ -201,7 +201,7 @@ import { $ } from "bun";
 await $`bun run ./index.ts 2>&1`;
 ```
 
-### Example: Redirect stderr -> stdout
+### Example: Redirect stdout -> stderr
 
 ```js
 import { $ } from "bun";

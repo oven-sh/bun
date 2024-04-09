@@ -25,6 +25,7 @@ using namespace JSC;
     macro(abortAlgorithm) \
     macro(AbortSignal) \
     macro(abortSteps) \
+    macro(addAbortAlgorithmToSignal) \
     macro(addEventListener) \
     macro(appendFromJS) \
     macro(argv) \
@@ -180,6 +181,7 @@ using namespace JSC;
     macro(readRequests) \
     macro(readyPromise) \
     macro(readyPromiseCapability) \
+    macro(removeAbortAlgorithmFromSignal) \
     macro(redirect) \
     macro(relative) \
     macro(releaseLock) \
@@ -234,7 +236,6 @@ using namespace JSC;
     macro(version) \
     macro(versions) \
     macro(view) \
-    macro(whenSignalAborted) \
     macro(writable) \
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \

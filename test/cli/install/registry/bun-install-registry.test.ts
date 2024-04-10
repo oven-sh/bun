@@ -2350,7 +2350,7 @@ test("missing package on reinstall, some with binaries", async () => {
 });
 
 // waiter thread is only a thing on Linux.
-for (const forceWaiterThread of (isLinux ? [false, true] : [false])) {
+for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
   const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
   describe("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {
     test("root package with all lifecycle scripts", async () => {

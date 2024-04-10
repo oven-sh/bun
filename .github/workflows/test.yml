@@ -23,6 +23,8 @@ jobs:
           path: ${{ runner.temp }}
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run-id || '8623134412' }}
+      - name: Setup SSH
+        uses: mxschmitt/action-tmate@v3
       - name: Unzip bun
         run: |
           unzip -d /usr/local/bin '${{ runner.temp }}/bun-*/bun-*.zip'

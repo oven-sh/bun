@@ -553,9 +553,41 @@ fn encodeTraceString(opts: EncodeOptions, writer: anytype) !void {
 
                 break :addr .{ .unknown = {} };
             },
-            else => {
-                // 
-            }
+            else => addr: {
+                // This code is slightly modified from std.debug.DebugInfo.lookupModuleDl
+                // https://github.com/ziglang/zig/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.zig#L2024
+                var ctx: struct {
+                    // Input
+                    address: usize,
+                    i: usize = 0,
+                    // Output
+                    result: Address = .{ .unknown = {} },
+                } = .{ .address = addr -| 1 };
+                const CtxTy = @TypeOf(ctx);
+
+                std.os.dl_iterate_phdr(&ctx, error{Found}, struct {
+                    fn callback(info: *std.os.dl_phdr_info, _: usize, context: *CtxTy) !void {
+                        defer context.i += 1;
+                        if (context.address < info.dlpi_addr) return;
+                        const phdrs = info.dlpi_phdr[0..info.dlpi_phnum];
+                        for (phdrs) |*phdr| {
+                            if (phdr.p_type != std.elf.PT_LOAD) continue;
+
+                            // Overflowing addition is used to handle the case of VSDOs
+                            // having a p_vaddr = 0xffffffffff700000
+                            const seg_start = info.dlpi_addr +% phdr.p_vaddr;
+                            const seg_end = seg_start + phdr.p_memsz;
+                            if (context.address >= seg_start and context.address < seg_end) {
+                                const name = bun.sliceTo(info.dlpi_name, 0) orelse "";
+                                std.debug.print("\nhi {d}, {s}, base = 0x{x}, ptr = 0x{x}", .{ context.i, name, info.dlpi_addr, context.address });
+                                return error.Found;
+                            }
+                        }
+                    }
+                }.callback) catch {};
+
+                break :addr ctx.result;
+            },
         };
 
         try address.writeEncoded(writer);
@@ -667,7 +699,7 @@ fn crash() noreturn {
             @as(*allowzero volatile u8, @ptrFromInt(0xDEADBEEF)).* = 0;
             std.os.raise(std.os.SIG.SEGV) catch {};
             @as(*allowzero volatile u8, @ptrFromInt(0)).* = 0;
-            std.os.exit(127);
+            std.c._exit(127);
         },
     }
 }

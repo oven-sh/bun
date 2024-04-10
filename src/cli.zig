@@ -187,6 +187,7 @@ pub const Arguments = struct {
     };
 
     const auto_or_run_params = [_]ParamType{
+        clap.parseParam("--filter <STR>...                 Run the script or executable in each workspace package matching the filter pattern") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     };
@@ -200,7 +201,6 @@ pub const Arguments = struct {
     const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const run_only_params = [_]ParamType{
-        clap.parseParam("--filter <STR>...                 Run the script or executable in each workspace package matching the filter pattern") catch unreachable,
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
     } ++ auto_or_run_params;
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
@@ -434,7 +434,7 @@ pub const Arguments = struct {
             cwd = try bun.getcwdAlloc(allocator);
         }
 
-        if (cmd == .RunCommand) {
+        if (cmd == .RunCommand or cmd == .AutoCommand) {
             ctx.filters = args.options("--filter");
         }
 
@@ -1740,6 +1740,7 @@ pub const Command = struct {
             },
             .AutoCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
+
                 var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {
@@ -1751,6 +1752,13 @@ pub const Command = struct {
                         },
                     }
                 };
+
+                if (ctx.filters.len > 0) {
+                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
 
                 if (ctx.runtime_options.eval.script.len > 0) {
                     const trigger = bun.pathLiteral("/[eval]");

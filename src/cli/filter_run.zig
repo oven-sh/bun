@@ -426,7 +426,7 @@ fn windowsIsTerminal() bool {
 }
 
 pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
-    const script_name = if (ctx.positionals.len > 1) ctx.positionals[1] else brk: {
+    const script_name = if (ctx.positionals.len > 1) ctx.positionals[1] else if (ctx.positionals.len > 0) ctx.positionals[0] else brk: {
         Output.prettyErrorln("<r><red>error<r>: No script name provided", .{});
         break :brk Global.exit(1);
     };

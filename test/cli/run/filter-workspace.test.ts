@@ -70,14 +70,16 @@ function runInCwdSuccess({
 	target_pattern,
 	antipattern,
 	command = ["present"],
+	auto = false,
 }: {
 	cwd: string;
 	pattern: string | string[];
 	target_pattern: RegExp | RegExp[];
 	antipattern?: RegExp | RegExp[];
 	command?: string[];
+	auto?: boolean;
 }) {
-	const cmd = [bunExe(), "run"];
+	const cmd = auto ? [bunExe()] : [bunExe(), "run"];
 	if (Array.isArray(pattern)) {
 		for (const p of pattern) {
 			cmd.push("--filter", p);
@@ -171,6 +173,15 @@ describe("bun", () => {
 		});
 	}
 
+	test("works with auto command", () => {
+		runInCwdSuccess({
+			cwd: cwd_root,
+			pattern: "./packages/*",
+			target_pattern: [/scripta/, /scriptb/, /scriptc/, /malformed1/],
+			auto: true,
+		});
+	});
+
 	test("resolve all with glob", () => {
 		runInCwdSuccess({
 			cwd: cwd_root,
@@ -201,6 +212,7 @@ describe("bun", () => {
 			antipattern: [/scripta/, /scriptb/, /scriptc/],
 		});
 	});
+
 	test(
 		"run in parallel",
 		() => {

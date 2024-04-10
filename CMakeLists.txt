@@ -600,7 +600,7 @@ set(BUN_DEPS_DIR "${BUN_SRC}/deps")
 set(BUN_CODEGEN_SRC "${BUN_SRC}/codegen")
 
 if(NOT BUN_DEPS_OUT_DIR)
-    set(BUN_DEPS_OUT_DIR "${BUN_DEPS_DIR}")
+    set(BUN_DEPS_OUT_DIR "${BUN_DEPS_DIR}/${CMAKE_BUILD_TYPE}")
 endif()
 
 set(BUN_RAW_SOURCES, "")
@@ -1264,14 +1264,7 @@ if(USE_CUSTOM_MIMALLOC)
     if(WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/mimalloc.lib")
     elseif(APPLE)
-        if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
-            message(STATUS "Using debug mimalloc")
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
-        else()
-            # https://github.com/microsoft/mimalloc/issues/512
-            # Linking mimalloc via object file on macOS x64 can cause heap corruption
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
-        endif()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
     else()
         if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
             message(STATUS "Using debug mimalloc")
@@ -1406,11 +1399,16 @@ else()
         winmm
         bcrypt
         ntdll
-        ucrt
         userenv
         dbghelp
         wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     )
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        target_link_libraries(${bun} PRIVATE ucrtd)
+    elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+        target_link_libraries(${bun} PRIVATE ucrt)
+    endif()
 endif()
 
 if(WIN32)

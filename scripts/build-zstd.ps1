@@ -6,7 +6,7 @@ try {
   Remove-Item CMakeCache.txt -ErrorAction SilentlyContinue
   
   Run cmake -S "build/cmake" @CMAKE_FLAGS -DZSTD_BUILD_STATIC=ON
-  Run cmake --build . --clean-first --config Release
+  Run cmake --build . --clean-first
 
   Copy-Item lib/zstd_static.lib $BUN_DEPS_OUT_DIR/zstd.lib
   Write-Host "-> zstd.lib"

@@ -34,11 +34,12 @@ if (!(Test-Path -PathType Container $Source)) {
 if(!($CloneOnly)) { 
   Push-Location $Source
   try {
+    Remove-Item -Force -Recurse -ErrorAction SilentlyContinue build
     $null = mkdir build -ErrorAction SilentlyContinue
     Set-Location build
     
     Run cmake .. @CMAKE_FLAGS "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS -Wno-int-conversion"
-    Run cmake --build . --clean-first --config Release
+    Run cmake --build . --clean-first
 
     Copy-Item libuv.lib $BUN_DEPS_OUT_DIR
     Write-Host "-> libuv.lib"

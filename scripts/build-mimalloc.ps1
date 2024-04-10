@@ -3,9 +3,11 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 
 Push-Location (Join-Path $BUN_DEPS_DIR 'mimalloc')
 try {
+  Remove-Item -Force -Recurse -ErrorAction SilentlyContinue build
   Set-Location (mkdir -Force build)
   
   Run cmake .. @CMAKE_FLAGS `
+    -DCMAKE_BUILD_TYPE=Release `
     -DMI_SKIP_COLLECT_ON_EXIT=1 `
     -DMI_BUILD_SHARED=OFF `
     -DMI_BUILD_STATIC=ON `
@@ -17,7 +19,7 @@ try {
     -DMI_OVERRIDE=OFF `
     -DMI_OSX_ZONE=OFF
 
-  Run cmake --build . --clean-first --config Release
+  Run cmake --build . --clean-first
 
   Copy-Item mimalloc-static.lib $BUN_DEPS_OUT_DIR/mimalloc.lib
 

@@ -17,10 +17,14 @@ try {
     throw "Failed to patch deflate.h"
   }
 
+  Remove-Item -Force -Recurse -ErrorAction SilentlyContinue build
   Set-Location (mkdir -Force build)
+
+  # https://github.com/cloudflare/zlib/pull/57
+  Set-Content -Path "..\CMakeLists.txt" -Value (get-content -Path "..\CMakeLists.txt" | Select-String -Pattern 'CMAKE_DEBUG_POSTFIX' -NotMatch)
   
-  Run cmake .. @CMAKE_FLAGS
-  Run cmake --build . --clean-first --config Release
+  Run cmake .. @CMAKE_FLAGS -DCMAKE_DEBUG_POSTFIX=''
+  Run cmake --build . --clean-first
 
   Copy-Item zlib.lib $BUN_DEPS_OUT_DIR
 

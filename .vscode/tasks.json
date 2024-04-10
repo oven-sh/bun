@@ -17,25 +17,28 @@
     },
     {
       "type": "process",
-      "label": "Setup Environment",
-      "dependsOn": ["Install Dependencies"],
-      "command": "scripts/setup.sh",
-      "windows": {
-        "command": "scripts/setup.ps1"
-      },
-      "icon": {
-        "id": "check"
-      },
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-    },
-    {
-      "type": "process",
       "label": "Build Bun",
       "dependsOn": ["Setup Environment"],
       "command": "bun",
       "args": ["run", "build"],
+      "icon": {
+        "id": "gear"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBuildCommand": true,
+      "runOptions": {
+        "instanceLimit": 1,
+        "reevaluateOnRerun": true,
+      },
+    },
+    {
+      "type": "process",
+      "label": "Windows: Build Bun",
+      "dependsOn": ["Setup Environment"],
+      "command": "bun",
+      "args": ["run", "build:windows"],
       "icon": {
         "id": "gear"
       },

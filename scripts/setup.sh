@@ -6,6 +6,7 @@ C_GREEN="\e[32m"
 C_RED="\e[31m"
 C_BLUE="\e[34m"
 C_RESET="\e[0m"
+export CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Debug}"
 
 has_exec() {
   which "$1" >/dev/null 2>&1 || return 1

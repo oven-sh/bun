@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 
 Push-Location (Join-Path $BUN_DEPS_DIR 'lol-html/c-api')
 try {
+  Remove-Item -Force -Recurse -ErrorAction SilentlyContinue target
   Run cargo build --release --target x86_64-pc-windows-msvc
 
   Copy-Item target/x86_64-pc-windows-msvc/release/lolhtml.lib $BUN_DEPS_OUT_DIR

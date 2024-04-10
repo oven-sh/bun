@@ -14,7 +14,13 @@ const TIMEOUT_DURATION = 1000 * 60 * 5;
 const SHORT_TIMEOUT_DURATION = Math.ceil(TIMEOUT_DURATION / 5);
 
 function defaultConcurrency() {
-  return 1;
+  // This causes instability due to the number of open file descriptors / sockets in some tests
+  // Windows has higher limits
+  if (process.platform !== "win32") {
+    return 1;
+  }
+
+  return Math.min(Math.floor((cpus().length - 2) / 2), 2);
 }
 
 const windows = process.platform === "win32";
@@ -355,9 +361,9 @@ Starting "${name}"
   }
 
   console.log(
-    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
-      passed ? "\x1b[32m✔" : "\x1b[31m✖"
-    } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
+    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${passed ? "\x1b[32m✔" : "\x1b[31m✖"} ${name}\x1b[0m${
+      reason ? ` (${reason})` : ""
+    }`,
   );
 
   finished++;

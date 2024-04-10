@@ -22,6 +22,13 @@ const ScriptConfig = struct {
     script_content: []const u8,
     combined: [:0]const u8,
     deps: DependencyMap,
+
+    // $PATH must be set per script because it contains
+    // node_modules/.bin
+    // ../node_modules/.bin
+    // ../../node_modules/.bin
+    // and so forth, in addition to the user's $PATH.
+    PATH: []const u8,
 };
 
 pub const ProcessHandle = struct {
@@ -48,14 +55,27 @@ pub const ProcessHandle = struct {
     visited: bool = false,
     visiting: bool = false,
 
-    fn start(this: *This) !void {
+    fn start(this: *This, env: *bun.DotEnv.Loader) !void {
         this.state.remaining_scripts += 1;
         const handle = this;
 
         var argv = [_:null]?[*:0]const u8{ this.state.shell_bin, if (Environment.isPosix) "-c" else "exec", this.config.combined, null };
 
         this.start_time = std.time.Instant.now() catch null;
-        var spawned = try (try bun.spawn.spawnProcess(&this.options, argv[0..], this.state.envp)).unwrap();
+        var spawned = brk: {
+
+            // Get the envp with the PATH configured
+            // There's probably a more optimal way to do this where you have a std.ArrayList shared
+            // instead of creating a new one for each process
+            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
+            const original_path = env.map.get("PATH") orelse "";
+            env.map.put("PATH", this.config.PATH) catch bun.outOfMemory();
+            defer env.map.put("PATH", original_path) catch bun.outOfMemory();
+            const envp = try env.map.createNullDelimitedEnvMap(arena.allocator());
+
+            break :brk try (try bun.spawn.spawnProcess(&this.options, argv[0..], envp)).unwrap();
+        };
         var process = spawned.toProcess(this.state.event_loop, false);
 
         handle.stdout.setParent(handle);
@@ -140,8 +160,8 @@ const State = struct {
     last_lines_written: usize = 0,
     pretty_output: bool,
     shell_bin: [:0]const u8,
-    envp: [:null]?[*:0]u8,
     aborted: bool = false,
+    env: *bun.DotEnv.Loader,
 
     pub fn isDone(this: *This) bool {
         return this.remaining_scripts == 0;
@@ -188,7 +208,7 @@ const State = struct {
             for (handle.dependents.items) |dependent| {
                 dependent.remaining_dependencies -= 1;
                 if (dependent.remaining_dependencies == 0) {
-                    dependent.start() catch {
+                    dependent.start(this.env) catch {
                         Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
                         Global.exit(1);
                     };
@@ -450,12 +470,16 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         var combined = try ctx.allocator.allocSentinel(u8, combined_len, 0);
         bun.copy(u8, combined, content);
         var remaining_script_buf = combined[content.len..];
+
         for (ctx.passthrough) |part| {
             const p = part;
             remaining_script_buf[0] = ' ';
             bun.copy(u8, remaining_script_buf[1..], p);
             remaining_script_buf = remaining_script_buf[p.len + 1 ..];
         }
+
+        var original_path: []const u8 = "";
+        const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_bundler, &original_path, dirpath, ctx.debug.run_in_bun);
 
         try scripts.append(.{
             // const res = try scripts.getOrPut(pkgjson.name, .{
@@ -465,6 +489,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             .script_content = copy_script.items,
             .combined = combined,
             .deps = pkgjson.dependencies,
+            .PATH = PATH,
         });
     }
 
@@ -484,7 +509,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .event_loop = event_loop,
         .pretty_output = if (Environment.isWindows) windowsIsTerminal() else Output.enable_ansi_colors_stdout,
         .shell_bin = shell_bin,
-        .envp = try this_bundler.env.map.createNullDelimitedEnvMap(ctx.allocator),
+        .env = this_bundler.env,
     };
 
     // initialize the handles
@@ -539,7 +564,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     // start inital scripts
     for (state.handles) |*handle| {
         if (handle.remaining_dependencies == 0) {
-            handle.start() catch {
+            handle.start(this_bundler.env) catch {
                 // todo this should probably happen in "start"
                 Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
                 Global.exit(1);

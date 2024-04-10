@@ -13,7 +13,7 @@ pub const Socket = opaque {};
 const debug = bun.Output.scoped(.uws, false);
 const uws = @This();
 
-const BoringSSL = @import("root").bun.BoringSSL;
+const BoringSSL = bun.BoringSSL;
 fn NativeSocketHandleType(comptime ssl: bool) type {
     if (ssl) {
         return BoringSSL.SSL;

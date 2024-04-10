@@ -8,22 +8,26 @@ on:
   push:
   workflow_call:
     inputs:
+      run-on:
+        type: string
+        required: true
       run-id:
         type: string
         required: true
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.run-on || 'ubuntu-latest' }}
     steps:
       - name: Download Bun
         uses: actions/download-artifact@v4
         with:
-          pattern: bun-{darwin,linux,windows}-{x64,aarch64}{,-baseline}
+          pattern: bun-${{ runner.os == 'macOS' && 'darwin' || (runner.os == 'Windows' && 'windows' || 'linux') }}-${{ runner.arch == 'X64' && 'x64' || 'aarch64' }}{,-baseline}
           path: ${{ runner.temp }}
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run-id || '8619678366' }}
       - name: Setup Bun
+        shell: bash
         run: |
           unzip -d /usr/local/bin ${{ runner.temp }}/bun-*/bun-*.zip
           mv /usr/local/bin/bun-*/bun /usr/local/bin/bun

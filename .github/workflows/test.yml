@@ -68,14 +68,7 @@ jobs:
       - name: Upload Results
         uses: actions/upload-artifact@v4
         with:
-          name: results.json
-          path: test-report.json
-          if-no-files-found: error
-          overwrite: true
-      - name: Upload Summary
-        uses: actions/upload-artifact@v4
-        with:
-          name: summary.md
-          path: test-report.md
+          name: results
+          path: test-report.*
           if-no-files-found: error
           overwrite: true

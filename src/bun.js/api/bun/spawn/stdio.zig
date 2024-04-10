@@ -1,14 +1,14 @@
 const Allocator = std.mem.Allocator;
 const uws = bun.uws;
 const std = @import("std");
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Async = bun.Async;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const Output = @import("root").bun.Output;
+const Output = bun.Output;
 const os = std.os;
 const uv = bun.windows.libuv;
 pub const Stdio = union(enum) {

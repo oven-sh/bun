@@ -13,13 +13,13 @@ const C = bun.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
 const URL = @import("../src/url.zig").URL;
-const Headers = @import("root").bun.http.Headers;
+const Headers = bun.http.Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const NetworkThread = @import("root").bun.http.NetworkThread;
-const HTTP = @import("root").bun.http;
+const NetworkThread = bun.http.NetworkThread;
+const HTTP = bun.http;
 fn noop_resolver(in: string) !string {
     return in;
 }

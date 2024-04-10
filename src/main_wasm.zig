@@ -3,7 +3,7 @@ const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const JSAst = bun.JSAst;
 const Api = @import("./api/schema.zig").Api;
-const Logger = @import("root").bun.logger;
+const Logger = bun.logger;
 const global = @import("root").bun;
 const default_allocator = global.default_allocator;
 const std = @import("std");
@@ -502,7 +502,7 @@ export fn getTests(opts_array: u64) u64 {
 }
 
 export fn transform(opts_array: u64) u64 {
-    // var arena = @import("root").bun.ArenaAllocator.init(default_allocator);
+    // var arena = bun.ArenaAllocator.init(default_allocator);
     var arena = Arena.init() catch unreachable;
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -572,7 +572,7 @@ export fn transform(opts_array: u64) u64 {
 }
 
 export fn scan(opts_array: u64) u64 {
-    // var arena = @import("root").bun.ArenaAllocator.init(default_allocator);
+    // var arena = bun.ArenaAllocator.init(default_allocator);
     var arena = Arena.init() catch unreachable;
     var allocator = arena.allocator();
     defer arena.deinit();

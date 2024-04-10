@@ -2441,7 +2441,7 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
     return input_len + total_non_ascii_count;
 }
 
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 
 pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
     var buf = buf_;

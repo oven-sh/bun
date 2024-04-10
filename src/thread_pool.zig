@@ -670,7 +670,7 @@ fn join(self: *ThreadPool) void {
     thread.join_event.notify();
 }
 
-const Output = @import("root").bun.Output;
+const Output = bun.Output;
 
 pub const Thread = struct {
     next: ?*Thread = null,

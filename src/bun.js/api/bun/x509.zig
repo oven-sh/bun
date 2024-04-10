@@ -2,7 +2,7 @@ const BoringSSL = bun.BoringSSL;
 const bun = @import("root").bun;
 const ZigString = JSC.ZigString;
 const std = @import("std");
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 

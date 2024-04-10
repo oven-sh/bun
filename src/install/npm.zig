@@ -12,15 +12,15 @@ const ExternalStringMap = @import("./install.zig").ExternalStringMap;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
-const logger = @import("root").bun.logger;
-const Output = @import("root").bun.Output;
+const logger = bun.logger;
+const Output = bun.Output;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
-const Environment = @import("root").bun.Environment;
+const Environment = bun.Environment;
 const Aligner = @import("./install.zig").Aligner;
-const HTTPClient = @import("root").bun.http;
+const HTTPClient = bun.http;
 const json_parser = bun.JSON;
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
@@ -216,7 +216,7 @@ pub const Registry = struct {
         not_found: void,
     };
 
-    const Pico = @import("root").bun.picohttp;
+    const Pico = bun.picohttp;
     pub fn getPackageMetadata(
         allocator: std.mem.Allocator,
         response: Pico.Response,
@@ -892,7 +892,7 @@ pub const PackageManifest = struct {
         const source = logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
-        var arena = @import("root").bun.ArenaAllocator.init(allocator);
+        var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = json_parser.ParseJSONUTF8(
             &source,

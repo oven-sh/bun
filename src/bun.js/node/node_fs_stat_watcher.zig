@@ -1,5 +1,5 @@
 const std = @import("std");
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const bun = @import("root").bun;
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");

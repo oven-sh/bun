@@ -1,7 +1,7 @@
 /// This file is mostly the API schema but with all the options normalized.
 /// Normalization is necessary because most fields in the API schema are optional
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Fs = @import("fs.zig");
 
 const resolver = @import("./resolver/resolver.zig");
@@ -23,7 +23,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;

@@ -2,21 +2,21 @@ const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.http;
+const HTTPClient = bun.http;
 
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const bun = @import("root").bun;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
@@ -35,7 +35,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Task = @import("../javascript.zig").Task;
 
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 
 pub const TextEncoder = struct {
     filler: u32 = 0,

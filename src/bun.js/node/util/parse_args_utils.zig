@@ -1,7 +1,8 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const testing = std.testing;
-const String = if (@import("builtin").is_test) TestString else @import("root").bun.String;
-const JSValue = if (@import("builtin").is_test) usize else @import("root").bun.JSC.JSValue;
+const String = if (@import("builtin").is_test) TestString else bun.String;
+const JSValue = if (@import("builtin").is_test) usize else bun.JSC.JSValue;
 
 pub const OptionValueType = enum { boolean, string };
 

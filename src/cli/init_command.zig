@@ -19,7 +19,7 @@ const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const initializeStore = @import("./create_command.zig").initializeStore;
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const JSPrinter = bun.js_printer;
 
 fn exists(path: anytype) bool {

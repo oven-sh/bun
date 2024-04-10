@@ -6,7 +6,7 @@ const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const system = std.os.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const FeatureFlags = bun.FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 

@@ -1,4 +1,4 @@
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Fs = @import("../../fs.zig");
 const CAPI = JSC.C;
 const JS = @import("../javascript.zig");
@@ -8,7 +8,7 @@ const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const std = @import("std");
 const Shimmer = @import("./shimmer.zig").Shimmer;
-const strings = @import("root").bun.strings;
+const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const NewGlobalObject = JSC.NewGlobalObject;
 const JSGlobalObject = JSC.JSGlobalObject;

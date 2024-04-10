@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 
 const FileSystem = @import("../fs.zig").FileSystem;
 const PathName = @import("../fs.zig").PathName;
@@ -35,15 +35,15 @@ var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const PathString = bun.PathString;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
-const HTTPThread = @import("root").bun.http.HTTPThread;
+const HTTPThread = bun.http.HTTPThread;
 
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
 
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
     comptime {

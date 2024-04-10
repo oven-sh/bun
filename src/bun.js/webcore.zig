@@ -5,7 +5,7 @@ pub usingnamespace @import("./webcore/blob.zig");
 pub usingnamespace @import("./webcore/request.zig");
 pub usingnamespace @import("./webcore/body.zig");
 
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -342,7 +342,7 @@ pub const Prompt = struct {
 
 pub const Crypto = struct {
     garbage: i32 = 0,
-    const BoringSSL = @import("root").bun.BoringSSL;
+    const BoringSSL = bun.BoringSSL;
 
     pub const doScryptSync = JSC.wrapInstanceMethod(Crypto, "scryptSync", false);
 

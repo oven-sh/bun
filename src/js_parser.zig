@@ -3,7 +3,7 @@
 /// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
 /// ** IMPORTANT **
 pub const std = @import("std");
-pub const logger = @import("root").bun.logger;
+pub const logger = bun.logger;
 pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
 pub const js_ast = bun.JSAst;
@@ -43,7 +43,7 @@ pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Index = @import("./ast/base.zig").Index;
 
 fn _disabledAssert(_: bool) void {

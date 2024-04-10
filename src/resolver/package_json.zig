@@ -13,7 +13,7 @@ const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
 const cache = @import("../cache.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_ast = bun.JSAst;
 
 const fs = @import("../fs.zig");

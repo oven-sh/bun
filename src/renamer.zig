@@ -12,7 +12,7 @@ const C = bun.C;
 const std = @import("std");
 const Ref = @import("./ast/base.zig").Ref;
 const RefCtx = @import("./ast/base.zig").RefCtx;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const JSLexer = @import("./js_lexer.zig");
 
 pub const NoOpRenamer = struct {
@@ -470,7 +470,7 @@ pub const NumberRenamer = struct {
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     number_scope_pool: bun.HiveArray(NumberScope, 128).Fallback,
-    arena: @import("root").bun.ArenaAllocator,
+    arena: bun.ArenaAllocator,
     root: NumberScope = .{},
     name_stack_fallback: std.heap.StackFallbackAllocator(512) = undefined,
     name_temp_allocator: std.mem.Allocator = undefined,
@@ -538,7 +538,7 @@ pub const NumberRenamer = struct {
             .temp_allocator = temp_allocator,
             .names = try allocator.alloc(bun.BabyList(string), symbols.symbols_for_source.len),
             .number_scope_pool = undefined,
-            .arena = @import("root").bun.ArenaAllocator.init(temp_allocator),
+            .arena = bun.ArenaAllocator.init(temp_allocator),
         };
         renamer.name_stack_fallback = .{
             .buffer = undefined,

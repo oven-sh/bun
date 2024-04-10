@@ -6,7 +6,7 @@
 //!
 //! - What version and commit of Bun captured the backtrace.
 //! - The platform the backtrace was captured on.
-//! - The list of addresses ready to be remapped.
+//! - The list of addresses with ASLR removed, ready to be remapped.
 //! - If panicking, the message that was panicked with.
 //! - List of feature-flags that were marked.
 //!
@@ -534,6 +534,8 @@ fn encodeTraceString(opts: EncodeOptions, writer: anytype) !void {
                                 // To remap this, `llvm-symbolizer --obj bun-with-symbols --relative-address 0x123456`
                                 const relative_address: i32 = @intCast(stable_address - @as(isize, @intCast(base_address)));
 
+                                if (relative_address < 0) break;
+
                                 const object = if (i == 0)
                                     null // zero is the main binary
                                 else
@@ -551,7 +553,9 @@ fn encodeTraceString(opts: EncodeOptions, writer: anytype) !void {
 
                 break :addr .{ .unknown = {} };
             },
-            else => @compileError("TODO"),
+            else => {
+                // 
+            }
         };
 
         try address.writeEncoded(writer);

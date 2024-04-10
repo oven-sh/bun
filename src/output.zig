@@ -214,6 +214,20 @@ pub const Source = struct {
     };
 
     pub const Stdio = struct {
+        extern "C" var bun_is_stdio_null: [3]i32;
+
+        pub fn isStderrNull() bool {
+            return bun_is_stdio_null[2] == 1;
+        }
+
+        pub fn isStdoutNull() bool {
+            return bun_is_stdio_null[1] == 1;
+        }
+
+        pub fn isStdinNull() bool {
+            return bun_is_stdio_null[0] == 1;
+        }
+
         pub fn init() void {
             bun.C.bun_initialize_process();
 

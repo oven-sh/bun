@@ -226,13 +226,14 @@ pub const AnyTaskWithExtraContext = struct {
     callback: *const (fn (*anyopaque, *anyopaque) void) = undefined,
     next: ?*AnyTaskWithExtraContext = null,
 
+    pub fn fromCallbackAutoDeinit(of: anytype, comptime callback: anytype) *AnyTaskWithExtraContext {
+        const TheTask = NewManaged(std.meta.Child(@TypeOf(of)), void, @field(std.meta.Child(@TypeOf(of)), callback));
+        const task = bun.default_allocator.create(AnyTaskWithExtraContext) catch bun.outOfMemory();
+        task.* = TheTask.init(of);
+        return task;
+    }
+
     pub fn from(this: *@This(), of: anytype, comptime field: []const u8) *@This() {
-        // this.* = .{
-        //     .ctx = of,
-        //     .callback = @field(std.meta.Child(@TypeOf(of)), field),
-        //     .next = null,
-        // };
-        // return this;
         const TheTask = New(std.meta.Child(@TypeOf(of)), void, @field(std.meta.Child(@TypeOf(of)), field));
         this.* = TheTask.init(of);
         return this;
@@ -263,6 +264,29 @@ pub const AnyTaskWithExtraContext = struct {
                         @as(*ContextType, @ptrCast(@alignCast(extra.?))),
                     },
                 );
+            }
+        };
+    }
+
+    pub fn NewManaged(comptime Type: type, comptime ContextType: type, comptime Callback: anytype) type {
+        return struct {
+            pub fn init(ctx: *Type) AnyTaskWithExtraContext {
+                return AnyTaskWithExtraContext{
+                    .callback = wrap,
+                    .ctx = ctx,
+                };
+            }
+
+            pub fn wrap(this: ?*anyopaque, extra: ?*anyopaque) void {
+                @call(
+                    .always_inline,
+                    Callback,
+                    .{
+                        @as(*Type, @ptrCast(@alignCast(this.?))),
+                        @as(*ContextType, @ptrCast(@alignCast(extra.?))),
+                    },
+                );
+                bun.default_allocator.destroy(@as(*AnyTaskWithExtraContext, @ptrCast(@alignCast(this.?))));
             }
         };
     }
@@ -360,6 +384,7 @@ const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTarg
 const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
 const ShellMkdirTask = bun.shell.Interpreter.Builtin.Mkdir.ShellMkdirTask;
 const ShellTouchTask = bun.shell.Interpreter.Builtin.Touch.ShellTouchTask;
+const ShellCpTask = bun.shell.Interpreter.Builtin.Cp.ShellCpTask;
 const ShellCondExprStatTask = bun.shell.Interpreter.CondExpr.ShellCondExprStatTask;
 const ShellAsync = bun.shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
@@ -438,6 +463,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellLsTask,
     ShellMkdirTask,
     ShellTouchTask,
+    ShellCpTask,
     ShellCondExprStatTask,
     ShellAsync,
     ShellAsyncSubprocessDone,
@@ -912,6 +938,10 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellCondExprStatTask))) => {
                     var shell_ls_task: *ShellCondExprStatTask = task.get(ShellCondExprStatTask).?;
                     shell_ls_task.task.runFromMainThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellCpTask))) => {
+                    var shell_ls_task: *ShellCpTask = task.get(ShellCpTask).?;
+                    shell_ls_task.runFromMainThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellTouchTask))) => {
                     var shell_ls_task: *ShellTouchTask = task.get(ShellTouchTask).?;
@@ -2080,6 +2110,13 @@ pub const AnyEventLoop = union(enum) {
 pub const EventLoopHandle = union(enum) {
     js: *JSC.EventLoop,
     mini: *MiniEventLoop,
+
+    pub fn globalObject(this: EventLoopHandle) ?*JSC.JSGlobalObject {
+        return switch (this) {
+            .js => this.js.global,
+            .mini => null,
+        };
+    }
 
     pub fn stdout(this: EventLoopHandle) *JSC.WebCore.Blob.Store {
         return switch (this) {

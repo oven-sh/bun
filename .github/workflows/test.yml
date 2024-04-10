@@ -34,7 +34,8 @@ jobs:
           unzip -d /usr/local/bin ${{ runner.temp }}/bun-*/bun-*.zip
           mv /usr/local/bin/bun-*/bun /usr/local/bin/bun
           which bun
-          bun --revision
+          bun --version
+          bun --print 'Bun.revision'
       # - if: ${{ false }}
       #   name: Setup SSH
       #   uses: mxschmitt/action-tmate@v3

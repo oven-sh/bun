@@ -6,7 +6,7 @@ const bun = @import("root").bun;
 const strings = bun.strings;
 const windows = bun.windows;
 const string = bun.string;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
 const C = bun.C;
@@ -5458,6 +5458,10 @@ pub const NodeFS = struct {
         }
 
         if (Environment.isWindows) {
+            if (args.flag == .a) {
+                return Maybe(Return.WriteFile).success;
+            }
+
             const rc = std.os.windows.kernel32.SetEndOfFile(fd.cast());
             if (rc == 0) {
                 return .{

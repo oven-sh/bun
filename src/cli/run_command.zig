@@ -1022,7 +1022,8 @@ pub const RunCommand = struct {
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (root_dir_info.package_json == null) {
                 // no trailing slash
-                package_json_dir = std.mem.trimRight(u8, package_json.source.path.name.dir, "/");
+
+                package_json_dir = strings.withoutTrailingSlash(package_json.source.path.name.dir);
             }
         }
 

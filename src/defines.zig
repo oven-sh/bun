@@ -1,6 +1,6 @@
 const std = @import("std");
 const js_ast = bun.JSAst;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_lexer = bun.js_lexer;
 const json_parser = bun.JSON;
 const fs = @import("fs.zig");

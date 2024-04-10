@@ -111,7 +111,7 @@ export function hideFromStackTrace(block: CallableFunction) {
 }
 
 type DirectoryTree = {
-  [name: string]: string | DirectoryTree;
+  [name: string]: string | Buffer | DirectoryTree;
 };
 
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
@@ -119,25 +119,24 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
   var path = require("path");
   var { tmpdir } = require("os");
 
-  function makeTree(base: string, tree: DirectoryTree) {
-    for (const [name, contents] of Object.entries(tree)) {
-      let joined = path.join(base, name);
-      if (name.includes("/")) {
-        let dirname = path.dirname(name);
-        fs.mkdirSync(path.join(base, dirname), { recursive: true });
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
+  for (const [name, contents] of Object.entries(files)) {
+    if (typeof contents === "object" && contents && !Buffer.isBuffer(contents)) {
+      const entries = Object.entries(contents);
+      if (entries.length == 0) {
+        fs.mkdirSync(path.join(dir, name), { recursive: true });
+      } else {
+        for (const [_name, _contents] of entries) {
+          fs.mkdirSync(path.dirname(path.join(dir, name, _name)), { recursive: true });
+          fs.writeFileSync(path.join(dir, name, _name), _contents);
+        }
       }
-      if (typeof contents === "object") {
-        fs.mkdirSync(joined);
-        makeTree(joined, contents);
-        continue;
-      }
-      fs.writeFileSync(joined, contents);
+      continue;
     }
+    fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+    fs.writeFileSync(path.join(dir, name), contents);
   }
-
-  const base = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
-  makeTree(base, files);
-  return base;
+  return dir;
 }
 
 export function bunRun(file: string, env?: Record<string, string>) {

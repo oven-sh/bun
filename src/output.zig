@@ -2,13 +2,13 @@ const Output = @This();
 const bun = @import("root").bun;
 const std = @import("std");
 const Environment = @import("./env.zig");
-const string = @import("root").bun.string;
+const string = bun.string;
 const root = @import("root");
-const strings = @import("root").bun.strings;
-const StringTypes = @import("root").bun.StringTypes;
-const Global = @import("root").bun.Global;
-const ComptimeStringMap = @import("root").bun.ComptimeStringMap;
-const use_mimalloc = @import("root").bun.use_mimalloc;
+const strings = bun.strings;
+const StringTypes = bun.StringTypes;
+const Global = bun.Global;
+const ComptimeStringMap = bun.ComptimeStringMap;
+const use_mimalloc = bun.use_mimalloc;
 const writeStream = std.json.writeStream;
 const WriteStream = std.json.WriteStream;
 
@@ -214,6 +214,20 @@ pub const Source = struct {
     };
 
     pub const Stdio = struct {
+        extern "C" var bun_is_stdio_null: [3]i32;
+
+        pub fn isStderrNull() bool {
+            return bun_is_stdio_null[2] == 1;
+        }
+
+        pub fn isStdoutNull() bool {
+            return bun_is_stdio_null[1] == 1;
+        }
+
+        pub fn isStdinNull() bool {
+            return bun_is_stdio_null[0] == 1;
+        }
+
         pub fn init() void {
             bun.C.bun_initialize_process();
 
@@ -663,7 +677,7 @@ pub const color_map = ComptimeStringMap(string, .{
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
-    if (comptime @import("root").bun.fast_debug_build_mode)
+    if (comptime bun.fast_debug_build_mode)
         return fmt;
 
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
@@ -752,7 +766,7 @@ pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime 
 }
 
 pub noinline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
-    if (comptime @import("root").bun.fast_debug_build_mode)
+    if (comptime bun.fast_debug_build_mode)
         return printFn(ctx, comptime prettyFmt(fmt, false), args);
 
     if (enable_ansi_colors) {
@@ -810,9 +824,9 @@ pub noinline fn printError(comptime fmt: string, args: anytype) void {
 }
 
 pub const DebugTimer = struct {
-    timer: @import("root").bun.DebugOnly(std.time.Timer) = undefined,
+    timer: bun.DebugOnly(std.time.Timer) = undefined,
 
-    pub fn start() DebugTimer {
+    pub inline fn start() DebugTimer {
         if (comptime Environment.isDebug) {
             return DebugTimer{
                 .timer = std.time.Timer.start() catch unreachable,

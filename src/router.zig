@@ -967,7 +967,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const expectStr = std.testing.expectEqualStrings;
-const Logger = @import("root").bun.logger;
+const Logger = bun.logger;
 
 pub const Test = struct {
     pub fn makeRoutes(comptime testName: string, data: anytype) !Routes {

@@ -45,8 +45,11 @@ pub const ProcessHandle = struct {
 
     remaining_dependencies: usize = 0,
     dependents: std.ArrayList(*This) = std.ArrayList(*This).init(bun.default_allocator),
+    visited: bool = false,
+    visiting: bool = false,
 
     fn start(this: *This) !void {
+        this.state.remaining_scripts += 1;
         const handle = this;
 
         var argv = [_:null]?[*:0]const u8{ this.state.shell_bin, if (Environment.isPosix) "-c" else "exec", this.config.combined, null };
@@ -131,7 +134,7 @@ const State = struct {
 
     handles: []ProcessHandle,
     event_loop: *bun.JSC.MiniEventLoop,
-    remaining_scripts: usize,
+    remaining_scripts: usize = 0,
     // buffer for batched output
     draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     last_lines_written: usize = 0,
@@ -479,7 +482,6 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     var state = State{
         .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
         .event_loop = event_loop,
-        .remaining_scripts = scripts.items.len,
         .pretty_output = if (Environment.isWindows) windowsIsTerminal() else Output.enable_ansi_colors_stdout,
         .shell_bin = shell_bin,
         .envp = try this_bundler.env.map.createNullDelimitedEnvMap(ctx.allocator),
@@ -528,7 +530,11 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             }
         }
     }
-    // TODO find cycles
+
+    // find and eliminate cycles
+    for (state.handles) |*handle| {
+        eliminateCycles(handle);
+    }
 
     // start inital scripts
     for (state.handles) |*handle| {
@@ -557,4 +563,21 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     state.finalize();
 
     Global.exit(0);
+}
+
+fn eliminateCycles(current: *ProcessHandle) void {
+    current.visited = true;
+    current.visiting = true;
+    var i: usize = 0;
+    while (i < current.dependents.items.len) {
+        const dep = current.dependents.items[i];
+        if (dep.visiting) {
+            _ = current.dependents.swapRemove(i);
+            dep.remaining_dependencies -= 1;
+        } else if (!dep.visited) {
+            eliminateCycles(dep);
+            i += 1;
+        }
+    }
+    current.visiting = false;
 }

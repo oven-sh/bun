@@ -187,7 +187,7 @@ const State = struct {
                 if (std.mem.indexOfScalar(u8, content, '\n')) |i| {
                     try handle.buffer.appendSlice(content[0 .. i + 1]);
                     content = content[i + 1 ..];
-                    try this.draw_buf.writer().print("{s}: {s}", .{ handle.config.package_name, handle.buffer.items });
+                    try this.draw_buf.writer().print("{s} {s}: {s}", .{ handle.config.package_name, handle.config.script_name, handle.buffer.items });
                     handle.buffer.clearRetainingCapacity();
                 } else {
                     try handle.buffer.appendSlice(content);
@@ -196,7 +196,7 @@ const State = struct {
             }
             while (std.mem.indexOfScalar(u8, content, '\n')) |i| {
                 const line = content[0 .. i + 1];
-                try this.draw_buf.writer().print("{s}: {s}", .{ handle.config.package_name, line });
+                try this.draw_buf.writer().print("{s} {s}: {s}", .{ handle.config.package_name, handle.config.script_name, line });
                 content = content[i + 1 ..];
             }
             if (content.len > 0) {
@@ -231,10 +231,10 @@ const State = struct {
             // print exit status
             switch (handle.process.?.status) {
                 .exited => |exited| {
-                    try this.draw_buf.writer().print("{s}: Exited with code {d}\n", .{ handle.config.package_name, exited.code });
+                    try this.draw_buf.writer().print("{s} {s}: Exited with code {d}\n", .{ handle.config.package_name, handle.config.script_name, exited.code });
                 },
                 .signaled => |signal| {
-                    try this.draw_buf.writer().print("{s}: Signaled with code {s}\n", .{ handle.config.package_name, @tagName(signal) });
+                    try this.draw_buf.writer().print("{s} {s}: Signaled with code {s}\n", .{ handle.config.package_name, handle.config.script_name, @tagName(signal) });
                 },
                 else => {},
             }
@@ -281,14 +281,9 @@ const State = struct {
             }
         }
         for (this.handles) |*handle| {
-            // if the process hasn't started yet, we don't print anything
-            // TODO we could print a message like "Waiting..."
-            if (handle.process == null) {
-                continue;
-            }
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
             const e = elide(handle.buffer.items, if (is_abort) null else 10);
-            try this.draw_buf.writer().print(fmt("<b>{s}<r> $ <d>{s}<r>\n"), .{ handle.config.package_name, handle.config.script_content });
+            try this.draw_buf.writer().print(fmt("<b>{s}<r> {s} $ <d>{s}<r>\n"), .{ handle.config.package_name, handle.config.script_name, handle.config.script_content });
             if (e.elided_count > 0) {
                 try this.draw_buf.writer().print(
                     fmt("<cyan>│<r> <d>[{d} lines elided]<r>\n"),
@@ -308,21 +303,29 @@ const State = struct {
                 try this.draw_buf.append('\n');
             }
             try this.draw_buf.appendSlice(fmt("<cyan>└─<r> "));
-            switch (handle.process.?.status) {
-                .running => try this.draw_buf.appendSlice(fmt("<cyan>Running...<r>\n")),
-                .exited => |exited| {
-                    if (exited.code == 0) {
-                        try this.draw_buf.appendSlice(fmt("<cyan>Done<r>\n"));
-                    } else {
-                        try this.draw_buf.writer().print(fmt("<red>Exited with code {d}<r>\n"), .{exited.code});
-                    }
-                },
-                .signaled => |code| {
-                    try this.draw_buf.writer().print(fmt("<red>Signaled with code {s}<r>\n"), .{@tagName(code)});
-                },
-                .err => {
-                    try this.draw_buf.appendSlice(fmt("<red>Error<r>\n"));
-                },
+            if (handle.process) |proc| {
+                switch (proc.status) {
+                    .running => try this.draw_buf.appendSlice(fmt("<cyan>Running...<r>\n")),
+                    .exited => |exited| {
+                        if (exited.code == 0) {
+                            try this.draw_buf.appendSlice(fmt("<cyan>Done<r>\n"));
+                        } else {
+                            try this.draw_buf.writer().print(fmt("<red>Exited with code {d}<r>\n"), .{exited.code});
+                        }
+                    },
+                    .signaled => |code| {
+                        if (code == .SIGINT) {
+                            try this.draw_buf.writer().print(fmt("<red>Interrupted<r>\n"), .{});
+                        } else {
+                            try this.draw_buf.writer().print(fmt("<red>Signaled with code {s}<r>\n"), .{@tagName(code)});
+                        }
+                    },
+                    .err => {
+                        try this.draw_buf.appendSlice(fmt("<red>Error<r>\n"));
+                    },
+                }
+            } else {
+                try this.draw_buf.appendSlice(fmt("<cyan><d>Waiting...<r>\n"));
             }
         }
         this.last_lines_written = 0;
@@ -417,6 +420,13 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         Output.prettyErrorln("<r><red>error<r>: No script name provided", .{});
         break :brk Global.exit(1);
     };
+    const pre_script_name = try ctx.allocator.alloc(u8, script_name.len + 3);
+    @memcpy(pre_script_name[0..3], "pre");
+    @memcpy(pre_script_name[3..], script_name);
+
+    const post_script_name = try ctx.allocator.alloc(u8, script_name.len + 4);
+    @memcpy(post_script_name[0..4], "post");
+    @memcpy(post_script_name[4..], script_name);
 
     const fsinstance = try bun.fs.FileSystem.init(null);
 
@@ -454,43 +464,42 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         if (!matches) continue;
 
         const pkgscripts = pkgjson.scripts orelse continue;
-        const content = pkgscripts.get(script_name) orelse continue;
+        const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_bundler, null, dirpath, ctx.debug.run_in_bun);
 
-        // we leak this
-        var copy_script = try std.ArrayList(u8).initCapacity(ctx.allocator, content.len);
-        try RunCommand.replacePackageManagerRun(&copy_script, content);
+        for (&[3][]const u8{ pre_script_name, script_name, post_script_name }) |name| {
+            const content = pkgscripts.get(name) orelse continue;
 
-        // and this, too
-        var combined_len = content.len;
-        for (ctx.passthrough) |p| {
-            combined_len += p.len + 1;
+            // we leak this
+            var copy_script = try std.ArrayList(u8).initCapacity(ctx.allocator, content.len);
+            try RunCommand.replacePackageManagerRun(&copy_script, content);
+
+            // and this, too
+            var combined_len = content.len;
+            for (ctx.passthrough) |p| {
+                combined_len += p.len + 1;
+            }
+            var combined = try ctx.allocator.allocSentinel(u8, combined_len, 0);
+            bun.copy(u8, combined, content);
+            var remaining_script_buf = combined[content.len..];
+
+            for (ctx.passthrough) |part| {
+                const p = part;
+                remaining_script_buf[0] = ' ';
+                bun.copy(u8, remaining_script_buf[1..], p);
+                remaining_script_buf = remaining_script_buf[p.len + 1 ..];
+            }
+
+            try scripts.append(.{
+                .package_json_path = try ctx.allocator.dupe(u8, package_json_path),
+                .package_name = pkgjson.name,
+                .script_name = name,
+                .script_content = copy_script.items,
+                .combined = combined,
+                .deps = pkgjson.dependencies,
+                .PATH = PATH,
+            });
         }
-        var combined = try ctx.allocator.allocSentinel(u8, combined_len, 0);
-        bun.copy(u8, combined, content);
-        var remaining_script_buf = combined[content.len..];
-
-        for (ctx.passthrough) |part| {
-            const p = part;
-            remaining_script_buf[0] = ' ';
-            bun.copy(u8, remaining_script_buf[1..], p);
-            remaining_script_buf = remaining_script_buf[p.len + 1 ..];
-        }
-
-        var original_path: []const u8 = "";
-        const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_bundler, &original_path, dirpath, ctx.debug.run_in_bun);
-
-        try scripts.append(.{
-            .package_json_path = try ctx.allocator.dupe(u8, package_json_path),
-            .package_name = pkgjson.name,
-            .script_name = script_name,
-            .script_content = copy_script.items,
-            .combined = combined,
-            .deps = pkgjson.dependencies,
-            .PATH = PATH,
-        });
     }
-    // to ensure a stable order we sort by name
-    std.sort.insertion(ScriptConfig, scripts.items, {}, ScriptConfig.cmp);
 
     if (scripts.items.len == 0) {
         Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
@@ -512,7 +521,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     };
 
     // initialize the handles
-    var map = bun.StringHashMap(*ProcessHandle).init(ctx.allocator);
+    var map = bun.StringHashMap(std.ArrayList(*ProcessHandle)).init(ctx.allocator);
     for (scripts.items, 0..) |*script, i| {
         state.handles[i] = ProcessHandle{
             .state = &state,
@@ -528,10 +537,13 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         };
         const res = try map.getOrPut(script.package_name);
         if (res.found_existing) {
-            Output.prettyErrorln("<r><red>error<r>: Duplicate package name: {s}", .{script.package_name});
-            Global.exit(1);
+            try res.value_ptr.append(&state.handles[i]);
+            // Output.prettyErrorln("<r><red>error<r>: Duplicate package name: {s}", .{script.package_name});
+            // Global.exit(1);
         } else {
-            res.value_ptr.* = &state.handles[i];
+            res.value_ptr.* = std.ArrayList(*ProcessHandle).init(ctx.allocator);
+            try res.value_ptr.append(&state.handles[i]);
+            // &state.handles[i];
         }
     }
     // compute dependencies (TODO: maybe we should do this only in a workspace?)
@@ -543,9 +555,11 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             defer alloc.get().free(buf);
             const name = entry.key_ptr.slice(buf);
             // is it a workspace dependency?
-            if (map.get(name)) |dep| {
-                try dep.dependents.append(handle);
-                handle.remaining_dependencies += 1;
+            if (map.get(name)) |pkgs| {
+                for (pkgs.items) |dep| {
+                    try dep.dependents.append(handle);
+                    handle.remaining_dependencies += 1;
+                }
             }
         }
     }
@@ -563,6 +577,15 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         for (state.handles) |*handle| {
             handle.dependents.clearRetainingCapacity();
             handle.remaining_dependencies = 0;
+        }
+    }
+
+    // set up dependencies between pre/post scripts
+    // this is done after the cycle check because we don't want these to be removed if there is a cycle
+    for (0..state.handles.len - 1) |i| {
+        if (bun.strings.eql(state.handles[i].config.package_name, state.handles[i + 1].config.package_name)) {
+            try state.handles[i].dependents.append(&state.handles[i + 1]);
+            state.handles[i + 1].remaining_dependencies += 1;
         }
     }
 

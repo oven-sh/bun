@@ -314,3 +314,45 @@ it("it should not crash when getting a ReferenceError on client socket open", as
     server.stop(true);
   }
 });
+
+it("it should not crash when returning a Error on client socket open", async () => {
+  const server = Bun.serve({
+    port: 8080,
+    hostname: "localhost",
+    fetch() {
+      return new Response("Hello World");
+    },
+  });
+  try {
+    const { resolve, reject, promise } = Promise.withResolvers();
+    let client: Socket<undefined> | null = null;
+    const timeout = setTimeout(() => {
+      client?.end();
+      reject(new Error("Timeout"));
+    }, 1000);
+    client = await Bun.connect({
+      port: server.port,
+      hostname: server.hostname,
+      socket: {
+        //@ts-ignore
+        open(socket) {
+          return new Error("CustomError");
+        },
+        error(socket, error) {
+          clearTimeout(timeout);
+          resolve(error);
+        },
+        close(socket) {
+          // we need the close handler
+          resolve({ message: "Closed" });
+        },
+        data(socket, data) {},
+      },
+    });
+
+    const result: any = await promise;
+    expect(result?.message).toBe("CustomError");
+  } finally {
+    server.stop(true);
+  }
+});

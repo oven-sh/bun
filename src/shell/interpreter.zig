@@ -1065,6 +1065,20 @@ pub const Interpreter = struct {
             return shell.ParseError.Lex;
         }
 
+        if (comptime bun.Environment.allow_assert) {
+            const print = bun.Output.scoped(.ShellTokens, true);
+            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch @panic("OOPS");
+            defer test_tokens.deinit();
+            for (lex_result.tokens) |tok| {
+                const test_tok = shell.Test.TestToken.from_real(tok, lex_result.strpool);
+                test_tokens.append(test_tok) catch @panic("OOPS");
+            }
+
+            const str = std.json.stringifyAlloc(bun.default_allocator, test_tokens.items[0..], .{}) catch @panic("OOPS");
+            defer bun.default_allocator.free(str);
+            print("Tokens: {s}", .{str});
+        }
+
         out_parser.* = try bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs);
 
         const script_ast = try out_parser.*.?.parse();

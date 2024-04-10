@@ -335,7 +335,7 @@ const State = struct {
                     },
                 }
             } else {
-                try this.draw_buf.appendSlice(fmt("<cyan><d>Waiting...<r>\n"));
+                try this.draw_buf.writer().print(fmt("<cyan><d>Waiting for {d} other script(s)<r>\n"), .{handle.remaining_dependencies});
             }
         }
         this.last_lines_written = 0;

@@ -14,7 +14,9 @@ on:
       run-id:
         type: string
         required: true
-
+      baseline:
+        type: boolean
+        required: false
 jobs:
   test:
     runs-on: ${{ inputs.run-on || 'ubuntu-latest' }}
@@ -22,7 +24,7 @@ jobs:
       - name: Download Bun
         uses: actions/download-artifact@v4
         with:
-          pattern: bun-${{ runner.os == 'macOS' && 'darwin' || (runner.os == 'Windows' && 'windows' || 'linux') }}-${{ runner.arch == 'X64' && 'x64' || 'aarch64' }}{,-baseline}
+          pattern: bun-${{ runner.os == 'macOS' && 'darwin' || (runner.os == 'Windows' && 'windows' || 'linux') }}-${{ runner.arch == 'X64' && 'x64' || 'aarch64' }}${{ inputs.baseline && '-baseline' || '' }}
           path: ${{ runner.temp }}
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run-id || '8619678366' }}

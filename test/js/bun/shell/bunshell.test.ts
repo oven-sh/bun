@@ -351,6 +351,176 @@ describe("bunshell", () => {
     expect(stdout.toString()).toEqual(`noice\n`);
   });
 
+  // Ported from GNU bash "quote.tests"
+  // https://github.com/bminor/bash/blob/f3b6bd19457e260b65d11f2712ec3da56cef463f/tests/quote.tests#L1
+  // Some backtick tests are skipped, because of insane behavior:
+  // For some reason, even though $(...) and `...` are suppoed to be equivalent,
+  // doing:
+  // echo "`echo 'foo\
+  // bar'`"
+  //
+  // gives:
+  // foobar
+  //
+  // While doing the same, but with $(...):
+  // echo "$(echo 'foo\
+  // bar')"
+  //
+  // gives:
+  // foo\
+  // bar
+  //
+  // I'm not sure why, this isn't documented behavior, so I'm choosing to ignore it.
+  describe("gnu_quote", () => {
+    // An unfortunate consequence of our use of String.raw and tagged template
+    // functions for the shell make it so that we have to use { raw: string } to do
+    // backtick command substitution
+    const BACKTICK = { raw: "`" };
+
+    // Single Quote
+    TestBuilder.command`
+echo 'foo
+bar'
+echo 'foo
+bar'
+echo 'foo\
+bar'
+`
+      .stdout("foo\nbar\nfoo\nbar\nfoo\\\nbar\n")
+      .runAsTest("Single Quote");
+
+    TestBuilder.command`
+echo "foo
+bar"
+echo "foo
+bar"
+echo "foo\
+bar"
+`
+      .stdout("foo\nbar\nfoo\nbar\nfoobar\n")
+      .runAsTest("Double Quote");
+
+    TestBuilder.command`
+echo ${BACKTICK}echo 'foo
+bar'${BACKTICK}
+echo ${BACKTICK}echo 'foo
+bar'${BACKTICK}
+echo ${BACKTICK}echo 'foo\
+bar'${BACKTICK}
+`
+      .stdout(
+        `foo bar
+foo bar
+foobar\n`,
+      )
+      .todo("insane backtick behavior")
+      .runAsTest("Backslash Single Quote");
+
+    TestBuilder.command`
+echo "${BACKTICK}echo 'foo
+bar'${BACKTICK}"
+echo "${BACKTICK}echo 'foo
+bar'${BACKTICK}"
+echo "${BACKTICK}echo 'foo\
+bar'${BACKTICK}"
+`
+      .stdout(
+        `foo
+bar
+foo
+bar
+foobar\n`,
+      )
+      .todo("insane backtick behavior")
+      .runAsTest("Double Quote Backslash Single Quote");
+
+    TestBuilder.command`
+echo $(echo 'foo
+bar')
+echo $(echo 'foo
+bar')
+echo $(echo 'foo\
+bar')
+`
+      .stdout(
+        `foo bar
+foo bar
+foo\\ bar\n`,
+      )
+      .runAsTest("Dollar Paren Single Quote");
+
+    TestBuilder.command`
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo\
+bar')"
+`
+      .stdout(
+        `foo
+bar
+foo
+bar
+foo\\
+bar\n`,
+      )
+      .runAsTest("Dollar Paren Double Quote");
+
+    TestBuilder.command`
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo\
+bar')"
+`
+      .stdout(
+        `foo
+bar
+foo
+bar
+foo\\
+bar\n`,
+      )
+      .runAsTest("Double Quote Dollar Paren Single Quote");
+  });
+
+  describe("escaped_newline", () => {
+    const printArgs = /* ts */ `console.log(JSON.stringify(process.argv))`;
+
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    on a newline!
+  `
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!"]))
+      .runAsTest("single");
+
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    on a newline! \
+    and \
+    a few \
+    others!
+  `
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out =>
+        expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "and", "a", "few", "others!"]),
+      )
+      .runAsTest("many");
+
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    on a newline! \
+    ooga"
+booga"
+  `
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "ooga\nbooga"]))
+      .runAsTest("quotes");
+  });
+
   describe("glob expansion", () => {
     // Issue #8403: https://github.com/oven-sh/bun/issues/8403
     TestBuilder.command`ls *.sdfljsfsdf`

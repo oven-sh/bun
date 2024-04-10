@@ -19,12 +19,14 @@ jobs:
       - name: Download bun
         uses: actions/download-artifact@v4
         with:
-          pattern: bun-{darwin,linux,windows}-{x64,aarch64}{,-baseline}{,-debug,-profile}
+          pattern: bun-{darwin,linux,windows}-{x64,aarch64}{,-baseline}
           path: ${{ runner.temp }}
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run-id || '8623134412' }}
       - name: Unzip bun
         run: |
-          unzip -d /usr/local/bin '${{ runner.temp }}/bun-*.zip'
-          which bun
+          ls -lah '${{ runner.temp }}'
+          ls -lah '${{ runner.temp }}/bun-darwin-x64'
+          # unzip -d /usr/local/bin '${{ runner.temp }}/bun-*.zip'
+          # which bun
       

@@ -14,6 +14,23 @@ echo "My name is bun-hello"
     "node_modules/.bin/bun-hello.cmd": `@echo off
 echo My name is bun-hello
     `,
+    "subdir/one/two/package.json": JSON.stringify(
+      {
+        name: "issue-10132",
+        version: "0.0.0",
+        scripts: {
+          "other-script": "echo hi",
+        },
+      },
+      null,
+      2,
+    ),
+    "subdir/one/two/node_modules/.bin/bun-hello2": `#!/usr/bin/env bash
+echo "My name is bun-hello2"
+    `,
+    "subdir/one/two/node_modules/.bin/bun-hello2.cmd": `@echo off
+echo My name is bun-hello2
+    `,
     "package.json": JSON.stringify(
       {
         name: "issue-10132",
@@ -29,6 +46,7 @@ echo My name is bun-hello
 
   if (isPosix) {
     chmodSync(join(dir, "node_modules/.bin/bun-hello"), 0o755);
+    chmodSync(join(dir, "subdir/one/two/node_modules/.bin/bun-hello2"), 0o755);
   }
 });
 

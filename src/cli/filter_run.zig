@@ -29,6 +29,10 @@ const ScriptConfig = struct {
     // ../../node_modules/.bin
     // and so forth, in addition to the user's $PATH.
     PATH: []const u8,
+
+    fn cmp(_: void, a: @This(), b: @This()) bool {
+        return bun.strings.cmpStringsAsc({}, a.package_name, b.package_name);
+    }
 };
 
 pub const ProcessHandle = struct {
@@ -55,24 +59,24 @@ pub const ProcessHandle = struct {
     visited: bool = false,
     visiting: bool = false,
 
-    fn start(this: *This, env: *bun.DotEnv.Loader) !void {
+    fn start(this: *This) !void {
         this.state.remaining_scripts += 1;
         const handle = this;
 
         var argv = [_:null]?[*:0]const u8{ this.state.shell_bin, if (Environment.isPosix) "-c" else "exec", this.config.combined, null };
 
         this.start_time = std.time.Instant.now() catch null;
-        var spawned = brk: {
+        var spawned: bun.spawn.SpawnProcessResult = brk: {
 
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a std.ArrayList shared
             // instead of creating a new one for each process
             var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
-            const original_path = env.map.get("PATH") orelse "";
-            env.map.put("PATH", this.config.PATH) catch bun.outOfMemory();
-            defer env.map.put("PATH", original_path) catch bun.outOfMemory();
-            const envp = try env.map.createNullDelimitedEnvMap(arena.allocator());
+            const original_path = this.state.env.map.get("PATH") orelse "";
+            this.state.env.map.put("PATH", this.config.PATH) catch bun.outOfMemory();
+            defer this.state.env.map.put("PATH", original_path) catch bun.outOfMemory();
+            const envp = try this.state.env.map.createNullDelimitedEnvMap(arena.allocator());
 
             break :brk try (try bun.spawn.spawnProcess(&this.options, argv[0..], envp)).unwrap();
         };
@@ -208,7 +212,7 @@ const State = struct {
             for (handle.dependents.items) |dependent| {
                 dependent.remaining_dependencies -= 1;
                 if (dependent.remaining_dependencies == 0) {
-                    dependent.start(this.env) catch {
+                    dependent.start() catch {
                         Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
                         Global.exit(1);
                     };
@@ -437,12 +441,6 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
 
-        // const dir_info = this_bundler.resolver.readDirInfo(path) catch |err| {
-        //     Output.warn("Failed to read directory info for {s}: {s}\n", .{ path, @errorName(err) });
-        //     continue;
-        // } orelse continue;
-
-        // const pkgjson = dir_info.enclosing_package_json orelse continue;
         const pkgjson = bun.PackageJSON.parse(&this_bundler.resolver, dirpath, .zero, null, .include_scripts, .main, .no_hash) orelse {
             Output.warn("Failed to read package.json\n", .{});
             continue;
@@ -482,7 +480,6 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_bundler, &original_path, dirpath, ctx.debug.run_in_bun);
 
         try scripts.append(.{
-            // const res = try scripts.getOrPut(pkgjson.name, .{
             .package_json_path = try ctx.allocator.dupe(u8, package_json_path),
             .package_name = pkgjson.name,
             .script_name = script_name,
@@ -492,6 +489,8 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             .PATH = PATH,
         });
     }
+    // to ensure a stable order we sort by name
+    std.sort.insertion(ScriptConfig, scripts.items, {}, ScriptConfig.cmp);
 
     if (scripts.items.len == 0) {
         Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
@@ -524,7 +523,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
                 .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
                 .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
                 .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) } else {},
-                .stream = false,
+                .stream = true,
             },
         };
         const res = try map.getOrPut(script.package_name);
@@ -545,26 +544,32 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             const name = entry.key_ptr.slice(buf);
             // is it a workspace dependency?
             if (map.get(name)) |dep| {
-                // const buf2 = try alloc.get().alloc(u8, dep.config.package_name.len);
-                // const sem_string = SemverString.init(buf2, dep.config.package_name);
-                // if (handle.config.deps.map.get(sem_string)) |_| {
-                //     continue;
-                // }
                 try dep.dependents.append(handle);
                 handle.remaining_dependencies += 1;
             }
         }
     }
 
-    // find and eliminate cycles
+    // check if there is a dependency cycle
+    var has_cycle = false;
     for (state.handles) |*handle| {
-        eliminateCycles(handle);
+        if (hasCycle(handle)) {
+            has_cycle = true;
+            break;
+        }
+    }
+    // if there is, we ignore dependency order completely
+    if (has_cycle) {
+        for (state.handles) |*handle| {
+            handle.dependents.clearRetainingCapacity();
+            handle.remaining_dependencies = 0;
+        }
     }
 
     // start inital scripts
     for (state.handles) |*handle| {
         if (handle.remaining_dependencies == 0) {
-            handle.start(this_bundler.env) catch {
+            handle.start() catch {
                 // todo this should probably happen in "start"
                 Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
                 Global.exit(1);
@@ -590,19 +595,18 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     Global.exit(0);
 }
 
-fn eliminateCycles(current: *ProcessHandle) void {
+fn hasCycle(current: *ProcessHandle) bool {
     current.visited = true;
     current.visiting = true;
-    var i: usize = 0;
-    while (i < current.dependents.items.len) {
-        const dep = current.dependents.items[i];
+    for (current.dependents.items) |dep| {
         if (dep.visiting) {
-            _ = current.dependents.swapRemove(i);
-            dep.remaining_dependencies -= 1;
+            return true;
         } else if (!dep.visited) {
-            eliminateCycles(dep);
-            i += 1;
+            if (hasCycle(dep)) {
+                return true;
+            }
         }
     }
     current.visiting = false;
+    return false;
 }

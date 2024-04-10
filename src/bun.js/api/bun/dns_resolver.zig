@@ -1,16 +1,16 @@
 const Bun = @This();
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const c_ares = bun.c_ares;
@@ -330,7 +330,7 @@ pub fn addrInfoToJSArray(
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
     var stack = std.heap.stackFallback(2048, parent_allocator);
-    var arena = @import("root").bun.ArenaAllocator.init(stack.get());
+    var arena = bun.ArenaAllocator.init(stack.get());
     const array = JSC.JSValue.createEmptyArray(
         globalThis,
         addrInfoCount(addr_info),
@@ -642,7 +642,7 @@ pub const GetAddrInfo = struct {
                     .addrinfo => |addrinfo| addrInfoToJSArray(globalThis.allocator(), addrinfo orelse return null, globalThis),
                     .list => |list| brk: {
                         var stack = std.heap.stackFallback(2048, globalThis.allocator());
-                        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
+                        var arena = bun.ArenaAllocator.init(stack.get());
                         const array = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
                         var i: u32 = 0;
                         const items: []const Result = list.items;

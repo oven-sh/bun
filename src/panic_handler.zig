@@ -11,7 +11,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
-const HTTP = @import("root").bun.http.AsyncHTTP;
+const HTTP = bun.http.AsyncHTTP;
 const Report = @import("./report.zig");
 
 pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackTrace, ?usize) noreturn) type {

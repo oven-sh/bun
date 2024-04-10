@@ -886,6 +886,7 @@ pub const PackageInstall = struct {
     package_name: string,
     package_version: string,
     file_count: u32 = 0,
+    node_modules: *const NodeModulesFolder,
 
     const debug = Output.scoped(.install, true);
 
@@ -1637,7 +1638,7 @@ pub const PackageInstall = struct {
                 return null;
             }
 
-            return bun.errnoToZigErr(bun.windows.getLastErrno());
+            return bun.windows.getLastError();
         }
     };
 
@@ -1913,7 +1914,80 @@ pub const PackageInstall = struct {
                 // if it fails, that means the directory doesn't exist or was inaccessible
             },
             .result => {
-                this.destination_dir.deleteTree(temp_path) catch {};
+                // Uninstall can sometimes take awhile in a large directory
+                // tree. Since we're renaming the directory to a randomly
+                // generated name, we can delete it in another thread without
+                // worrying about race conditions or blocking the main thread.
+                //
+                // This should be a slight improvement to CI environments.
+                //
+                // on macOS ARM64 in a project with Gatsby, @mui/icons-material, and Next.js:
+                //
+                // ❯ hyperfine "bun install --ignore-scripts" "bun-1.1.2 install --ignore-scripts" --prepare="rm -rf node_modules/**/package.json" --warmup=2
+                // Benchmark 1: bun install --ignore-scripts
+                //   Time (mean ± σ):      2.281 s ±  0.027 s    [User: 0.041 s, System: 6.851 s]
+                //   Range (min … max):    2.231 s …  2.312 s    10 runs
+                //
+                // Benchmark 2: bun-1.1.2 install --ignore-scripts
+                //   Time (mean ± σ):      3.315 s ±  0.033 s    [User: 0.029 s, System: 2.237 s]
+                //   Range (min … max):    3.279 s …  3.356 s    10 runs
+                //
+                // Summary
+                //   bun install --ignore-scripts ran
+                //     1.45 ± 0.02 times faster than bun-1.1.2 install --ignore-scripts
+                //
+
+                const UninstallTask = struct {
+                    absolute_path: []const u8,
+                    task: JSC.WorkPoolTask = .{ .callback = &run },
+                    pub fn run(task: *JSC.WorkPoolTask) void {
+                        var unintall_task = @fieldParentPtr(@This(), "task", task);
+                        var debug_timer = bun.Output.DebugTimer.start();
+                        defer {
+                            _ = PackageManager.instance.pending_tasks.fetchSub(1, .Monotonic);
+                            PackageManager.instance.wake();
+                        }
+
+                        defer unintall_task.deinit();
+                        const dirname = std.fs.path.dirname(unintall_task.absolute_path) orelse {
+                            Output.debugWarn("Unexpectedly failed to get dirname of {s}", .{unintall_task.absolute_path});
+                            return;
+                        };
+                        const basename = std.fs.path.basename(unintall_task.absolute_path);
+
+                        var dir = bun.openDirA(std.fs.cwd(), dirname) catch |err| {
+                            if (comptime Environment.isDebug) {
+                                Output.debugWarn("Failed to delete {s}: {s}", .{ unintall_task.absolute_path, @errorName(err) });
+                            }
+                            return;
+                        };
+                        defer _ = bun.sys.close(bun.toFD(dir.fd));
+
+                        dir.deleteTree(basename) catch |err| {
+                            if (comptime Environment.isDebug) {
+                                Output.debugWarn("Failed to delete {s} in {s}: {s}", .{ basename, dirname, @errorName(err) });
+                            }
+                        };
+
+                        if (Environment.isDebug) {
+                            _ = &debug_timer;
+                            debug("deleteTree({s}, {s}) = {}", .{ basename, dirname, debug_timer });
+                        }
+                    }
+
+                    pub fn deinit(uninstall_task: *@This()) void {
+                        bun.default_allocator.free(uninstall_task.absolute_path);
+                        uninstall_task.destroy();
+                    }
+
+                    pub usingnamespace bun.New(@This());
+                };
+                var task = UninstallTask.new(.{
+                    .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
+                });
+                PackageManager.instance.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
+                _ = PackageManager.instance.pending_tasks.fetchAdd(1, .Monotonic);
+                PackageManager.instance.total_tasks += 1;
             },
         }
     }
@@ -2334,7 +2408,7 @@ pub const PackageManager = struct {
     network_tarball_batch: ThreadPool.Batch = .{},
     network_resolve_batch: ThreadPool.Batch = .{},
     network_task_fifo: NetworkQueue = undefined,
-    pending_tasks: u32 = 0,
+    pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     total_tasks: u32 = 0,
     preallocated_network_tasks: PreallocatedNetworkTasks = PreallocatedNetworkTasks.init(bun.default_allocator),
     preallocated_resolve_tasks: PreallocatedTaskStore = PreallocatedTaskStore.init(bun.default_allocator),
@@ -2651,7 +2725,7 @@ pub const PackageManager = struct {
                                     manager: *PackageManager,
                                     pub fn isDone(closure: *@This()) bool {
                                         var manager = closure.manager;
-                                        if (manager.pending_tasks > 0) {
+                                        if (manager.pendingTaskCount() > 0) {
                                             manager.runTasks(
                                                 void,
                                                 {},
@@ -2668,12 +2742,12 @@ pub const PackageManager = struct {
                                                 return true;
                                             };
 
-                                            if (PackageManager.verbose_install and manager.pending_tasks > 0) {
-                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
+                                            if (PackageManager.verbose_install and manager.pendingTaskCount() > 0) {
+                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pendingTaskCount()});
                                             }
                                         }
 
-                                        return manager.pending_tasks == 0;
+                                        return manager.pendingTaskCount() == 0;
                                     }
                                 };
                             }
@@ -3358,7 +3432,7 @@ pub const PackageManager = struct {
             return null;
         }
 
-        var arena = @import("root").bun.ArenaAllocator.init(this.allocator);
+        var arena = bun.ArenaAllocator.init(this.allocator);
         defer arena.deinit();
         const arena_alloc = arena.allocator();
         var stack_fallback = std.heap.stackFallback(4096, arena_alloc);
@@ -4728,7 +4802,7 @@ pub const PackageManager = struct {
     pub fn scheduleTasks(manager: *PackageManager) usize {
         const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len;
 
-        manager.pending_tasks += @as(u32, @truncate(count));
+        _ = manager.pending_tasks.fetchAdd(@truncate(count), .Monotonic);
         manager.total_tasks += @as(u32, @truncate(count));
         manager.thread_pool.schedule(manager.task_batch);
         manager.network_resolve_batch.push(manager.network_tarball_batch);
@@ -5124,8 +5198,8 @@ pub const PackageManager = struct {
         var network_tasks_batch = manager.async_network_task_queue.popBatch();
         var network_tasks_iter = network_tasks_batch.iterator();
         while (network_tasks_iter.next()) |task| {
-            if (comptime Environment.allow_assert) std.debug.assert(manager.pending_tasks > 0);
-            manager.pending_tasks -|= 1;
+            if (comptime Environment.allow_assert) std.debug.assert(manager.pendingTaskCount() > 0);
+            _ = manager.pending_tasks.fetchSub(1, .Monotonic);
             // We cannot free the network task at the end of this scope.
             // It may continue to be referenced in a future task.
 
@@ -5449,9 +5523,9 @@ pub const PackageManager = struct {
         var resolve_tasks_batch = manager.resolve_tasks.popBatch();
         var resolve_tasks_iter = resolve_tasks_batch.iterator();
         while (resolve_tasks_iter.next()) |task| {
-            if (comptime Environment.allow_assert) std.debug.assert(manager.pending_tasks > 0);
+            if (comptime Environment.allow_assert) std.debug.assert(manager.pendingTaskCount() > 0);
             defer manager.preallocated_resolve_tasks.put(task);
-            manager.pending_tasks -|= 1;
+            _ = manager.pending_tasks.fetchSub(1, .Monotonic);
 
             if (task.log.msgs.items.len > 0) {
                 switch (Output.enable_ansi_colors) {
@@ -5762,7 +5836,7 @@ pub const PackageManager = struct {
 
         if (comptime log_level.showProgress()) {
             if (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true) {
-                const completed_items = manager.total_tasks - manager.pending_tasks;
+                const completed_items = manager.total_tasks - manager.pendingTaskCount();
                 if (completed_items != manager.downloads_node.?.unprotected_completed_items or has_updated_this_run) {
                     manager.downloads_node.?.setCompletedItems(completed_items);
                     manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks);
@@ -8989,6 +9063,7 @@ pub const PackageManager = struct {
                 .allocator = this.lockfile.allocator,
                 .package_name = name,
                 .package_version = resolution_label,
+                .node_modules = &this.node_modules,
                 // .install_order = this.tree_iterator.order,
             };
             debug("Installing {s}@{s}", .{ name, resolution_label });
@@ -9888,7 +9963,7 @@ pub const PackageManager = struct {
 
                     // We want to minimize how often we call this function
                     // That's part of why we unroll this loop
-                    if (this.pending_tasks > 0) {
+                    if (this.pendingTaskCount() > 0) {
                         try this.runTasks(
                             *PackageInstaller,
                             &installer,
@@ -9928,7 +10003,7 @@ pub const PackageManager = struct {
                 this.tickLifecycleScripts();
             }
 
-            while (this.pending_tasks > 0 and installer.options.do.install_packages) {
+            while (this.pendingTaskCount() > 0 and installer.options.do.install_packages) {
                 const Closure = struct {
                     installer: *PackageInstaller,
                     err: ?anyerror = null,
@@ -9954,11 +10029,11 @@ pub const PackageManager = struct {
                             return true;
                         }
 
-                        if (PackageManager.verbose_install and PackageManager.instance.pending_tasks > 0) {
-                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
+                        if (PackageManager.verbose_install and PackageManager.instance.pendingTaskCount() > 0) {
+                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pendingTaskCount()});
                         }
 
-                        return closure.manager.pending_tasks == 0 and closure.manager.hasNoMorePendingLifecycleScripts();
+                        return closure.manager.pendingTaskCount() == 0 and closure.manager.hasNoMorePendingLifecycleScripts();
                     }
                 };
 
@@ -10006,6 +10081,10 @@ pub const PackageManager = struct {
         return summary;
     }
 
+    pub inline fn pendingTaskCount(manager: *const PackageManager) u32 {
+        return manager.pending_tasks.load(.Monotonic);
+    }
+
     pub fn setupGlobalDir(manager: *PackageManager, ctx: *const Command.Context) !void {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
         var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -10025,7 +10104,7 @@ pub const PackageManager = struct {
         manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
         manager.setNodeName(manager.downloads_node.?, ProgressStrings.download_no_emoji_, ProgressStrings.download_emoji, true);
         manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
-        manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pending_tasks);
+        manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pendingTaskCount());
         manager.downloads_node.?.activate();
         manager.progress.refresh();
     }
@@ -10345,7 +10424,7 @@ pub const PackageManager = struct {
             manager.drainDependencyList();
         }
 
-        if (manager.pending_tasks > 0 or manager.peer_dependencies.readableLength() > 0) {
+        if (manager.pendingTaskCount() > 0 or manager.peer_dependencies.readableLength() > 0) {
             if (root.dependencies.len > 0) {
                 _ = manager.getCacheDirectory();
                 _ = manager.getTemporaryDirectory();
@@ -10396,7 +10475,7 @@ pub const PackageManager = struct {
                                 }
                             }
 
-                            const pending_tasks = this.pending_tasks;
+                            const pending_tasks = this.pendingTaskCount();
 
                             if (PackageManager.verbose_install and pending_tasks > 0) {
                                 if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{pending_tasks});
@@ -10423,7 +10502,7 @@ pub const PackageManager = struct {
             const waitForEverythingExceptPeers = runAndWaitFn(false);
             const waitForPeers = runAndWaitFn(true);
 
-            if (manager.pending_tasks > 0) {
+            if (manager.pendingTaskCount() > 0) {
                 try waitForEverythingExceptPeers(manager);
             }
 

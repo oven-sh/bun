@@ -6,13 +6,13 @@
       "label": "Install Dependencies",
       "command": "scripts/all-dependencies.sh",
       "windows": {
-        "command": "scripts/all-dependencies.ps1"
+        "command": "scripts/all-dependencies.ps1",
       },
       "icon": {
-        "id": "arrow-down"
+        "id": "arrow-down",
       },
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}",
       },
     },
     {
@@ -21,13 +21,13 @@
       "dependsOn": ["Install Dependencies"],
       "command": "scripts/setup.sh",
       "windows": {
-        "command": "scripts/setup.ps1"
+        "command": "scripts/setup.ps1",
       },
       "icon": {
-        "id": "check"
+        "id": "check",
       },
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}",
       },
     },
     {
@@ -37,10 +37,10 @@
       "command": "bun",
       "args": ["run", "build"],
       "icon": {
-        "id": "gear"
+        "id": "gear",
       },
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}",
       },
       "isBuildCommand": true,
       "runOptions": {
@@ -48,5 +48,5 @@
         "reevaluateOnRerun": true,
       },
     },
-  ]
+  ],
 }

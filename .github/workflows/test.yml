@@ -16,7 +16,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Download bun
+      - id: download
+        name: Download bun
         uses: actions/download-artifact@v4
         with:
           pattern: bun-{darwin,linux,windows}-{x64,aarch64}{,-baseline}
@@ -25,8 +26,5 @@ jobs:
           run-id: ${{ inputs.run-id || '8623134412' }}
       - name: Unzip bun
         run: |
-          ls -lah '${{ runner.temp }}'
-          ls -lah '${{ runner.temp }}/bun-darwin-x64'
-          # unzip -d /usr/local/bin '${{ runner.temp }}/bun-*.zip'
-          # which bun
+          echo "${{ steps.download.outputs.download-path }}"
       

@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
+import { bunExe, bunEnv as env, isLinux, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
 import { join, sep } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -42,6 +42,7 @@ afterAll(() => {
 beforeEach(async () => {
   packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+  env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   await writeFile(
     join(packageDir, "bunfig.toml"),
     `
@@ -2348,7 +2349,8 @@ test("missing package on reinstall, some with binaries", async () => {
   ).toBe(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin", bin));
 });
 
-for (const forceWaiterThread of [false, true]) {
+// waiter thread is only a thing on Linux.
+for (const forceWaiterThread of (isLinux ? [false, true] : [false])) {
   const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
   describe("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {
     test("root package with all lifecycle scripts", async () => {

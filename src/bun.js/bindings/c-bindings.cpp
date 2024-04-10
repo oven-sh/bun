@@ -423,6 +423,8 @@ extern "C" void Bun__setCTRLHandler(BOOL add)
 }
 #endif
 
+extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
+
 extern "C" void bun_initialize_process()
 {
     // Disable printf() buffering. We buffer it ourselves.
@@ -443,6 +445,7 @@ extern "C" void bun_initialize_process()
     bool anyTTYs = false;
 
     const auto setDevNullFd = [&](int target_fd) -> void {
+        bun_is_stdio_null[target_fd] = 1;
         if (devNullFd_ == -1) {
             do {
                 devNullFd_ = open("/dev/null", O_RDWR | O_CLOEXEC, 0);
@@ -510,6 +513,7 @@ extern "C" void bun_initialize_process()
             // Ignore _close result. If it fails or not depends on used Windows
             // version. We will just check _open result.
             _close(fd);
+            bun_is_stdio_null[fd] = 1;
             if (fd != _open("nul", O_RDWR)) {
                 RELEASE_ASSERT_NOT_REACHED();
             } else {

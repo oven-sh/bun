@@ -8,6 +8,7 @@ env:
   # note: in other files, this version is only the major version, but for windows it is the full version
   LLVM_VERSION: 16.0.6
   BUN_DOWNLOAD_URL_BASE: https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest
+  CMAKE_BUILD_TYPE: Release
 
   tag: bun-windows
   # TODO: wire this up to workflow_dispatch.
@@ -161,7 +162,6 @@ jobs:
           $Nasm = (Get-ChildItem "nasm")
           $env:Path += ";${Nasm}"
           $env:BUN_DEPS_OUT_DIR = (mkdir -Force "./bun-deps")
-          $env:CMAKE_BUILD_TYPE = "Release"
           .\scripts\all-dependencies.ps1
 
       - name: Upload Dependencies

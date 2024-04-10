@@ -7,6 +7,7 @@ concurrency:
 env:
   LLVM_VERSION: 16
   BUN_DOWNLOAD_URL_BASE: https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest
+  CMAKE_BUILD_TYPE: Release
 
 on:
   push:
@@ -145,7 +146,6 @@ jobs:
         env:
           CPU_TARGET: ${{ matrix.cpu }}
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
-          CMAKE_BUILD_TYPE: Release
         run: |
           mkdir -p $BUN_DEPS_OUT_DIR
           bash ./scripts/all-dependencies.sh

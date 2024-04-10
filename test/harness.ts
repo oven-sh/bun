@@ -110,14 +110,17 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>): string {
+export function tempDirWithFiles(
+  basename: string,
+  files: Record<string, string | Buffer | Record<string, string | Buffer>>,
+): string {
   var fs = require("fs");
   var path = require("path");
   var { tmpdir } = require("os");
 
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
   for (const [name, contents] of Object.entries(files)) {
-    if (typeof contents === "object") {
+    if (typeof contents === "object" && contents && !Buffer.isBuffer(contents)) {
       const entries = Object.entries(contents);
       if (entries.length == 0) {
         fs.mkdirSync(path.join(dir, name), { recursive: true });

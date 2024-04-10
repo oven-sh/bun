@@ -49,7 +49,7 @@ namespace WebCore {
 
 static inline String redact(const String& input)
 {
-    if (input.contains("@"_s))
+    if (input.contains('@'))
         return "<redacted>"_s;
 
     return makeString('"', input, '"');
@@ -59,6 +59,14 @@ inline DOMURL::DOMURL(URL&& completeURL)
     : m_url(WTFMove(completeURL))
 {
     ASSERT(m_url.isValid());
+}
+
+ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
+{
+    URL completeURL { url };
+    if (!completeURL.isValid())
+        return Exception { TypeError, makeString(redact(url), " cannot be parsed as a URL.") };
+    return adoptRef(*new DOMURL(WTFMove(completeURL)));
 }
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)

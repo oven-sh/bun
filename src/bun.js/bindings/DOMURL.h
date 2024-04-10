@@ -43,6 +43,7 @@ class URLSearchParams;
 class DOMURL final : public RefCounted<DOMURL>, public CanMakeWeakPtr<DOMURL>, public URLDecomposition {
 public:
     static ExceptionOr<Ref<DOMURL>> create(const String& url, const String& base);
+    static ExceptionOr<Ref<DOMURL>> create(const String& url);
     WEBCORE_EXPORT ~DOMURL();
 
     static RefPtr<DOMURL> parse(const String& url, const String& base);

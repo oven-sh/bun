@@ -1,0 +1,14 @@
+name: Demo
+
+on:
+  pull_request:
+
+jobs:
+  ci:
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+    with:
+      run-id: ${{ github.run_id }}
+      pr-number: ${{ github.event.number }}
+      run-on: ubuntu-latest
+      baseline: false

@@ -1,0 +1,42 @@
+name: PR Comment
+
+permissions:
+  pull-requests: write
+
+on:
+  workflow_run:
+    workflows:
+      - Test
+    types:
+      - completed
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Results
+        uses: actions/download-artifact@v4
+        with:
+          name: results
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Parse Results
+        id: results
+        run: |
+          echo "pr-number=$(<pr-number.txt)" >> $GITHUB_OUTPUT
+          echo "@${{ github.event.workflow_run.triggering_actor }}\n" >> $GITHUB_OUTPUT
+          echo "<!-- generated-comment run-id=${{ github.event.workflow_run.id }} -->" >> test-report.md
+      - name: Find Comment
+        id: comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ steps.results.outputs.pr-number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "<!-- generated-comment run-id=${{ github.event.workflow_run.id }} -->"
+      - name: Post Comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.comment.outputs.comment-id }}
+          issue-number: ${{ steps.results.outputs.pr-number }}
+          body-path: test-report.md
+          edit-mode: replace

@@ -1,19 +1,21 @@
 name: Test
 
-concurrency:
-  group: ${{ github.workflow }}-${{ inputs.run-id || github.run_id }}
-  cancel-in-progress: true
+permissions:
+  contents: read
+  checks: read
 
 on:
-  push:
   workflow_call:
     inputs:
-      run-on:
-        type: string
-        required: true
       run-id:
         type: string
         required: true
+      run-on:
+        type: string
+        required: true
+      pr-number:
+        type: string
+        required: false
       baseline:
         type: boolean
         required: false
@@ -29,6 +31,10 @@ jobs:
             bun.lockb
             test
             packages/bun-internal-test
+      - name: Setup Environment
+        shell: bash
+        run: |
+          echo "${{ inputs.pr-number }}" > pr-number.txt
       - name: Download Bun
         uses: actions/download-artifact@v4
         with:
@@ -69,6 +75,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: results
-          path: test-report.*
+          path: |
+            test-report.*
+            pr-number.txt
           if-no-files-found: error
           overwrite: true

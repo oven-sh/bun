@@ -1,7 +1,7 @@
-import { bench, run } from './runner.mjs'
+import { bench, run } from "./runner.mjs";
 
-bench('url', () => {
-  const url = new URL('https://example.com/')
-})
+bench("url", () => {
+  const url = new URL("https://example.com/");
+});
 
-await run()
+await run();

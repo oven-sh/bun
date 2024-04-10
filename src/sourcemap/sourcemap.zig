@@ -678,6 +678,10 @@ pub const VLQ = struct {
     // I believe the actual number is 7 bytes long, however we can add an extra byte to be more cautious
     bytes: [vlq_max_in_bytes]u8,
     len: u4 = 0,
+
+    pub fn writeTo(self: VLQ, writer: anytype) !void {
+        try writer.writeAll(self.bytes[0..self.len]);
+    }
 };
 
 pub fn encodeVLQWithLookupTable(

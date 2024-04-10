@@ -48,15 +48,15 @@ pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
     pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
-    pub fn start(allocator: std.mem.Allocator, comptime MainPanicHandler: type) void {
+    pub fn start(allocator: std.mem.Allocator) void {
         is_main_thread = true;
         start_time = std.time.nanoTimestamp();
         log_ = logger.Log.init(allocator);
 
         var log = &log_;
 
-        var panicker = MainPanicHandler.init(log);
-        MainPanicHandler.Singleton = &panicker;
+        // var panicker = MainPanicHandler.init(log);
+        // MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
             log.printForLogLevel(Output.errorWriter()) catch {};
 
@@ -1054,7 +1054,7 @@ pub const HelpCommand = struct {
 pub const ReservedCommand = struct {
     pub fn exec(_: std.mem.Allocator) !void {
         @setCold(true);
-        const command_name = bun.argv()[1];
+        const command_name = bun.argv[1];
         Output.prettyError(
             \\<r><red>Uh-oh<r>. <b><yellow>bun {s}<r> is a subcommand reserved for future use by Bun.
             \\
@@ -1240,7 +1240,7 @@ pub const Command = struct {
     }
 
     pub fn which() Tag {
-        var args_iter = ArgsIterator{ .buf = bun.argv() };
+        var args_iter = ArgsIterator{ .buf = bun.argv };
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
@@ -1383,8 +1383,8 @@ pub const Command = struct {
             };
 
             ctx.args.target = Api.Target.bun;
-            if (bun.argv().len > 1) {
-                ctx.passthrough = bun.argv()[1..];
+            if (bun.argv.len > 1) {
+                ctx.passthrough = bun.argv[1..];
             } else {
                 ctx.passthrough = &[_]string{};
             }
@@ -1397,7 +1397,7 @@ pub const Command = struct {
             return;
         }
 
-        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv(), ", ")});
+        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
 
         const tag = which();
 
@@ -1405,7 +1405,7 @@ pub const Command = struct {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
             .ReservedCommand => return try ReservedCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
+            .InitCommand => return try InitCommand.exec(allocator, bun.argv),
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BuildCommand);
@@ -1441,7 +1441,7 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BunxCommand);
 
-                try BunxCommand.exec(ctx, bun.argv()[if (is_bunx_exe) 0 else 1..]);
+                try BunxCommand.exec(ctx, bun.argv[if (is_bunx_exe) 0 else 1..]);
                 return;
             },
             .ReplCommand => {
@@ -1449,7 +1449,7 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 var ctx = try Command.Context.create(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
-                var args = bun.argv()[0..];
+                var args = bun.argv[0..];
                 args[1] = "bun-repl";
                 try BunxCommand.exec(ctx, args);
                 return;
@@ -1755,7 +1755,7 @@ pub const Command = struct {
                 // KEYWORDS: open file argv argv0
                 if (ctx.args.entry_points.len == 1) {
                     if (strings.eqlComptime(extension, ".lockb")) {
-                        for (bun.argv()) |arg| {
+                        for (bun.argv) |arg| {
                             if (strings.eqlComptime(arg, "--hash")) {
                                 try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
                                 return;

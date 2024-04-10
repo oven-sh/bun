@@ -64,13 +64,13 @@ pub inline fn getStartTime() i128 {
     return @import("root").bun.start_time;
 }
 
-pub fn setThreadName(name: StringTypes.stringZ) void {
+pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {
-        _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
+        _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch {};
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
     } else if (Environment.isWindows) {
-        // _ = std.os.SetThreadDescription(std.os.GetCurrentThread(), name);
+        _ = std.os.SetThreadDescription(std.os.GetCurrentThread(), name);
     }
 }
 
@@ -105,7 +105,7 @@ pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
     }
 
     Output.flush();
-    @import("./crash_reporter.zig").on_error = null;
+
     if (!Environment.isWindows) {
         if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
             const act = std.os.Sigaction{
@@ -119,9 +119,7 @@ pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
 
     Output.Source.Stdio.restore();
 
-    // TODO(@paperdave): report a bug that this intcast shouldnt be needed. signals are i32 not u32
-    // after that is fixed we can make this function take i32
-    _ = std.c.raise(@intCast(sig));
+    _ = std.c.raise(sig);
     std.c.abort();
 }
 
@@ -165,26 +163,8 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
 // std.debug.assert but happens at runtime
 pub fn invariant(condition: bool, comptime fmt: string, args: anytype) void {
     if (!condition) {
-        _invariant(fmt, args);
+        bun.Output.panic(fmt, args);
     }
-}
-
-inline fn _invariant(comptime fmt: string, args: anytype) noreturn {
-    @setCold(true);
-
-    if (comptime Environment.isWasm) {
-        Output.printErrorln(fmt, args);
-        Output.flush();
-        @panic(fmt);
-    } else {
-        Output.prettyErrorln(fmt, args);
-        Global.exit(1);
-    }
-}
-
-pub fn notimpl() noreturn {
-    @setCold(true);
-    Global.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover

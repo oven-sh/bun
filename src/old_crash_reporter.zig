@@ -1,3 +1,4 @@
+// TODO(@paperdave): merge all functionality into panic_handler.zig
 const std = @import("std");
 
 fn setup_sigactions(act: ?*const os.Sigaction) !void {

@@ -696,7 +696,7 @@ pub const uws = @import("./deps/uws.zig");
 pub const BoringSSL = @import("./boringssl.zig");
 pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
-pub const analytics = @import("./analytics.zig");
+pub const analytics = @import("./analytics/analytics_thread.zig");
 pub const zlib = @import("./zlib.zig");
 
 pub var start_time: i128 = 0;
@@ -1597,8 +1597,8 @@ pub fn reloadProcess(
         }
     }
     const PosixSpawn = posix.spawn;
-    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
-    for (bun.argv(), dupe_argv) |src, *dest| {
+    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv.len, null) catch unreachable;
+    for (bun.argv, dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, src) catch unreachable).ptr;
     }
 
@@ -2059,14 +2059,10 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
-var _argv: [][:0]const u8 = &[_][:0]const u8{};
-
-pub inline fn argv() [][:0]const u8 {
-    return _argv;
-}
+pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
 pub fn initArgv(allocator: std.mem.Allocator) !void {
-    _argv = try std.process.argsAlloc(allocator);
+    argv = try std.process.argsAlloc(allocator);
 }
 
 pub const posix = struct {
@@ -2989,7 +2985,7 @@ pub inline fn markPosixOnly() if (Environment.isPosix) void else noreturn {
 
 pub fn linuxKernelVersion() Semver.Version {
     if (comptime !Environment.isLinux) @compileError("linuxKernelVersion() is only available on Linux");
-    return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+    return analytics.GenerateHeader.GeneratePlatform.kernelVersion();
 }
 
 pub fn selfExePath() ![:0]u8 {
@@ -3046,4 +3042,4 @@ pub fn SliceIterator(comptime T: type) type {
 
 pub const Futex = @import("./futex.zig");
 
-pub const crash_report = @import("panic_v2.zig");
+pub const panic_handler = @import("panic_handler.zig");

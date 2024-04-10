@@ -694,7 +694,7 @@ pub const StandaloneModuleGraph = struct {
 
     fn openSelf() std.fs.OpenSelfExeError!bun.FileDescriptor {
         if (!Environment.isWindows) {
-            const argv = bun.argv();
+            const argv = bun.argv;
             if (argv.len > 0) {
                 if (isBuiltInExe(u8, argv[0])) {
                     return error.FileNotFound;
@@ -707,14 +707,14 @@ pub const StandaloneModuleGraph = struct {
                 if (std.fs.openFileAbsoluteZ("/proc/self/exe", .{})) |easymode| {
                     return bun.toFD(easymode.handle);
                 } else |_| {
-                    if (bun.argv().len > 0) {
+                    if (bun.argv.len > 0) {
                         // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
                         var whichbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
                         if (bun.which(
                             &whichbuf,
                             bun.getenvZ("PATH") orelse return error.FileNotFound,
                             "",
-                            bun.argv()[0],
+                            bun.argv[0],
                         )) |path| {
                             return bun.toFD((try std.fs.cwd().openFileZ(path, .{})).handle);
                         }

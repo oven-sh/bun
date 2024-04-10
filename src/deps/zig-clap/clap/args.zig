@@ -61,7 +61,7 @@ pub const OsIterator = struct {
         var res = OsIterator{
             .arena = @import("root").bun.ArenaAllocator.init(allocator),
             .exe_arg = undefined,
-            .remain = bun.argv(),
+            .remain = bun.argv,
         };
         res.exe_arg = res.next();
         return res;

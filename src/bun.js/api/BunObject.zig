@@ -3370,7 +3370,8 @@ const UnsafeObject = struct {
     }
 
     pub fn crashByPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        std.debug.panic("invoked crashByPanic() handler", .{});
+        // std.debug.panic("invoked crashByPanic() handler", .{});
+        bun.panic_handler.panicImpl("invoked crashByPanic() handler", null, null);
     }
 
     pub fn crashByUnreachable(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

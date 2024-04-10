@@ -4848,7 +4848,7 @@ pub const Path = struct {
 
 pub const Process = struct {
     pub fn getArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return JSC.ZigString.fromUTF8(bun.argv()[0]).toValueGC(globalObject);
+        return JSC.ZigString.fromUTF8(bun.argv[0]).toValueGC(globalObject);
     }
 
     pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
@@ -4879,13 +4879,13 @@ pub const Process = struct {
             JSC.ZigString,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
             // argv also omits the script name
-            bun.argv().len -| 1,
+            bun.argv.len -| 1,
         ) catch bun.outOfMemory();
         defer allocator.free(args);
         var used: usize = 0;
         const offset = 1;
 
-        for (bun.argv()[@min(bun.argv().len, offset)..]) |arg| {
+        for (bun.argv[@min(bun.argv.len, offset)..]) |arg| {
             if (arg.len == 0)
                 continue;
 

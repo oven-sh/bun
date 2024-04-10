@@ -1059,7 +1059,7 @@ pub const PosixSpawnResult = struct {
     }
 
     fn pidfdFlagsForLinux() u32 {
-        const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+        const kernel = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
 
         // pidfd_nonblock only supported in 5.10+
         return if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))

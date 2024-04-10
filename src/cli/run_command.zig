@@ -716,9 +716,9 @@ pub const RunCommand = struct {
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
-            if (bun.argv()[0][0] == '/') {
-                optional_bun_path.* = bun.argv()[0];
-                argv0 = bun.argv()[0];
+            if (bun.argv[0][0] == '/') {
+                optional_bun_path.* = bun.argv[0];
+                argv0 = bun.argv[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
                 const self = try bun.selfExePath();
@@ -729,7 +729,7 @@ pub const RunCommand = struct {
             }
 
             if (optional_bun_path.len == 0) {
-                argv0 = bun.argv()[0];
+                argv0 = bun.argv[0];
             }
 
             if (Environment.isDebug) {
@@ -1391,7 +1391,7 @@ pub const RunCommand = struct {
 
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (strings.hasPrefixComptime(shebang, "#!")) {
-                            const first_arg: string = if (bun.argv().len > 0) bun.argv()[0] else "";
+                            const first_arg: string = if (bun.argv.len > 0) bun.argv[0] else "";
                             const filename = std.fs.path.basename(first_arg);
                             // are we attempting to run the script with bun?
                             if (!strings.contains(shebang, filename)) {

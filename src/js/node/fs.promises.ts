@@ -175,7 +175,7 @@ const exports = {
   lstat: fs.lstat.bind(fs),
   mkdir: fs.mkdir.bind(fs),
   mkdtemp: fs.mkdtemp.bind(fs),
-  open: async (path, flags, mode) => {
+  open: async (path, flags = 'r', mode = 0o666) => {
     return new FileHandle(await fs.open(path, flags, mode), flags);
   },
   read: fs.read.bind(fs),

@@ -47,10 +47,7 @@ test("issue #10132, bun run sets cwd", async () => {
 test("issue #10132, bun run sets PATH", async () => {
   async function run(dir: string) {
     $.cwd(dir);
-    const [first, second] = await Promise.all([
-      $`${bunExe()} run bun-hello`.quiet(),
-      $`${bunExe()} run bun-hello`.quiet(),
-    ]);
+    const [first, second] = await Promise.all([$`${bunExe()} bun-hello`.quiet(), $`${bunExe()} run bun-hello`.quiet()]);
 
     expect(first.text().trim()).toBe("My name is bun-hello");
     expect(second.text().trim()).toBe("My name is bun-hello");

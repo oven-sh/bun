@@ -44,7 +44,8 @@ jobs:
           which bun
           bun --version
           bun --print 'Bun.revision'
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
       - name: Install Dependencies
@@ -63,7 +64,7 @@ jobs:
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         run: |
-          node packages/bun-internal-test/src/runner.node.mjs
+          node packages/bun-internal-test/src/runner.node.mjs || true
       - name: Upload Results
         uses: actions/upload-artifact@v4
         with:

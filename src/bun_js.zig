@@ -144,7 +144,20 @@ pub const Run = struct {
         JSC.markBinding(@src());
 
         if (!ctx.debug.loaded_bunfig) {
+            ctx.debug.loaded_bunfig = true;
+            const did_not_have_log_level = ctx.args.log_level == null;
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+            if (did_not_have_log_level) {
+                if (ctx.args.log_level) |log_level| {
+                    logger.Log.default_log_level = switch (log_level) {
+                        .debug => logger.Log.Level.debug,
+                        .err => logger.Log.Level.err,
+                        .warn => logger.Log.Level.warn,
+                        else => logger.Log.Level.err,
+                    };
+                    ctx.log.level = logger.Log.default_log_level;
+                }
+            }
         }
 
         if (strings.endsWithComptime(entry_path, ".sh")) {

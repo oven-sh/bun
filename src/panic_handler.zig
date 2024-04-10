@@ -1,4 +1,4 @@
-//! This file contains Bun's panic handler. In debug builds, we are able to
+//! This file contains Bun's crash handler. In debug builds, we are able to
 //! print backtraces that are mapped to source code. In a release mode, we do
 //! not have that information in the binary. Bun's solution to this is called
 //! a "trace string", a compressed and url-safe encoding of a captured
@@ -21,11 +21,12 @@ const bun = @import("root").bun;
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
+const windows = std.os.windows;
 const Features = bun.Analytics.Features;
 
 /// Set this to false if you want to disable all uses of this panic handler.
 /// This is useful for testing as a crash in here will not 'panicked during a panic'.
-pub const enabled = false;
+pub const enabled = true;
 
 const report_base_url = "https://bun.report/";
 
@@ -42,11 +43,46 @@ var panic_mutex = std.Thread.Mutex{};
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
-pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, begin_addr: ?usize) noreturn {
+pub const CrashReason = union(enum) {
+    panic: []const u8,
+    // "reached unreachable code"
+    @"unreachable",
+
+    segmentation_fault: usize,
+    illegal_instruction: usize,
+    /// Posix-only
+    bus_error: usize,
+    /// Posix-only
+    floating_point_error: usize,
+    /// Windows-only
+    datatype_misalignment,
+    /// Windows-only
+    stack_overflow,
+
+    pub fn format(self: CrashReason, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (self) {
+            .panic => try writer.print("{s}", .{self.panic}),
+            .@"unreachable" => try writer.writeAll("reached unreachable code"),
+            .segmentation_fault => |addr| try writer.print("Segmentation fault at address 0x{x}", .{addr}),
+            .illegal_instruction => |addr| try writer.print("Illegal instruction at address 0x{x}", .{addr}),
+            .bus_error => |addr| try writer.print("Bus error at address 0x{x}", .{addr}),
+            .floating_point_error => |addr| try writer.print("Floating point error at address 0x{x}", .{addr}),
+            .datatype_misalignment => try writer.writeAll("Unaligned memory access"),
+            .stack_overflow => try writer.writeAll("Stack overflow"),
+        }
+    }
+};
+
+pub fn crashHandler(
+    reason: CrashReason,
+    error_return_trace: ?*std.builtin.StackTrace,
+    begin_addr: ?usize,
+) noreturn {
     @setCold(true);
 
-    // std.os.abort()'s non libc version will not clear signal handlers.
-    comptime std.debug.assert(builtin.link_libc);
+    // If a segfault happens while panicking, we want it to actually segfault, not trigger
+    // the handler.
+    resetSegfaultHandler();
 
     nosuspend switch (panic_stage) {
         0 => {
@@ -95,8 +131,7 @@ pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, 
                     else => @compileError("TODO"),
                 }
 
-                writer.writeAll(": ") catch std.os.abort();
-                writer.writeAll(msg) catch std.os.abort();
+                writer.print(": {}", .{reason}) catch std.os.abort();
 
                 if (bun.Output.enable_ansi_colors) {
                     writer.writeAll(bun.Output.prettyFmt("<r>\n", true)) catch std.os.abort();
@@ -125,7 +160,7 @@ pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, 
                 encodeTraceString(
                     .{
                         .trace = trace,
-                        .msg = msg,
+                        .reason = reason,
                         .include_features = true,
                         .action = .open_issue,
                     },
@@ -154,7 +189,7 @@ pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, 
             // we're still holding the mutex but that's fine as we're going to
             // call abort()
             const stderr = std.io.getStdErr().writer();
-            stderr.print("panic: {s}\n", .{msg}) catch std.os.abort();
+            stderr.print("panic: {s}\n", .{reason}) catch std.os.abort();
             stderr.print("panicked during a panic. Aborting.\n", .{}) catch std.os.abort();
         },
         3 => {
@@ -166,40 +201,19 @@ pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, 
         },
     };
 
-    switch (bun.Environment.os) {
-        .windows => {
-            std.os.abort();
-        },
-        else => {
-            // Parts of this is copied from std.os.abort (linux non libc path) and WTFCrash
-            // Cause a segfault to make sure a core dump is generated if such is enabled
+    crash();
+}
 
-            // Only one thread may proceed to the rest of abort().
-            const global = struct {
-                var abort_entered: bool = false;
-            };
-            while (@cmpxchgWeak(bool, &global.abort_entered, false, true, .SeqCst, .SeqCst)) |_| {}
-
-            // Install default handler so that the tkill below will terminate.
-            const sigact = std.os.Sigaction{ .handler = .{ .handler = std.os.SIG.DFL }, .mask = std.os.empty_sigset, .flags = 0 };
-            inline for (.{
-                std.os.SIG.SEGV,
-                std.os.SIG.ILL,
-                std.os.SIG.BUS,
-                std.os.SIG.ABRT,
-                std.os.SIG.FPE,
-                std.os.SIG.HUP,
-                std.os.SIG.TERM,
-            }) |sig| {
-                std.os.sigaction(sig, &sigact, null) catch {};
-            }
-
-            @as(*allowzero volatile u8, @ptrFromInt(0xDEADBEEF)).* = 0;
-            std.os.raise(std.os.SIG.SEGV) catch {};
-            @as(*allowzero volatile u8, @ptrFromInt(0)).* = 0;
-            std.os.exit(127);
-        },
-    }
+pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, begin_addr: ?usize) noreturn {
+    @setCold(true);
+    crashHandler(
+        if (bun.strings.eqlComptime(msg, "reached unreachable code"))
+            .{ .@"unreachable" = {} }
+        else
+            .{ .panic = msg },
+        error_return_trace,
+        begin_addr orelse @returnAddress(),
+    );
 }
 
 fn panicBuiltin(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, begin_addr: ?usize) noreturn {
@@ -223,9 +237,89 @@ const metadata_version_line = std.fmt.comptimePrint(
     },
 );
 
+fn handleSegfaultPosix(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) noreturn {
+    resetSegfaultHandler();
+
+    const addr = switch (bun.Environment.os) {
+        .linux => @intFromPtr(info.fields.sigfault.addr),
+        .mac => @intFromPtr(info.addr),
+        else => unreachable,
+    };
+
+    crashHandler(
+        switch (sig) {
+            std.os.SIG.SEGV => .{ .segmentation_fault = addr },
+            std.os.SIG.ILL => .{ .illegal_instruction = addr },
+            std.os.SIG.BUS => .{ .bus_error = addr },
+            std.os.SIG.FPE => .{ .floating_point_error = addr },
+
+            // we do not register this handler for other signals
+            else => unreachable,
+        },
+        null,
+        @returnAddress(),
+    );
+}
+
+pub fn updatePosixSegfaultHandler(act: ?*const std.os.Sigaction) !void {
+    try std.os.sigaction(std.os.SIG.SEGV, act, null);
+    try std.os.sigaction(std.os.SIG.ILL, act, null);
+    try std.os.sigaction(std.os.SIG.BUS, act, null);
+    try std.os.sigaction(std.os.SIG.FPE, act, null);
+}
+
+var windows_segfault_handle: ?windows.HANDLE = null;
+
 pub fn init() void {
     if (!enabled) return;
-    // TODO:
+    switch (bun.Environment.os) {
+        .windows => {
+            windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
+        },
+        .mac, .linux => {
+            const act = std.os.Sigaction{
+                .handler = .{ .sigaction = handleSegfaultPosix },
+                .mask = std.os.empty_sigset,
+                .flags = (std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND),
+            };
+            updatePosixSegfaultHandler(&act) catch {};
+        },
+        else => @compileError("TODO"),
+    }
+}
+
+pub fn resetSegfaultHandler() void {
+    if (bun.Environment.os == .windows) {
+        if (windows_segfault_handle) |handle| {
+            std.debug.assert(
+                windows.kernel32.RemoveVectoredExceptionHandler(handle) != 0,
+            );
+            windows_segfault_handle = null;
+        }
+        return;
+    }
+    var act = std.os.Sigaction{
+        .handler = .{ .handler = std.os.SIG.DFL },
+        .mask = std.os.empty_sigset,
+        .flags = 0,
+    };
+    // To avoid a double-panic, do nothing if an error happens here.
+    updatePosixSegfaultHandler(&act) catch {};
+}
+
+pub fn handleSegfaultWindows(info: windows.EXCEPTION_POINTERS) callconv(windows.WINAPI) c_long {
+    resetSegfaultHandler();
+    crashHandler(
+        switch (info.ExceptionRecord.ExceptionCode) {
+            windows.EXCEPTION_DATATYPE_MISALIGNMENT => .{ .datatype_misalignment = {} },
+            windows.EXCEPTION_ACCESS_VIOLATION => .{ .segmentation_fault = info.ExceptionRecord.ExceptionInformation[1] },
+            windows.EXCEPTION_ILLEGAL_INSTRUCTION => .{ .illegal_instruction = info.ContextRecord.getRegs().ip },
+            windows.EXCEPTION_STACK_OVERFLOW => .{ .stack_overflow = {} },
+            else => return windows.EXCEPTION_CONTINUE_SEARCH,
+        },
+        null,
+        @intFromPtr(info.ExceptionRecord.ExceptionAddress),
+    );
 }
 
 pub fn printMetadata(writer: anytype) !void {
@@ -235,7 +329,7 @@ pub fn printMetadata(writer: anytype) !void {
         if (i != 0) try writer.writeAll(", ");
         try bun.fmt.quotedWriter(writer, arg);
     }
-    try writer.print("{}", .{bun.Analytics.Features.formatter()});
+    try writer.print("\n{}", .{bun.Analytics.Features.formatter()});
 
     if (bun.use_mimalloc) {
         var elapsed_msecs: usize = 0;
@@ -309,28 +403,17 @@ const Platform = enum(u8) {
         (if (bun.Environment.baseline) "_baseline" else ""));
 };
 
+const tracestr_version: u8 = '1';
+
 const tracestr_header = std.fmt.comptimePrint(
-    "{s}/{c}{s}1",
+    "{s}/{c}{s}{c}",
     .{
         bun.Environment.version_string,
         @intFromEnum(Platform.current),
         if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown",
+        tracestr_version,
     },
 );
-
-const EncodeOptions = struct {
-    trace: *std.builtin.StackTrace,
-    msg: ?[]const u8,
-    include_features: bool,
-    action: Action,
-
-    const Action = enum {
-        /// Open a pre-filled GitHub issue with the expanded trace
-        open_issue,
-        /// View the trace with nothing else
-        view_trace,
-    };
-};
 
 const Address = union(enum) {
     unknown,
@@ -367,6 +450,20 @@ const Address = union(enum) {
     }
 };
 
+const EncodeOptions = struct {
+    trace: *std.builtin.StackTrace,
+    reason: CrashReason,
+    include_features: bool,
+    action: Action,
+
+    const Action = enum {
+        /// Open a pre-filled GitHub issue with the expanded trace
+        open_issue,
+        /// View the trace with nothing else
+        view_trace,
+    };
+};
+
 fn encodeTraceString(opts: EncodeOptions, writer: anytype) !void {
     try writer.writeAll(report_base_url ++ tracestr_header);
 
@@ -400,6 +497,8 @@ fn encodeTraceString(opts: EncodeOptions, writer: anytype) !void {
                 };
             },
             .mac => addr: {
+                // This code is slightly modified from std.debug.DebugInfo.lookupModuleNameDyld
+                // https://github.com/ziglang/zig/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.zig#L1783
                 const address = if (addr == 0) 0 else addr - 1;
 
                 const image_count = std.c._dyld_image_count();
@@ -463,38 +562,108 @@ fn encodeTraceString(opts: EncodeOptions, writer: anytype) !void {
         break :zero_vlq vlq.bytes[0..vlq.len];
     });
 
-    if (opts.msg) |message| {
-        var compressed_bytes: [2048]u8 = undefined;
-        var len: usize = compressed_bytes.len;
-        const ret: bun.zlib.ReturnCode = @enumFromInt(bun.zlib.compress2(&compressed_bytes, &len, message.ptr, message.len, 9));
-        const compressed = switch (ret) {
-            .Ok => compressed_bytes[0..len],
-            // Insufficient memory.
-            .MemError => return error.OutOfMemory,
-            // The buffer dest was not large enough to hold the compressed data.
-            .BufError => return error.NoSpaceLeft,
+    switch (opts.reason) {
+        .panic => |message| {
+            try writer.writeByte('0');
 
-            // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
-            // This is technically possible but impossible because we pass 9.
-            .StreamError => return error.Unexpected,
-            else => return error.Unexpected,
-        };
+            var compressed_bytes: [2048]u8 = undefined;
+            var len: usize = compressed_bytes.len;
+            const ret: bun.zlib.ReturnCode = @enumFromInt(bun.zlib.compress2(&compressed_bytes, &len, message.ptr, message.len, 9));
+            const compressed = switch (ret) {
+                .Ok => compressed_bytes[0..len],
+                // Insufficient memory.
+                .MemError => return error.OutOfMemory,
+                // The buffer dest was not large enough to hold the compressed data.
+                .BufError => return error.NoSpaceLeft,
 
-        var b64_bytes: [2048]u8 = undefined;
-        if (bun.base64.encodeLen(compressed) > b64_bytes.len) {
-            return error.NoSpaceLeft;
-        }
-        const b64_len = bun.base64.encode(&b64_bytes, compressed);
+                // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
+                // This is technically possible but impossible because we pass 9.
+                .StreamError => return error.Unexpected,
+                else => return error.Unexpected,
+            };
 
-        try writer.writeAll(b64_bytes[0..b64_len]);
+            var b64_bytes: [2048]u8 = undefined;
+            if (bun.base64.encodeLen(compressed) > b64_bytes.len) {
+                return error.NoSpaceLeft;
+            }
+            const b64_len = bun.base64.encode(&b64_bytes, compressed);
+
+            try writer.writeAll(std.mem.trimRight(u8, b64_bytes[0..b64_len], "="));
+        },
+        .@"unreachable" => try writer.writeByte('1'),
+
+        .segmentation_fault => |addr| {
+            try writer.writeByte('2');
+            try writeU64AsTwoVLQs(writer, addr);
+        },
+        .illegal_instruction => |addr| {
+            try writer.writeByte('3');
+            try writeU64AsTwoVLQs(writer, addr);
+        },
+        .bus_error => |addr| {
+            try writer.writeByte('4');
+            try writeU64AsTwoVLQs(writer, addr);
+        },
+        .floating_point_error => |addr| {
+            try writer.writeByte('5');
+            try writeU64AsTwoVLQs(writer, addr);
+        },
+
+        .datatype_misalignment => try writer.writeByte('6'),
+        .stack_overflow => try writer.writeByte('7'),
     }
 
-    if (opts.include_features) {
-        // try writer.writeAll("_");
-        //  TODO
-    }
+    // TODO: not sure if worth adding since URLs are already quite lengthy
+    // if (opts.include_features) {
+    // try writer.writeAll("_");
+    //  TODO
+    // }
 
     if (opts.action == .view_trace) {
         try writer.writeAll("/view");
+    }
+}
+
+fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
+    const first = SourceMap.encodeVLQ(@intCast((addr & 0xFFFFFFFF00000000) >> 32));
+    const second = SourceMap.encodeVLQ(@intCast(addr & 0xFFFFFFFF));
+    try first.writeTo(writer);
+    try second.writeTo(writer);
+}
+
+fn crash() noreturn {
+    switch (bun.Environment.os) {
+        .windows => {
+            std.os.abort();
+        },
+        else => {
+            // Parts of this is copied from std.os.abort (linux non libc path) and WTFCrash
+            // Cause a segfault to make sure a core dump is generated if such is enabled
+
+            // Only one thread may proceed to the rest of abort().
+            const global = struct {
+                var abort_entered: bool = false;
+            };
+            while (@cmpxchgWeak(bool, &global.abort_entered, false, true, .SeqCst, .SeqCst)) |_| {}
+
+            // Install default handler so that the tkill below will terminate.
+            const sigact = std.os.Sigaction{ .handler = .{ .handler = std.os.SIG.DFL }, .mask = std.os.empty_sigset, .flags = 0 };
+            inline for (.{
+                std.os.SIG.SEGV,
+                std.os.SIG.ILL,
+                std.os.SIG.BUS,
+                std.os.SIG.ABRT,
+                std.os.SIG.FPE,
+                std.os.SIG.HUP,
+                std.os.SIG.TERM,
+            }) |sig| {
+                std.os.sigaction(sig, &sigact, null) catch {};
+            }
+
+            @as(*allowzero volatile u8, @ptrFromInt(0xDEADBEEF)).* = 0;
+            std.os.raise(std.os.SIG.SEGV) catch {};
+            @as(*allowzero volatile u8, @ptrFromInt(0)).* = 0;
+            std.os.exit(127);
+        },
     }
 }

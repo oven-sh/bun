@@ -21,6 +21,14 @@ jobs:
   test:
     runs-on: ${{ inputs.run-on || 'ubuntu-latest' }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            package.json
+            bun.lockb
+            test
+            packages/bun-internal-test
       - name: Download Bun
         uses: actions/download-artifact@v4
         with:
@@ -36,8 +44,37 @@ jobs:
           which bun
           bun --version
           bun --print 'Bun.revision'
-      # - if: ${{ false }}
-      #   name: Setup SSH
-      #   uses: mxschmitt/action-tmate@v3
-      #   with:
-      #     limit-access-to-actor: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          bun install
+          bun install --cwd test
+          bun install --cwd packages/bun-internal-test
+      - name: Run Tests
+        id: test
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
+          SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
+          TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
+          TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
+        run: |
+          node packages/bun-internal-test/src/runner.node.mjs
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: results.json
+          path: test-report.json
+          if-no-files-found: error
+          overwrite: true
+      - name: Upload Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: summary.md
+          path: test-report.md
+          if-no-files-found: error
+          overwrite: true

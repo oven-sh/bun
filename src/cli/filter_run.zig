@@ -308,7 +308,17 @@ const State = struct {
                     .running => try this.draw_buf.appendSlice(fmt("<cyan>Running...<r>\n")),
                     .exited => |exited| {
                         if (exited.code == 0) {
-                            try this.draw_buf.appendSlice(fmt("<cyan>Done<r>\n"));
+                            if (handle.start_time != null and handle.end_time != null) {
+                                const duration = handle.end_time.?.since(handle.start_time.?);
+                                const ms = @as(f64, @floatFromInt(duration)) / 1_000_000.0;
+                                if (ms > 1000.0) {
+                                    try this.draw_buf.writer().print(fmt("<cyan>Done in {d:.2} s<r>\n"), .{ms / 1_000.0});
+                                } else {
+                                    try this.draw_buf.writer().print(fmt("<cyan>Done in {d:.0} ms<r>\n"), .{ms});
+                                }
+                            } else {
+                                try this.draw_buf.appendSlice(fmt("<cyan>Done<r>\n"));
+                            }
                         } else {
                             try this.draw_buf.writer().print(fmt("<red>Exited with code {d}<r>\n"), .{exited.code});
                         }

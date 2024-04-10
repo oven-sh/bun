@@ -2631,6 +2631,16 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     }
                     continue;
                 }
+                // Treat newline preceded by backslash as whitespace
+                else if (char == '\n') {
+                    if (comptime bun.Environment.allow_assert) {
+                        std.debug.assert(input.escaped);
+                    }
+                    if (self.chars.state != .Double) {
+                        try self.break_word_impl(true, true, false);
+                    }
+                    continue;
+                }
 
                 try self.appendCharToStrPool(char);
             }
@@ -2981,9 +2991,11 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 },
                 .normal => try self.tokens.append(.OpenParen),
             }
+            const prev_quote_state = self.chars.state;
             var sublexer = self.make_sublexer(kind);
             try sublexer.lex();
             self.continue_from_sublexer(&sublexer);
+            self.chars.state = prev_quote_state;
         }
 
         fn appendStringToStrPool(self: *@This(), bunstr: bun.String) !void {
@@ -3442,6 +3454,7 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
                         else => return .{ .char = char, .escaped = false },
                     }
                 },
+                // We checked `self.state == .Single` above so this is impossible
                 .Single => unreachable,
             }
 

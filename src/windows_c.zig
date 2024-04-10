@@ -1298,7 +1298,7 @@ pub fn renameAtW(
     return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
 }
 
-const log = bun.Output.scoped(.SYS, true);
+const log = bun.sys.syslog;
 
 /// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
 /// Does not close the file descriptor.

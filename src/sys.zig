@@ -1680,14 +1680,16 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
         var w_buf_from: bun.WPathBuffer = undefined;
         var w_buf_to: bun.WPathBuffer = undefined;
 
-        return bun.C.renameAtW(
+        const rc = bun.C.renameAtW(
             from_dir,
-            bun.strings.toWPathNormalized(&w_buf_from, from),
+            bun.strings.toNTPath(&w_buf_from, from),
             to_dir,
-            bun.strings.toWPathNormalized(&w_buf_to, to),
+            bun.strings.toNTPath(&w_buf_to, to),
             // @paperdave why waas this set to false?
             true,
         );
+
+        return rc;
     }
     while (true) {
         if (Maybe(void).errnoSys(sys.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {

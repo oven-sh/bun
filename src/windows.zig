@@ -3052,6 +3052,7 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         } else .BUSY,
         .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
+            std.debug.dumpCurrentStackTrace(null);
             break :brk .INVAL;
         } else .INVAL,
 

@@ -5458,6 +5458,10 @@ pub const NodeFS = struct {
         }
 
         if (Environment.isWindows) {
+            if (args.flag == .a) {
+                return Maybe(Return.WriteFile).success;
+            }
+
             const rc = std.os.windows.kernel32.SetEndOfFile(fd.cast());
             if (rc == 0) {
                 return .{

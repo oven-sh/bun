@@ -9,6 +9,7 @@ const open = fsPromises.open;
 const copyFile = fsPromises.copyFile;
 const statfs = fsPromises.statfs;
 const unlink = fsPromises.unlink;
+const readFile = fsPromises.readFile;
 
 //
 //
@@ -185,4 +186,19 @@ describe("more", () => {
       await unlink(dest);
     });
   });
+});
+
+test("writing to file in append mode works", async () => {
+  const tempFile = os.tmpdir() + "/" + Date.now() + ".txt";
+
+  const f = await open(tempFile, "a");
+
+  await f.writeFile("test\n");
+  await f.appendFile("test\n");
+  await f.write("test\n");
+  await f.datasync();
+
+  await f.close();
+
+  expect((await readFile(tempFile)).toString()).toEqual("test\ntest\ntest\n");
 });

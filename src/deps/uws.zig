@@ -893,6 +893,47 @@ pub const SocketContext = opaque {
         us_socket_context_free(@as(i32, 0), this);
     }
 
+    pub fn cleanCallbacks(ctx: *SocketContext, comptime is_ssl: bool) void {
+        const ssl_int: i32 = @intFromBool(is_ssl);
+        // replace callbacks with dummy ones
+        const DummyCallbacks = struct {
+            fn open(socket: *Socket, _: i32, _: [*c]u8, _: i32) callconv(.C) ?*Socket {
+                return socket;
+            }
+            fn close(socket: *Socket, _: i32, _: ?*anyopaque) callconv(.C) ?*Socket {
+                return socket;
+            }
+            fn data(socket: *Socket, _: [*c]u8, _: i32) callconv(.C) ?*Socket {
+                return socket;
+            }
+            fn writable(socket: *Socket) callconv(.C) ?*Socket {
+                return socket;
+            }
+            fn timeout(socket: *Socket) callconv(.C) ?*Socket {
+                return socket;
+            }
+            fn connect_error(socket: *Socket, _: i32) callconv(.C) ?*Socket {
+                return socket;
+            }
+            fn end(socket: *Socket) callconv(.C) ?*Socket {
+                return socket;
+            }
+            fn handshake(_: *Socket, _: i32, _: us_bun_verify_error_t, _: ?*anyopaque) callconv(.C) void {}
+            fn long_timeout(socket: *Socket) callconv(.C) ?*Socket {
+                return socket;
+            }
+        };
+        us_socket_context_on_open(ssl_int, ctx, DummyCallbacks.open);
+        us_socket_context_on_close(ssl_int, ctx, DummyCallbacks.close);
+        us_socket_context_on_data(ssl_int, ctx, DummyCallbacks.data);
+        us_socket_context_on_writable(ssl_int, ctx, DummyCallbacks.writable);
+        us_socket_context_on_timeout(ssl_int, ctx, DummyCallbacks.timeout);
+        us_socket_context_on_connect_error(ssl_int, ctx, DummyCallbacks.connect_error);
+        us_socket_context_on_end(ssl_int, ctx, DummyCallbacks.end);
+        us_socket_context_on_handshake(ssl_int, ctx, DummyCallbacks.handshake, null);
+        us_socket_context_on_long_timeout(ssl_int, ctx, DummyCallbacks.long_timeout);
+    }
+
     fn getLoop(this: *SocketContext, ssl: bool) ?*Loop {
         if (ssl) {
             return us_socket_context_loop(@as(i32, 1), this);

@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows } from "harness";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-
+import type { Socket } from "bun";
 it("should coerce '0' to 0", async () => {
   const listener = Bun.listen({
     // @ts-expect-error
@@ -271,3 +271,46 @@ it("socket.timeout works", async () => {
 it("should allow large amounts of data to be sent and received", async () => {
   expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
 }, 60_000);
+
+it("it should not crash when getting a ReferenceError on client socket open", async () => {
+  const server = Bun.serve({
+    port: 8080,
+    hostname: "localhost",
+    fetch() {
+      return new Response("Hello World");
+    },
+  });
+  try {
+    const { resolve, reject, promise } = Promise.withResolvers();
+    let client: Socket<undefined> | null = null;
+    const timeout = setTimeout(() => {
+      client?.end();
+      reject(new Error("Timeout"));
+    }, 1000);
+    client = await Bun.connect({
+      port: server.port,
+      hostname: server.hostname,
+      socket: {
+        open(socket) {
+          // ReferenceError: Can't find variable: bytes
+          // @ts-expect-error
+          socket.write(bytes);
+        },
+        error(socket, error) {
+          clearTimeout(timeout);
+          resolve(error);
+        },
+        close(socket) {
+          // we need the close handler
+          resolve({ message: "Closed" });
+        },
+        data(socket, data) {},
+      },
+    });
+
+    const result: any = await promise;
+    expect(result?.message).toBe("Can't find variable: bytes");
+  } finally {
+    server.stop(true);
+  }
+});

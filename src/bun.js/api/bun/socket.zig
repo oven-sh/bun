@@ -218,9 +218,14 @@ const Handlers = struct {
                 this.unprotect();
                 // will deinit when is not wrapped or when is the TCP wrapped connection
                 if (wrapped != .tls) {
-                    if (ctx) |ctx_|
+                    if (ctx) |ctx_| {
+                        // at this point we dont care about the callback anymore because we are deiniting after this
+                        // ctx will deinit only in the next tick
+                        ctx_.cleanCallbacks(false);
                         ctx_.deinit(ssl);
+                    }
                 }
+                // clean
                 bun.default_allocator.destroy(this);
             }
         }
@@ -861,6 +866,9 @@ pub const Listener = struct {
         this.handlers.unprotect();
 
         if (this.socket_context) |ctx| {
+            // at this point we dont care about the callback anymore because we are deiniting after this
+            // ctx will deinit only in the next tick
+            if (this.ssl) ctx.cleanCallbacks(true) else ctx.cleanCallbacks(false);
             ctx.deinit(this.ssl);
         }
 

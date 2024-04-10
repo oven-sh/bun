@@ -348,7 +348,7 @@ pub const BufferReadStream = struct {
     // }
 };
 
-const Kind = std.fs.File.Kind;
+const Kind = bun.sys.File.Kind;
 
 pub const Archive = struct {
     // impl: *lib.archive = undefined,

@@ -15,7 +15,8 @@ const builtin = @import("builtin");
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
-const Kind = std.fs.File.Kind;
+
+const Kind = bun.sys.File.Kind;
 const StatError = std.fs.File.StatError;
 const errno = os.errno;
 const mode_t = bun.Mode;
@@ -187,15 +188,15 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
     }
 }
 
-pub fn kindFromMode(mode: mode_t) std.fs.File.Kind {
+pub fn kindFromMode(mode: mode_t) bun.sys.File.Kind {
     return switch (mode & bun.S.IFMT) {
-        bun.S.IFBLK => std.fs.File.Kind.block_device,
-        bun.S.IFCHR => std.fs.File.Kind.character_device,
-        bun.S.IFDIR => std.fs.File.Kind.directory,
-        bun.S.IFIFO => std.fs.File.Kind.named_pipe,
-        bun.S.IFLNK => std.fs.File.Kind.sym_link,
-        bun.S.IFREG => std.fs.File.Kind.file,
-        bun.S.IFSOCK => std.fs.File.Kind.unix_domain_socket,
+        bun.S.IFBLK => .block_device,
+        bun.S.IFCHR => .character_device,
+        bun.S.IFDIR => .directory,
+        bun.S.IFIFO => .named_pipe,
+        bun.S.IFLNK => .sym_link,
+        bun.S.IFREG => .file,
+        bun.S.IFSOCK => .unix_domain_socket,
         else => .unknown,
     };
 }

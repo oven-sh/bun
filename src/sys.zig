@@ -825,16 +825,6 @@ pub fn openFileAtWindowsNtPath(
     // std.debug.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
     assertIsValidWindowsPath(u16, path);
 
-    return openFileAtWindowsNtPathWithoutAssertion(dir, path, access_mask, disposition, options);
-}
-
-fn openFileAtWindowsNtPathWithoutAssertion(
-    dir: bun.FileDescriptor,
-    path: []const u16,
-    access_mask: w.ULONG,
-    disposition: w.ULONG,
-    options: w.ULONG,
-) Maybe(bun.FileDescriptor) {
     var result: windows.HANDLE = undefined;
 
     const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
@@ -1043,11 +1033,11 @@ pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T
 }
 
 pub fn openatWindows(
-    dir: bun.FileDescriptor,
+    dir: anytype,
     path: []const u16,
     flags: bun.Mode,
 ) Maybe(bun.FileDescriptor) {
-    return openatWindowsT(u16, dir, path, flags);
+    return openatWindowsT(u16, bun.toFD(dir), path, flags);
 }
 
 pub fn openatWindowsA(

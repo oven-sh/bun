@@ -148,7 +148,7 @@ pub fn copyFile(in: InputType, out: InputType) CopyFileError!void {
     var state: CopyFileState = .{};
     return copyFileWithState(in, out, &state);
 }
-const Platform = @import("root").bun.analytics.GenerateHeader.GeneratePlatform;
+const Platform = bun.analytics.GenerateHeader.GeneratePlatform;
 
 var can_use_copy_file_range = std.atomic.Value(i32).init(0);
 pub inline fn disableCopyFileRangeSyscall() void {

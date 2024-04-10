@@ -16,22 +16,21 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Download bun
+      - name: Download Bun
         uses: actions/download-artifact@v4
         with:
           pattern: bun-{darwin,linux,windows}-{x64,aarch64}{,-baseline}
           path: ${{ runner.temp }}
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.run-id || '8623134412' }}
-      - if: ${{ false }}
-        name: Setup SSH
-        uses: mxschmitt/action-tmate@v3
-        with:
-          limit-access-to-actor: true
-      - name: Unzip bun
+          run-id: ${{ inputs.run-id || '8619678366' }}
+      - name: Setup Bun
         run: |
           unzip -d /usr/local/bin ${{ runner.temp }}/bun-*/bun-*.zip
           mv /usr/local/bin/bun-*/bun /usr/local/bin/bun
           which bun
           bun --revision
-
+      # - if: ${{ false }}
+      #   name: Setup SSH
+      #   uses: mxschmitt/action-tmate@v3
+      #   with:
+      #     limit-access-to-actor: true

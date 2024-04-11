@@ -326,7 +326,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 .err => |err| {
                     if (!did_retry) {
                         switch (err.getErrno()) {
-                            .PERM, .BUSY, .EXIST => {
+                            .NOTEMPTY, .PERM, .BUSY, .EXIST => {
 
                                 // before we attempt to delete the destination, let's close the source dir.
                                 _ = bun.sys.close(dir_to_move);

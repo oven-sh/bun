@@ -393,6 +393,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
         pub fn createMini(
             cp_args: Arguments.Cp,
+            mini: *JSC.MiniEventLoop,
             arena: bun.ArenaAllocator,
             shelltask: *ShellTask,
         ) *ThisAsyncCpTask {
@@ -402,7 +403,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     .args = cp_args,
                     .has_result = .{ .raw = false },
                     .result = undefined,
-                    .evtloop = .{ .mini = JSC.MiniEventLoop.global },
+                    .evtloop = .{ .mini = mini },
                     .tracker = JSC.AsyncTaskTracker{ .id = 0 },
                     .arena = arena,
                     .subtask_count = .{ .raw = 1 },
@@ -441,7 +442,6 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             if (this.evtloop == .js) {
                 this.evtloop.enqueueTaskConcurrent(.{ .js = JSC.ConcurrentTask.fromCallback(this, runFromJSThread) });
             } else {
-                // this.evtloop.enqueueTaskConcurrent(.{ .mini = JSC.AnyTaskWithExtraContext.fromCallbackAutoDeinit(this, "runFromJSThreadMini") });
                 this.evtloop.enqueueTaskConcurrent(.{ .mini = JSC.AnyTaskWithExtraContext.fromCallbackAutoDeinit(this, "runFromJSThreadMini") });
             }
         }

@@ -10137,17 +10137,6 @@ pub const Interpreter = struct {
                 done,
             } = .idle,
 
-            const Form = enum {
-                @"source_file target_file",
-                @"source_file... target",
-                @"-R source_file... target",
-            };
-
-            const Target = union(enum) {
-                file: [:0]const u8,
-                dir: struct { path: [:0]const u8, fd: ?bun.FileDescriptor = null },
-            };
-
             pub fn start(this: *Cp) Maybe(void) {
                 const maybe_filepath_args = switch (this.opts.parse(this.bltn.argsSlice())) {
                     .ok => |args| args,
@@ -10191,6 +10180,9 @@ pub const Interpreter = struct {
                             if (exec.started) {
                                 if (this.state.exec.tasks_count <= 0 and this.state.exec.output_done >= this.state.exec.output_waiting) {
                                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
+                                    if (this.state.exec.err != null) {
+                                        this.state.exec.err.?.deinit(bun.default_allocator);
+                                    }
                                     this.state = .done;
                                     this.bltn.done(exit_code);
                                     return;
@@ -10567,6 +10559,7 @@ pub const Interpreter = struct {
                     } else {
                         _ = JSC.Node.ShellAsyncCpTask.createMini(
                             args,
+                            this.event_loop.mini,
                             bun.ArenaAllocator.init(bun.default_allocator),
                             this,
                         );

@@ -7,8 +7,7 @@ import fs from "fs";
 import { shellInternals } from "bun:internal-for-testing";
 const { builtinDisabled } = shellInternals;
 
-const p = process.platform === "win32" ? (s: string) => s.replaceAll("/", "\\") : (s: string) => s;
-// const p =  (s: string) => s;
+const p = process.platform === 'win32' ? (s: string) => s.replaceAll('/', '\\') : (s: string) => s;
 
 describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cp -v lmao.txt lmao2.txt`

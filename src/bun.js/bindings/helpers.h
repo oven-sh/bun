@@ -107,7 +107,7 @@ static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* gl
         return JSC::Identifier::EmptyIdentifier;
     }
 
-    return JSC::Identifier::fromString(global->vm(), untag(str.ptr), str.len);
+    return JSC::Identifier::fromString(global->vm(), {untag(str.ptr), str.len});
 }
 
 static bool isTaggedUTF16Ptr(const unsigned char* ptr)
@@ -147,15 +147,15 @@ static const WTF::String toString(ZigString str)
 
     if (UNLIKELY(isTaggedExternalPtr(str.ptr))) {
         return !isTaggedUTF16Ptr(str.ptr)
-            ? WTF::String(WTF::ExternalStringImpl::create(untag(str.ptr), str.len, untagVoid(str.ptr), free_global_string))
+            ? WTF::String(WTF::ExternalStringImpl::create({untag(str.ptr), str.len}, untagVoid(str.ptr), free_global_string))
             : WTF::String(WTF::ExternalStringImpl::create(
-                reinterpret_cast<const UChar*>(untag(str.ptr)), str.len, untagVoid(str.ptr), free_global_string));
+                {reinterpret_cast<const UChar*>(untag(str.ptr)), str.len}, untagVoid(str.ptr), free_global_string));
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
-        ? WTF::String(WTF::StringImpl::createWithoutCopying(untag(str.ptr), str.len))
+        ? WTF::String(WTF::StringImpl::createWithoutCopying({untag(str.ptr), str.len}))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
-            reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
+            {reinterpret_cast<const UChar*>(untag(str.ptr)), str.len}));
 }
 
 static WTF::AtomString toAtomString(ZigString str)
@@ -178,9 +178,9 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
-        ? WTF::String(WTF::StringImpl::createWithoutCopying(&untag(str.ptr)[ptr.off], ptr.len))
+        ? WTF::String(WTF::StringImpl::createWithoutCopying({&untag(str.ptr)[ptr.off], ptr.len}))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
-            &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len));
+            {&reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len}));
 }
 
 static const WTF::String toStringCopy(ZigString str, StringPointer ptr)

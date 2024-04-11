@@ -1513,7 +1513,7 @@ pub const JestPrettyFormat = struct {
                             .skip_empty_name = true,
 
                             .include_value = true,
-                        }).init(this.globalThis, props.asObjectRef());
+                        }).init(this.globalThis, props);
                         defer props_iter.deinit();
 
                         const children_prop = props.get(this.globalThis, "children");

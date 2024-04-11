@@ -170,12 +170,12 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
 
 extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
 {
-    return WTF::parseDouble(string, length, *position);
+    return WTF::parseDouble({string, length}, *position);
 }
 
 extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
 {
-    WTF::StringImpl::copyCharacters(destination, source, length);
+    WTF::StringImpl::copyCharacters(destination, {source, length});
 }
 
 extern "C" void Bun__crashReportWrite(void* ctx, const char* message, size_t length);

@@ -343,7 +343,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 .skip_empty_name = true,
 
                 .include_value = true,
-            }).init(globalThis, define.asObjectRef());
+            }).init(globalThis, define);
             defer define_iter.deinit();
 
             // cannot be a temporary because it may be loaded on different threads.
@@ -657,7 +657,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             var iter = JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
                 .include_value = true,
-            }).init(globalThis, replace.asObjectRef());
+            }).init(globalThis, replace);
 
             if (iter.len > 0) {
                 errdefer iter.deinit();

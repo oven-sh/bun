@@ -7249,11 +7249,10 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        const object = value.asObjectRef();
                         var object_iter = JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
-                        }).init(this.global, object);
+                        }).init(this.global, value);
                         defer object_iter.deinit();
                         var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
                         errdefer this.allocator.free(properties);

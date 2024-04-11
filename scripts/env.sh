@@ -7,8 +7,8 @@ export BUN_DEPS_DIR=${BUN_DEPS_DIR:-$BUN_BASE_DIR/src/deps/}
 export BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR:-$BUN_BASE_DIR/src/deps/}
 
 # this compiler detection could be better
-export CC=${CC:-$(which clang-16 || which clang || which cc)}
-export CXX=${CXX:-$(which clang++-16 || which clang++ || which c++)}
+export CC=${CC:-$(which clang-17 || which clang || which cc)}
+export CXX=${CXX:-$(which clang++-17 || which clang++ || which c++)}
 export AR=${AR:-$(which llvm-ar || which ar)}
 export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
 

@@ -1981,11 +1981,10 @@ pub const H2FrameParser = struct {
 
         var encoded_size: usize = 0;
 
-        const headers_obj = headers_arg.asObjectRef();
         var iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalObject, headers_obj);
+        }).init(globalObject, headers_arg);
         defer iter.deinit();
 
         // TODO: support CONTINUE for more headers if headers are too big
@@ -2182,13 +2181,11 @@ pub const H2FrameParser = struct {
             return JSC.JSValue.jsNumber(-1);
         }
 
-        const headers_obj = headers_arg.asObjectRef();
-
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
         var iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalObject, headers_obj);
+        }).init(globalObject, headers_arg);
         defer iter.deinit();
         for (0..2) |ignore_pseudo_headers| {
             iter.reset();

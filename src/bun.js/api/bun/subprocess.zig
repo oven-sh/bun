@@ -1764,7 +1764,7 @@ pub const Subprocess = struct {
                     var object_iter = JSC.JSPropertyIterator(.{
                         .skip_empty_name = false,
                         .include_value = true,
-                    }).init(globalThis, object.asObjectRef());
+                    }).init(globalThis, object);
                     defer object_iter.deinit();
                     env_array.ensureTotalCapacityPrecise(allocator, object_iter.len +
                         // +1 incase there's IPC

@@ -99,7 +99,7 @@ endif()
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
 #
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-set(LLVM_VERSION 16)
+set(LLVM_VERSION 17)
 
 macro(BUN_FIND_LLVM)
     find_program(

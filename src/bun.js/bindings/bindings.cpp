@@ -1440,7 +1440,7 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
         if (name.is8Bit())
             memcpy(&buf[i], name.characters8(), name.length());
         else {
-            StringImpl::copyCharacters(&buf[i], name.characters16(), name.length());
+            StringImpl::copyCharacters(&buf[i], {name.characters16(), name.length()});
         }
 
         i += name.length();
@@ -1448,7 +1448,7 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
         if (value.is8Bit())
             memcpy(&buf[i], value.characters8(), value.length());
         else
-            StringImpl::copyCharacters(&buf[i], value.characters16(), value.length());
+            StringImpl::copyCharacters(&buf[i], {value.characters16(), value.length()});
 
         i += value.length();
     }
@@ -2423,7 +2423,7 @@ JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigS
     rangeError->putDirect(
         vm, vm.propertyNames->name,
         JSC::JSValue(JSC::jsOwnedString(
-            vm, WTF::String(WTF::StringImpl::createWithoutCopying(range_error_name, 10)))),
+            vm, WTF::String(WTF::StringImpl::createWithoutCopying({range_error_name, 10})))),
         0);
 
     if (code.len > 0) {
@@ -2446,7 +2446,7 @@ JSC__JSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigSt
     typeError->putDirect(
         vm, vm.propertyNames->name,
         JSC::JSValue(JSC::jsOwnedString(
-            vm, WTF::String(WTF::StringImpl::createWithoutCopying(range_error_name, 9)))),
+            vm, WTF::String(WTF::StringImpl::createWithoutCopying({range_error_name, 9})))),
         0);
 
     if (code.len > 0) {
@@ -2723,7 +2723,7 @@ JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC__JSG
         return JSC::JSValue::encode(JSC::jsEmptyString(global->vm()));
     }
 
-    auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(arg0), len, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
+    auto ref = String(ExternalStringImpl::create({reinterpret_cast<const UChar*>(arg0), len}, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
 
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
         global->vm(), WTFMove(ref))));
@@ -2738,12 +2738,12 @@ JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObje
     }
 
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, Zig::untagVoid(str.ptr), free_global_string));
+        auto ref = String(ExternalStringImpl::create({reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len}, Zig::untagVoid(str.ptr), free_global_string));
 
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(), WTFMove(ref))));
     } else {
-        auto ref = String(ExternalStringImpl::create(Zig::untag(str.ptr), str.len, Zig::untagVoid(str.ptr), free_global_string));
+        auto ref = String(ExternalStringImpl::create({Zig::untag(str.ptr), str.len}, Zig::untagVoid(str.ptr), free_global_string));
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
             WTFMove(ref))));
@@ -2796,11 +2796,11 @@ JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
+            WTF::String(ExternalStringImpl::create({reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len},  arg2, ArgFn3)))));
     } else {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
+            WTF::String(ExternalStringImpl::create({reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len},  arg2, ArgFn3)))));
     }
 }
 
@@ -2812,11 +2812,11 @@ JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* arg0, JSC__
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, nullptr, ArgFn2)))));
+            WTF::String(ExternalStringImpl::create({reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len}, nullptr, ArgFn2)))));
     } else {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, nullptr, ArgFn2)))));
+            WTF::String(ExternalStringImpl::create({reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len},  nullptr, ArgFn2)))));
     }
 }
 
@@ -3534,7 +3534,7 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
 
     JSC::VM& vm = globalObject->vm();
     JSC::JSObject* object = value.getObject();
-    auto identifier = JSC::Identifier::fromString(vm, String(StringImpl::createWithoutCopying(arg1, arg2)));
+    auto identifier = JSC::Identifier::fromString(vm, String(StringImpl::createWithoutCopying({arg1, arg2})));
     auto property = JSC::PropertyName(identifier);
 
     return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));

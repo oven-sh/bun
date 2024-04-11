@@ -58,7 +58,7 @@ Bun requires LLVM 16 and Clang 16 (`clang` is part of LLVM). This version requir
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@16
+$ brew install llvm@17
 ```
 
 ```bash#Ubuntu/Debian
@@ -87,7 +87,7 @@ If none of the above solutions apply, you will have to install it [manually](htt
 Make sure LLVM 16 is in your path:
 
 ```bash
-$ which clang-16
+$ which clang-17
 ```
 
 If not, run this to manually link it:
@@ -96,7 +96,7 @@ If not, run this to manually link it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-$ export PATH="$(brew --prefix llvm@16)/bin:$PATH"
+$ export PATH="$(brew --prefix llvm@17)/bin:$PATH"
 ```
 
 ```bash#Arch
@@ -262,7 +262,7 @@ The issue may manifest when initially running `bun setup` as Clang being unable 
 ```
 The C++ compiler
 
-  "/usr/bin/clang++-16"
+  "/usr/bin/clang++-17"
 
 is not able to compile a simple test program.
 ```

@@ -15,12 +15,12 @@ fail() {
   printf "${C_RED}setup error${C_RESET}: %s\n" "$@"
 }
 
-LLVM_VERSION=16
+LLVM_VERSION=17
 
 # this compiler detection could be better
 # it is copy pasted from ./env.sh
-CC=${CC:-$(which clang-16 || which clang || which cc)}
-CXX=${CXX:-$(which clang++-16 || which clang++ || which c++)}
+CC=${CC:-$(which clang-17 || which clang || which cc)}
+CXX=${CXX:-$(which clang++-17 || which clang++ || which c++)}
 
 test -n "$CC" || fail "missing LLVM $LLVM_VERSION (could not find clang)"
 test -n "$CXX" || fail "missing LLVM $LLVM_VERSION (could not find clang++)"
@@ -78,6 +78,7 @@ rm -f build/CMakeCache.txt
 cmake -B build -S . \
   -G Ninja \
   -DUSE_DEBUG_JSC=ON \
+  -DWEBKIT_DIR="$(pwd)/src/bun.js/WebKit/WebKitBuild/Debug" \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_COMPILER="$CC" \
   -DCMAKE_CXX_COMPILER="$CXX" \

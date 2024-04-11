@@ -620,7 +620,7 @@ pub const FFI = struct {
             .skip_empty_name = true,
 
             .include_value = true,
-        }).init(global, object.asObjectRef());
+        }).init(global, object);
         defer symbols_iter.deinit();
 
         try symbols.ensureTotalCapacity(allocator, symbols_iter.len);

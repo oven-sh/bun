@@ -204,14 +204,12 @@ pub const PackageFilterIterator = struct {
     iter: GlobWalker.Iterator = undefined,
     valid: bool = false,
 
-    arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, patterns: []const []const u8, root_dir: []const u8) !PackageFilterIterator {
         return PackageFilterIterator{
             .patterns = patterns,
             .allocator = allocator,
-            .arena = std.heap.ArenaAllocator.init(allocator),
             .root_dir = root_dir,
         };
     }
@@ -220,7 +218,6 @@ pub const PackageFilterIterator = struct {
         if (self.valid) {
             self.deinitWalker();
         }
-        self.arena.deinit();
     }
 
     fn walkerNext(self: *PackageFilterIterator) !?[]const u8 {
@@ -239,7 +236,7 @@ pub const PackageFilterIterator = struct {
 
     fn initWalker(self: *PackageFilterIterator) !void {
         const pattern = self.patterns[self.pattern_idx];
-        var arena = std.heap.ArenaAllocator.init(self.arena.allocator());
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
         errdefer arena.deinit();
         const cwd = try arena.allocator().dupe(u8, self.root_dir);
         try (try self.walker.initWithCwd(&arena, pattern, cwd, true, true, false, true, true)).unwrap();
@@ -250,7 +247,6 @@ pub const PackageFilterIterator = struct {
     fn deinitWalker(self: *PackageFilterIterator) void {
         self.walker.deinit(false);
         self.iter.deinit();
-        _ = self.arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
     }
 
     pub fn next(self: *PackageFilterIterator) !?[]const u8 {

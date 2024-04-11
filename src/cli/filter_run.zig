@@ -418,9 +418,9 @@ fn windowsIsTerminal() bool {
 }
 
 pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
-    const script_name = if (ctx.positionals.len > 1) ctx.positionals[1] else if (ctx.positionals.len > 0) ctx.positionals[0] else brk: {
+    const script_name = if (ctx.positionals.len > 1) ctx.positionals[1] else if (ctx.positionals.len > 0) ctx.positionals[0] else {
         Output.prettyErrorln("<r><red>error<r>: No script name provided", .{});
-        break :brk Global.exit(1);
+        Global.exit(1);
     };
     const pre_script_name = try ctx.allocator.alloc(u8, script_name.len + 3);
     @memcpy(pre_script_name[0..3], "pre");

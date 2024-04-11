@@ -831,26 +831,27 @@ pub fn GlobWalker_(
             error_on_broken_symlinks: bool,
             only_files: bool,
         ) !Maybe(void) {
-            var patternComponents = ArrayList(Component){};
+            this.* = .{
+                .cwd = cwd,
+                .pattern = pattern,
+                .dot = dot,
+                .absolute = absolute,
+                .follow_symlinks = follow_symlinks,
+                .error_on_broken_symlinks = error_on_broken_symlinks,
+                .only_files = only_files,
+            };
+
             try GlobWalker.buildPatternComponents(
                 arena,
-                &patternComponents,
+                &this.patternComponents,
                 pattern,
                 &this.cp_len,
                 &this.pattern_codepoints,
                 &this.has_relative_components,
             );
 
-            this.cwd = cwd;
-
-            this.patternComponents = patternComponents;
-            this.pattern = pattern;
+            // copy arena after all allocations are successful
             this.arena = arena.*;
-            this.dot = dot;
-            this.absolute = absolute;
-            this.follow_symlinks = follow_symlinks;
-            this.error_on_broken_symlinks = error_on_broken_symlinks;
-            this.only_files = only_files;
 
             if (bun.Environment.allow_assert) {
                 this.debugPatternComopnents();

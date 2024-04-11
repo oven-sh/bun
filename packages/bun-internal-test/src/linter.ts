@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import BANNED_ from "./BANNED_METHODS.txt";
+import * as BANNED from "./banned.json";
 import * as action from "@actions/core";
 
 const IGNORED_FOLDERS = [
@@ -7,7 +7,6 @@ const IGNORED_FOLDERS = [
   // "windows-shim",
 ];
 
-const BANNED = BANNED_.replaceAll("\r\n", "\n").trim().split("\n");
 const ci = !!process.env["GITHUB_ACTIONS"];
 process.chdir(require("path").join(import.meta.dir, "../../../"));
 let bad = [];
@@ -16,7 +15,7 @@ const write = (text: string) => {
   process.stdout.write(text);
   report += text;
 };
-for (const banned of BANNED) {
+for (const [banned, suggestion] of Object.entries(BANNED)) {
   // Run git grep to find occurrences of std.debug.assert in .zig files
   let stdout = await $`git grep -n "${banned}" "src/**/**.zig"`.text();
 
@@ -29,7 +28,7 @@ for (const banned of BANNED) {
     .filter(line => !IGNORED_FOLDERS.some(folder => line.includes(folder)))
     .map(line => {
       const [path, lineNumber, ...text] = line.split(":");
-      return { path, lineNumber, reason: `🔴 ${banned} is banned`, text: text.join(":") };
+      return { path, lineNumber, banned, suggestion, text: text.join(":") };
     });
   // Check if we got any output
   // Split the output into lines
@@ -46,8 +45,9 @@ if (report.length === 0) {
   process.exit(0);
 }
 
-function link({ path, lineNumber, reason }) {
-  action.error(`Lint failure: ${reason}`, {
+function link({ path, lineNumber, suggestion, banned }) {
+  action.error(suggestion, {
+    title: banned + " is banned",
     file: path,
     startLine: lineNumber,
     endLine: lineNumber,
@@ -60,7 +60,7 @@ if (ci) {
     action.setFailed(`${bad.length} lint failures`);
   }
   action.setOutput("count", bad.length);
-  action.setOutput("text_output", bad.map(m => `- ${link(m)}: ${m.reason}`).join("\n"));
+  action.setOutput("text_output", bad.map(m => `- ${link(m)}: ${m.banned} is banned, use ${m.suggestion}`).join("\n"));
   action.setOutput("json_output", JSON.stringify(bad));
   action.summary.addRaw(report);
   await action.summary.write();

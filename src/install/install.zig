@@ -7920,7 +7920,7 @@ pub const PackageManager = struct {
                         \\
                         \\  <d>Add a dev, optional, or peer dependency <r>
                         \\  <b><green>bun add -d typescript<r>
-                        \\  <b><green>bun add -o lodash<r>
+                        \\  <b><green>bun add --optional lodash<r>
                         \\  <b><green>bun add --peer esbuild<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/add<r>

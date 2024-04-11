@@ -29,7 +29,7 @@ for (const banned of BANNED) {
     .filter(line => !IGNORED_FOLDERS.some(folder => line.includes(folder)))
     .map(line => {
       const [path, lineNumber, ...text] = line.split(":");
-      return { path, lineNumber, reason: `**${banned}** is banned`, text: text.join(":") };
+      return { path, lineNumber, reason: `🔴 ${banned} is banned`, text: text.join(":") };
     });
   // Check if we got any output
   // Split the output into lines

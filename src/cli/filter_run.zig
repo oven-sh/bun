@@ -86,24 +86,16 @@ pub const ProcessHandle = struct {
         handle.stderr.setParent(handle);
 
         if (Environment.isWindows) {
-            handle.stdout.source = .{ .pipe = this.spawn_options.stdout.buffer };
-            handle.stderr.source = .{ .pipe = this.spawn_options.stderr.buffer };
+            handle.stdout.source = .{ .pipe = this.options.stdout.buffer };
+            handle.stderr.source = .{ .pipe = this.options.stderr.buffer };
         }
 
         if (Environment.isPosix) {
             if (spawned.stdout) |stdout| {
-                if (!spawned.memfds[1]) {
-                    try handle.stdout.start(stdout, true).unwrap();
-                } else {
-                    handle.stdout.startMemfd(stdout);
-                }
+                try handle.stdout.start(stdout, true).unwrap();
             }
             if (spawned.stderr) |stderr| {
-                if (!spawned.memfds[2]) {
-                    try handle.stderr.start(stderr, true).unwrap();
-                } else {
-                    handle.stderr.startMemfd(stderr);
-                }
+                try handle.stderr.start(stderr, true).unwrap();
             }
         } else {
             try handle.stdout.startWithCurrentPipe().unwrap();

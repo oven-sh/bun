@@ -153,7 +153,7 @@ $ bun run --bun vite
 
 ### Filtering
 
-When in monorepos containing multiple packages, you can use the `--filter` argument to execute scripts in many packages at once.
+in monorepos containing multiple packages, you can use the `--filter` argument to execute scripts in many packages at once.
 
 Use `bun run --filter <name_pattern> <script>` to execute `<script>` in all packages whose name matches `<name_pattern>`.
 For example, if you have subdirectories containing packages named `foo`, `bar` and `baz`, running 
@@ -162,12 +162,7 @@ bun run --filter 'ba*' <script>
 ```
 will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
-You can also match on filesystem paths using `--filter ./<glob>`. This will ignore the package names and will match on directories instead. Both matchers have full glob support.
-
-Filters respect your [workspace configuration](/docs/install/workspaces.md): If you have a `package.json` file that specifies which packages are part of the workspace,
-`--filter` will be restricted to only these packages. Also, in a workspace you can use `--filter` to run scripts in packages that are located in sibling directories:
-Say your current working directory is in `foo` - you can use `bun run --filter bar <script>` to run a script from `bar` without having to `cd`.
-
+Find more details in the docs page for [filter](/docs/cli/filter.md).
 
 ## `bun run -` to pipe code from stdin
 

@@ -187,7 +187,7 @@ pub const Arguments = struct {
     };
 
     const auto_or_run_params = [_]ParamType{
-        clap.parseParam("--filter <STR>...                 Run the script or executable in each workspace package matching the filter pattern") catch unreachable,
+        clap.parseParam("--filter <STR>...                 Run a script in all workspace packages matching the pattern") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     };

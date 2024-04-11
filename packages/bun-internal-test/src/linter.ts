@@ -46,12 +46,19 @@ if (report.length === 0) {
   process.exit(0);
 }
 
+function link(path: string, lineNumber: number) {
+  return `[\`${path}:${lineNumber}\`](https://github.com/oven-sh/bun/blob/${process.env.GITHUB_REF}/${path}#L${lineNumber})`;
+}
+
 if (ci) {
   if (report.length > 0) {
     action.setFailed(`${bad.length} lint failures`);
   }
   action.setOutput("count", bad.length);
-  action.setOutput("text_output", bad.map(m => `- \`${m.path}:${m.lineNumber}\`: ${m.text.slice(0, 24)}`).join("\n"));
+  action.setOutput(
+    "text_output",
+    bad.map(m => `- ${link(m.path, m.lineNumber)}: \`${m.text.slice(0, 120)}\``).join("\n"),
+  );
   action.setOutput("json_output", JSON.stringify(bad));
   action.summary.addRaw(report);
   await action.summary.write();

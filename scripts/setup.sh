@@ -78,7 +78,6 @@ rm -f build/CMakeCache.txt
 cmake -B build -S . \
   -G Ninja \
   -DUSE_DEBUG_JSC=ON \
-  -DWEBKIT_DIR="$(pwd)/src/bun.js/WebKit/WebKitBuild/Debug" \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_COMPILER="$CC" \
   -DCMAKE_CXX_COMPILER="$CXX" \

@@ -7,7 +7,8 @@ const cwd_root = tempDirWithFiles("testworkspace", {
   packages: {
     pkga: {
       "index.js": "console.log('pkga');",
-      "sleep.js": "for (let i = 0; i < 3; i++) { await new Promise(resolve => setTimeout(resolve, 100)); console.log('x'); }",
+      "sleep.js":
+        "for (let i = 0; i < 3; i++) { await new Promise(resolve => setTimeout(resolve, 100)); console.log('x'); }",
       "package.json": JSON.stringify({
         name: "pkga",
         scripts: {
@@ -18,7 +19,8 @@ const cwd_root = tempDirWithFiles("testworkspace", {
     },
     pkgb: {
       "index.js": "console.log('pkgb');",
-      "sleep.js": "for (let i = 0; i < 3; i++) { await new Promise(resolve => setTimeout(resolve, 100)); console.log('y'); }",
+      "sleep.js":
+        "for (let i = 0; i < 3; i++) { await new Promise(resolve => setTimeout(resolve, 100)); console.log('y'); }",
       "package.json": JSON.stringify({
         name: "pkgb",
         scripts: {
@@ -206,18 +208,15 @@ describe("bun", () => {
     });
   });
 
-  test(
-    "run in parallel",
-    () => {
-      runInCwdSuccess({
-        cwd: cwd_root,
-        pattern: "pkg*",
-        target_pattern: [/x[\s\S]*y[\s\S]*x/],
-        antipattern: [/scripta/, /scriptb/, /scriptc/],
-        command: ["long"],
-      });
-    }
-  );
+  test("run in parallel", () => {
+    runInCwdSuccess({
+      cwd: cwd_root,
+      pattern: "pkg*",
+      target_pattern: [/x[\s\S]*y[\s\S]*x/],
+      antipattern: [/scripta/, /scriptb/, /scriptc/],
+      command: ["long"],
+    });
+  });
 
   test("run pre and post scripts, in order", () => {
     const dir = tempDirWithFiles("testworkspace", {
@@ -277,49 +276,46 @@ describe("bun", () => {
     });
   });
 
-  test(
-    "ignore dependency order on cycle, preserving pre and post script order",
-    () => {
-      const dir = tempDirWithFiles("testworkspace", {
-        dep0: {
-          "write.js": "await Bun.write('out.txt', 'success')",
-          "readwrite.js":
-            "console.log(await Bun.file('out.txt').text()); await Bun.write('post.txt', 'great success'); setTimeout(() => {}, 300)",
-          "read.js": "console.log(await Bun.file('post.txt').text())",
-          "package.json": JSON.stringify({
-            name: "dep0",
-            scripts: {
-              prescript: "bun run write.js",
-              script: "bun run readwrite.js",
-              postscript: "bun run read.js",
-            },
-            dependencies: {
-              dep1: "*",
-            },
-          }),
-        },
-        dep1: {
-          "index.js": "setTimeout(() => {}, 300)",
-          "package.json": JSON.stringify({
-            name: "dep1",
-            dependencies: {
-              dep0: "*",
-            },
-            scripts: {
-              script: "bun run index.js",
-            },
-          }),
-        },
-      });
-      runInCwdSuccess({
-        cwd: dir,
-        pattern: "*",
-        target_pattern: [/success/, /great success/],
-        antipattern: [/not found/],
-        command: ["script"],
-      });
-    }
-  );
+  test("ignore dependency order on cycle, preserving pre and post script order", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      dep0: {
+        "write.js": "await Bun.write('out.txt', 'success')",
+        "readwrite.js":
+          "console.log(await Bun.file('out.txt').text()); await Bun.write('post.txt', 'great success'); setTimeout(() => {}, 300)",
+        "read.js": "console.log(await Bun.file('post.txt').text())",
+        "package.json": JSON.stringify({
+          name: "dep0",
+          scripts: {
+            prescript: "bun run write.js",
+            script: "bun run readwrite.js",
+            postscript: "bun run read.js",
+          },
+          dependencies: {
+            dep1: "*",
+          },
+        }),
+      },
+      dep1: {
+        "index.js": "setTimeout(() => {}, 300)",
+        "package.json": JSON.stringify({
+          name: "dep1",
+          dependencies: {
+            dep0: "*",
+          },
+          scripts: {
+            script: "bun run index.js",
+          },
+        }),
+      },
+    });
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "*",
+      target_pattern: [/success/, /great success/],
+      antipattern: [/not found/],
+      command: ["script"],
+    });
+  });
 
   test("detect cycle of length > 2", () => {
     const dir = tempDirWithFiles("testworkspace", {

@@ -29,7 +29,7 @@ for (const banned of BANNED) {
     .filter(line => !IGNORED_FOLDERS.some(folder => line.includes(folder)))
     .map(line => {
       const [path, lineNumber, ...text] = line.split(":");
-      return { path, lineNumber, text: text.join(":") };
+      return { path, lineNumber, reason: banned, text: text.join(":") };
     });
   // Check if we got any output
   // Split the output into lines
@@ -57,7 +57,9 @@ if (ci) {
   action.setOutput("count", bad.length);
   action.setOutput(
     "text_output",
-    bad.map(m => `- ${link(m.path, m.lineNumber)}: \`${m.text.slice(0, 120)}\``).join("\n"),
+    bad
+      .map(m => `- ${link(m.path, m.lineNumber)}: \`${m.text.slice(0, 120)}\` ... :red_circle: ${m.reason}`)
+      .join("\n"),
   );
   action.setOutput("json_output", JSON.stringify(bad));
   action.summary.addRaw(report);

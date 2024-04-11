@@ -46,11 +46,10 @@ if (report.length === 0) {
 }
 
 function link({ path, lineNumber, suggestion, banned }) {
-  action.error(suggestion, {
-    title: banned + " is banned",
+  action.error(`Lint failure: ${banned} is banned, ${suggestion}`, {
     file: path,
-    startLine: lineNumber,
-    endLine: lineNumber,
+    startLine: Number(lineNumber),
+    endLine: Number(lineNumber),
   });
   return `[\`${path}:${lineNumber}\`](https://github.com/oven-sh/bun/blob/${process.env.GITHUB_SHA}/${path}#L${lineNumber})`;
 }

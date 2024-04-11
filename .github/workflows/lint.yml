@@ -38,7 +38,7 @@ jobs:
       - name: Lint
         id: lint
         run: |
-          bun ./packages/bun-internal-test/src/lint.ts || true
+          bun ./packages/bun-internal-test/src/linter.ts || true
       - uses: sarisia/actions-status-discord@v1
         if: always() && steps.lint.outputs.text_output != '' && github.event_name == 'pull_request'
         with:

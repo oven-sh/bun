@@ -46,8 +46,13 @@ if (report.length === 0) {
   process.exit(0);
 }
 
-function link(path: string, lineNumber: number) {
-  return `[\`${path}:${lineNumber}\`](https://github.com/oven-sh/bun/blob/${process.env.GITHUB_REF}/${path}#L${lineNumber})`;
+function link({ path, lineNumber, reason }) {
+  action.error(`Lint failure: ${reason}`, {
+    file: path,
+    startLine: lineNumber,
+    endLine: lineNumber,
+  });
+  return `[\`${path}:${lineNumber}\`](https://github.com/oven-sh/bun/blob/${process.env.GITHUB_SHA}/${path}#L${lineNumber})`;
 }
 
 if (ci) {
@@ -55,12 +60,7 @@ if (ci) {
     action.setFailed(`${bad.length} lint failures`);
   }
   action.setOutput("count", bad.length);
-  action.setOutput(
-    "text_output",
-    bad
-      .map(m => `- ${link(m.path, m.lineNumber)}: \`${m.text.slice(0, 120)}\` ... :red_circle: ${m.reason}`)
-      .join("\n"),
-  );
+  action.setOutput("text_output", bad.map(m => `- ${link(m)}: :red_circle: ${m.reason}`).join("\n"));
   action.setOutput("json_output", JSON.stringify(bad));
   action.summary.addRaw(report);
   await action.summary.write();

@@ -4,7 +4,7 @@ import * as action from "@actions/core";
 
 const IGNORED_FOLDERS = [
   // list of folders to ignore
-  // "windows-shim",
+  "windows-shim",
 ];
 
 const ci = !!process.env["GITHUB_ACTIONS"];

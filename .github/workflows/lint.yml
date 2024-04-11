@@ -51,7 +51,7 @@ jobs:
             Pull Request
             ### ❌ [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
 
-            @${{ github.actor }}, there are ${{ steps.lint.outputs.count }} lint errors on ${{ github.ref }}
+            @${{ github.actor }}, there are ${{ steps.lint.outputs.count }} lint errors on ${{ github.ref_name }}
 
             ${{ steps.lint.outputs.text_output }}
 

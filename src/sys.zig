@@ -223,7 +223,7 @@ pub const Error = struct {
     };
 
     pub inline fn withFd(this: Error, fd: anytype) Error {
-        if (Environment.allow_assert) std.debug.assert(fd != bun.invalid_fd);
+        if (Environment.allow_assert) bun.assert(fd != bun.invalid_fd);
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,
@@ -820,7 +820,7 @@ pub fn openFileAtWindowsNtPath(
     // Another problem re: normalization is that you can use relative paths, but no leading '.\' or './''
     // this path is probably already backslash normalized so we're only going to check for '.\'
     // const path = if (bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, ".\\")) path_maybe_leading_dot[2..] else path_maybe_leading_dot;
-    // std.debug.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
+    // bun.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
     assertIsValidWindowsPath(u16, path);
 
     const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
@@ -1182,7 +1182,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
         .windows => {
             // "WriteFile sets this value to zero before doing any work or error checking."
             var bytes_written: u32 = undefined;
-            std.debug.assert(bytes.len > 0);
+            bun.assert(bytes.len > 0);
             const rc = kernel32.WriteFile(
                 fd.cast(),
                 bytes.ptr,
@@ -2012,7 +2012,7 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
 
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {
     if (comptime !Environment.isLinux) @compileError("Linux-only");
-    std.debug.assert(capacity > 0);
+    bun.assert(capacity > 0);
 
     // In  Linux  versions  before 2.6.11, the capacity of a
     // pipe was the same as the system page size (e.g., 4096
@@ -2342,7 +2342,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
     }
 
     if (comptime Environment.allow_assert)
-        std.debug.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
+        bun.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
 
     return Maybe(void).errnoSysP(
         std.os.linux.linkat(

@@ -1272,7 +1272,7 @@ pub fn renameAtW(
     if (comptime bun.Environment.allow_assert) {
         // if the directories are the same and the destination path is absolute, the old path name is kept
         if (old_dir_fd == new_dir_fd) {
-            std.debug.assert(!std.fs.path.isAbsoluteWindowsWTF16(new_path_w));
+            bun.assert(!std.fs.path.isAbsoluteWindowsWTF16(new_path_w));
         }
     }
 
@@ -1325,10 +1325,10 @@ pub fn moveOpenedFileAt(
     // supported in order to avoid either (1) using a redundant call that we can know in advance will return
     // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
     // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
-    comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
 
     if (bun.Environment.allow_assert) {
-        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
+        bun.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
     }
 
     const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (bun.MAX_PATH_BYTES - 1);
@@ -1379,7 +1379,7 @@ pub fn moveOpenedFileAtLoose(
     new_path: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {
-    std.debug.assert(std.mem.indexOfScalar(u16, new_path, '/') == null); // Call bun.strings.toWPathNormalized first
+    bun.assert(std.mem.indexOfScalar(u16, new_path, '/') == null); // Call bun.strings.toWPathNormalized first
 
     const without_leading_dot_slash = if (new_path.len >= 2 and new_path[0] == '.' and new_path[1] == '\\')
         new_path[2..]
@@ -1413,7 +1413,7 @@ const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: w.ULONG = 0x00000010;
 ///
 /// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
 pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
-    comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
     var info = w.FILE_DISPOSITION_INFORMATION_EX{
         .Flags = FILE_DISPOSITION_DELETE |
             FILE_DISPOSITION_POSIX_SEMANTICS |

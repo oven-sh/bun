@@ -87,7 +87,7 @@ pub const Source = struct {
 
     pub fn configureThread() void {
         if (source_set) return;
-        std.debug.assert(stdout_stream_set);
+        bun.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
     }
 
@@ -346,17 +346,17 @@ pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
 pub fn errorWriter() WriterType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.error_stream.quietWriter();
 }
 
 pub fn errorStream() Source.StreamType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.error_stream;
 }
 
 pub fn writer() WriterType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.stream.quietWriter();
 }
 
@@ -519,7 +519,7 @@ pub fn debug(comptime fmt: string, args: anytype) void {
 }
 
 pub inline fn _debug(comptime fmt: string, args: anytype) void {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     println(fmt, args);
 }
 
@@ -530,8 +530,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
         std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
-        if (comptime Environment.allow_assert)
-            std.debug.assert(source_set);
+        bun.debugAssert(source_set);
 
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
         if (enable_buffering) {
@@ -903,7 +902,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         // enum literals
         if (info == .EnumLiteral) {
             const tag = @tagName(info);
-            comptime std.debug.assert(tag.len > 0); // how?
+            comptime bun.assert(tag.len > 0); // how?
             if (tag[0] != 'E') break :display_name .{ "E" ++ tag, true };
             break :display_name .{ tag, true };
         }
@@ -940,7 +939,7 @@ pub fn enableScopedDebugWriter() void {
 extern "c" fn getpid() c_int;
 
 pub fn initScopedDebugWriterAtStartup() void {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
 
     if (bun.getenvZ("BUN_DEBUG")) |path| {
         if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {

@@ -142,7 +142,7 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
 
         pub inline fn get(this: Slice, in: []const Type) []const Type {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.off + this.len <= in.len);
+                bun.assert(this.off + this.len <= in.len);
             }
             // it should be impossible to address this out of bounds due to the minimum here
             return in.ptr[this.off..@min(in.len, this.off + this.len)];
@@ -150,15 +150,15 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
 
         pub inline fn mut(this: Slice, in: []Type) []Type {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.off + this.len <= in.len);
+                bun.assert(this.off + this.len <= in.len);
             }
             return in.ptr[this.off..@min(in.len, this.off + this.len)];
         }
 
         pub fn init(buf: []const Type, in: []const Type) Slice {
             // if (comptime Environment.allow_assert) {
-            //     std.debug.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr));
-            //     std.debug.assert((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len));
+            //     bun.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr));
+            //     bun.assert((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len));
             // }
 
             return Slice{
@@ -1957,7 +1957,7 @@ pub const PackageInstall = struct {
             defer _ = bun.sys.close(fd);
             const size = fd.asFile().readAll(temp_buffer) catch return true;
             const decoded = WinBinLinkingShim.looseDecode(temp_buffer[0..size]) orelse return true;
-            std.debug.assert(decoded.flags.isValid()); // looseDecode ensures valid flags
+            bun.assert(decoded.flags.isValid()); // looseDecode ensures valid flags
             break :bin_path decoded.bin_path;
         };
 
@@ -2620,7 +2620,7 @@ pub const PackageManager = struct {
             const index = this.lockfile.buffers.dependencies.items.len;
             this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
             this.lockfile.buffers.resolutions.append(this.allocator, invalid_package_id) catch unreachable;
-            if (comptime Environment.allow_assert) std.debug.assert(this.lockfile.buffers.dependencies.items.len == this.lockfile.buffers.resolutions.items.len);
+            if (comptime Environment.allow_assert) bun.assert(this.lockfile.buffers.dependencies.items.len == this.lockfile.buffers.resolutions.items.len);
             break :brk index;
         }));
 
@@ -3470,7 +3470,7 @@ pub const PackageManager = struct {
             Features.npm,
         ));
 
-        if (comptime Environment.allow_assert) std.debug.assert(package.meta.id != invalid_package_id);
+        if (comptime Environment.allow_assert) bun.assert(package.meta.id != invalid_package_id);
         defer successFn(this, dependency_id, package.meta.id);
 
         return switch (this.determinePreinstallState(package, this.lockfile)) {
@@ -3561,9 +3561,9 @@ pub const PackageManager = struct {
     fn assignResolution(this: *PackageManager, dependency_id: DependencyID, package_id: PackageID) void {
         const buffers = &this.lockfile.buffers;
         if (comptime Environment.allow_assert) {
-            std.debug.assert(dependency_id < buffers.resolutions.items.len);
-            std.debug.assert(package_id < this.lockfile.packages.len);
-            // std.debug.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
+            bun.assert(dependency_id < buffers.resolutions.items.len);
+            bun.assert(package_id < this.lockfile.packages.len);
+            // bun.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
         }
         buffers.resolutions.items[dependency_id] = package_id;
         const string_buf = buffers.string_bytes.items;
@@ -3577,9 +3577,9 @@ pub const PackageManager = struct {
     fn assignRootResolution(this: *PackageManager, dependency_id: DependencyID, package_id: PackageID) void {
         const buffers = &this.lockfile.buffers;
         if (comptime Environment.allow_assert) {
-            std.debug.assert(dependency_id < buffers.resolutions.items.len);
-            std.debug.assert(package_id < this.lockfile.packages.len);
-            std.debug.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
+            bun.assert(dependency_id < buffers.resolutions.items.len);
+            bun.assert(package_id < this.lockfile.packages.len);
+            bun.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
         }
         buffers.resolutions.items[dependency_id] = package_id;
         const string_buf = buffers.string_bytes.items;
@@ -4253,7 +4253,7 @@ pub const PackageManager = struct {
                             const name_str = this.lockfile.str(&name);
                             const task_id = Task.Id.forManifest(name_str);
 
-                            if (comptime Environment.allow_assert) std.debug.assert(task_id != 0);
+                            if (comptime Environment.allow_assert) bun.assert(task_id != 0);
 
                             if (comptime Environment.allow_assert)
                                 debug(
@@ -4542,7 +4542,7 @@ pub const PackageManager = struct {
                     }
 
                     // should not trigger a network call
-                    if (comptime Environment.allow_assert) std.debug.assert(result.network_task == null);
+                    if (comptime Environment.allow_assert) bun.assert(result.network_task == null);
 
                     if (comptime Environment.allow_assert)
                         debug(
@@ -5073,7 +5073,7 @@ pub const PackageManager = struct {
                 var builder = manager.lockfile.stringBuilder();
                 Lockfile.Package.Scripts.parseCount(manager.allocator, &builder, json);
                 builder.allocate() catch unreachable;
-                if (comptime Environment.allow_assert) std.debug.assert(package_id.* != invalid_package_id);
+                if (comptime Environment.allow_assert) bun.assert(package_id.* != invalid_package_id);
                 var scripts = manager.lockfile.packages.items(.scripts)[package_id.*];
                 scripts.parseAlloc(manager.allocator, &builder, json);
                 scripts.filled = true;
@@ -5124,7 +5124,7 @@ pub const PackageManager = struct {
         var network_tasks_batch = manager.async_network_task_queue.popBatch();
         var network_tasks_iter = network_tasks_batch.iterator();
         while (network_tasks_iter.next()) |task| {
-            if (comptime Environment.allow_assert) std.debug.assert(manager.pending_tasks > 0);
+            if (comptime Environment.allow_assert) bun.assert(manager.pending_tasks > 0);
             manager.pending_tasks -|= 1;
             // We cannot free the network task at the end of this scope.
             // It may continue to be referenced in a future task.
@@ -5449,7 +5449,7 @@ pub const PackageManager = struct {
         var resolve_tasks_batch = manager.resolve_tasks.popBatch();
         var resolve_tasks_iter = resolve_tasks_batch.iterator();
         while (resolve_tasks_iter.next()) |task| {
-            if (comptime Environment.allow_assert) std.debug.assert(manager.pending_tasks > 0);
+            if (comptime Environment.allow_assert) bun.assert(manager.pending_tasks > 0);
             defer manager.preallocated_resolve_tasks.put(task);
             manager.pending_tasks -|= 1;
 
@@ -6418,7 +6418,7 @@ pub const PackageManager = struct {
                         for (deps) |dep| {
                             if (dep.data == .e_missing) has_missing = true;
                         }
-                        std.debug.assert(has_missing);
+                        bun.assert(has_missing);
                     }
 
                     var i = deps.len;
@@ -6438,7 +6438,7 @@ pub const PackageManager = struct {
                 }
 
                 if (comptime Environment.allow_assert) {
-                    for (deps) |dep| std.debug.assert(dep.data != .e_missing);
+                    for (deps) |dep| bun.assert(dep.data != .e_missing);
                 }
 
                 break :brk deps;
@@ -6629,7 +6629,7 @@ pub const PackageManager = struct {
                             for (deps) |dep| {
                                 if (dep.data == .e_missing) has_missing = true;
                             }
-                            std.debug.assert(has_missing);
+                            bun.assert(has_missing);
                         }
 
                         var i = deps.len;
@@ -6649,7 +6649,7 @@ pub const PackageManager = struct {
                     }
 
                     if (comptime Environment.allow_assert) {
-                        for (deps) |dep| std.debug.assert(dep.data != .e_missing);
+                        for (deps) |dep| bun.assert(dep.data != .e_missing);
                     }
 
                     break :brk deps;
@@ -6657,7 +6657,7 @@ pub const PackageManager = struct {
 
                 outer: for (updates) |*request| {
                     if (request.e_string != null) continue;
-                    defer if (comptime Environment.allow_assert) std.debug.assert(request.e_string != null);
+                    defer if (comptime Environment.allow_assert) bun.assert(request.e_string != null);
 
                     var k: usize = 0;
                     while (k < new_dependencies.len) : (k += 1) {
@@ -8665,7 +8665,7 @@ pub const PackageManager = struct {
         /// if the tree is finished.
         pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: Options.LogLevel) void {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(tree_id != Lockfile.Tree.invalid_id);
+                bun.assert(tree_id != Lockfile.Tree.invalid_id);
             }
 
             const trees = this.lockfile.buffers.trees.items;
@@ -8884,8 +8884,8 @@ pub const PackageManager = struct {
             comptime log_level: Options.LogLevel,
         ) usize {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(resolution_tag != .root);
-                std.debug.assert(package_id != 0);
+                bun.assert(resolution_tag != .root);
+                bun.assert(package_id != 0);
             }
             var count: usize = 0;
             const scripts = brk: {
@@ -8921,7 +8921,7 @@ pub const PackageManager = struct {
             };
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(scripts.filled);
+                bun.assert(scripts.filled);
             }
 
             switch (resolution_tag) {
@@ -9764,14 +9764,14 @@ pub const PackageManager = struct {
                     if (comptime Environment.allow_assert) {
                         if (trees.len > 0) {
                             // last tree should not depend on another except for itself
-                            std.debug.assert(tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).count() == 1 and tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).isSet(trees.len - 1));
+                            bun.assert(tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).count() == 1 and tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).isSet(trees.len - 1));
                             // root tree should always depend on all trees
-                            std.debug.assert(tree_ids_to_trees_the_id_depends_on.at(0).count() == trees.len);
+                            bun.assert(tree_ids_to_trees_the_id_depends_on.at(0).count() == trees.len);
                         }
 
                         // a tree should always depend on itself
                         for (0..trees.len) |j| {
-                            std.debug.assert(tree_ids_to_trees_the_id_depends_on.at(j).isSet(j));
+                            bun.assert(tree_ids_to_trees_the_id_depends_on.at(j).isSet(j));
                         }
                     }
 
@@ -9871,7 +9871,7 @@ pub const PackageManager = struct {
                 }
 
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(node_modules.dependencies.len == this.lockfile.buffers.trees.items[installer.current_tree_id].dependencies.len);
+                    bun.assert(node_modules.dependencies.len == this.lockfile.buffers.trees.items[installer.current_tree_id].dependencies.len);
                 }
 
                 // cache line is 64 bytes on ARM64 and x64
@@ -10491,7 +10491,7 @@ pub const PackageManager = struct {
                             );
 
                             if (comptime Environment.allow_assert) {
-                                std.debug.assert(first_index != -1);
+                                bun.assert(first_index != -1);
                             }
 
                             if (first_index != -1) {
@@ -10513,7 +10513,7 @@ pub const PackageManager = struct {
                             );
 
                             if (comptime Environment.allow_assert) {
-                                std.debug.assert(first_index != -1);
+                                bun.assert(first_index != -1);
                             }
 
                             inline for (entries, 0..) |maybe_entry, i| {
@@ -10659,7 +10659,7 @@ pub const PackageManager = struct {
         if (manager.options.do.run_scripts) {
             if (manager.root_lifecycle_scripts) |scripts| {
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(scripts.total > 0);
+                    bun.assert(scripts.total > 0);
                 }
 
                 if (comptime log_level != .silent) {
@@ -10785,9 +10785,9 @@ pub const PackageManager = struct {
 
         if (comptime Environment.allow_assert) {
             // if packages_count is greater than 0, scripts_count must also be greater than 0.
-            std.debug.assert(packages_count == 0 or scripts_count > 0);
+            bun.assert(packages_count == 0 or scripts_count > 0);
             // if scripts_count is 1, it's only possible for packages_count to be 1.
-            std.debug.assert(scripts_count != 1 or packages_count == 1);
+            bun.assert(scripts_count != 1 or packages_count == 1);
         }
 
         if (packages_count > 0) {
@@ -10826,7 +10826,7 @@ pub const PackageManager = struct {
 
         var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
         var current_dir: ?*DirInfo = this_bundler.resolver.readDirInfo(cwd) catch null;
-        std.debug.assert(current_dir != null);
+        bun.assert(current_dir != null);
         while (current_dir) |dir| {
             if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
                 try PATH.append(std.fs.path.delimiter);

@@ -176,7 +176,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(tmp.len > 0);
+            bun.assert(tmp.len > 0);
         }
 
         break :brk tmp;
@@ -226,7 +226,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                     needs_first_dirname: bool = true,
                     outdirname: *[]const u8,
                     pub fn onFirstDirectoryName(dirname_reader: *@This(), first_dirname: []const u8) void {
-                        std.debug.assert(dirname_reader.needs_first_dirname);
+                        bun.assert(dirname_reader.needs_first_dirname);
                         dirname_reader.needs_first_dirname = false;
                         dirname_reader.outdirname.* = FileSystem.DirnameStore.instance.append([]const u8, first_dirname) catch unreachable;
                     }

@@ -4,11 +4,11 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 

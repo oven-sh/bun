@@ -217,7 +217,7 @@ pub const ThreadPool = struct {
 
         deinit_task: ThreadPoolLib.Task = .{ .callback = deinitCallback },
 
-        temporary_arena: @import("root").bun.ArenaAllocator = undefined,
+        temporary_arena: bun.ArenaAllocator = undefined,
         stmt_list: LinkerContext.StmtList = undefined,
 
         pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
@@ -301,7 +301,7 @@ pub const ThreadPool = struct {
             this.data.bundler.linker.resolver = &this.data.bundler.resolver;
             this.data.bundler.macro_context = js_ast.Macro.MacroContext.init(&this.data.bundler);
             this.data.macro_context = this.data.bundler.macro_context.?;
-            this.temporary_arena = @import("root").bun.ArenaAllocator.init(this.allocator);
+            this.temporary_arena = bun.ArenaAllocator.init(this.allocator);
             this.stmt_list = LinkerContext.StmtList.init(this.allocator);
 
             const CacheSet = @import("../cache.zig");
@@ -3870,6 +3870,13 @@ const LinkerContext = struct {
             const line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
+            const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
+
+            if (!loader.canHaveSourceMap()) {
+                // This is not a file which we support generating source maps for
+                line_offset_table.* = .{};
+                return;
+            }
 
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
 
@@ -3884,7 +3891,12 @@ const LinkerContext = struct {
 
         pub fn computeQuotedSourceContents(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
+            const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
             const quoted_source_contents: *string = &this.graph.files.items(.quoted_source_contents)[source_index];
+            if (!loader.canHaveSourceMap()) {
+                quoted_source_contents.* = "";
+                return;
+            }
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             const mutable = MutableString.initEmpty(allocator);
@@ -4070,7 +4082,7 @@ const LinkerContext = struct {
 
         var stack_fallback = std.heap.stackFallback(4096, this.allocator);
         const stack_all = stack_fallback.get();
-        var arena = @import("root").bun.ArenaAllocator.init(stack_all);
+        var arena = bun.ArenaAllocator.init(stack_all);
         defer arena.deinit();
 
         var temp_allocator = arena.allocator();
@@ -6684,7 +6696,7 @@ const LinkerContext = struct {
 
         defer chunk.renamer.deinit(bun.default_allocator);
 
-        var arena = @import("root").bun.ArenaAllocator.init(worker.allocator);
+        var arena = bun.ArenaAllocator.init(worker.allocator);
         defer arena.deinit();
 
         // Also generate the cross-chunk binding code

@@ -1,6 +1,6 @@
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
-If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
+If you are using Windows, please refer to [this guide](/docs/project/building-windows)
 
 ## Install Dependencies
 

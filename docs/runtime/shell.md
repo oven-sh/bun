@@ -74,8 +74,8 @@ try {
   console.log(output);
 } catch (err) {
   console.log(`Failed with code ${err.exitCode}`);
-  console.log(output.stdout.toString());
-  console.log(output.stderr.toString());
+  console.log(err.stdout.toString());
+  console.log(err.stderr.toString());
 }
 ```
 
@@ -191,7 +191,7 @@ import { $ } from "bun";
 await $`bun run index.ts 2> errors.txt`;
 ```
 
-### Example: Redirect stdout -> stderr
+### Example: Redirect stderr -> stdout
 
 ```js
 import { $ } from "bun";
@@ -201,7 +201,7 @@ import { $ } from "bun";
 await $`bun run ./index.ts 2>&1`;
 ```
 
-### Example: Redirect stderr -> stdout
+### Example: Redirect stdout -> stderr
 
 ```js
 import { $ } from "bun";

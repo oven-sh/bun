@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;

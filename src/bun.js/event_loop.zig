@@ -1,5 +1,5 @@
 const std = @import("std");
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Allocator = std.mem.Allocator;
@@ -25,7 +25,7 @@ const Waker = bun.Async.Waker;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 const Async = bun.Async;
 
 pub fn ConcurrentPromiseTask(comptime Context: type) type {

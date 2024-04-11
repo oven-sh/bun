@@ -593,6 +593,10 @@ pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
 
 pub fn getErrno(rc: anytype) bun.C.E {
     if (comptime Environment.isWindows) {
+        if (comptime @TypeOf(rc) == bun.windows.NTSTATUS) {
+            return bun.windows.translateNTStatusToErrno(rc);
+        }
+
         if (bun.windows.Win32Error.get().toSystemErrno()) |e| {
             return e.toE();
         }
@@ -815,13 +819,13 @@ pub fn openFileAtWindowsNtPath(
     disposition: w.ULONG,
     options: w.ULONG,
 ) Maybe(bun.FileDescriptor) {
-    var result: windows.HANDLE = undefined;
-
     // Another problem re: normalization is that you can use relative paths, but no leading '.\' or './''
     // this path is probably already backslash normalized so we're only going to check for '.\'
     // const path = if (bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, ".\\")) path_maybe_leading_dot[2..] else path_maybe_leading_dot;
     // std.debug.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
     assertIsValidWindowsPath(u16, path);
+
+    var result: windows.HANDLE = undefined;
 
     const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
         .err = .{
@@ -1029,11 +1033,11 @@ pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T
 }
 
 pub fn openatWindows(
-    dir: bun.FileDescriptor,
+    dir: anytype,
     path: []const u16,
     flags: bun.Mode,
 ) Maybe(bun.FileDescriptor) {
-    return openatWindowsT(u16, dir, path, flags);
+    return openatWindowsT(u16, bun.toFD(dir), path, flags);
 }
 
 pub fn openatWindowsA(
@@ -1666,14 +1670,16 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
         var w_buf_from: bun.WPathBuffer = undefined;
         var w_buf_to: bun.WPathBuffer = undefined;
 
-        return bun.C.renameAtW(
+        const rc = bun.C.renameAtW(
             from_dir,
-            bun.strings.toWPathNormalized(&w_buf_from, from),
+            bun.strings.toNTPath(&w_buf_from, from),
             to_dir,
-            bun.strings.toWPathNormalized(&w_buf_to, to),
+            bun.strings.toNTPath(&w_buf_to, to),
             // @paperdave why waas this set to false?
             true,
         );
+
+        return rc;
     }
     while (true) {
         if (Maybe(void).errnoSys(sys.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {
@@ -1855,22 +1861,22 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
 }
 
 pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
-    if (Environment.isWindows) {
-        return Maybe(void).todo();
-    }
-    while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, std.os.AT.REMOVEDIR), .rmdir)) |err| {
-            if (err.getErrno() == .INTR) continue;
-            return err;
-        }
-        return Maybe(void).success;
-    }
+    return unlinkatWithFlags(dirfd, to, std.os.AT.REMOVEDIR);
 }
 
 pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) Maybe(void) {
     if (Environment.isWindows) {
-        return Maybe(void).todo();
+        if (comptime std.meta.Elem(@TypeOf(to)) == u8) {
+            var w_buf: bun.WPathBuffer = undefined;
+            return unlinkatWithFlags(dirfd, bun.strings.toNTPath(&w_buf, bun.span(to)), flags);
+        }
+
+        return bun.windows.DeleteFileBun(to, .{
+            .dir = if (dirfd != bun.invalid_fd) dirfd.cast() else null,
+            .remove_dir = flags & std.os.AT.REMOVEDIR != 0,
+        });
     }
+
     while (true) {
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, flags), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -1887,7 +1893,7 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
 
 pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     if (Environment.isWindows) {
-        return Maybe(void).todo();
+        return unlinkatWithFlags(dirfd, to, 0);
     }
     while (true) {
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, 0), .unlink)) |err| {
@@ -2268,6 +2274,14 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
     }
     log("pipe() = [{d}, {d}]", .{ fds[0], fds[1] });
     return .{ .result = .{ bun.toFD(fds[0]), bun.toFD(fds[1]) } };
+}
+
+pub fn openNullDevice() Maybe(bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.open("nul", 0, 0);
+    }
+
+    return open("/dev/null", os.O.RDWR, 0);
 }
 
 pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor) {

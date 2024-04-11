@@ -600,7 +600,7 @@ pub const PackageJSON = struct {
             false,
             null,
         ) catch |err| {
-            if (err != error.IsDir) {
+            if (err != error.IsDir and err != error.EISDIR) {
                 r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
             }
 

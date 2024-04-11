@@ -17,6 +17,7 @@ seed: u64 = 0,
 const NameBufferList = std.ArrayList(bun.OSPathChar);
 
 const Dir = std.fs.Dir;
+const Kind = bun.sys.File.Kind;
 const WrappedIterator = DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8);
 
 pub const WalkerEntry = struct {
@@ -26,7 +27,7 @@ pub const WalkerEntry = struct {
     dir: Dir,
     basename: OSPathSlice,
     path: OSPathSlice,
-    kind: Dir.Entry.Kind,
+    kind: Kind,
 };
 
 const StackItem = struct {
@@ -65,7 +66,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
                         },
 
                         // we don't know what it is for a symlink
-                        .sym_link => {
+                        .sym_link_directory, .sym_link => {
                             if (std.mem.indexOfScalar(
                                 u64,
                                 self.skip_all,

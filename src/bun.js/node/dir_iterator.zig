@@ -282,15 +282,15 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     if (mem.eql(u16, dir_info_name, &[_]u16{'.'}) or mem.eql(u16, dir_info_name, &[_]u16{ '.', '.' }))
                         continue;
 
-                    const kind = blk: {
+                    const kind: Entry.Kind = blk: {
                         const attrs = dir_info.FileAttributes;
+                        if (attrs == w.INVALID_FILE_ATTRIBUTES) break :blk .unknown;
                         const isdir = attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0;
                         const islink = attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0;
-                        // on windows symlinks can be directories, too. We prioritize the
-                        // "sym_link" kind over the "directory" kind
-                        if (islink) break :blk Entry.Kind.sym_link;
-                        if (isdir) break :blk Entry.Kind.directory;
-                        break :blk Entry.Kind.file;
+                        if (islink and isdir) break :blk .sym_link_directory;
+                        if (islink) break :blk .sym_link;
+                        if (isdir) break :blk .directory;
+                        break :blk .file;
                     };
 
                     if (use_windows_ospath) {

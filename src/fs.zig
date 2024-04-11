@@ -158,7 +158,7 @@ pub const FileSystem = struct {
         pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: *const bun.DirIterator.IteratorResult, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
             const name_slice = entry.name.slice();
             const _kind: Entry.Kind = switch (entry.kind) {
-                .directory => .dir,
+                .sym_link_directory, .directory => .dir,
                 // This might be wrong!
                 .sym_link => .file,
                 .file => .file,
@@ -208,7 +208,7 @@ pub const FileSystem = struct {
                     // Call "stat" lazily for performance. The "@material-ui/icons" package
                     // contains a directory with over 11,000 entries in it and running "stat"
                     // for each entry was a big performance issue for that package.
-                    .need_stat = entry.kind == .sym_link,
+                    .need_stat = entry.kind == .sym_link or entry.kind == .sym_link_directory,
                     .cache = .{
                         .symlink = PathString.empty,
                         .kind = _kind,
@@ -1136,19 +1136,21 @@ pub const FileSystem = struct {
             allocator: std.mem.Allocator,
             path: string,
             _size: ?usize,
-            file: std.fs.File,
+            file_: std.fs.File,
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
         ) !PathContentsPair {
-            FileSystem.setMaxFd(file.handle);
+            _ = stream; // autofix
+            FileSystem.setMaxFd(file_.handle);
+            const file = bun.sys.File.from(file_);
 
             // Skip the extra file.stat() call when possible
-            var size = _size orelse (file.getEndPos() catch |err| {
+            const size = _size orelse (file.getEndPos().unwrap() catch |err| {
                 fs.readFileError(path, err);
                 return err;
             });
-            debug("stat({d}) = {d}", .{ file.handle, size });
+            debug("stat({}) = {d}", .{ file.handle, size });
 
             // Skip the pread call for empty files
             // Otherwise will get out of bounds errors
@@ -1170,52 +1172,19 @@ pub const FileSystem = struct {
             // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
             if (use_shared_buffer) {
                 shared_buffer.reset();
-                var offset: u64 = 0;
-                try shared_buffer.growBy(size + 1);
-                shared_buffer.list.expandToCapacity();
+                {
+                    var list = shared_buffer.list.toManaged(bun.default_allocator);
+                    defer shared_buffer.list = list.moveToUnmanaged();
+                    const rc = file.readToEndWithArrayListAndSize(&list, size);
 
-                // if you press save on a large file we might not read all the
-                // bytes in the first few pread() calls. we only handle this on
-                // stream because we assume that this only realistically happens
-                // during HMR
-                while (true) {
-
-                    // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                    const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                    const read_count = file.preadAll(shared_buffer.list.items[offset..], offset) catch |err| {
-                        fs.readFileError(path, err);
-                        return err;
-                    };
-                    if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
-                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + offset];
-                    file_contents = shared_buffer.list.items;
-                    debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
-
-                    if (comptime stream) {
-                        // check again that stat() didn't change the file size
-                        // another reason to only do this when stream
-                        const new_size = file.getEndPos() catch |err| {
-                            fs.readFileError(path, err);
-                            return err;
-                        };
-
-                        offset += read_count;
-
-                        // don't infinite loop is we're still not reading more
-                        if (read_count == 0) break;
-
-                        if (offset < new_size) {
-                            try shared_buffer.growBy(new_size - size);
-                            shared_buffer.list.expandToCapacity();
-                            size = new_size;
-                            continue;
-                        }
+                    switch (rc) {
+                        .result => {
+                            file_contents = list.items;
+                        },
+                        .err => {
+                            return bun.errnoToZigErr(rc.err.getErrno());
+                        },
                     }
-                    break;
-                }
-
-                if (shared_buffer.list.capacity > file_contents.len) {
-                    file_contents.ptr[file_contents.len] = 0;
                 }
 
                 if (strings.BOM.detect(file_contents)) |bom| {
@@ -1223,20 +1192,14 @@ pub const FileSystem = struct {
                     file_contents = try bom.removeAndConvertToUTF8WithoutDealloc(allocator, &shared_buffer.list);
                 }
             } else {
-                // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                var buf = try allocator.alloc(u8, size + 1);
+                const result = file.readToEnd(allocator);
+                if (comptime Environment.isWindows) _ = file.resetPosition();
+                file_contents = result.bytes.items;
 
-                // stick a zero at the end
-                buf[size] = 0;
-
-                const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                const read_count = file.preadAll(buf, 0) catch |err| {
-                    fs.readFileError(path, err);
-                    return err;
-                };
-                if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
-                file_contents = buf[0..read_count];
-                debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
+                if (result.err) |err| {
+                    allocator.free(file_contents);
+                    return bun.errnoToZigErr(err.getErrno());
+                }
 
                 if (strings.BOM.detect(file_contents)) |bom| {
                     debug("Convert {s} BOM", .{@tagName(bom)});
@@ -1245,60 +1208,6 @@ pub const FileSystem = struct {
             }
 
             return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
-        }
-
-        pub fn kindFromAbsolute(
-            fs: *RealFS,
-            absolute_path: [:0]const u8,
-            existing_fd: StoredFileDescriptorType,
-            store_fd: bool,
-        ) !Entry.Cache {
-            var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-
-            const stat = try C.lstat_absolute(absolute_path);
-            const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
-            var _kind = stat.kind;
-            var cache = Entry.Cache{
-                .kind = Entry.Kind.file,
-                .symlink = PathString.empty,
-            };
-            var symlink: []const u8 = "";
-
-            if (is_symlink) {
-                var file = try if (existing_fd != 0)
-                    std.fs.File{ .handle = existing_fd }
-                else if (store_fd)
-                    std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only })
-                else
-                    bun.openFileForPath(absolute_path);
-                setMaxFd(file.handle);
-
-                defer {
-                    if ((!store_fd or fs.needToCloseFiles()) and existing_fd == 0) {
-                        file.close();
-                    } else if (comptime FeatureFlags.store_file_descriptors) {
-                        cache.fd = file.handle;
-                    }
-                }
-                const _stat = try file.stat();
-
-                symlink = try bun.getFdPath(file.handle, &outpath);
-
-                _kind = _stat.kind;
-            }
-
-            std.debug.assert(_kind != .SymLink);
-
-            if (_kind == .Directory) {
-                cache.kind = .dir;
-            } else {
-                cache.kind = .file;
-            }
-            if (symlink.len > 0) {
-                cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, symlink));
-            }
-
-            return cache;
         }
 
         pub fn kind(
@@ -1324,19 +1233,39 @@ pub const FileSystem = struct {
             const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
             if (comptime bun.Environment.isWindows) {
-                var file = try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only });
-                defer file.close();
-                const metadata = try file.metadata();
-                cache.kind = switch (metadata.kind()) {
-                    .directory => .dir,
-                    .sym_link => .file,
-                    else => .file,
-                };
+                var wbuf: bun.WPathBuffer = undefined;
+                const wpath = bun.strings.toNTPath(&wbuf, absolute_path_c);
+                const attr = bun.windows.GetFileAttributesW(wpath);
+                if (attr == bun.windows.INVALID_FILE_ATTRIBUTES) {
+                    return error.FileNotFound;
+                }
+
+                const is_dir = (attr & bun.windows.FILE_ATTRIBUTE_DIRECTORY) != 0;
+                const is_link = (attr & bun.windows.FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+
+                if (is_dir) {
+                    cache.kind = .dir;
+                } else {
+                    cache.kind = .file;
+                }
+
+                if (is_link) {
+                    const fd = switch (bun.sys.openatWindows(std.fs.cwd(), wpath, 0)) {
+                        .err => {
+                            return cache;
+                        },
+                        .result => |rc| rc,
+                    };
+                    defer _ = bun.sys.close(fd);
+                    const symlink_path = try bun.getFdPath(fd, &outpath);
+                    cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, symlink_path));
+                }
+
                 return cache;
             }
 
             const stat = try C.lstat_absolute(absolute_path_c);
-            const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
+            const is_symlink = stat.kind == .sym_link;
             var _kind = stat.kind;
 
             var symlink: []const u8 = "";

@@ -5,7 +5,7 @@ const win32 = std.os.windows;
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
-const Kind = std.fs.File.Kind;
+const Kind = bun.sys.File.Kind;
 const StatError = std.fs.File.StatError;
 
 pub fn getTotalMemory() usize {

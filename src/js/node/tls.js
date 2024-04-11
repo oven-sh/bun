@@ -406,11 +406,15 @@ const TLSSocket = (function (InternalTLSSocket) {
         throw error;
       }
 
-      throw Error("Not implented in Bun yet");
+      return this[bunSocketInternal]?.renegotiate();
     }
+
     disableRenegotiation() {
+      // mark as disabled and disable internal socket
       this.#renegotiationDisabled = true;
+      return this[bunSocketInternal]?.disableRenegotiation();
     }
+    
     getTLSTicket() {
       return this[bunSocketInternal]?.getTLSTicket();
     }
@@ -485,7 +489,8 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
   },
 );
-
+let CLIENT_RENEG_LIMIT = 3,
+  CLIENT_RENEG_WINDOW = 600;
 class Server extends NetServer {
   key;
   cert;
@@ -592,6 +597,8 @@ class Server extends NetServer {
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,
+        clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
+        clientRenegotiationWindow: CLIENT_RENEG_WINDOW
       },
       SocketClass,
     ];
@@ -601,9 +608,7 @@ class Server extends NetServer {
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
-const CLIENT_RENEG_LIMIT = 3,
-  CLIENT_RENEG_WINDOW = 600,
-  DEFAULT_ECDH_CURVE = "auto",
+const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_CIPHERS =
     "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",

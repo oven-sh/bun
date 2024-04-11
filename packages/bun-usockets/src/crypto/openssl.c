@@ -72,7 +72,8 @@ struct us_internal_ssl_socket_context_t {
   // socket context
   SSL_CTX *ssl_context;
   int is_parent;
-
+  unsigned int client_renegotiation_limit;
+  unsigned int client_renegotiation_window;
   /* These decorate the base implementation */
   struct us_internal_ssl_socket_t *(*on_open)(struct us_internal_ssl_socket_t *,
                                               int is_client, char *ip,
@@ -100,10 +101,13 @@ struct us_internal_ssl_socket_context_t {
 struct us_internal_ssl_socket_t {
   struct us_socket_t s;
   SSL *ssl;
+  unsigned int client_pending_renegotiations;
+  uint64_t last_ssl_renegotiation;
   unsigned int ssl_write_wants_read : 1; // we use this for now
   unsigned int ssl_read_wants_write : 1;
   unsigned int pending_handshake : 1;
   unsigned int received_ssl_shutdown : 1;
+  unsigned int is_client : 1;
 };
 
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
@@ -183,12 +187,16 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
       (struct loop_ssl_data *)loop->data.ssl_data;
 
   s->ssl = SSL_new(context->ssl_context);
+  s->client_pending_renegotiations = context->client_renegotiation_limit;
+  s->last_ssl_renegotiation = 0;
+  s->is_client = is_client ? 1 : 0;
   s->ssl_write_wants_read = 0;
   s->ssl_read_wants_write = 0;
   s->pending_handshake = 1;
   s->received_ssl_shutdown = 0;
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
+  SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_explicit);
 
   BIO_up_ref(loop_ssl_data->shared_rbio);
   BIO_up_ref(loop_ssl_data->shared_wbio);
@@ -423,11 +431,48 @@ restart:
     }
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
-
       // as far as I know these are the only errors we want to handle
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+        if (err == SSL_ERROR_WANT_RENEGOTIATE) {
+          // handle renegotation here since we are using
+          // ssl_renegotiate_explicit
 
-        if (err == SSL_ERROR_ZERO_RETURN) {
+          // if is a server and we have no pending renegotiation we can check
+          // the limits
+          if (!s->is_client && !SSL_renegotiate_pending(s->ssl)) {
+            uint64_t now = time(NULL);
+
+            // if is not the first time we negotiate and we are outside the time
+            // window, reset the limits
+            if (s->last_ssl_renegotiation &&
+                (now - s->last_ssl_renegotiation) >=
+                    context->client_renegotiation_window) {
+              // reset the limits
+              s->client_pending_renegotiations =
+                  context->client_renegotiation_limit;
+            }
+            // if we have no more renegotiations, we should close the connection
+            if (s->client_pending_renegotiations == 0) {
+              err = SSL_ERROR_SSL; // clean err and close the connection
+            } else {
+              s->last_ssl_renegotiation = now;
+              s->client_pending_renegotiations--;
+              if (!SSL_renegotiate(s->ssl)) {
+                err = SSL_ERROR_SSL; // clean err and close the connection
+              } else {
+                continue; // continue reading
+              }
+            }
+
+          } else if (!SSL_renegotiate(
+                         s->ssl)) { // if is a client or we have pending
+                                    // renegotiation, try to renegotiate
+
+            err = SSL_ERROR_SSL; // clean err and close the connection
+          } else {
+            continue; // continue reading
+          }
+        } else if (err == SSL_ERROR_ZERO_RETURN) {
           // zero return can be EOF/FIN, if we have data just signal on_data and
           // close
           if (read) {
@@ -1259,6 +1304,8 @@ void us_bun_internal_ssl_socket_context_add_server_name(
 
   /* We do not want to hold any nullptr's in our SNI tree */
   if (ssl_context) {
+    context->client_renegotiation_limit = options.client_renegotiation_limit;
+    context->client_renegotiation_window = options.client_renegotiation_window;
     if (sni_add(context->sni, hostname_pattern, ssl_context)) {
       /* If we already had that name, ignore */
       free_ssl_context(ssl_context);
@@ -1402,7 +1449,6 @@ us_internal_bun_create_ssl_socket_context(
 
   /* I guess this is the only optional callback */
   context->on_server_name = NULL;
-
   /* Then we extend its SSL parts */
   context->ssl_context =
       ssl_context; // create_ssl_context_from_options(options);
@@ -1410,6 +1456,8 @@ us_internal_bun_create_ssl_socket_context(
 
   context->on_handshake = NULL;
   context->handshake_data = NULL;
+  context->client_renegotiation_limit = options.client_renegotiation_limit;
+  context->client_renegotiation_window = options.client_renegotiation_window;
   /* We, as parent context, may ignore data */
   context->sc.is_low_prio = (int (*)(struct us_socket_t *))ssl_is_low_prio;
 

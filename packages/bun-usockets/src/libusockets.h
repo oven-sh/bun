@@ -195,6 +195,8 @@ struct us_bun_socket_context_options_t {
     unsigned int secure_options;
     int reject_unauthorized;
     int request_cert;
+    unsigned int client_renegotiation_limit;
+    unsigned int client_renegotiation_window;
 };
 
 /* Return 15-bit timestamp for this context */

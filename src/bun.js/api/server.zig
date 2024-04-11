@@ -215,6 +215,8 @@ pub const ServerConfig = struct {
         ssl_ciphers: [*c]const u8 = null,
         protos: [*c]const u8 = null,
         protos_len: usize = 0,
+        client_renegotiation_limit: u32 = 0,
+        client_renegotiation_window: u32 = 0,
 
         const log = Output.scoped(.SSLConfig, false);
 
@@ -657,6 +659,18 @@ pub const ServerConfig = struct {
                 if (obj.getTruthy(global, "secureOptions")) |secure_options| {
                     if (secure_options.isNumber()) {
                         result.secure_options = secure_options.toU32();
+                    }
+                }
+
+                if (obj.getTruthy(global, "clientRenegotiationLimit")) |client_renegotiation_limit| {
+                    if (client_renegotiation_limit.isNumber()) {
+                        result.client_renegotiation_limit = client_renegotiation_limit.toU32();
+                    }
+                }
+
+                if (obj.getTruthy(global, "clientRenegotiationWindow")) |client_renegotiation_window| {
+                    if (client_renegotiation_window.isNumber()) {
+                        result.client_renegotiation_window = client_renegotiation_window.toU32();
                     }
                 }
 

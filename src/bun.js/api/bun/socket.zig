@@ -2049,6 +2049,41 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn disableRenegotiation(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = this.socket.ssl();
+            BoringSSL.SSL_set_renegotiate_mode(ssl_ptr, 0);
+            return JSValue.jsUndefined();
+        }
+        pub fn renegotiate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = this.socket.ssl();
+            if (BoringSSL.SSL_renegotiate(ssl_ptr) != 1) {
+                globalObject.throwValue(getSSLException(globalObject, "SSL_renegotiate error"));
+                return .zero;
+            }
+            return JSValue.jsUndefined();
+        }
         pub fn getTLSTicket(
             this: *This,
             globalObject: *JSC.JSGlobalObject,

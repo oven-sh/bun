@@ -7,7 +7,7 @@ const cwd_root = tempDirWithFiles("testworkspace", {
   packages: {
     pkga: {
       "index.js": "console.log('pkga');",
-      "sleep.js": "setTimeout(() => {}, 300);",
+      "sleep.js": "for (let i = 0; i < 3; i++) { await new Promise(resolve => setTimeout(resolve, 100)); console.log('x'); }",
       "package.json": JSON.stringify({
         name: "pkga",
         scripts: {
@@ -18,7 +18,7 @@ const cwd_root = tempDirWithFiles("testworkspace", {
     },
     pkgb: {
       "index.js": "console.log('pkgb');",
-      "sleep.js": "setTimeout(() => {}, 300);",
+      "sleep.js": "for (let i = 0; i < 3; i++) { await new Promise(resolve => setTimeout(resolve, 100)); console.log('y'); }",
       "package.json": JSON.stringify({
         name: "pkgb",
         scripts: {
@@ -212,12 +212,11 @@ describe("bun", () => {
       runInCwdSuccess({
         cwd: cwd_root,
         pattern: "pkg*",
-        target_pattern: [/code 0/],
+        target_pattern: [/x[\s\S]*y[\s\S]*x/],
         antipattern: [/scripta/, /scriptb/, /scriptc/],
         command: ["long"],
       });
-    },
-    { timeout: 500 },
+    }
   );
 
   test("run pre and post scripts, in order", () => {
@@ -319,8 +318,7 @@ describe("bun", () => {
         antipattern: [/not found/],
         command: ["script"],
       });
-    },
-    { timeout: 500 },
+    }
   );
 
   test("detect cycle of length > 2", () => {

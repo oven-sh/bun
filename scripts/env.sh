@@ -27,11 +27,7 @@ export CMAKE_FLAGS=(
 )
 
 if [[ $(uname -s) == 'Darwin' ]]; then
-    if ! [[ $(uname -m) == 'arm64' ]]; then
-        export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-10.14}
-    else
-        export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-11.0}
-    fi
+    export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-12.0}
 
     CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
     export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}"

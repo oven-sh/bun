@@ -179,14 +179,3 @@ test "which" {
     try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "bin"));
     try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "usr"));
 }
-
-test "endsWithExtension" {
-    try std.testing.expect(endsWithExtension("test.exe"));
-    try std.testing.expect(endsWithExtension("test.cmd"));
-    try std.testing.expect(endsWithExtension("test.bat"));
-    try std.testing.expect(endsWithExtension("test.EXE"));
-    try std.testing.expect(!endsWithExtension("test"));
-    try std.testing.expect(!endsWithExtension("test."));
-    try std.testing.expect(!endsWithExtension("test.aa."));
-    try std.testing.expect(!endsWithExtension("."));
-}

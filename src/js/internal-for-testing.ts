@@ -28,5 +28,5 @@ export const shellInternals = {
    * const isDisabled = builtinDisabled("cp")
    * ```
    */
-  builtinDisabled: $newZigFunction("shell.zig", "TestingAPIs.disabledOnThisPlatform", 1)
+  builtinDisabled: $newZigFunction("shell.zig", "TestingAPIs.disabledOnThisPlatform", 1),
 };

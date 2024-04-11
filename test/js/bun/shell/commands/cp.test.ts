@@ -5,9 +5,9 @@ import { sortedShellOutput } from "../util";
 import { tempDirWithFiles } from "harness";
 import fs from "fs";
 import { shellInternals } from "bun:internal-for-testing";
-const { builtinDisabled } = shellInternals
+const { builtinDisabled } = shellInternals;
 
-const p = process.platform === 'win32' ? (s: string) => s.replaceAll('/', '\\') : (s: string) => s;
+const p = process.platform === "win32" ? (s: string) => s.replaceAll("/", "\\") : (s: string) => s;
 // const p =  (s: string) => s;
 
 describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {

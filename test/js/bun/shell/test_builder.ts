@@ -20,7 +20,7 @@ export class TestBuilder {
 
   private tempdir: string | undefined = undefined;
   private _env: { [key: string]: string } | undefined = undefined;
-  private _cwd: string | undefined = undefined
+  private _cwd: string | undefined = undefined;
 
   private __todo: boolean | string = false;
 
@@ -58,7 +58,7 @@ export class TestBuilder {
 
   cwd(path: string): this {
     this._cwd = path;
-    return this
+    return this;
   }
 
   directory(path: string): this {
@@ -137,7 +137,7 @@ export class TestBuilder {
    */
   ensureTempDir(str?: string): this {
     if (str !== undefined) {
-      this.setTempdir(str)
+      this.setTempdir(str);
     } else this.getTempDir();
 
     return this;
@@ -212,10 +212,10 @@ export class TestBuilder {
       return undefined;
     }
 
-    let finalPromise = this.promise.val
+    let finalPromise = this.promise.val;
     if (this._cwd) finalPromise = finalPromise.cwd(this._cwd);
     if (this._env) finalPromise = finalPromise.env(this._env);
-    const output = await finalPromise
+    const output = await finalPromise;
 
     const { stdout, stderr, exitCode } = output!;
     const tempdir = this.tempdir || "NO_TEMP_DIR";
@@ -229,15 +229,15 @@ export class TestBuilder {
     if (this.expected_stderr !== undefined) {
       if (typeof this.expected_stderr === "string") {
         expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
-      } else if (typeof this.expected_stderr === 'function') {
+      } else if (typeof this.expected_stderr === "function") {
         this.expected_stderr(stderr.toString(), tempdir);
       } else {
-        expect(stderr.toString()).toContain(this.expected_stderr.contains)
+        expect(stderr.toString()).toContain(this.expected_stderr.contains);
       }
     }
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
-    console.log('Checking files')
+    console.log("Checking files");
     for (const [filename, expected] of Object.entries(this.file_equals)) {
       const actual = await Bun.file(join(this.tempdir!, filename)).text();
       expect(actual).toEqual(expected);

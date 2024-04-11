@@ -1065,6 +1065,20 @@ pub const Interpreter = struct {
             return shell.ParseError.Lex;
         }
 
+        if (comptime bun.Environment.allow_assert) {
+            const print = bun.Output.scoped(.ShellTokens, true);
+            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch @panic("OOPS");
+            defer test_tokens.deinit();
+            for (lex_result.tokens) |tok| {
+                const test_tok = shell.Test.TestToken.from_real(tok, lex_result.strpool);
+                test_tokens.append(test_tok) catch @panic("OOPS");
+            }
+
+            const str = std.json.stringifyAlloc(bun.default_allocator, test_tokens.items[0..], .{}) catch @panic("OOPS");
+            defer bun.default_allocator.free(str);
+            print("Tokens: {s}", .{str});
+        }
+
         out_parser.* = try bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs);
 
         const script_ast = try out_parser.*.?.parse();
@@ -1129,7 +1143,7 @@ pub const Interpreter = struct {
         }
 
         log("Duping stdin", .{});
-        const stdin_fd = switch (ShellSyscall.dup(shell.STDIN_FD)) {
+        const stdin_fd = switch (if (bun.Output.Source.Stdio.isStdinNull()) bun.sys.openNullDevice() else ShellSyscall.dup(shell.STDIN_FD)) {
             .result => |fd| fd,
             .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
         };
@@ -1315,13 +1329,13 @@ pub const Interpreter = struct {
             const event_loop = this.event_loop;
 
             log("Duping stdout", .{});
-            const stdout_fd = switch (ShellSyscall.dup(shell.STDOUT_FD)) {
+            const stdout_fd = switch (if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(bun.STDOUT_FD)) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
 
             log("Duping stderr", .{});
-            const stderr_fd = switch (ShellSyscall.dup(shell.STDERR_FD)) {
+            const stderr_fd = switch (if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(bun.STDERR_FD)) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
@@ -9212,8 +9226,8 @@ pub const Interpreter = struct {
                     JSC.WorkPool.schedule(&subtask.task);
                 }
 
-                pub fn getcwd(this: *ShellRmTask) if (bun.Environment.isWindows) CwdPath else bun.FileDescriptor {
-                    return if (bun.Environment.isWindows) this.cwd_path.? else bun.toFD(this.cwd);
+                pub fn getcwd(this: *ShellRmTask) bun.FileDescriptor {
+                    return this.cwd;
                 }
 
                 pub fn verboseDeleted(this: *@This(), dir_task: *DirTask, path: [:0]const u8) Maybe(void) {
@@ -9548,8 +9562,7 @@ pub const Interpreter = struct {
                         }
                     };
                     const dirfd = bun.toFD(this.cwd);
-                    _ = dirfd; // autofix
-                    switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, 0)) {
+                    switch (ShellSyscall.unlinkatWithFlags(dirfd, path, 0)) {
                         .result => return this.verboseDeleted(parent_dir_task, path),
                         .err => |e| {
                             print("unlinkatWithFlags({s}) = {s}", .{ path, @tagName(e.getErrno()) });
@@ -11786,6 +11799,8 @@ pub const IOWriterChildPtr = struct {
 /// - Sometimes windows doesn't have `*at()` functions like `rmdirat` so we have to join the directory path with the target path
 /// - Converts Posix absolute paths to Windows absolute paths on Windows
 const ShellSyscall = struct {
+    pub const unlinkatWithFlags = Syscall.unlinkatWithFlags;
+    pub const rmdirat = Syscall.rmdirat;
     fn getPath(dirfd: anytype, to: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8) Maybe([:0]const u8) {
         if (bun.Environment.isPosix) @compileError("Don't use this");
         if (bun.strings.eqlComptime(to[0..to.len], "/dev/null")) {
@@ -11898,58 +11913,6 @@ const ShellSyscall = struct {
             };
         }
         return Syscall.dup(fd);
-    }
-
-    pub fn unlinkatWithFlags(dirfd: anytype, to: [:0]const u8, flags: c_uint) Maybe(void) {
-        if (bun.Environment.isWindows) {
-            if (flags & std.os.AT.REMOVEDIR != 0) return ShellSyscall.rmdirat(dirfd, to);
-
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const path = brk: {
-                switch (ShellSyscall.getPath(dirfd, to, &buf)) {
-                    .err => |e| return .{ .err = e },
-                    .result => |p| break :brk p,
-                }
-            };
-
-            return switch (Syscall.unlink(path)) {
-                .result => return Maybe(void).success,
-                .err => |e| {
-                    log("unlinkatWithFlags({s}) = {s}", .{ path, @tagName(e.getErrno()) });
-                    return .{ .err = e.withPath(bun.default_allocator.dupe(u8, path) catch bun.outOfMemory()) };
-                },
-            };
-        }
-        if (@TypeOf(dirfd) != bun.FileDescriptor) {
-            @compileError("Bad type: " ++ @typeName(@TypeOf(dirfd)));
-        }
-        return Syscall.unlinkatWithFlags(dirfd, to, flags);
-    }
-
-    pub fn rmdirat(dirfd: anytype, to: [:0]const u8) Maybe(void) {
-        if (bun.Environment.isWindows) {
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const path: []const u8 = brk: {
-                switch (getPath(dirfd, to, &buf)) {
-                    .result => |p| break :brk p,
-                    .err => |e| return .{ .err = e },
-                }
-            };
-            var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
-            const wpath = bun.strings.toWPath(&wide_buf, path);
-            while (true) {
-                if (windows.RemoveDirectoryW(wpath) == 0) {
-                    const errno = Syscall.getErrno(420);
-                    if (errno == .INTR) continue;
-                    log("rmdirat({s}) = {d}: {s}", .{ path, @intFromEnum(errno), @tagName(errno) });
-                    return .{ .err = Syscall.Error.fromCode(errno, .rmdir) };
-                }
-                log("rmdirat({s}) = {d}", .{ path, 0 });
-                return Maybe(void).success;
-            }
-        }
-
-        return Syscall.rmdirat(dirfd, to);
     }
 };
 

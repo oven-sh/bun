@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 pub usingnamespace std.meta;
 
@@ -36,7 +37,7 @@ pub fn enumFieldNames(comptime Type: type) []const []const u8 {
     for (names) |name| {
         // zig seems to include "_" or an empty string in the list of enum field names
         // it makes sense, but humans don't want that
-        if (@import("root").bun.strings.eqlAnyComptime(name, &.{ "_none", "", "_" })) {
+        if (bun.strings.eqlAnyComptime(name, &.{ "_none", "", "_" })) {
             continue;
         }
         names[i] = name;

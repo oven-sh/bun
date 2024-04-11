@@ -15,7 +15,7 @@ const Ref = @import("./ast/base.zig").Ref;
 
 const std = @import("std");
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -39,7 +39,7 @@ const ResolverType = Resolver.Resolver;
 const ESModule = @import("./resolver/package_json.zig").ESModule;
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const PluginRunner = bun.bundler.PluginRunner;
 pub const CSSResolveError = error{ResolveMessage};
 

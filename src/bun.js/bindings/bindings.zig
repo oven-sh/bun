@@ -2,7 +2,7 @@ const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
-const C_API = @import("root").bun.JSC.C;
+const C_API = bun.JSC.C;
 const StringPointer = @import("../../api/schema.zig").Api.StringPointer;
 const Exports = @import("./exports.zig");
 const strings = bun.strings;
@@ -12,7 +12,7 @@ const ZigException = Exports.ZigException;
 const ZigStackTrace = Exports.ZigStackTrace;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Shimmer = JSC.Shimmer;
 const ConsoleObject = JSC.ConsoleObject;
 const FFI = @import("./FFI.zig");
@@ -2709,7 +2709,7 @@ pub const JSGlobalObject = extern struct {
         got: usize,
     ) JSC.JSValue {
         return JSC.toTypeErrorWithCode(
-            "NOT_ENOUGH_ARGUMENTS",
+            @tagName(JSC.Node.ErrorCode.ERR_MISSING_ARGS),
             "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.",
             .{ expected, got },
             this,

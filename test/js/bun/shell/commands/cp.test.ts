@@ -1,47 +1,143 @@
 import { $ } from "bun";
 import { TestBuilder } from "../test_builder";
-import { beforeAll, describe, test, expect } from "bun:test";
+import { beforeAll, describe, test, expect, beforeEach } from "bun:test";
 import { sortedShellOutput } from "../util";
+import { tempDirWithFiles } from "harness";
+import fs from "fs";
+import { shellInternals } from "bun:internal-for-testing";
+const { builtinDisabled } = shellInternals
 
-describe("bunshell cp", async () => {
+describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cp -v lmao.txt lmao2.txt`
     .stdout("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao2.txt\n")
     .ensureTempDir()
     .fileEquals("lmao2.txt", await $`cat ${import.meta.filename}`.text())
-    .runAsTest('file -> file');
+    .runAsTest("file -> file");
 
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; touch lmao2.txt; cp -v lmao.txt lmao2.txt`
     .stdout("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao2.txt\n")
     .ensureTempDir()
     .fileEquals("lmao2.txt", await $`cat ${import.meta.filename}`.text())
-    .runAsTest('file -> existing file replaces contents');
+    .runAsTest("file -> existing file replaces contents");
 
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; mkdir lmao2; cp -v lmao.txt lmao2`
     .ensureTempDir()
     .stdout("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao2/lmao.txt\n")
     .fileEquals("lmao2/lmao.txt", await $`cat ${import.meta.filename}`.text())
-    .runAsTest('file -> dir');
+    .runAsTest("file -> dir");
 
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cp -v lmao.txt lmao2/`
     .ensureTempDir()
-    .stderr('cp: $TEMP_DIR/lmao2/ is not a directory\n')
+    .stderr("cp: lmao2/ is not a directory\n")
     .exitCode(1)
-    .runAsTest('file -> non-existent dir fails');
+    .runAsTest("file -> non-existent dir fails");
 
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cat ${import.meta.filename} > lmao2.txt; mkdir lmao3; cp -v lmao.txt lmao2.txt lmao3`
     .ensureTempDir()
-    .stdout(expectSortedOutput("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao3/lmao.txt\n$TEMP_DIR/lmao2.txt -> $TEMP_DIR/lmao3/lmao2.txt\n"))
+    .stdout(
+      expectSortedOutput(
+        "$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao3/lmao.txt\n$TEMP_DIR/lmao2.txt -> $TEMP_DIR/lmao3/lmao2.txt\n",
+      ),
+    )
     .fileEquals("lmao3/lmao.txt", await $`cat ${import.meta.filename}`.text())
     .fileEquals("lmao3/lmao2.txt", await $`cat ${import.meta.filename}`.text())
-    .runAsTest('file+ -> dir');
+    .runAsTest("file+ -> dir");
 
   TestBuilder.command`mkdir lmao; mkdir lmao2; cp -v lmao lmao2 lmao3`
     .ensureTempDir()
-    .stderr(expectSortedOutput('cp: $TEMP_DIR/lmao is a directory (not copied)\ncp: $TEMP_DIR/lmao2 is a directory (not copied)\n'))
+    .stderr(expectSortedOutput("cp: lmao is a directory (not copied)\ncp: lmao2 is a directory (not copied)\n"))
     .exitCode(1)
-    .runAsTest('dir -> ? fails without -R');
+    .runAsTest("dir -> ? fails without -R");
+
+  describe("uutils ported", () => {
+    const TEST_EXISTING_FILE: string = "existing_file.txt";
+    const TEST_HELLO_WORLD_SOURCE: string = "hello_world.txt";
+    const TEST_HELLO_WORLD_SOURCE_SYMLINK: string = "hello_world.txt.link";
+    const TEST_HELLO_WORLD_DEST: string = "copy_of_hello_world.txt";
+    const TEST_HELLO_WORLD_DEST_SYMLINK: string = "copy_of_hello_world.txt.link";
+    const TEST_HOW_ARE_YOU_SOURCE: string = "how_are_you.txt";
+    const TEST_HOW_ARE_YOU_DEST: string = "hello_dir/how_are_you.txt";
+    const TEST_COPY_TO_FOLDER: string = "hello_dir/";
+    const TEST_COPY_TO_FOLDER_FILE: string = "hello_dir/hello_world.txt";
+    const TEST_COPY_FROM_FOLDER: string = "hello_dir_with_file/";
+    const TEST_COPY_FROM_FOLDER_FILE: string = "hello_dir_with_file/hello_world.txt";
+    const TEST_COPY_TO_FOLDER_NEW: string = "hello_dir_new";
+    const TEST_COPY_TO_FOLDER_NEW_FILE: string = "hello_dir_new/hello_world.txt";
+
+    // beforeAll doesn't work beacuse of the way TestBuilder is setup
+    const tmpdir: string = tempDirWithFiles("cp-uutils", {
+      "hello_world.txt": "Hello, World!",
+      "existing_file.txt": "Cogito ergo sum.",
+      "how_are_you.txt": "How are you?",
+      "hello_dir": {
+        "hello.txt": "",
+      },
+      "hello_dir_with_file": {
+        "hello_world.txt": "Hello, World!",
+      },
+      "dir_with_10_files": {
+        "0": "",
+        "1": "",
+        "2": "",
+        "3": "",
+        "4": "",
+        "5": "",
+        "6": "",
+        "7": "",
+        "8": "",
+        "9": "",
+      },
+    });
+
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_DEST}`
+      .ensureTempDir(tmpdir)
+      .fileEquals(TEST_HELLO_WORLD_DEST, "Hello, World!")
+      .runAsTest("cp_cp");
+
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_EXISTING_FILE}`
+      .ensureTempDir(tmpdir)
+      .fileEquals(TEST_EXISTING_FILE, "Hello, World!")
+      .runAsTest("cp_existing_target");
+
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_SOURCE} ${TEST_COPY_TO_FOLDER}`
+      .ensureTempDir(tmpdir)
+      .file(TEST_EXISTING_FILE, "Hello, World!\n")
+      .runAsTest("cp_duplicate_files");
+
+    TestBuilder.command`touch a; cp a a`
+      .ensureTempDir(tmpdir)
+      .stderr_contains("cp: a and a are identical (not copied)\n")
+      .exitCode(1)
+      .runAsTest("cp_same_file");
+
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_SOURCE} ${TEST_EXISTING_FILE}`
+      .ensureTempDir(tmpdir)
+      .stderr_contains(`cp: ${TEST_EXISTING_FILE} is not a directory\n`)
+      .exitCode(1)
+      .runAsTest("cp_multiple_files_target_is_file");
+
+    TestBuilder.command`cp ${TEST_COPY_TO_FOLDER} ${TEST_HELLO_WORLD_DEST}`
+      .ensureTempDir(tmpdir)
+      .stderr_contains(`cp: ${TEST_COPY_TO_FOLDER} is a directory (not copied)\n`)
+      .exitCode(1)
+      .runAsTest("cp_directory_not_recursive");
+
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HOW_ARE_YOU_SOURCE} ${TEST_COPY_TO_FOLDER}`
+      .ensureTempDir(tmpdir)
+      .fileEquals(TEST_COPY_TO_FOLDER_FILE, "Hello, World!")
+      .fileEquals(TEST_HOW_ARE_YOU_DEST, "How are you?")
+      .runAsTest("cp_multiple_files");
+
+    TestBuilder.command`cp -R ${TEST_COPY_FROM_FOLDER} ${TEST_COPY_TO_FOLDER_NEW}`
+      .ensureTempDir(tmpdir)
+      .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
+      .runAsTest("cp_recurse");
+  });
 });
 
 function expectSortedOutput(expected: string) {
-  return (stdout: string, tempdir: string) => expect(sortedShellOutput(stdout).join('\n')).toEqual(sortedShellOutput(expected).join('\n').replaceAll("$TEMP_DIR", tempdir))
+  return (stdout: string, tempdir: string) =>
+    expect(sortedShellOutput(stdout).join("\n")).toEqual(
+      sortedShellOutput(expected).join("\n").replaceAll("$TEMP_DIR", tempdir),
+    );
 }

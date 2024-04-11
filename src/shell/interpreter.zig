@@ -4959,6 +4959,8 @@ pub const Interpreter = struct {
             basename,
             cp,
 
+            pub const DISABLED_ON_POSIX: []const Kind = &.{ .cat, .cp };
+
             pub fn parentType(this: Kind) type {
                 _ = this;
             }
@@ -4988,13 +4990,15 @@ pub const Interpreter = struct {
             }
 
             pub fn fromStr(str: []const u8) ?Builtin.Kind {
-                if (!bun.Environment.isWindows) {
-                    if (bun.strings.eqlComptime(str, "cat")) {
-                        log("Cat builtin disabled on posix for now", .{});
+                const result = std.meta.stringToEnum(Builtin.Kind, str) orelse return null;
+                if (bun.Environment.isWindows) return result;
+                inline for (Builtin.Kind.DISABLED_ON_POSIX) |disabled| {
+                    if (disabled == result) {
+                        log("{s} builtin disabled on posix for now", .{@tagName(disabled)});
                         return null;
                     }
                 }
-                return std.meta.stringToEnum(Builtin.Kind, str);
+                return result;
             }
         };
 
@@ -10304,6 +10308,7 @@ pub const Interpreter = struct {
                 src_copy: ?[:0]const u8 = null,
                 tgt_copy: ?[:0]const u8 = null,
                 cwd_path: [:0]const u8,
+                verbose_output_lock: std.Thread.Mutex = .{},
                 verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
                 vtable: NodeCpVtable,
 
@@ -10382,7 +10387,8 @@ pub const Interpreter = struct {
                 pub fn isDir(this: *ShellCpTask, path: [:0]const u8) Maybe(bool) {
                     _ = this;
                     if (bun.Environment.isWindows) {
-                        const attributes = windows.GetFileAttributesW(path);
+                        var wpath: bun.OSPathBuffer = undefined;
+                        const attributes = windows.GetFileAttributesW(bun.strings.toWPath(wpath[0..], path[0..path.len]));
                         if (attributes == windows.INVALID_FILE_ATTRIBUTES) {
                             const err: Syscall.Error = .{
                                 .errno = @intFromEnum(bun.C.SystemErrno.ENOENT),
@@ -10391,7 +10397,7 @@ pub const Interpreter = struct {
                             };
                             return .{ .err = err };
                         }
-                        return attributes & windows.FILE_ATTRIBUTE_DIRECTORY != 0;
+                        return .{ .result = (attributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0 };
                     }
                     const stat = switch (Syscall.lstat(path)) {
                         .result => |x| x,
@@ -10468,7 +10474,12 @@ pub const Interpreter = struct {
 
                     // Any source directory without -R is an error
                     if (src_is_dir and !this.opts.recursive) {
-                        const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{src}) catch bun.outOfMemory();
+                        const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch bun.outOfMemory();
+                        return .{ .custom = errmsg };
+                    }
+
+                    if (!src_is_dir and bun.strings.eql(src, tgt)) {
+                        const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} and {s} are identical (not copied)", .{ this.src, this.src }) catch bun.outOfMemory();
                         return .{ .custom = errmsg };
                     }
 
@@ -10504,14 +10515,14 @@ pub const Interpreter = struct {
                         } else if (this.operands == 2) {
                             // source_dir -> new_target_dir
                         } else {
-                            const errmsg = std.fmt.allocPrint(bun.default_allocator, "directory {s} does not exist", .{tgt}) catch bun.outOfMemory();
+                            const errmsg = std.fmt.allocPrint(bun.default_allocator, "directory {s} does not exist", .{this.tgt}) catch bun.outOfMemory();
                             return .{ .custom = errmsg };
                         }
                     }
                     // Handle the "3rd synopsis": source_files... -> target
                     else {
-                        if (src_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{src}) catch bun.outOfMemory() };
-                        if (!tgt_exists or !tgt_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is not a directory", .{tgt}) catch bun.outOfMemory() };
+                        if (src_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch bun.outOfMemory() };
+                        if (!tgt_exists or !tgt_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is not a directory", .{this.tgt}) catch bun.outOfMemory() };
                         const basename = ResolvePath.basename(src[0..src.len]);
                         const parts: []const []const u8 = &.{
                             tgt[0..tgt.len],
@@ -10571,6 +10582,9 @@ pub const Interpreter = struct {
 
                     pub fn onCopy(this: *NodeCpVtable, src: [:0]const u8, dest: [:0]const u8) void {
                         if (!this.shellTask().opts.verbose) return;
+                        log("onCopy: {s} -> {s}\n", .{ src, dest });
+                        this.shellTask().verbose_output_lock.lock();
+                        defer this.shellTask().verbose_output_lock.unlock();
                         var writer = this.shellTask().verbose_output.writer();
                         writer.print("{s} -> {s}\n", .{ src, dest }) catch bun.outOfMemory();
                     }

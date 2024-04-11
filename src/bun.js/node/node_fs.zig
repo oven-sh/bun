@@ -326,7 +326,22 @@ pub const AsyncCpTask = struct {
 
     vtable: AsyncCPTaskVtable = AsyncCPTaskVtable.Dead,
 
-    pub fn onCopy(this: *AsyncCpTask, src: [:0]const u8, dest: [:0]const u8) void {
+    pub fn onCopy(this: *AsyncCpTask, src_: anytype, dest_: anytype) void {
+        if (@intFromPtr(this.vtable.ctx) == @intFromPtr(AsyncCPTaskVtable.Dead.ctx)) return;
+        if (comptime bun.Environment.isPosix) return this.vtable.onCopy(this.vtable.ctx, src_, dest_);
+
+        var buf: bun.PathBuffer = undefined;
+        const src: [:0]const u8 = switch (@TypeOf(src_)) {
+            [:0]const u8, [:0]u8 => src_,
+            [:0]const u16, [:0]u16 => bun.strings.fromWPath(buf[0..], src_),
+            else => @compileError("Invalid type: " ++ @typeName(@TypeOf(src_))),
+        };
+        const dest: [:0]const u8 = switch (@TypeOf(dest_)) {
+            [:0]const u8, [:0]u8 => src_,
+            [:0]const u16, [:0]u16 => bun.strings.fromWPath(buf[0..], dest_),
+            else => @compileError("Invalid type: " ++ @typeName(@TypeOf(dest_))),
+        };
+
         this.vtable.onCopy(this.vtable.ctx, src, dest);
     }
 
@@ -6787,7 +6802,9 @@ pub const NodeFS = struct {
                 task.finishConcurrently(.{ .err = err });
                 return false;
             },
-            .result => {},
+            .result => {
+                task.onCopy(src, normdest);
+            },
         }
 
         const dir = fd.asDir();

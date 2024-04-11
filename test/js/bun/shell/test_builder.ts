@@ -11,7 +11,7 @@ export class TestBuilder {
   private _testName: string | undefined = undefined;
 
   private expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
-  private expected_stderr: string | ((stderr: string, tempdir: string) => void) = "";
+  private expected_stderr: string | ((stderr: string, tempdir: string) => void) | { contains: string } = "";
   private expected_exit_code: number = 0;
   private expected_error: ShellError | string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
@@ -20,6 +20,7 @@ export class TestBuilder {
 
   private tempdir: string | undefined = undefined;
   private _env: { [key: string]: string } | undefined = undefined;
+  private _cwd: string | undefined = undefined
 
   private __todo: boolean | string = false;
 
@@ -53,6 +54,11 @@ export class TestBuilder {
     } catch (err) {
       return new this({ type: "err", val: err as Error });
     }
+  }
+
+  cwd(path: string): this {
+    this._cwd = path;
+    return this
   }
 
   directory(path: string): this {
@@ -118,14 +124,22 @@ export class TestBuilder {
     return this;
   }
 
+  stderr_contains(expected: string): this {
+    this.expected_stderr = { contains: expected };
+    return this;
+  }
+
   /**
    * Makes this test use a temp directory:
    * - The shell's cwd will be set to the temp directory
    * - All FS functions on the `TestBuilder` will use this temp directory.
    * @returns
    */
-  ensureTempDir(): this {
-    this.getTempDir();
+  ensureTempDir(str?: string): this {
+    if (str !== undefined) {
+      this.setTempdir(str)
+    } else this.getTempDir();
+
     return this;
   }
 
@@ -198,7 +212,10 @@ export class TestBuilder {
       return undefined;
     }
 
-    const output = await (this._env !== undefined ? this.promise.val.env(this._env) : this.promise.val);
+    let finalPromise = this.promise.val
+    if (this._cwd) finalPromise = finalPromise.cwd(this._cwd);
+    if (this._env) finalPromise = finalPromise.env(this._env);
+    const output = await finalPromise
 
     const { stdout, stderr, exitCode } = output!;
     const tempdir = this.tempdir || "NO_TEMP_DIR";
@@ -212,12 +229,15 @@ export class TestBuilder {
     if (this.expected_stderr !== undefined) {
       if (typeof this.expected_stderr === "string") {
         expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
-      } else {
+      } else if (typeof this.expected_stderr === 'function') {
         this.expected_stderr(stderr.toString(), tempdir);
+      } else {
+        expect(stderr.toString()).toContain(this.expected_stderr.contains)
       }
     }
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
+    console.log('Checking files')
     for (const [filename, expected] of Object.entries(this.file_equals)) {
       const actual = await Bun.file(join(this.tempdir!, filename)).text();
       expect(actual).toEqual(expected);

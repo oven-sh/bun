@@ -5198,7 +5198,7 @@ pub const PackageManager = struct {
         var network_tasks_batch = manager.async_network_task_queue.popBatch();
         var network_tasks_iter = network_tasks_batch.iterator();
         while (network_tasks_iter.next()) |task| {
-            if (comptime Environment.allow_assert) std.debug.assert(manager.pendingTaskCount() > 0);
+            if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
             _ = manager.pending_tasks.fetchSub(1, .Monotonic);
             // We cannot free the network task at the end of this scope.
             // It may continue to be referenced in a future task.
@@ -5523,7 +5523,7 @@ pub const PackageManager = struct {
         var resolve_tasks_batch = manager.resolve_tasks.popBatch();
         var resolve_tasks_iter = resolve_tasks_batch.iterator();
         while (resolve_tasks_iter.next()) |task| {
-            if (comptime Environment.allow_assert) std.debug.assert(manager.pendingTaskCount() > 0);
+            if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
             defer manager.preallocated_resolve_tasks.put(task);
             _ = manager.pending_tasks.fetchSub(1, .Monotonic);
 

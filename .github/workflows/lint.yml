@@ -77,7 +77,7 @@ jobs:
           mode: upsert
           create_if_not_exists: false
           message: |
-            ✅ lint failures have been resolved.
+            ✅ lint failures have been resolved. Thank you.
 
             <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
       - id: fail

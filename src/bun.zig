@@ -697,6 +697,7 @@ pub const BoringSSL = @import("./boringssl.zig");
 pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
 pub const analytics = @import("./analytics.zig");
+pub const zlib = @import("./zlib.zig");
 
 pub var start_time: i128 = 0;
 
@@ -3044,3 +3045,5 @@ pub fn SliceIterator(comptime T: type) type {
 }
 
 pub const Futex = @import("./futex.zig");
+
+pub const crash_report = @import("panic_v2.zig");

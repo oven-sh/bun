@@ -49,6 +49,7 @@ pub const Cli = struct {
     pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
     pub fn start(allocator: std.mem.Allocator, comptime MainPanicHandler: type) void {
+        is_main_thread = true;
         start_time = std.time.nanoTimestamp();
         log_ = logger.Log.init(allocator);
 
@@ -68,6 +69,7 @@ pub const Cli = struct {
     }
 
     pub var cmd: ?Command.Tag = null;
+    pub threadlocal var is_main_thread: bool = false;
 };
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);

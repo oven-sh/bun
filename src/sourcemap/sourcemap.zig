@@ -736,9 +736,7 @@ test "decodeVLQ" {
 //   V    V
 //   101011
 //
-pub fn encodeVLQ(
-    value: i32,
-) VLQ {
+pub fn encodeVLQ(value: i32) VLQ {
     var len: u4 = 0;
     var bytes: [vlq_max_in_bytes]u8 = undefined;
 

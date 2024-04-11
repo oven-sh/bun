@@ -9,14 +9,12 @@ const Environment = bun.Environment;
 const panic_handler = @import("./panic_handler.zig");
 const MainPanicHandler = panic_handler.NewPanicHandler(std.builtin.default_panic);
 
+pub const panic = @import("panic_v2.zig").panic;
+
 pub const io_mode = .blocking;
 
 comptime {
     std.debug.assert(builtin.target.cpu.arch.endian() == .little);
-}
-
-pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, addr: ?usize) noreturn {
-    MainPanicHandler.handle_panic(msg, trace, addr);
 }
 
 const CrashReporter = @import("./crash_reporter.zig");

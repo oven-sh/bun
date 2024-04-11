@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import * as BANNED from "./banned.json";
+import BANNED from "./banned.json";
 import * as action from "@actions/core";
 
 const IGNORED_FOLDERS = [

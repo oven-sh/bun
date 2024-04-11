@@ -1,5 +1,5 @@
 const std = @import("std");
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Allocator = std.mem.Allocator;
@@ -25,7 +25,7 @@ const Waker = bun.Async.Waker;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 const Async = bun.Async;
 
 pub fn ConcurrentPromiseTask(comptime Context: type) type {
@@ -363,7 +363,7 @@ const ShellTouchTask = bun.shell.Interpreter.Builtin.Touch.ShellTouchTask;
 const ShellCondExprStatTask = bun.shell.Interpreter.CondExpr.ShellCondExprStatTask;
 const ShellAsync = bun.shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
-const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinit;
+const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
@@ -442,6 +442,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellAsync,
     ShellAsyncSubprocessDone,
     TimerReference,
+    bun.shell.Interpreter.Builtin.Yes.YesTask,
 
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
@@ -994,7 +995,7 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
-                .FSWatchTask => {
+                @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
                     transform_task.*.run();
                     transform_task.deinit();

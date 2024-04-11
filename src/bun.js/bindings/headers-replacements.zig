@@ -1,4 +1,4 @@
-const bindings = @import("root").bun.JSC;
+const bindings = bun.JSC;
 pub const struct_JSC__CallFrame = bindings.CallFrame;
 pub const struct_JSC__StringPrototype = bindings.StringPrototype;
 pub const struct_JSC__SetIteratorPrototype = bindings.SetIteratorPrototype;
@@ -68,4 +68,4 @@ pub const WebSocketHTTPClient = bindings.WebSocketHTTPClient;
 pub const WebSocketHTTPSClient = bindings.WebSocketHTTPSClient;
 pub const WebSocketClient = bindings.WebSocketClient;
 pub const WebSocketClientTLS = bindings.WebSocketClientTLS;
-pub const BunString = @import("root").bun.String;
+pub const BunString = bun.String;

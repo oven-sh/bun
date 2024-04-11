@@ -12,7 +12,7 @@ const C = bun.C;
 const root = @import("root");
 const std = @import("std");
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -27,7 +27,7 @@ const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
-const clap = @import("root").bun.clap;
+const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
 const bundler = bun.bundler;
@@ -1224,11 +1224,17 @@ pub const Command = struct {
     };
 
     pub fn isBunX(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "bunx" ++ bun.exe_suffix);
+        if (Environment.isWindows) {
+            return strings.endsWithComptime(argv0, "bunx.exe");
+        }
+        return strings.endsWithComptime(argv0, "bunx");
     }
 
     pub fn isNode(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "node" ++ bun.exe_suffix);
+        if (Environment.isWindows) {
+            return strings.endsWithComptime(argv0, "node.exe");
+        }
+        return strings.endsWithComptime(argv0, "node");
     }
 
     pub fn which() Tag {

@@ -240,6 +240,7 @@ Starting "${name}"
           BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
           GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
           BUN_DEBUG_QUIET_LOGS: "1",
+          BUN_INSTALL_CACHE_DIR: join(TMPDIR, ".bun-install-cache"),
           [windows ? "TEMP" : "TMPDIR"]: TMPDIR,
         },
       });
@@ -360,9 +361,9 @@ Starting "${name}"
   }
 
   console.log(
-    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
-      passed ? "\x1b[32m✔" : "\x1b[31m✖"
-    } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
+    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${passed ? "\x1b[32m✔" : "\x1b[31m✖"} ${name}\x1b[0m${
+      reason ? ` (${reason})` : ""
+    }`,
   );
 
   finished++;

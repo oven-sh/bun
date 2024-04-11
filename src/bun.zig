@@ -730,7 +730,7 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
 
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true }).unwrap();
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -740,7 +740,17 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
 
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true }).unwrap();
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
+        return res.asDir();
+    } else {
+        const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return fd.asDir();
+    }
+}
+
+pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
+    if (comptime Environment.isWindows) {
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -750,7 +760,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
 
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true }).unwrap();
+        const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -1253,7 +1263,7 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
-        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]);
+        const wide_slice = try windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]);
         const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
         return buf[0..res.written];
     }
@@ -1291,7 +1301,7 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
-        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, buf);
+        const wide_slice = try windows.GetFinalPathNameByHandle(fd, .{}, buf);
 
         return wide_slice;
     }
@@ -2080,6 +2090,31 @@ pub const win32 = struct {
     pub var STDOUT_FD: FileDescriptor = undefined;
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
+
+    /// Returns the original mode
+    pub fn unsetStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+        const fd = stdio(i);
+        var original_mode: w.DWORD = 0;
+        if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
+            if (windows.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
+                return windows.getLastError();
+            }
+        } else return windows.getLastError();
+
+        return original_mode;
+    }
+
+    /// Returns the original mode
+    pub fn setStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+        const fd = stdio(i);
+        var original_mode: w.DWORD = 0;
+        if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
+            if (windows.SetConsoleMode(fd.cast(), original_mode | flags) == 0) {
+                return windows.getLastError();
+            }
+        } else return windows.getLastError();
+        return original_mode;
+    }
 
     const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
     // magic exit code to indicate to the watcher manager that the child process should be re-spawned
@@ -3015,3 +3050,22 @@ pub fn selfExePath() ![:0]u8 {
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
 
 pub const spawnSync = @This().spawn.sync.spawn;
+
+pub fn SliceIterator(comptime T: type) type {
+    return struct {
+        items: []const T,
+        index: usize = 0,
+
+        pub fn init(items: []const T) @This() {
+            return .{ .items = items };
+        }
+
+        pub fn next(this: *@This()) ?T {
+            if (this.index >= this.items.len) return null;
+            defer this.index += 1;
+            return this.items[this.index];
+        }
+    };
+}
+
+pub const Futex = @import("./futex.zig");

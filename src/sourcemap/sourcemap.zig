@@ -8,7 +8,7 @@ const bun = @import("root").bun;
 const string = bun.string;
 const JSAst = bun.JSAst;
 const BabyList = JSAst.BabyList;
-const Logger = @import("root").bun.logger;
+const Logger = bun.logger;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const Joiner = @import("../string_joiner.zig");
@@ -1399,6 +1399,17 @@ pub const Chunk = struct {
 
                 b.prev_loc = loc;
                 const list = b.line_offset_tables;
+
+                // We have no sourcemappings.
+                // This happens for example when importing an asset which does not support sourcemaps
+                // like a png or a jpg
+                //
+                // import foo from "./foo.png";
+                //
+                if (list.len == 0) {
+                    return;
+                }
+
                 const original_line = LineOffsetTable.findLine(b.line_offset_table_byte_offset_list, loc);
                 const line = list.get(@as(usize, @intCast(@max(original_line, 0))));
 

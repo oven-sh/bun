@@ -60,8 +60,10 @@ if (ci) {
     action.setFailed(`${bad.length} lint failures`);
   }
   action.setOutput("count", bad.length);
-  action.setOutput("text_output", bad.map(m => `- ${link(m)}: ${m.banned} is banned, use ${m.suggestion}`).join("\n"));
+  action.setOutput("text_output", bad.map(m => `- ${link(m)}: ${m.banned} is banned, ${m.suggestion}`).join("\n"));
   action.setOutput("json_output", JSON.stringify(bad));
   action.summary.addRaw(report);
   await action.summary.write();
 }
+
+process.exit(1);

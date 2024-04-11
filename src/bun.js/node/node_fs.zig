@@ -242,75 +242,6 @@ pub const Async = struct {
     }
 };
 
-pub const AsyncCPTaskVtable = struct {
-    ctx: *anyopaque,
-    /// The supplied paths are borrowed, you have to copy them
-    onCopy: *const (fn (*anyopaque, [:0]const u8, [:0]const u8) void) = undefined,
-    onFinish: *const (fn (*anyopaque, Maybe(void)) void) = undefined,
-    is_shell: bool = true,
-    verbose: bool = false,
-
-    pub const Dead = AsyncCPTaskVtable{
-        .ctx = @ptrFromInt(0xDEADBEEF),
-        .onCopy = deadOnCopy,
-        .onFinish = deadOnFinish,
-        .is_shell = false,
-    };
-
-    pub fn deadOnCopy(ctx: *anyopaque, src: [:0]const u8, dest: [:0]const u8) void {
-        _ = ctx;
-        _ = src;
-        _ = dest;
-    }
-    pub fn deadOnFinish(ctx: *anyopaque, result: Maybe(void)) void {
-        _ = ctx;
-        _ = result;
-    }
-
-    pub fn from(ctx: anytype) @This() {
-        const Type = New(std.meta.Child(@TypeOf(ctx)));
-        return Type.init(ctx);
-    }
-
-    pub fn New(comptime Type: type) type {
-        const OnCopyCallback = @field(Type, "onCopy");
-        const OnFinishCallback = @field(Type, "onFinish");
-        return struct {
-            pub fn init(ctx: *Type) AsyncCPTaskVtable {
-                return AsyncCPTaskVtable{
-                    .onCopy = wrapOnCopy,
-                    .onFinish = wrapOnFinish,
-                    .ctx = ctx,
-                    .verbose = Type.verbose,
-                };
-            }
-
-            pub fn wrapOnCopy(this: *anyopaque, src: [:0]const u8, dest: [:0]const u8) void {
-                @call(
-                    .always_inline,
-                    OnCopyCallback,
-                    .{
-                        @as(*Type, @ptrCast(@alignCast(this))),
-                        src,
-                        dest,
-                    },
-                );
-            }
-
-            pub fn wrapOnFinish(this: *anyopaque, result: Maybe(void)) void {
-                @call(
-                    .always_inline,
-                    OnFinishCallback,
-                    .{
-                        @as(*Type, @ptrCast(@alignCast(this))),
-                        result,
-                    },
-                );
-            }
-        };
-    }
-};
-
 pub const AsyncCpTask = struct {
     promise: JSC.JSPromise.Strong = .{},
     args: Arguments.Cp,
@@ -326,31 +257,18 @@ pub const AsyncCpTask = struct {
     /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
     subtask_count: std.atomic.Value(usize),
 
-    vtable: AsyncCPTaskVtable = AsyncCPTaskVtable.Dead,
+    shelltask: ?*ShellTask = null,
 
-    pub fn onCopy(this: *AsyncCpTask, src_: anytype, dest_: anytype) void {
-        if (@intFromPtr(this.vtable.ctx) == @intFromPtr(AsyncCPTaskVtable.Dead.ctx)) return;
-        if (!this.vtable.verbose) return;
-        if (comptime bun.Environment.isPosix) return this.vtable.onCopy(this.vtable.ctx, src_, dest_);
+    const ShellTask = bun.shell.Interpreter.Builtin.Cp.ShellCpTask;
 
-        var buf: bun.PathBuffer = undefined;
-        var buf2: bun.PathBuffer = undefined;
-        const src: [:0]const u8 = switch (@TypeOf(src_)) {
-            [:0]const u8, [:0]u8 => src_,
-            [:0]const u16, [:0]u16 => bun.strings.fromWPath(buf[0..], src_),
-            else => @compileError("Invalid type: " ++ @typeName(@TypeOf(src_))),
-        };
-        const dest: [:0]const u8 = switch (@TypeOf(dest_)) {
-            [:0]const u8, [:0]u8 => src_,
-            [:0]const u16, [:0]u16 => bun.strings.fromWPath(buf2[0..], dest_),
-            else => @compileError("Invalid type: " ++ @typeName(@TypeOf(dest_))),
-        };
-
-        this.vtable.onCopy(this.vtable.ctx, src, dest);
+    pub fn onCopy(this: *AsyncCpTask, src: anytype, dest: anytype) void {
+        const task = this.shelltask orelse return;
+        task.cpOnCopy(src, dest);
     }
 
     pub fn onFinish(this: *AsyncCpTask, result: Maybe(void)) void {
-        this.vtable.onFinish(this.vtable.ctx, result);
+        const task = this.shelltask orelse return;
+        task.cpOnFinish(result);
     }
 
     pub fn create(
@@ -359,16 +277,16 @@ pub const AsyncCpTask = struct {
         vm: *JSC.VirtualMachine,
         arena: bun.ArenaAllocator,
     ) JSC.JSValue {
-        const task = createWithVTable(globalObject, cp_args, vm, arena, AsyncCPTaskVtable.Dead, true);
+        const task = createWithShellTask(globalObject, cp_args, vm, arena, null, true);
         return task.promise.value();
     }
 
-    pub fn createWithVTable(
+    pub fn createWithShellTask(
         globalObject: *JSC.JSGlobalObject,
         cp_args: Arguments.Cp,
         vm: *JSC.VirtualMachine,
         arena: bun.ArenaAllocator,
-        vtable: AsyncCPTaskVtable,
+        shelltask: ?*ShellTask,
         comptime enable_promise: bool,
     ) *AsyncCpTask {
         var task = bun.new(
@@ -382,7 +300,7 @@ pub const AsyncCpTask = struct {
                 .tracker = JSC.AsyncTaskTracker.init(vm),
                 .arena = arena,
                 .subtask_count = .{ .raw = 1 },
-                .vtable = vtable,
+                .shelltask = shelltask,
             },
         );
         task.ref.ref(vm);
@@ -398,7 +316,7 @@ pub const AsyncCpTask = struct {
     pub fn createMini(
         cp_args: Arguments.Cp,
         arena: bun.ArenaAllocator,
-        vtable: AsyncCPTaskVtable,
+        shelltask: *ShellTask,
     ) *AsyncCpTask {
         var task = bun.new(
             AsyncCpTask,
@@ -410,7 +328,7 @@ pub const AsyncCpTask = struct {
                 .tracker = JSC.AsyncTaskTracker{ .id = 0 },
                 .arena = arena,
                 .subtask_count = .{ .raw = 1 },
-                .vtable = vtable,
+                .shelltask = shelltask,
             },
         );
         task.ref.ref(JSC.MiniEventLoop.global);
@@ -455,8 +373,8 @@ pub const AsyncCpTask = struct {
     }
 
     fn runFromJSThread(this: *AsyncCpTask) void {
-        if (this.vtable.is_shell) {
-            this.vtable.onFinish(this.vtable.ctx, this.result);
+        if (this.shelltask) |shelltask| {
+            shelltask.cpOnFinish(this.result);
             this.deinit();
             return;
         }
@@ -6686,7 +6604,7 @@ pub const NodeFS = struct {
                 const r = this._copySingleFileSync(
                     src,
                     dest,
-                    if (task.vtable.is_shell)
+                    if (task.shelltask != null)
                         // Shell always forces copy
                         @enumFromInt(Constants.Copyfile.force)
                     else

@@ -10323,7 +10323,6 @@ pub const Interpreter = struct {
                 cwd_path: [:0]const u8,
                 verbose_output_lock: std.Thread.Mutex = .{},
                 verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
-                vtable: NodeCpVtable,
 
                 task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
                 event_loop: JSC.EventLoopHandle,
@@ -10368,7 +10367,6 @@ pub const Interpreter = struct {
                         .src = src,
                         .tgt = tgt,
                         .cwd_path = cwd_path,
-                        .vtable = .{},
                         .event_loop = evtloop,
                         .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
                     });
@@ -10561,19 +10559,19 @@ pub const Interpreter = struct {
                     if (this.event_loop == .js) {
                         const vm: *JSC.VirtualMachine = this.event_loop.js.getVmImpl();
                         print("Yoops", .{});
-                        _ = JSC.Node.AsyncCpTask.createWithVTable(
+                        _ = JSC.Node.AsyncCpTask.createWithShellTask(
                             vm.global,
                             args,
                             vm,
                             bun.ArenaAllocator.init(bun.default_allocator),
-                            JSC.Node.AsyncCPTaskVtable.from(&this.vtable),
+                            this,
                             false,
                         );
                     } else {
                         _ = JSC.Node.AsyncCpTask.createMini(
                             args,
                             bun.ArenaAllocator.init(bun.default_allocator),
-                            JSC.Node.AsyncCPTaskVtable.from(&this.vtable),
+                            this,
                         );
                     }
 
@@ -10588,25 +10586,36 @@ pub const Interpreter = struct {
                     this.enqueueToEventLoop();
                 }
 
-                const NodeCpVtable = struct {
-                    pub const verbose = true;
-                    inline fn shellTask(this: *NodeCpVtable) *ShellCpTask {
-                        return @fieldParentPtr(ShellCpTask, "vtable", this);
-                    }
+                pub fn onCopyImpl(this: *ShellCpTask, src: [:0]const u8, dest: [:0]const u8) void {
+                    this.verbose_output_lock.lock();
+                    log("onCopy: {s} -> {s}\n", .{ src, dest });
+                    defer this.verbose_output_lock.unlock();
+                    var writer = this.verbose_output.writer();
+                    writer.print("{s} -> {s}\n", .{ src, dest }) catch bun.outOfMemory();
+                }
 
-                    pub fn onCopy(this: *NodeCpVtable, src: [:0]const u8, dest: [:0]const u8) void {
-                        if (!this.shellTask().opts.verbose) return;
-                        log("onCopy: {s} -> {s}\n", .{ src, dest });
-                        this.shellTask().verbose_output_lock.lock();
-                        defer this.shellTask().verbose_output_lock.unlock();
-                        var writer = this.shellTask().verbose_output.writer();
-                        writer.print("{s} -> {s}\n", .{ src, dest }) catch bun.outOfMemory();
-                    }
+                pub fn cpOnCopy(this: *ShellCpTask, src_: anytype, dest_: anytype) void {
+                    if (!this.opts.verbose) return;
+                    if (comptime bun.Environment.isPosix) return this.onCopyImpl(src_, dest_);
 
-                    pub fn onFinish(this: *NodeCpVtable, result: Maybe(void)) void {
-                        this.shellTask().onSubtaskFinish(result);
-                    }
-                };
+                    var buf: bun.PathBuffer = undefined;
+                    var buf2: bun.PathBuffer = undefined;
+                    const src: [:0]const u8 = switch (@TypeOf(src_)) {
+                        [:0]const u8, [:0]u8 => src_,
+                        [:0]const u16, [:0]u16 => bun.strings.fromWPath(buf[0..], src_),
+                        else => @compileError("Invalid type: " ++ @typeName(@TypeOf(src_))),
+                    };
+                    const dest: [:0]const u8 = switch (@TypeOf(dest_)) {
+                        [:0]const u8, [:0]u8 => src_,
+                        [:0]const u16, [:0]u16 => bun.strings.fromWPath(buf2[0..], dest_),
+                        else => @compileError("Invalid type: " ++ @typeName(@TypeOf(dest_))),
+                    };
+                    this.onCopyImpl(src, dest);
+                }
+
+                pub fn cpOnFinish(this: *ShellCpTask, result: Maybe(void)) void {
+                    this.onSubtaskFinish(result);
+                }
             };
 
             const Opts = struct {

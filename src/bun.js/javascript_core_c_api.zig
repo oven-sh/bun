@@ -226,7 +226,6 @@ pub extern fn JSRemoteInspectorSetInspectionEnabledByDefault(enabled: bool) void
 
 const size_t = usize;
 
-
 pub const CellType = enum(u8) {
     pub const LastMaybeFalsyCellPrimitive = 2;
     pub const LastJSCObjectType = 73;
@@ -319,9 +318,5 @@ pub const CellType = enum(u8) {
         };
     }
 };
-
-
-
-
 
 pub extern "c" fn JSObjectGetProxyTarget(JSObjectRef) JSObjectRef;

@@ -82,7 +82,7 @@ $ sudo zypper install clang16 lld16 llvm16
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-17.0.6).
 
 Make sure LLVM 16 is in your path:
 

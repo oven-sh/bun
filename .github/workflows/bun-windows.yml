@@ -6,7 +6,7 @@ concurrency:
 
 env:
   # note: in other files, this version is only the major version, but for windows it is the full version
-  LLVM_VERSION: 16.0.6
+  LLVM_VERSION: 17.0.6
   BUN_DOWNLOAD_URL_BASE: https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest
 
   tag: bun-windows

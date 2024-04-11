@@ -51,11 +51,7 @@ endif()
 
 # --- MacOS SDK ---
 if(APPLE AND DEFINED ENV{CI})
-    if(ARCH STREQUAL "x86_64")
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
-    else()
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
-    endif()
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
 endif()
 
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)

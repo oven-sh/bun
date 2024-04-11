@@ -248,6 +248,7 @@ pub const AsyncCPTaskVtable = struct {
     onCopy: *const (fn (*anyopaque, [:0]const u8, [:0]const u8) void) = undefined,
     onFinish: *const (fn (*anyopaque, Maybe(void)) void) = undefined,
     is_shell: bool = true,
+    verbose: bool = false,
 
     pub const Dead = AsyncCPTaskVtable{
         .ctx = @ptrFromInt(0xDEADBEEF),
@@ -280,6 +281,7 @@ pub const AsyncCPTaskVtable = struct {
                     .onCopy = wrapOnCopy,
                     .onFinish = wrapOnFinish,
                     .ctx = ctx,
+                    .verbose = Type.verbose,
                 };
             }
 
@@ -328,9 +330,11 @@ pub const AsyncCpTask = struct {
 
     pub fn onCopy(this: *AsyncCpTask, src_: anytype, dest_: anytype) void {
         if (@intFromPtr(this.vtable.ctx) == @intFromPtr(AsyncCPTaskVtable.Dead.ctx)) return;
+        if (!this.vtable.verbose) return;
         if (comptime bun.Environment.isPosix) return this.vtable.onCopy(this.vtable.ctx, src_, dest_);
 
         var buf: bun.PathBuffer = undefined;
+        var buf2: bun.PathBuffer = undefined;
         const src: [:0]const u8 = switch (@TypeOf(src_)) {
             [:0]const u8, [:0]u8 => src_,
             [:0]const u16, [:0]u16 => bun.strings.fromWPath(buf[0..], src_),
@@ -338,7 +342,7 @@ pub const AsyncCpTask = struct {
         };
         const dest: [:0]const u8 = switch (@TypeOf(dest_)) {
             [:0]const u8, [:0]u8 => src_,
-            [:0]const u16, [:0]u16 => bun.strings.fromWPath(buf[0..], dest_),
+            [:0]const u16, [:0]u16 => bun.strings.fromWPath(buf2[0..], dest_),
             else => @compileError("Invalid type: " ++ @typeName(@TypeOf(dest_))),
         };
 

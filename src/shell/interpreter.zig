@@ -10576,6 +10576,7 @@ pub const Interpreter = struct {
                 }
 
                 const NodeCpVtable = struct {
+                    pub const verbose = true;
                     inline fn shellTask(this: *NodeCpVtable) *ShellCpTask {
                         return @fieldParentPtr(ShellCpTask, "vtable", this);
                     }

@@ -250,6 +250,17 @@ it("Dirent.name setter", () => {
   expect(dirent.name).toBe("hello");
 });
 
+it("writeFileSync should correctly resolve ../..", () => {
+  const base = tmpdir();
+  const path = join(base, "foo", "bar")
+  mkdirSync(path, { recursive: true });
+  const cwd = process.cwd();
+  process.chdir(path);
+  writeFileSync("../../test.txt", "hello");
+  expect(readFileSync(join(base, "test.txt"), "utf8")).toBe("hello");
+  process.chdir(cwd);
+});
+
 it("writeFileSync in append should not truncate the file", () => {
   const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
   var str = "";

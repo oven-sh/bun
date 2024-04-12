@@ -768,6 +768,22 @@ pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     }
 }
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
+pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
+    return struct {
+        const flag_ = flag;
+        var is_enabled: ?bool = null;
+        pub fn get() bool {
+            return is_enabled orelse brk: {
+                is_enabled = false;
+                if (getenvZ(flag_)) |val| {
+                    is_enabled = strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true");
+                }
+
+                break :brk is_enabled.?;
+            };
+        }
+    }.get();
+}
 
 /// This wrapper exists to avoid the call to sliceTo(0)
 /// Zig's sliceTo(0) is scalar

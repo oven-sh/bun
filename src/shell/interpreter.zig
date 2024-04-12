@@ -5003,9 +5003,14 @@ pub const Interpreter = struct {
                 };
             }
 
+            fn forceEnableOnPosix() bool {
+                return bun.getRuntimeFeatureFlag("BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS");
+            }
+
             pub fn fromStr(str: []const u8) ?Builtin.Kind {
                 const result = std.meta.stringToEnum(Builtin.Kind, str) orelse return null;
                 if (bun.Environment.isWindows) return result;
+                if (forceEnableOnPosix()) return result;
                 inline for (Builtin.Kind.DISABLED_ON_POSIX) |disabled| {
                     if (disabled == result) {
                         log("{s} builtin disabled on posix for now", .{@tagName(disabled)});

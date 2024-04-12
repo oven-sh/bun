@@ -146,7 +146,7 @@ const fs = std.fs;
 pub fn build(b: *Build) !void {
     build_(b) catch |err| {
         if (@errorReturnTrace()) |trace| {
-            std.debug.dumpStackTrace(trace.*);
+            (std.debug).dumpStackTrace(trace.*);
         }
 
         return err;

@@ -1534,7 +1534,7 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
 
 var __reload_in_progress__ = std.atomic.Value(bool).init(false);
 threadlocal var __reload_in_progress__on_current_thread = false;
-fn isProcessReloadInProgressOnAnotherThread() bool {
+pub fn isProcessReloadInProgressOnAnotherThread() bool {
     @fence(.Acquire);
     return __reload_in_progress__.load(.Monotonic) and !__reload_in_progress__on_current_thread;
 }
@@ -1562,18 +1562,26 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 }
 
-/// Reload Bun's process
+/// Reload Bun's process. This clones envp, argv, and gets the current
+/// executable path.
 ///
-/// This clones envp, argv, and gets the current executable path
+/// On posix, this overwrites the current process with the new process using
+/// `execve`. On Windows, we dont have this API, instead relying on a dummy
+/// parent process that we can signal via a special exit code.
 ///
-/// Overwrites the current process with the new process
-///
-/// Must be able to allocate memory. malloc is not signal safe, but it's
+/// Must be able to allocate memory. `malloc` is not signal safe, but it's
 /// best-effort. Not much we can do if it fails.
+///
+/// Note that this function is called during the crash handler, in which it is
+/// passed true to `may_return`. If failure occurs, one line of standard error
+/// is printed and then this returns void. If `may_return == false`, then a
+/// panic will occur on failure. The crash handler will not schedule two reloads
+/// at once.
 pub fn reloadProcess(
     allocator: std.mem.Allocator,
     clear_terminal: bool,
-) noreturn {
+    comptime may_return: bool,
+) if (may_return) void else noreturn {
     __reload_in_progress__.store(true, .Monotonic);
     __reload_in_progress__on_current_thread = true;
 
@@ -1582,6 +1590,7 @@ pub fn reloadProcess(
         Output.disableBuffering();
         Output.resetTerminalAll();
     }
+
     Output.Source.Stdio.restore();
     const bun = @This();
 
@@ -1591,11 +1600,20 @@ pub fn reloadProcess(
         const rc = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), win32.watcher_reload_exit);
         if (rc == 0) {
             const err = bun.windows.GetLastError();
+            if (may_return) {
+                Output.errGeneric("Failed to reload process: {s}", .{@tagName(err)});
+                return;
+            }
             Output.panic("Error while reloading process: {s}", .{@tagName(err)});
         } else {
+            if (may_return) {
+                Output.errGeneric("Failed to reload process", .{});
+                return;
+            }
             Output.panic("Unexpected error while reloading process\n", .{});
         }
     }
+
     const PosixSpawn = posix.spawn;
     const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv.len, null) catch unreachable;
     for (bun.argv, dupe_argv) |src, *dest| {
@@ -1642,9 +1660,17 @@ pub fn reloadProcess(
         ) catch unreachable;
         switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
+                if (may_return) {
+                    Output.errGeneric("Failed to reload process: {s}", .{@tagName(err.getErrno())});
+                    return;
+                }
                 Output.panic("Unexpected error while reloading: {d} {s}", .{ err.errno, @tagName(err.getErrno()) });
             },
             .result => |_| {
+                if (may_return) {
+                    Output.errGeneric("Failed to reload process", .{});
+                    return;
+                }
                 Output.panic("Unexpected error while reloading: posix_spawn returned a result", .{});
             },
         }
@@ -1659,6 +1685,10 @@ pub fn reloadProcess(
             newargv,
             envp,
         );
+        if (may_return) {
+            Output.errGeneric("Failed to reload process: {s}", .{@errorName(err)});
+            return;
+        }
         Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
     } else {
         @compileError("unsupported platform for reloadProcess");
@@ -3067,7 +3097,8 @@ pub fn SliceIterator(comptime T: type) type {
 
 pub const Futex = @import("./futex.zig");
 
-pub const panic_handler = @import("panic_handler.zig");
+pub const crash_handler = @import("crash_handler.zig");
+pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
 
 noinline fn assertionFailure() noreturn {
     if (@inComptime()) {

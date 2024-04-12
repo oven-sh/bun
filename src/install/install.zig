@@ -673,11 +673,8 @@ const Task = struct {
                     manifest.network.callback.package_manifest.loaded_manifest,
                     manager,
                 ) catch |err| {
-                    if (comptime Environment.isDebug) {
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpStackTrace(trace.*);
-                        }
-                    }
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .package_manifest = .{} };
@@ -1725,11 +1722,8 @@ pub const PackageInstall = struct {
             state.to_copy_buf2,
             if (Environment.isWindows) &state.buf2 else void{},
         ) catch |err| {
-            if (comptime Environment.isDebug) {
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
-            }
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
             if (comptime Environment.isWindows) {
                 if (err == error.FailedToCopyFile) {
                     return Result.fail(err, .copying_files);

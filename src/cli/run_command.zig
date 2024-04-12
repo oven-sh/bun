@@ -487,9 +487,6 @@ pub const RunCommand = struct {
     fn runBinaryGenericError(executable: []const u8, silent: bool, err: bun.sys.Error) noreturn {
         if (!silent) {
             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{}", .{ basenameOrBun(executable), err.withPath(executable) });
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
         }
 
         Global.exit(1);
@@ -533,6 +530,8 @@ pub const RunCommand = struct {
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
             } else {},
         }) catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
             // an error occurred before the process was spawned
             print_error: {
                 if (!silent) {
@@ -557,9 +556,6 @@ pub const RunCommand = struct {
                     }
 
                     Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to <r><red>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
-                    if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpStackTrace(trace.*);
-                    }
                 }
             }
             Global.exit(1);
@@ -600,9 +596,6 @@ pub const RunCommand = struct {
                                     basenameOrBun(executable),
                                     exit_code.signal.name() orelse "unknown",
                                 });
-                                if (@errorReturnTrace()) |trace| {
-                                    std.debug.dumpStackTrace(trace.*);
-                                }
                             }
 
                             Output.flush();
@@ -639,10 +632,6 @@ pub const RunCommand = struct {
                                         basenameOrBun(executable),
                                         code,
                                     });
-                                }
-
-                                if (@errorReturnTrace()) |trace| {
-                                    std.debug.dumpStackTrace(trace.*);
                                 }
                             }
                         }
@@ -1320,15 +1309,14 @@ pub const RunCommand = struct {
             (script_name_to_search.len == 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
         {
             Run.boot(ctx, ".") catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                 ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     script_name_to_search,
                     @errorName(err),
                 });
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
                 Global.exit(1);
             };
             return true;
@@ -1416,15 +1404,14 @@ pub const RunCommand = struct {
                     Global.configureAllocator(.{ .long_running = true });
                     const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
                     Run.boot(ctx, out_path) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                         ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                         Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                             std.fs.path.basename(file_path),
                             @errorName(err),
                         });
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpStackTrace(trace.*);
-                        }
                         Global.exit(1);
                     };
 
@@ -1518,15 +1505,14 @@ pub const RunCommand = struct {
             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
         {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                 ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     std.fs.path.basename(script_name_to_search),
                     @errorName(err),
                 });
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
                 Global.exit(1);
             };
         }
@@ -1553,9 +1539,7 @@ pub const RunCommand = struct {
                     std.fs.path.basename(script_name_to_search),
                     @errorName(err),
                 });
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 Global.exit(1);
             };
             return true;

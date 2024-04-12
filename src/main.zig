@@ -6,10 +6,9 @@ const bun = @import("root").bun;
 const Output = bun.Output;
 const Environment = bun.Environment;
 
-pub const panic = bun.panic_handler.panic;
-
+pub const panic = bun.crash_handler.panic;
 pub const std_options = struct {
-    pub const enable_segfault_handler = !bun.panic_handler.enabled;
+    pub const enable_segfault_handler = !bun.crash_handler.enabled;
 };
 
 pub const io_mode = .blocking;
@@ -23,7 +22,7 @@ pub extern "C" var _environ: ?*anyopaque;
 pub extern "C" var environ: ?*anyopaque;
 
 pub fn main() void {
-    bun.panic_handler.init();
+    bun.crash_handler.init();
 
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.

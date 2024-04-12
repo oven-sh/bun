@@ -14,15 +14,21 @@
 //! versions of all debug symbols for all versions of Bun. Hosting this keeps
 //! users from having to download symbols, which can be very large.
 //!
+//! The remapper is open source: https://github.com/oven-sh/bun-report
 //!
-//! Source code: https://github.com/oven-sh/bun-report
+//! A lot of this handler is based on the Zig Standard Library implementation
+//! for std.debug.panicImpl and their code for gathering backtraces.
 const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 const windows = std.os.windows;
+const Output = bun.Output;
+const Global = bun.Global;
 const Features = bun.Analytics.Features;
+const debug = std.debug;
+const dumpStackTrace = debug.dumpStackTrace;
 
 /// Set this to false if you want to disable all uses of this panic handler.
 /// This is useful for testing as a crash in here will not 'panicked during a panic'.
@@ -30,6 +36,8 @@ pub const enabled = true;
 
 const report_base_url = "https://bun.report/";
 
+/// Only print the `Bun has crashed` message once. Once this is true, control
+/// flow is not returned to the main application.
 var has_printed_message = false;
 
 /// Non-zero whenever the program triggered a panic.
@@ -43,13 +51,17 @@ var panic_mutex = std.Thread.Mutex{};
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
+/// This structure and formatter must be kept in sync with `bun-report`'s decoder.
 pub const CrashReason = union(enum) {
+    /// From @panic()
     panic: []const u8,
-    // "reached unreachable code"
+
+    /// "reached unreachable code"
     @"unreachable",
 
     segmentation_fault: usize,
     illegal_instruction: usize,
+
     /// Posix-only
     bus_error: usize,
     /// Posix-only
@@ -58,6 +70,9 @@ pub const CrashReason = union(enum) {
     datatype_misalignment,
     /// Windows-only
     stack_overflow,
+
+    /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
+    zig_error: anyerror,
 
     pub fn format(self: CrashReason, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self) {
@@ -69,12 +84,15 @@ pub const CrashReason = union(enum) {
             .floating_point_error => |addr| try writer.print("Floating point error at address 0x{x}", .{addr}),
             .datatype_misalignment => try writer.writeAll("Unaligned memory access"),
             .stack_overflow => try writer.writeAll("Stack overflow"),
+            .zig_error => |err| try writer.print("error.{s}", .{@errorName(err)}),
         }
     }
 };
 
+/// This function is invoked when a crash happpens. A crash is classified in `CrashReason`.
 pub fn crashHandler(
     reason: CrashReason,
+    // TODO: if both of these are specified, what is supposed to happen?
     error_return_trace: ?*std.builtin.StackTrace,
     begin_addr: ?usize,
 ) noreturn {
@@ -86,6 +104,8 @@ pub fn crashHandler(
 
     nosuspend switch (panic_stage) {
         0 => {
+            bun.maybeHandlePanicDuringProcessReload();
+
             panic_stage = 1;
             _ = panicking.fetchAdd(1, .SeqCst);
 
@@ -93,25 +113,46 @@ pub fn crashHandler(
                 panic_mutex.lock();
                 defer panic_mutex.unlock();
 
-                bun.Output.flush();
+                const writer = Output.errorWriter();
 
-                const writer = bun.Output.errorWriter();
+                // The format of the panic trace is slightly different in debug
+                // builds Mainly, we demangle the backtrace immediately instead
+                // of using a trace string.
+                //
+                // To make the release-mode behavior easier to demo, debug mode
+                // checks for this CLI flag.
+                const debug_trace = bun.Environment.isDebug and check_flag: {
+                    for (bun.argv) |arg| {
+                        if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
+                            break :check_flag false;
+                        }
+                    }
+                    break :check_flag true;
+                };
 
                 if (!has_printed_message) {
                     has_printed_message = true;
+
+                    Output.flush();
+                    Output.Source.Stdio.restore();
+
                     writer.writeAll("=" ** 60 ++ "\n") catch std.os.abort();
-                    bun.Output.err("oh no",
-                        \\Bun has crashed. This indicates a bug in Bun, and
-                        \\should be reported as a GitHub issue.
-                        \\
-                        \\
-                    , .{});
-                    bun.Output.flush();
+
+                    // Omit this blurb in debug builds because it is noise
+                    if (!debug_trace) {
+                        Output.err("oh no",
+                            \\Bun has crashed. This indicates a bug in Bun, and
+                            \\should be reported as a GitHub issue.
+                            \\
+                            \\
+                        , .{});
+                    }
+                    Output.flush();
                     printMetadata(writer) catch std.os.abort();
                 }
 
-                if (bun.Output.enable_ansi_colors) {
-                    writer.writeAll(bun.Output.prettyFmt("<red>", true)) catch std.os.abort();
+                if (Output.enable_ansi_colors) {
+                    writer.writeAll(Output.prettyFmt("<red>", true)) catch std.os.abort();
                 }
 
                 writer.writeAll("panic") catch std.os.abort();
@@ -133,8 +174,8 @@ pub fn crashHandler(
 
                 writer.print(": {}", .{reason}) catch std.os.abort();
 
-                if (bun.Output.enable_ansi_colors) {
-                    writer.writeAll(bun.Output.prettyFmt("<r>\n", true)) catch std.os.abort();
+                if (Output.enable_ansi_colors) {
+                    writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.os.abort();
                 } else {
                     writer.writeAll("\n") catch std.os.abort();
                 }
@@ -143,45 +184,67 @@ pub fn crashHandler(
                 var trace_buf: std.builtin.StackTrace = undefined;
 
                 // If a trace was not provided, compute one now
-                const trace = (error_return_trace orelse get_backtrace: {
+                const trace = error_return_trace orelse get_backtrace: {
                     trace_buf = std.builtin.StackTrace{
                         .index = 0,
                         .instruction_addresses = &addr_buf,
                     };
                     std.debug.captureStackTrace(begin_addr orelse @returnAddress(), &trace_buf);
                     break :get_backtrace &trace_buf;
-                });
+                };
 
-                writer.writeAll("Please report this panic as a GitHub issue using this link:\n") catch std.os.abort();
-                if (bun.Output.enable_ansi_colors) {
-                    writer.print(bun.Output.prettyFmt("<cyan>", true), .{}) catch std.os.abort();
+                if (debug_trace) {
+                    // TODO: On Windows, there are sometimes issues remapping information here:
+                    dumpStackTrace(trace.*);
+                } else {
+                    writer.writeAll("Please report this panic as a GitHub issue using this link:\n") catch std.os.abort();
+                    if (Output.enable_ansi_colors) {
+                        writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.os.abort();
+                    }
                 }
 
                 encodeTraceString(
                     .{
                         .trace = trace,
                         .reason = reason,
-                        .include_features = true,
                         .action = .open_issue,
                     },
                     writer,
                 ) catch std.os.abort();
 
-                if (bun.Output.enable_ansi_colors) {
-                    writer.writeAll(bun.Output.prettyFmt("<r>\n", true)) catch std.os.abort();
+                if (Output.enable_ansi_colors) {
+                    writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.os.abort();
                 } else {
                     writer.writeAll("\n") catch std.os.abort();
                 }
 
-                bun.Output.flush();
+                Output.flush();
             }
 
+            // Be aware that this function only lets one thread return from it.
+            // This is important sot hat we do not try to run the reload logic twice.
             waitForOtherThreadToFinishPanicking();
+
+            if (bun.auto_reload_on_crash and
+                // Do not reload if the panic arised FROM the reload function.
+                !bun.isProcessReloadInProgressOnAnotherThread())
+            {
+                // attempt to prevent a double panic
+                bun.auto_reload_on_crash = false;
+
+                Output.prettyErrorln("<d>--- Bun is auto-restarting due to crash <d>[time: <b>{d}<r><d>] ---<r>", .{
+                    @max(std.time.milliTimestamp(), 0),
+                });
+                Output.flush();
+
+                // It is important to be aware that this function *can* panic.
+                bun.reloadProcess(bun.default_allocator, false, true);
+            }
         },
         inline 1, 2 => |t| {
             if (t == 1) {
                 panic_stage = 2;
-                bun.Output.flush();
+                Output.flush();
             }
             panic_stage = 3;
 
@@ -202,6 +265,292 @@ pub fn crashHandler(
     };
 
     crash();
+}
+
+/// This is called when `main` returns a Zig error.
+/// We don't want to treat it as a crash under certain error codes.
+pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTrace) noreturn {
+    if (bun.Environment.isDebug) {
+        if (bun.verbose_error_trace) {
+            if (error_return_trace) |trace| {
+                Output.errGeneric("CLI returned {s}", .{@errorName(err)});
+                std.debug.dumpStackTrace(trace.*);
+                Global.exit(1);
+            } else {
+                Output.debugWarn("error return trace not available for the following error", .{});
+            }
+        }
+    }
+
+    const always_show_trace = bun.Environment.isDebug;
+
+    switch (err) {
+        error.OutOfMemory => bun.outOfMemory(),
+
+        error.InvalidArgument,
+        error.@"Invalid Bunfig",
+        => if (!always_show_trace) Global.exit(1),
+
+        error.SyntaxError => {
+            Output.err("SyntaxError", "An error occurred while parsing code", .{});
+            if (!always_show_trace) Global.exit(1);
+        },
+
+        error.CurrentWorkingDirectoryUnlinked => {
+            Output.errGeneric(
+                "The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
+                .{},
+            );
+            if (!always_show_trace) Global.exit(1);
+        },
+
+        error.SystemFdQuotaExceeded => {
+            if (comptime bun.Environment.isPosix) {
+                const limit = if (std.os.getrlimit(.NOFILE)) |limit| limit.cur else |_| null;
+                if (comptime bun.Environment.isMac) {
+                    Output.prettyError(
+                        \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\That will only work until you reboot.
+                        \\
+                    ,
+                        .{
+                            bun.fmt.nullableFallback(limit, "<unknown>"),
+                        },
+                    );
+                } else {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
+                        \\  <cyan>sudo sysctl -p<r>
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                    ,
+                        .{
+                            bun.fmt.nullableFallback(limit, "<unknown>"),
+                        },
+                    );
+
+                    if (bun.getenvZ("USER")) |user| {
+                        if (user.len > 0) {
+                            Output.prettyError(
+                                \\
+                                \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                                \\
+                                \\ <cyan>{s} soft nofile 2147483646<r>
+                                \\ <cyan>{s} hard nofile 2147483646<r>
+                                \\
+                            ,
+                                .{ user, user },
+                            );
+                        }
+                    }
+                }
+            } else {
+                Output.prettyError(
+                    \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                ,
+                    .{},
+                );
+            }
+
+            if (!always_show_trace) Global.exit(1);
+        },
+
+        error.ProcessFdQuotaExceeded => {
+            if (comptime bun.Environment.isPosix) {
+                const limit = if (std.os.getrlimit(.NOFILE)) |limit| limit.cur else |_| null;
+                if (comptime bun.Environment.isMac) {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\You may also need to run:
+                        \\
+                        \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                        \\
+                    ,
+                        .{
+                            bun.fmt.nullableFallback(limit, "<unknown>"),
+                        },
+                    );
+                } else {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\That will only work for the current shell. To fix this for the entire system, run:
+                        \\
+                        \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
+                        \\  <cyan>sudo sysctl -p<r>
+                        \\
+                    ,
+                        .{
+                            bun.fmt.nullableFallback(limit, "<unknown>"),
+                        },
+                    );
+
+                    if (bun.getenvZ("USER")) |user| {
+                        if (user.len > 0) {
+                            Output.prettyError(
+                                \\
+                                \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                                \\
+                                \\ <cyan>{s} soft nofile 2147483646<r>
+                                \\ <cyan>{s} hard nofile 2147483646<r>
+                                \\
+                            ,
+                                .{ user, user },
+                            );
+                        }
+                    }
+                }
+            } else {
+                Output.prettyErrorln(
+                    \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                ,
+                    .{},
+                );
+            }
+
+            if (!always_show_trace) Global.exit(1);
+        },
+
+        // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
+        error.NotOpenForReading, error.Unexpected => {
+            if (comptime bun.Environment.isPosix) {
+                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+
+                if (limit.cur > 0 and limit.cur < (8192 * 2)) {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
+
+                    if (bun.Environment.isLinux) {
+                        if (bun.getenvZ("USER")) |user| {
+                            if (user.len > 0) {
+                                Output.prettyError(
+                                    \\
+                                    \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                                    \\
+                                    \\ <cyan>{s} soft nofile 2147483646<r>
+                                    \\ <cyan>{s} hard nofile 2147483646<r>
+                                    \\
+                                ,
+                                    .{
+                                        user,
+                                        user,
+                                    },
+                                );
+                            }
+                        }
+                    } else if (bun.Environment.isMac) {
+                        Output.prettyError(
+                            \\
+                            \\If that still doesn't work, you may need to run:
+                            \\
+                            \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                            \\
+                        ,
+                            .{},
+                        );
+                    }
+                } else {
+                    Output.errGeneric(
+                        "An unknown error ocurred <d>(<red>{s}<r><d>)<r>",
+                        .{@errorName(err)},
+                    );
+                }
+            } else {
+                Output.errGeneric(
+                    \\An unknown error ocurred <d>(<red>{s}<r><d>)<r>
+                ,
+                    .{@errorName(err)},
+                );
+            }
+            if (!always_show_trace) Global.exit(1);
+        },
+
+        error.ENOENT, error.FileNotFound => {
+            Output.err(
+                "ENOENT",
+                "Bun could not find a file, and the code that produces this error is missing a better error.",
+                .{},
+            );
+        },
+
+        error.MissingPackageJSON => {
+            Output.err(
+                "MissingPackageJSON",
+                "Bun could not find a package.json file.",
+                .{},
+            );
+            if (!always_show_trace) Global.exit(1);
+        },
+
+        else => {
+            Output.errGeneric(
+                if (bun.Environment.isDebug)
+                    "'main' returned <red>error.{s}<r>"
+                else
+                    "An internal error ocurred (<red>{s}<r>)",
+                .{@errorName(err)},
+            );
+        },
+    }
+
+    if (error_return_trace) |trace| {
+        if (bun.Environment.isDebug) {
+            std.debug.dumpStackTrace(trace.*);
+        }
+
+        // TODO: enable release-mode error return traces
+        // TODO: write better message here
+        Output.note("error trace string: {}", .{TraceString{
+            .trace = trace,
+            .reason = .{ .zig_error = err },
+            .action = .view_trace,
+        }});
+    }
+
+    Global.exit(1);
 }
 
 pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, begin_addr: ?usize) noreturn {
@@ -230,7 +579,7 @@ else
 const metadata_version_line = std.fmt.comptimePrint(
     "Bun v{s} {s} {s}{s}\n",
     .{
-        bun.Global.package_json_version_with_sha,
+        Global.package_json_version_with_sha,
         bun.Environment.os.displayString(),
         arch_display_string,
         if (bun.Environment.baseline) " (baseline)" else "",
@@ -291,14 +640,14 @@ pub fn init() void {
 pub fn resetSegfaultHandler() void {
     if (bun.Environment.os == .windows) {
         if (windows_segfault_handle) |handle| {
-            std.debug.assert(
-                windows.kernel32.RemoveVectoredExceptionHandler(handle) != 0,
-            );
+            const rc = windows.kernel32.RemoveVectoredExceptionHandler(handle);
             windows_segfault_handle = null;
+            bun.assert(rc != 0);
         }
         return;
     }
-    var act = std.os.Sigaction{
+
+    const act = std.os.Sigaction{
         .handler = .{ .handler = std.os.SIG.DFL },
         .mask = std.os.empty_sigset,
         .flags = 0,
@@ -450,10 +799,9 @@ const Address = union(enum) {
     }
 };
 
-const EncodeOptions = struct {
+const TraceString = struct {
     trace: *std.builtin.StackTrace,
     reason: CrashReason,
-    include_features: bool,
     action: Action,
 
     const Action = enum {
@@ -462,9 +810,13 @@ const EncodeOptions = struct {
         /// View the trace with nothing else
         view_trace,
     };
+
+    pub fn format(self: TraceString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try encodeTraceString(self, writer);
+    }
 };
 
-fn encodeTraceString(opts: EncodeOptions, writer: anytype) !void {
+fn encodeTraceString(opts: TraceString, writer: anytype) !void {
     try writer.writeAll(report_base_url ++ tracestr_header);
 
     const image_path = if (bun.Environment.isWindows) bun.windows.exePathW() else null;
@@ -562,6 +914,7 @@ fn encodeTraceString(opts: EncodeOptions, writer: anytype) !void {
         break :zero_vlq vlq.bytes[0..vlq.len];
     });
 
+    // The following switch must be kept in sync with `bun-report`'s decoder.
     switch (opts.reason) {
         .panic => |message| {
             try writer.writeByte('0');
@@ -590,6 +943,7 @@ fn encodeTraceString(opts: EncodeOptions, writer: anytype) !void {
 
             try writer.writeAll(std.mem.trimRight(u8, b64_bytes[0..b64_len], "="));
         },
+
         .@"unreachable" => try writer.writeByte('1'),
 
         .segmentation_fault => |addr| {
@@ -611,13 +965,12 @@ fn encodeTraceString(opts: EncodeOptions, writer: anytype) !void {
 
         .datatype_misalignment => try writer.writeByte('6'),
         .stack_overflow => try writer.writeByte('7'),
-    }
 
-    // TODO: not sure if worth adding since URLs are already quite lengthy
-    // if (opts.include_features) {
-    // try writer.writeAll("_");
-    //  TODO
-    // }
+        .zig_error => |err| {
+            try writer.writeByte('8');
+            try writer.writeAll(@errorName(err));
+        },
+    }
 
     if (opts.action == .view_trace) {
         try writer.writeAll("/view");
@@ -665,5 +1018,51 @@ fn crash() noreturn {
             @as(*allowzero volatile u8, @ptrFromInt(0)).* = 0;
             std.os.exit(127);
         },
+    }
+}
+
+pub var verbose_error_trace = false;
+
+/// In many places we catch errors, the trace for them is absorbed and only a
+/// single line (the error name) is printed. When this is set, we will print
+/// trace strings for those errors (or full stacks in debug builds).
+///
+/// This can be enabled by passing `--verbose-error-trace` to the CLI.
+/// In release builds with error return tracing enabled, this is also exposed.
+/// You can test if this feature is available by checking `bun --help` for the flag.
+pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.StackTrace) void {
+    if (!builtin.have_error_return_tracing) return;
+    if (!verbose_error_trace) return;
+
+    if (maybe_trace) |trace| {
+
+        // The format of the panic trace is slightly different in debug
+        // builds Mainly, we demangle the backtrace immediately instead
+        // of using a trace string.
+        //
+        // To make the release-mode behavior easier to demo, debug mode
+        // checks for this CLI flag.
+        const is_debug = bun.Environment.isDebug and check_flag: {
+            for (bun.argv) |arg| {
+                if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
+                    break :check_flag false;
+                }
+            }
+            break :check_flag true;
+        };
+
+        if (is_debug) {
+            Output.note("caught error.{s}:", .{@errorName(err)});
+            std.debug.dumpStackTrace(trace.*);
+        } else {
+            Output.prettyErrorln("<cyan>trace<r>: error.{s}: <d>{}<r>", .{
+                @errorName(err),
+                TraceString{
+                    .trace = trace,
+                    .reason = .{ .cli_returned_error = err },
+                    .action = .view_trace,
+                },
+            });
+        }
     }
 }

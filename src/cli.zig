@@ -20,6 +20,7 @@ const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
+const builtin = @import("builtin");
 
 const debug = Output.scoped(.CLI, true);
 
@@ -41,7 +42,6 @@ const Router = @import("./router.zig");
 
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
-const Reporter = @import("./report.zig");
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 
@@ -61,11 +61,7 @@ pub const Cli = struct {
         Command.start(allocator, log) catch |err| {
             log.printForLogLevel(Output.errorWriter()) catch {};
 
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
-
-            Reporter.globalError(err, null);
+            bun.crash_handler.handleRootError(err, @errorReturnTrace());
         };
     }
 
@@ -153,7 +149,10 @@ pub const Arguments = struct {
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
         clap.parseParam("<POS>...") catch unreachable,
-    };
+    } ++ if (builtin.have_error_return_tracing) [_]ParamType{
+        // This will print more error return traces, as a debug aid
+        clap.parseParam("--verbose-error-trace") catch unreachable,
+    } else [_]ParamType{};
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
@@ -408,6 +407,12 @@ pub const Arguments = struct {
 
             if (args.flag("--revision")) {
                 printRevisionAndExit();
+            }
+        }
+
+        if (builtin.have_error_return_tracing) {
+            if (args.flag("--verbose-error-trace")) {
+                bun.crash_handler.verbose_error_trace = true;
             }
         }
 
@@ -1964,6 +1969,8 @@ pub const Command = struct {
             ctx.*,
             absolute_script_path.?,
         ) catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
@@ -1974,9 +1981,6 @@ pub const Command = struct {
                 std.fs.path.basename(file_path),
                 @errorName(err),
             });
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
             Global.exit(1);
         };
         return true;

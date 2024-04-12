@@ -1304,3 +1304,22 @@ pub const FormatDouble = struct {
         try writer.writeAll(slice);
     }
 };
+
+pub fn nullableFallback(value: anytype, null_fallback: []const u8) NullableFallback(@TypeOf(value)) {
+    return .{ .value = value, .null_fallback = null_fallback };
+}
+
+pub fn NullableFallback(comptime T: type) type {
+    return struct {
+        value: T,
+        null_fallback: []const u8,
+
+        pub fn format(self: @This(), comptime template: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+            if (self.value) |value| {
+                try std.fmt.formatType(value, template, opts, writer, 4);
+            } else {
+                try writer.writeAll(self.null_fallback);
+            }
+        }
+    };
+}

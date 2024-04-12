@@ -926,12 +926,9 @@ pub const Valid = struct {
             0...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
-                    .{},
-                    ctx,
-                    exception,
-                );
+                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(zig_str.slice()).toSystemError();
+                system_error.syscall = bun.String.dead;
+                exception.* = system_error.toErrorInstance(ctx).asObjectRef();
                 return false;
             },
         }
@@ -944,12 +941,9 @@ pub const Valid = struct {
             0...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
-                    .{},
-                    ctx,
-                    exception,
-                );
+                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
+                system_error.syscall = bun.String.dead;
+                exception.* = system_error.toErrorInstance(ctx).asObjectRef();
                 return false;
             },
         }
@@ -970,14 +964,9 @@ pub const Valid = struct {
             },
 
             else => {
-
-                // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path buffer: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
-                    .{},
-                    ctx,
-                    exception,
-                );
+                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
+                system_error.syscall = bun.String.dead;
+                exception.* = system_error.toErrorInstance(ctx).asObjectRef();
                 return false;
             },
             1...bun.MAX_PATH_BYTES => return true,

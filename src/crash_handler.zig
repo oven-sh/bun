@@ -28,7 +28,6 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Features = bun.Analytics.Features;
 const debug = std.debug;
-const dumpStackTrace = debug.dumpStackTrace;
 
 /// Set this to false if you want to disable all uses of this panic handler.
 /// This is useful for testing as a crash in here will not 'panicked during a panic'.
@@ -252,7 +251,7 @@ pub fn crashHandler(
             // we're still holding the mutex but that's fine as we're going to
             // call abort()
             const stderr = std.io.getStdErr().writer();
-            stderr.print("panic: {s}\n", .{reason}) catch std.os.abort();
+            stderr.print("\npanic: {s}\n", .{reason}) catch std.os.abort();
             stderr.print("panicked during a panic. Aborting.\n", .{}) catch std.os.abort();
         },
         3 => {
@@ -1063,13 +1062,23 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
         };
 
         if (is_debug) {
-            Output.note(
-                if (is_root)
-                    "CLI returned error.{s}"
-                else
+            if (is_root) {
+                Output.note(
+                    "'main' returned error.{s}.{s}",
+                    .{
+                        @errorName(err),
+                        if (verbose_error_trace)
+                            ""
+                        else
+                            " (release build will not have this trace by default)",
+                    },
+                );
+            } else {
+                Output.note(
                     "caught error.{s}:",
-                .{@errorName(err)},
-            );
+                    .{@errorName(err)},
+                );
+            }
             Output.flush();
             dumpStackTrace(trace.*);
         } else {
@@ -1080,8 +1089,15 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
             };
             if (is_root) {
                 Output.prettyErrorln(
-                    "<cyan>trace string: <d>{}<r>",
-                    .{ @errorName(err), ts },
+                    \\
+                    \\The trace for the above error has been captured as a URL,
+                    \\which will direct you to fill out a GitHub issue for Bun.
+                    \\This trace only includes functions in Bun, and contains none
+                    \\of your code data:
+                    \\<cyan>{}<r>
+                    \\
+                ,
+                    .{ts},
                 );
             } else {
                 Output.prettyErrorln(
@@ -1102,4 +1118,13 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
 /// You can test if this feature is available by checking `bun --help` for the flag.
 pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.StackTrace) void {
     handleErrorReturnTraceExtra(err, maybe_trace, false);
+}
+
+const stdDumpStackTrace = debug.dumpStackTrace;
+
+pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
+    if (bun.Environment.isWindows) {
+        // TODO: Zig's dump trace for windows is not fully reliable.
+    }
+    stdDumpStackTrace(trace);
 }

@@ -399,22 +399,50 @@ const TLSSocket = (function (InternalTLSSocket) {
       return !!this.#session;
     }
 
-    renegotiate() {
+    renegotiate(options, callback) {
       if (this.#renegotiationDisabled) {
+        // if renegotiation is disabled should emit error event in nextTick for nodejs compatibility
         const error = new Error("ERR_TLS_RENEGOTIATION_DISABLED: TLS session renegotiation disabled for this socket");
         error.name = "ERR_TLS_RENEGOTIATION_DISABLED";
-        throw error;
+        typeof callback === "function" && process.nextTick(callback, error);
+        return false;
       }
 
-      return this[bunSocketInternal]?.renegotiate();
+      const socket = this[bunSocketInternal];
+      // if the socket is detached we can't renegotiate, nodejs do a noop too (we should not return false or true here)
+      if (!socket) return;
+
+      if (options) {
+        let requestCert = !!this._requestCert;
+        let rejectUnauthorized = !!this._rejectUnauthorized;
+
+        if (options.requestCert !== undefined) requestCert = !!options.requestCert;
+        if (options.rejectUnauthorized !== undefined) rejectUnauthorized = !!options.rejectUnauthorized;
+
+        if (requestCert !== this._requestCert || rejectUnauthorized !== this._rejectUnauthorized) {
+          socket.setVerifyMode(requestCert, rejectUnauthorized);
+          this._requestCert = requestCert;
+          this._rejectUnauthorized = rejectUnauthorized;
+        }
+      }
+      try {
+        socket.renegotiate();
+        // if renegotiate is successful should emit secure event when done
+        typeof callback === "function" && this.once("secure", () => callback(null));
+        return true;
+      } catch (err) {
+        // if renegotiate fails should emit error event in nextTick for nodejs compatibility
+        typeof callback === "function" && process.nextTick(callback, err);
+        return false;
+      }
     }
 
     disableRenegotiation() {
-      // mark as disabled and disable internal socket
       this.#renegotiationDisabled = true;
+      // disable renegotiation on the socket
       return this[bunSocketInternal]?.disableRenegotiation();
     }
-    
+
     getTLSTicket() {
       return this[bunSocketInternal]?.getTLSTicket();
     }
@@ -598,7 +626,7 @@ class Server extends NetServer {
         requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
-        clientRenegotiationWindow: CLIENT_RENEG_WINDOW
+        clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
       },
       SocketClass,
     ];

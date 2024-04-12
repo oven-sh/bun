@@ -196,7 +196,12 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   s->received_ssl_shutdown = 0;
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
-  SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_explicit);
+  // if we allow renegotiation, we need to set the mode here
+  if (context->client_renegotiation_limit) {
+    SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_explicit);
+  } else {
+    SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_never);
+  }
 
   BIO_up_ref(loop_ssl_data->shared_rbio);
   BIO_up_ref(loop_ssl_data->shared_wbio);

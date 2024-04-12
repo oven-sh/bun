@@ -132,6 +132,11 @@ noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []c
     return exception;
 }
 
+/// we always allow and check the SSL certificate after the handshake or renegotiation
+fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.C) c_int {
+    return 1;
+}
+
 fn normalizeHost(input: anytype) @TypeOf(input) {
     return input;
 }
@@ -2062,9 +2067,51 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             const ssl_ptr = this.socket.ssl();
-            BoringSSL.SSL_set_renegotiate_mode(ssl_ptr, 0);
+            BoringSSL.SSL_set_renegotiate_mode(ssl_ptr, BoringSSL.ssl_renegotiate_never);
             return JSValue.jsUndefined();
         }
+
+        pub fn setVerifyMode(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const args = callframe.arguments(2);
+
+            if (args.len < 2) {
+                globalObject.throw("Expected requestCert and rejectUnauthorized arguments", .{});
+                return .zero;
+            }
+            const request_cert_js = args.ptr[0];
+            const reject_unauthorized_js = args.ptr[1];
+            if (!request_cert_js.isBoolean() or !reject_unauthorized_js.isBoolean()) {
+                globalObject.throw("Expected requestCert and rejectUnauthorized arguments to be boolean", .{});
+                return .zero;
+            }
+
+            const request_cert = request_cert_js.toBoolean();
+            const reject_unauthorized = request_cert_js.toBoolean();
+            var verify_mode: c_int = BoringSSL.SSL_VERIFY_NONE;
+            if (this.handlers.is_server) {
+                if (request_cert) {
+                    verify_mode = BoringSSL.SSL_VERIFY_PEER;
+                    if (reject_unauthorized)
+                        verify_mode |= BoringSSL.SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+                }
+            }
+            const ssl_ptr = this.socket.ssl();
+            // we always allow and check the SSL certificate after the handshake or renegotiation
+            BoringSSL.SSL_set_verify(ssl_ptr, verify_mode, alwaysAllowSSLVerifyCallback);
+            return JSValue.jsUndefined();
+        }
+
         pub fn renegotiate(
             this: *This,
             globalObject: *JSC.JSGlobalObject,

@@ -2977,7 +2977,7 @@ it("using writeFile on an fd does not truncate it", () => {
   const fd = fs.openSync(join(temp, "file.txt"), "w+");
   fs.writeFileSync(fd, "x");
   fs.writeFileSync(fd, "x");
-  // fs.close(fd);
+  fs.closeSync(fd);
   const content = fs.readFileSync(join(temp, "file.txt"), "utf8");
   expect(content).toBe("xx");
 })

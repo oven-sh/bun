@@ -2981,3 +2981,9 @@ it("using writeFile on an fd does not truncate it", () => {
   const content = fs.readFileSync(join(temp, "file.txt"), "utf8");
   expect(content).toBe("xx");
 });
+
+it("fs.close with one arg works", () => {
+  const temp = tmpdir();
+  const fd = fs.openSync(join(temp, "file.txt"), "w+");
+  fs.close(fd);
+});

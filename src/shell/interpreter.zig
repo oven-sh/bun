@@ -50,7 +50,7 @@ const ShellError = shell.ShellError;
 const ast = shell.AST;
 const SmolList = shell.SmolList;
 
-const GlobWalker = @import("../glob.zig").GlobWalker_(null, true);
+const GlobWalker = Glob.GlobWalker_(null, Glob.SyscallAccessor, true);
 
 const stdin_no = 0;
 const stdout_no = 1;

@@ -506,9 +506,6 @@ pub const PackageJSONVersionChecker = struct {
             },
             else => {
                 try p.lexer.unexpected();
-                if (comptime Environment.isDebug) {
-                    @breakpoint();
-                }
                 return error.ParserError;
             },
         }

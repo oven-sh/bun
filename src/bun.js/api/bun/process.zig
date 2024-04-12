@@ -81,6 +81,7 @@ pub const Rusage = if (Environment.isWindows) win_rusage else std.os.rusage;
 const Subprocess = JSC.Subprocess;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const ShellSubprocess = bun.shell.ShellSubprocess;
+const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
 pub const ProcessExitHandler = struct {
     ptr: TaggedPointer = TaggedPointer.Null,
@@ -93,6 +94,7 @@ pub const ProcessExitHandler = struct {
             Subprocess,
             LifecycleScriptSubprocess,
             ShellSubprocess,
+            ProcessHandle,
 
             SyncProcess,
         },
@@ -114,6 +116,10 @@ pub const ProcessExitHandler = struct {
             },
             .LifecycleScriptSubprocess => {
                 const subprocess = this.ptr.as(LifecycleScriptSubprocess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            .ProcessHandle => {
+                const subprocess = this.ptr.as(ProcessHandle);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {

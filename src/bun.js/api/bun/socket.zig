@@ -222,7 +222,6 @@ const Handlers = struct {
                         ctx_.deinit(ssl);
                     }
                 }
-                // clean
                 bun.default_allocator.destroy(this);
             }
         }

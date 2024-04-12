@@ -270,27 +270,17 @@ pub fn crashHandler(
 /// This is called when `main` returns a Zig error.
 /// We don't want to treat it as a crash under certain error codes.
 pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTrace) noreturn {
-    if (verbose_error_trace) {
-        if (error_return_trace) |trace| {
-            handleErrorReturnTraceExtra(err, trace, true);
-            Global.exit(1);
-        } else {
-            Output.debugWarn("error return trace not available for the following error", .{});
-        }
-    }
-
-    const always_show_trace = bun.Environment.isDebug;
+    var show_trace = bun.Environment.isDebug;
 
     switch (err) {
         error.OutOfMemory => bun.outOfMemory(),
 
         error.InvalidArgument,
         error.@"Invalid Bunfig",
-        => if (!always_show_trace) Global.exit(1),
+        => if (!show_trace) Global.exit(1),
 
         error.SyntaxError => {
             Output.err("SyntaxError", "An error occurred while parsing code", .{});
-            if (!always_show_trace) Global.exit(1);
         },
 
         error.CurrentWorkingDirectoryUnlinked => {
@@ -298,7 +288,6 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 "The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
                 .{},
             );
-            if (!always_show_trace) Global.exit(1);
         },
 
         error.SystemFdQuotaExceeded => {
@@ -363,8 +352,6 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                     .{},
                 );
             }
-
-            if (!always_show_trace) Global.exit(1);
         },
 
         error.ProcessFdQuotaExceeded => {
@@ -434,8 +421,6 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                     .{},
                 );
             }
-
-            if (!always_show_trace) Global.exit(1);
         },
 
         // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
@@ -494,6 +479,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                         "An unknown error ocurred <d>(<red>{s}<r><d>)<r>",
                         .{@errorName(err)},
                     );
+                    show_trace = true;
                 }
             } else {
                 Output.errGeneric(
@@ -501,8 +487,8 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 ,
                     .{@errorName(err)},
                 );
+                show_trace = true;
             }
-            if (!always_show_trace) Global.exit(1);
         },
 
         error.ENOENT, error.FileNotFound => {
@@ -519,7 +505,6 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 "Bun could not find a package.json file.",
                 .{},
             );
-            if (!always_show_trace) Global.exit(1);
         },
 
         else => {
@@ -530,21 +515,12 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                     "An internal error ocurred (<red>{s}<r>)",
                 .{@errorName(err)},
             );
+            show_trace = true;
         },
     }
 
-    if (error_return_trace) |trace| {
-        if (bun.Environment.isDebug) {
-            dumpStackTrace(trace.*);
-        }
-
-        // TODO: enable release-mode error return traces
-        // TODO: write better message here
-        Output.note("error trace string: {}", .{TraceString{
-            .trace = trace,
-            .reason = .{ .zig_error = err },
-            .action = .view_trace,
-        }});
+    if (show_trace) {
+        handleErrorReturnTraceExtra(err, error_return_trace, true);
     }
 
     Global.exit(1);
@@ -670,10 +646,18 @@ pub fn handleSegfaultWindows(info: windows.EXCEPTION_POINTERS) callconv(windows.
 
 pub fn printMetadata(writer: anytype) !void {
     try writer.writeAll(metadata_version_line);
-    try writer.print("Args: ", .{});
-    for (bun.argv, 0..) |arg, i| {
-        if (i != 0) try writer.writeAll(", ");
-        try bun.fmt.quotedWriter(writer, arg);
+    {
+        try writer.print("Args: ", .{});
+        var arg_chars_left: usize = 196;
+        for (bun.argv, 0..) |arg, i| {
+            if (i != 0) try writer.writeAll(", ");
+            try bun.fmt.quotedWriter(writer, arg[0..@min(arg.len, arg_chars_left)]);
+            arg_chars_left -|= arg.len;
+            if (arg_chars_left == 0) {
+                try writer.writeAll("...");
+                break;
+            }
+        }
     }
     try writer.print("\n{}", .{bun.Analytics.Features.formatter()});
 
@@ -1017,6 +1001,8 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
     try second.writeTo(writer);
 }
 
+/// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.
+/// This causes a segfault on posix systems to try to get a core dump.
 fn crash() noreturn {
     switch (bun.Environment.os) {
         .windows => {
@@ -1058,7 +1044,7 @@ pub var verbose_error_trace = false;
 
 fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTrace, comptime is_root: bool) void {
     if (!builtin.have_error_return_tracing) return;
-    if (!verbose_error_trace) return;
+    if (!verbose_error_trace and !is_root) return;
 
     if (maybe_trace) |trace| {
         // The format of the panic trace is slightly different in debug
@@ -1077,20 +1063,32 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
         };
 
         if (is_debug) {
-            Output.note(if (is_root) "CLI returned error.{s}" else "caught error.{s}:", .{@errorName(err)});
+            Output.note(
+                if (is_root)
+                    "CLI returned error.{s}"
+                else
+                    "caught error.{s}:",
+                .{@errorName(err)},
+            );
+            Output.flush();
             dumpStackTrace(trace.*);
         } else {
-            Output.prettyErrorln(if (is_root)
-                "<cyan>trace<r>: Bun returned with error.{s}: <d>{}<r>"
-            else
-                "<cyan>trace<r>: error.{s}: <d>{}<r>", .{
-                @errorName(err),
-                TraceString{
-                    .trace = trace,
-                    .reason = .{ .zig_error = err },
-                    .action = .view_trace,
-                },
-            });
+            const ts = TraceString{
+                .trace = trace,
+                .reason = .{ .zig_error = err },
+                .action = .view_trace,
+            };
+            if (is_root) {
+                Output.prettyErrorln(
+                    "<cyan>trace string: <d>{}<r>",
+                    .{ @errorName(err), ts },
+                );
+            } else {
+                Output.prettyErrorln(
+                    "<cyan>trace<r>: error.{s}: <d>{}<r>",
+                    .{ @errorName(err), ts },
+                );
+            }
         }
     }
 }

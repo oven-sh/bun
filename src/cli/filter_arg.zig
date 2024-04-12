@@ -10,18 +10,27 @@ const Glob = @import("../glob.zig");
 
 const Package = @import("../install/lockfile.zig").Package;
 
+const SKIP_LIST = .{
+    // skip hidden directories
+    ".",
+
+    // skip node_modules
+    "node_modules",
+
+    // skip .git folder
+    ".git",
+};
 fn globIgnoreFn(val: []const u8) bool {
     if (val.len == 0) {
         return false;
     }
-    // skip hidden directories
-    if (val[0] == '.') {
-        return true;
+
+    inline for (SKIP_LIST) |skip| {
+        if (strings.eqlComptime(val, skip)) {
+            return true;
+        }
     }
-    // skip node_modules
-    if (strings.eqlComptime(val, "node_modules")) {
-        return true;
-    }
+
     return false;
 }
 

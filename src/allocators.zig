@@ -122,7 +122,7 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             }
 
             pub fn append(block: *Block, value: ValueType) *ValueType {
-                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
+                if (comptime Environment.allow_assert) bun.assert(block.used < count);
                 const index = block.used;
                 block.items[index] = value;
                 block.used +%= 1;
@@ -155,9 +155,9 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             else
                 0;
 
-            if (comptime Environment.allow_assert) std.debug.assert(index.is_overflow);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.used >= block_id);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.ptrs[block_id].used > (index.index % count));
+            if (comptime Environment.allow_assert) bun.assert(index.is_overflow);
+            if (comptime Environment.allow_assert) bun.assert(this.list.used >= block_id);
+            if (comptime Environment.allow_assert) bun.assert(this.list.ptrs[block_id].used > (index.index % count));
 
             return &this.list.ptrs[block_id].items[index.index % count];
         }
@@ -168,9 +168,9 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             else
                 0;
 
-            if (comptime Environment.allow_assert) std.debug.assert(index.is_overflow);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.used >= block_id);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.ptrs[block_id].used > (index.index % count));
+            if (comptime Environment.allow_assert) bun.assert(index.is_overflow);
+            if (comptime Environment.allow_assert) bun.assert(this.list.used >= block_id);
+            if (comptime Environment.allow_assert) bun.assert(this.list.ptrs[block_id].used > (index.index % count));
 
             return &this.list.ptrs[block_id].items[index.index % count];
         }

@@ -1333,7 +1333,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             };
             ctx.response_jsvalue = value;
-            std.debug.assert(!ctx.flags.response_protected);
+            assert(!ctx.flags.response_protected);
             ctx.flags.response_protected = true;
             JSC.C.JSValueProtect(ctx.server.globalThis, value.asObjectRef());
 
@@ -1574,7 +1574,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onWritableResponseBuffer(this: *RequestContext, _: u64, resp: *App.Response) callconv(.C) bool {
             ctxLog("onWritableResponseBuffer", .{});
 
-            std.debug.assert(this.resp == resp);
+            assert(this.resp == resp);
             if (this.flags.aborted) {
                 this.finalizeForAbort();
                 return false;
@@ -1587,7 +1587,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // TODO: should we cork?
         pub fn onWritableCompleteResponseBufferAndMetadata(this: *RequestContext, write_offset: u64, resp: *App.Response) callconv(.C) bool {
             ctxLog("onWritableCompleteResponseBufferAndMetadata", .{});
-            std.debug.assert(this.resp == resp);
+            assert(this.resp == resp);
 
             if (this.flags.aborted) {
                 this.finalizeForAbort();
@@ -1609,7 +1609,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onWritableCompleteResponseBuffer(this: *RequestContext, write_offset: u64, resp: *App.Response) callconv(.C) bool {
             ctxLog("onWritableCompleteResponseBuffer", .{});
-            std.debug.assert(this.resp == resp);
+            assert(this.resp == resp);
             if (this.flags.aborted) {
                 this.finalizeForAbort();
                 return false;
@@ -1646,8 +1646,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
-            std.debug.assert(this.resp == resp);
-            std.debug.assert(!this.flags.aborted);
+            assert(this.resp == resp);
+            assert(!this.flags.aborted);
             // mark request as aborted
             this.flags.aborted = true;
             var any_js_calls = false;
@@ -1823,10 +1823,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             ctxLog("deinit<d> ({*})<r>", .{this});
             if (comptime Environment.allow_assert)
-                std.debug.assert(this.flags.has_finalized);
+                assert(this.flags.has_finalized);
 
             if (comptime Environment.allow_assert)
-                std.debug.assert(this.flags.has_marked_complete);
+                assert(this.flags.has_marked_complete);
 
             var server = this.server;
             this.request_body_buf.clearAndFree(this.allocator);
@@ -1855,7 +1855,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn writeStatus(this: *RequestContext, status: u16) void {
             var status_text_buf: [48]u8 = undefined;
-            std.debug.assert(!this.flags.has_written_status);
+            assert(!this.flags.has_written_status);
             this.flags.has_written_status = true;
 
             if (this.resp) |resp| {
@@ -1951,7 +1951,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onWritableBytes(this: *RequestContext, write_offset: u64, resp: *App.Response) callconv(.C) bool {
             ctxLog("onWritableBytes", .{});
-            std.debug.assert(this.resp == resp);
+            assert(this.resp == resp);
             if (this.flags.aborted) {
                 this.finalizeForAbort();
                 return false;
@@ -1966,7 +1966,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset_: u64, resp: *App.Response) bool {
-            std.debug.assert(this.resp == resp);
+            assert(this.resp == resp);
             const write_offset: usize = write_offset_;
 
             const bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
@@ -1982,7 +1982,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset_: u64, resp: *App.Response) bool {
             const write_offset: usize = write_offset_;
-            std.debug.assert(this.resp == resp);
+            assert(this.resp == resp);
 
             const bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
@@ -2151,7 +2151,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const is_temporary = result.result.is_temporary;
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.blob == .Blob);
+                assert(this.blob == .Blob);
             }
 
             if (!is_temporary) {
@@ -2248,7 +2248,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // explicitly set it to a dead pointer
             // we use this memory address to disable signals being sent
             signal.clear();
-            std.debug.assert(signal.isDead());
+            assert(signal.isDead());
 
             // We are already corked!
             const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
@@ -2261,7 +2261,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assignment_result.ensureStillAlive();
 
             // assert that it was updated
-            std.debug.assert(!signal.isDead());
+            assert(!signal.isDead());
 
             if (comptime Environment.allow_assert) {
                 if (resp.hasResponded()) {
@@ -2747,8 +2747,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             },
 
                             .Bytes => |byte_stream| {
-                                std.debug.assert(byte_stream.pipe.ctx == null);
-                                std.debug.assert(this.byte_stream == null);
+                                assert(byte_stream.pipe.ctx == null);
+                                assert(this.byte_stream == null);
                                 if (this.resp == null) {
                                     // we don't have a response, so we can discard the stream
                                     stream.done(this.server.globalThis);
@@ -3213,7 +3213,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onBufferedBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
             ctxLog("onBufferedBodyChunk {} {}", .{ chunk.len, last });
 
-            std.debug.assert(this.resp == resp);
+            assert(this.resp == resp);
 
             this.flags.is_waiting_for_request_body = last == false;
             if (this.flags.aborted or this.flags.has_marked_complete) return;
@@ -3230,7 +3230,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (body.value == .Locked) {
                     if (body.value.Locked.readable.get()) |readable| {
                         if (readable.ptr == .Bytes) {
-                            std.debug.assert(this.request_body_buf.items.len == 0);
+                            assert(this.request_body_buf.items.len == 0);
                             var vm = this.server.vm;
                             vm.eventLoop().enter();
                             defer vm.eventLoop().exit();
@@ -6179,3 +6179,5 @@ pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, tru
 const welcome_page_html_gz = @embedFile("welcome-page.html.gz");
 
 extern fn Bun__addInspector(bool, *anyopaque, *JSC.JSGlobalObject) void;
+
+const assert = bun.assert;

@@ -633,7 +633,7 @@ pub const PollerWindows = union(enum) {
 
     pub fn deinit(this: *PollerWindows) void {
         if (this.* == .uv) {
-            std.debug.assert(this.uv.isClosed());
+            bun.assert(this.uv.isClosed());
         }
     }
 
@@ -846,7 +846,7 @@ const WaiterThreadPosix = struct {
     const stack_size = 512 * 1024;
     pub var instance: WaiterThread = .{};
     pub fn init() !void {
-        std.debug.assert(should_use_waiter_thread);
+        bun.assert(should_use_waiter_thread);
 
         if (instance.started.fetchMax(1, .Monotonic) > 0) {
             return;
@@ -1614,7 +1614,7 @@ pub fn spawnProcessWindows(
 
     defer {
         if (dup_src != null) {
-            if (Environment.allow_assert) std.debug.assert(dup_src != null and dup_tgt != null);
+            if (Environment.allow_assert) bun.assert(dup_src != null and dup_tgt != null);
         }
 
         if (failed) {
@@ -1635,7 +1635,7 @@ pub fn spawnProcessWindows(
     }
 
     process.pid = process.poller.uv.pid;
-    std.debug.assert(process.poller.uv.exit_cb == &Process.onExitUV);
+    bun.assert(process.poller.uv.exit_cb == &Process.onExitUV);
 
     var result = WindowsSpawnResult{
         .process_ = process,

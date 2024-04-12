@@ -162,26 +162,6 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
     }
 }
 
-// std.debug.assert but happens at runtime
-pub fn invariant(condition: bool, comptime fmt: string, args: anytype) void {
-    if (!condition) {
-        _invariant(fmt, args);
-    }
-}
-
-inline fn _invariant(comptime fmt: string, args: anytype) noreturn {
-    @setCold(true);
-
-    if (comptime Environment.isWasm) {
-        Output.printErrorln(fmt, args);
-        Output.flush();
-        @panic(fmt);
-    } else {
-        Output.prettyErrorln(fmt, args);
-        Global.exit(1);
-    }
-}
-
 pub fn notimpl() noreturn {
     @setCold(true);
     Global.panic("Not implemented yet!!!!!", .{});

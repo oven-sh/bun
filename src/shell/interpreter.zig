@@ -10244,9 +10244,7 @@ pub const Interpreter = struct {
             }
 
             pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
-                if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.state == .exec);
-                }
+                assert(this.state == .exec);
                 this.state.exec.tasks_count -= 1;
                 // ShellCpTask deinitializes itself inside
                 // the node_fs code: AsyncCpTask.finishConcurrently()

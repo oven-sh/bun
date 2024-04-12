@@ -5985,7 +5985,8 @@ pub const NodeFS = struct {
         return Maybe(Return.CreateWriteStream).todo();
     }
 
-    /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
+    /// This function is `cpSync`, but only if you pass
+    ///    { recursive: ..., force: ..., errorOnExist: ..., mode: ... }
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
         comptime bun.assert(flavor == .sync);

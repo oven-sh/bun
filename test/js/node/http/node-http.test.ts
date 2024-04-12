@@ -1746,3 +1746,37 @@ if (process.platform !== "win32") {
     expect([joinPath(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
   });
 }
+
+it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", async () => {
+  const expected = "á" + "-".repeat(254) + "x";
+  const server = require("http")
+    .createServer((_, response) => {
+      response.write("á" + "-".repeat(254) + "x");
+      response.write("");
+      response.end();
+    })
+    .listen(0, "localhost", async (err, hostname, port) => {
+      try {
+        expect(err).toBeFalsy();
+        expect(port).toBeGreaterThan(0);
+        const url = `http://${hostname}:${port}`;
+        const count = 1000;
+        const all = [];
+        const batchSize = 20;
+        while (all.length < count) {
+          const batch = Array.from({ length: batchSize }, () => fetch(url).then(a => a.text()));
+
+          all.push(...(await Promise.all(batch)));
+        }
+
+        for (const result of all) {
+          expect(result).toBe(expected);
+        }
+      } finally {
+        server.close();
+        Bun.gc(true);
+      }
+    });
+  await Bun.sleep(1000);
+  Bun.gc(true);
+});

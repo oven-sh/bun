@@ -21,32 +21,72 @@ const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;
 const ZigString = JSC.ZigString;
 const Environment = bun.Environment;
-const Subprocess = bun.JSC.Subprocess;
-const TLSSocket = bun.JSC.API.TLSSocket;
-const TCPSocket = bun.JSC.API.TCPSocket;
-const Listener = bun.JSC.API.Listener;
-const HTTPServer = JSC.API.HTTPServer;
-const HTTPSServer = JSC.API.HTTPSServer;
-const DebugHTTPServer = JSC.API.DebugHTTPServer;
-const DebugHTTPSServer = JSC.API.DebugHTTPSServer;
-const ShellSubprocess = bun.shell.ShellSubprocess;
-pub const CleanableTypes = bun.TaggedPointerUnion(.{
-    Subprocess,
-    TLSSocket,
-    TCPSocket,
-    Listener,
-    HTTPServer,
-    HTTPSServer,
-    DebugHTTPServer,
-    DebugHTTPSServer,
-    ShellSubprocess,
-});
+
+const Cleanable = packed struct {
+    ptr: Type = Type.Null,
+
+    pub fn init(ptr: anytype) Cleanable {
+        return Cleanable{ .ptr = Type.init(ptr) };
+    }
+
+    const Subprocess = bun.JSC.Subprocess;
+    const TLSSocket = bun.JSC.API.TLSSocket;
+    const TCPSocket = bun.JSC.API.TCPSocket;
+    const Listener = bun.JSC.API.Listener;
+    const HTTPServer = JSC.API.HTTPServer;
+    const HTTPSServer = JSC.API.HTTPSServer;
+    const DebugHTTPServer = JSC.API.DebugHTTPServer;
+    const DebugHTTPSServer = JSC.API.DebugHTTPSServer;
+    const ShellSubprocess = bun.shell.ShellSubprocess;
+
+    pub const Type = bun.TaggedPointerUnion(.{
+        Subprocess,
+        TLSSocket,
+        TCPSocket,
+        Listener,
+        HTTPServer,
+        HTTPSServer,
+        DebugHTTPServer,
+        DebugHTTPSServer,
+        ShellSubprocess,
+    });
+    const Tag = Type.Tag;
+    const name = bun.meta.typeName;
+
+    pub fn run(this: Cleanable, vm: *JSC.VirtualMachine) void {
+        switch (this.tag()) {
+            inline @field(Tag, name(Subprocess)),
+            @field(Tag, name(TLSSocket)),
+            @field(Tag, name(TCPSocket)),
+            @field(Tag, name(Listener)),
+            @field(Tag, name(HTTPServer)),
+            @field(Tag, name(HTTPSServer)),
+            @field(Tag, name(DebugHTTPServer)),
+            @field(Tag, name(DebugHTTPSServer)),
+            @field(Tag, name(ShellSubprocess)),
+            => |tag| {
+                this.as(
+                    Type.typeFromTag(
+                        @intFromEnum(
+                            @field(
+                                Tag,
+                                @tagName(tag),
+                            ),
+                        ),
+                    ),
+                ).onCleanup(vm);
+            },
+            else => {
+                bun.assert(false);
+            },
+        }
+    }
+};
 
 pub const TestCleanupHandler = struct {
-    cleanables: std.AutoArrayHashMapUnmanaged(CleanableTypes, u32) = .{},
+    cleanables: std.AutoArrayHashMapUnmanaged(Cleanable, u32) = .{},
     generation: u32 = 0,
     state: State = .none,
-    current_cleanable: CleanableTypes = CleanableTypes.Null,
 
     const State = enum {
         none,
@@ -57,11 +97,11 @@ pub const TestCleanupHandler = struct {
     pub usingnamespace bun.New(@This());
 
     pub fn add(this: *TestCleanupHandler, ptr: anytype) void {
-        _ = this.cleanables.getOrPutValue(bun.default_allocator, CleanableTypes.init(ptr), this.generation) catch bun.outOfMemory();
+        _ = this.cleanables.getOrPutValue(bun.default_allocator, Cleanable.init(ptr), this.generation) catch bun.outOfMemory();
     }
 
     pub fn remove(this: *TestCleanupHandler, ptr: anytype) void {
-        const cleanable = CleanableTypes.init(ptr);
+        const cleanable = Cleanable.init(ptr);
         _ = this.cleanables.swapRemove(cleanable);
     }
 
@@ -72,32 +112,7 @@ pub const TestCleanupHandler = struct {
         var i: usize = 0;
         for (generations, cleanables, 0..) |gen, cleanable, idx| {
             if (target <= gen) {
-                switch (cleanable.tag()) {
-                    inline @field(CleanableTypes.Tag, bun.meta.typeName(Subprocess)),
-                    @field(CleanableTypes.Tag, bun.meta.typeName(TLSSocket)),
-                    @field(CleanableTypes.Tag, bun.meta.typeName(TCPSocket)),
-                    @field(CleanableTypes.Tag, bun.meta.typeName(Listener)),
-                    @field(CleanableTypes.Tag, bun.meta.typeName(HTTPServer)),
-                    @field(CleanableTypes.Tag, bun.meta.typeName(HTTPSServer)),
-                    @field(CleanableTypes.Tag, bun.meta.typeName(DebugHTTPServer)),
-                    @field(CleanableTypes.Tag, bun.meta.typeName(DebugHTTPSServer)),
-                    @field(CleanableTypes.Tag, bun.meta.typeName(ShellSubprocess)),
-                    => |tag| {
-                        cleanable.as(
-                            CleanableTypes.typeFromTag(
-                                @intFromEnum(
-                                    @field(
-                                        CleanableTypes.Tag,
-                                        @tagName(tag),
-                                    ),
-                                ),
-                            ),
-                        ).onCleanup(vm);
-                    },
-                    else => {
-                        bun.assert(false);
-                    },
-                }
+                cleanable.run(vm);
             } else {
                 i = idx;
             }
@@ -111,32 +126,7 @@ pub const TestCleanupHandler = struct {
         this.cleanables = .{};
         const ptrs = cleanables.keys();
         for (ptrs) |cleanable| {
-            switch (cleanable.tag()) {
-                inline @field(CleanableTypes.Tag, bun.meta.typeName(Subprocess)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(TLSSocket)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(TCPSocket)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(Listener)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(HTTPServer)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(HTTPSServer)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(DebugHTTPServer)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(DebugHTTPSServer)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(ShellSubprocess)),
-                => |tag| {
-                    cleanable.as(
-                        CleanableTypes.typeFromTag(
-                            @intFromEnum(
-                                @field(
-                                    CleanableTypes.Tag,
-                                    @tagName(tag),
-                                ),
-                            ),
-                        ),
-                    ).onCleanup(vm);
-                },
-                else => {
-                    bun.assert(false);
-                },
-            }
+            cleanable.run(vm);
         }
     }
 
@@ -158,35 +148,7 @@ pub const TestCleanupHandler = struct {
                 continue;
             }
 
-            const cleanable = cleanables[i];
-
-            switch (cleanable.tag()) {
-                inline @field(CleanableTypes.Tag, bun.meta.typeName(Subprocess)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(TLSSocket)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(TCPSocket)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(Listener)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(HTTPServer)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(HTTPSServer)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(DebugHTTPServer)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(DebugHTTPSServer)),
-                @field(CleanableTypes.Tag, bun.meta.typeName(ShellSubprocess)),
-                => |tag| {
-                    this.current_cleanable = cleanable;
-                    cleanable.as(
-                        CleanableTypes.typeFromTag(
-                            @intFromEnum(
-                                @field(
-                                    CleanableTypes.Tag,
-                                    @tagName(tag),
-                                ),
-                            ),
-                        ),
-                    ).onCleanup(vm);
-                },
-                else => {
-                    bun.assert(false);
-                },
-            }
+            cleanables[i].run(vm);
 
             i += 1;
         }
@@ -198,7 +160,6 @@ pub const TestCleanupHandler = struct {
         bun.assert(this.state != .running);
         this.state = .waiting;
         vm.test_cleaner = this;
-        this.current_cleanable = CleanableTypes.Null;
         return this.generation;
     }
 
@@ -208,6 +169,5 @@ pub const TestCleanupHandler = struct {
         this.state = .none;
         if (generation == this.generation)
             this.generation +%= 1;
-        this.current_cleanable = CleanableTypes.Null;
     }
 };

@@ -1,4 +1,4 @@
 {
   "std.debug.assert": "Use bun.assert instead",
-  "std.debug.dumpStackTrace": "Use bun.handleErrorReturnTrace instead"
+  "std.debug.dumpStackTrace": "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead"
 }

@@ -1774,13 +1774,14 @@ it("#10177 response.write with non-ascii latin1 should not cause duplicated char
       response.end();
     })
     .listen(0, "localhost", async (err, hostname, port) => {
+      expect(err).toBeFalsy();
+      expect(port).toBeGreaterThan(0);
+
       for (const char of chars) {
         for (const size of sizes) {
           expected = char + "-".repeat(size) + "x";
 
           try {
-            expect(err).toBeFalsy();
-            expect(port).toBeGreaterThan(0);
             const url = `http://${hostname}:${port}`;
             const count = 20;
             const all = [];

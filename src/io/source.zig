@@ -138,7 +138,7 @@ pub const Source = union(enum) {
     }
 
     pub fn openFile(fd: bun.FileDescriptor) *Source.File {
-        std.debug.assert(fd.isValid() and bun.uvfdcast(fd) != -1);
+        bun.assert(fd.isValid() and bun.uvfdcast(fd) != -1);
         log("openFile (fd = {})", .{fd});
         const file = bun.default_allocator.create(Source.File) catch bun.outOfMemory();
 

@@ -52,7 +52,7 @@ const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
 threadlocal var imported_module_ids_list_unset: bool = true;
@@ -75,7 +75,7 @@ fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void
 }
 
 pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void {
-    std.debug.assert(module_id != 0); // either module_id is forgotten or it should be disabled
+    bun.assert(module_id != 0); // either module_id is forgotten or it should be disabled
     _ = writer.writeAll("$") catch unreachable;
     std.fmt.formatInt(module_id, 16, .lower, .{}, writer) catch unreachable;
 }
@@ -1019,7 +1019,7 @@ fn NewPrinter(
         }
 
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
-            comptime std.debug.assert(is_bun_platform);
+            comptime bun.assert(is_bun_platform);
 
             switch (p.options.module_type) {
                 .cjs => {
@@ -1379,13 +1379,13 @@ fn NewPrinter(
         }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
-            std.debug.assert(!ref.isNull());
+            bun.assert(!ref.isNull());
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
         }
         pub fn printClauseAlias(p: *Printer, alias: string) void {
-            std.debug.assert(alias.len > 0);
+            bun.assert(alias.len > 0);
 
             if (!strings.containsNonBmpCodePointOrIsInvalidIdentifier(alias)) {
                 p.printSpaceBeforeIdentifier();
@@ -2250,7 +2250,7 @@ fn NewPrinter(
                         // This is currently only used in Bun's runtime for CommonJS modules
                         // referencing import.meta
                         if (comptime Environment.allow_assert)
-                            std.debug.assert(p.options.module_type == .cjs);
+                            bun.assert(p.options.module_type == .cjs);
 
                         p.printSymbol(p.options.import_meta_ref);
                     }
@@ -3618,7 +3618,7 @@ fn NewPrinter(
             }
 
             if (comptime is_json) {
-                std.debug.assert(item.initializer == null);
+                bun.assert(item.initializer == null);
             }
 
             if (item.initializer) |initial| {
@@ -4463,7 +4463,7 @@ fn NewPrinter(
                     p.needs_semicolon = false;
                 },
                 .s_import => |s| {
-                    std.debug.assert(s.import_record_index < p.import_records.len);
+                    bun.assert(s.import_record_index < p.import_records.len);
 
                     const record: *const ImportRecord = p.importRecord(s.import_record_index);
 
@@ -4967,7 +4967,7 @@ fn NewPrinter(
         }
 
         inline fn printModuleId(p: *Printer, module_id: u32) void {
-            std.debug.assert(module_id != 0); // either module_id is forgotten or it should be disabled
+            bun.assert(module_id != 0); // either module_id is forgotten or it should be disabled
             p.printModuleIdAssumeEnabled(module_id);
         }
 
@@ -5554,7 +5554,7 @@ const FileWriterInternal = struct {
         return @as([*]u8, @ptrCast(&buffer.list.items.ptr[buffer.list.items.len]));
     }
     pub fn advanceBy(this: *FileWriterInternal, count: u32) void {
-        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
+        if (comptime Environment.isDebug) bun.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
         if (count >= 2) {
@@ -5673,7 +5673,7 @@ pub const BufferWriter = struct {
         return @as([*]u8, @ptrCast(&ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]));
     }
     pub fn advanceBy(ctx: *BufferWriter, count: u32) void {
-        if (comptime Environment.isDebug) std.debug.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
+        if (comptime Environment.isDebug) bun.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
 
         ctx.buffer.list.items = ctx.buffer.list.items.ptr[0 .. ctx.buffer.list.items.len + count];
 

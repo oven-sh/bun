@@ -119,9 +119,9 @@ const LibInfo = struct {
 
             return promise_value;
         }
-        std.debug.assert(request.backend.libinfo.machport != null);
+        bun.assert(request.backend.libinfo.machport != null);
         request.backend.libinfo.file_poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
-        std.debug.assert(
+        bun.assert(
             request.backend.libinfo.file_poll.?.registerWithFd(
                 this.vm.event_loop_handle.?,
                 .machport,
@@ -1294,7 +1294,7 @@ pub const GetAddrInfoRequest = struct {
     pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) void {
         log("onLibUVComplete: status={d}", .{uv_info.retcode.int()});
         const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
-        std.debug.assert(uv_info == &this.backend.libc.uv);
+        bun.assert(uv_info == &this.backend.libc.uv);
         if (this.backend == .libinfo) {
             if (this.backend.libinfo.file_poll) |poll| poll.deinit();
         }
@@ -1650,7 +1650,7 @@ pub const DNSResolver = struct {
 
     fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8, comptime request_type: type) request_type.PendingCacheKey {
         var cache = &@field(this, cache_name);
-        std.debug.assert(!cache.available.isSet(index));
+        bun.assert(!cache.available.isSet(index));
         const entry = cache.buffer[index];
         cache.buffer[index] = undefined;
 

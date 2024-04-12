@@ -518,7 +518,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 .basename = bun.PathString.init(bun.default_allocator.dupeZ(u8, basename) catch bun.outOfMemory()),
             },
         );
-        std.debug.assert(readdir_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
+        bun.assert(readdir_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
         JSC.WorkPool.schedule(&task.task);
     }
 
@@ -641,7 +641,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             return;
         }
 
-        std.debug.assert(this.subtask_count.load(.Monotonic) == 0);
+        bun.assert(this.subtask_count.load(.Monotonic) == 0);
 
         const root_fd = this.root_fd;
         if (root_fd != bun.invalid_fd) {
@@ -743,7 +743,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     }
 
     pub fn deinit(this: *AsyncReaddirRecursiveTask) void {
-        std.debug.assert(this.root_fd == bun.invalid_fd); // should already have closed it
+        bun.assert(this.root_fd == bun.invalid_fd); // should already have closed it
         if (this.pending_err) |*err| {
             bun.default_allocator.free(err.path);
         }
@@ -4632,7 +4632,7 @@ pub const NodeFS = struct {
     }
 
     fn _read(_: *NodeFS, args: Arguments.Read, comptime _: Flavor) Maybe(Return.Read) {
-        if (Environment.allow_assert) std.debug.assert(args.position == null);
+        if (Environment.allow_assert) bun.assert(args.position == null);
         var buf = args.buffer.slice();
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(buf.len, args.length)];
@@ -5609,7 +5609,7 @@ pub const NodeFS = struct {
                 } };
 
             // Seems like `rc` does not contain the errno?
-            std.debug.assert(rc.errEnum() == null);
+            bun.assert(rc.errEnum() == null);
             const buf = bun.span(req.ptrAs([*:0]u8));
 
             return .{
@@ -5632,7 +5632,7 @@ pub const NodeFS = struct {
 
         var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var inbuf = &this.sync_error_buf;
-        if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
+        if (comptime Environment.allow_assert) bun.assert(FileSystem.instance_loaded);
 
         const path_slice = args.path.slice();
 
@@ -5936,7 +5936,7 @@ pub const NodeFS = struct {
     }
 
     pub fn watchFile(_: *NodeFS, args: Arguments.WatchFile, comptime flavor: Flavor) Maybe(Return.WatchFile) {
-        std.debug.assert(flavor == .sync);
+        bun.assert(flavor == .sync);
 
         const watcher = args.createStatWatcher() catch |err| {
             const buf = std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}) catch bun.outOfMemory();
@@ -5976,8 +5976,8 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
-        std.debug.assert(args.mtime.tv_nsec <= 1e9);
-        std.debug.assert(args.atime.tv_nsec <= 1e9);
+        bun.assert(args.mtime.tv_nsec <= 1e9);
+        bun.assert(args.atime.tv_nsec <= 1e9);
         var times = [2]std.c.timeval{
             .{
                 .tv_sec = args.atime.tv_sec,
@@ -6016,8 +6016,8 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
-        std.debug.assert(args.mtime.tv_nsec <= 1e9);
-        std.debug.assert(args.atime.tv_nsec <= 1e9);
+        bun.assert(args.mtime.tv_nsec <= 1e9);
+        bun.assert(args.atime.tv_nsec <= 1e9);
         var times = [2]std.c.timeval{
             .{
                 .tv_sec = args.atime.tv_sec,
@@ -6061,7 +6061,7 @@ pub const NodeFS = struct {
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
-        comptime std.debug.assert(flavor == .sync);
+        comptime bun.assert(flavor == .sync);
 
         var src_buf: bun.PathBuffer = undefined;
         var dest_buf: bun.PathBuffer = undefined;

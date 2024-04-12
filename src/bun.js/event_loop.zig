@@ -1819,7 +1819,7 @@ pub const MiniEventLoop = struct {
 
     pub fn deinit(this: *MiniEventLoop) void {
         this.tasks.deinit();
-        std.debug.assert(this.concurrent_tasks.isEmpty());
+        bun.assert(this.concurrent_tasks.isEmpty());
     }
 
     pub fn tickConcurrentWithCount(this: *MiniEventLoop) usize {

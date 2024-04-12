@@ -143,7 +143,7 @@ pub const MutableString = struct {
             }
 
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(js_lexer.isIdentifier(mutable.list.items));
+                bun.assert(js_lexer.isIdentifier(mutable.list.items));
             }
 
             return try mutable.list.toOwnedSlice(allocator);
@@ -193,7 +193,7 @@ pub const MutableString = struct {
         self: *MutableString,
         index: usize,
     ) void {
-        std.debug.assert(index <= self.list.capacity);
+        bun.assert(index <= self.list.capacity);
         self.list.items.len = index;
     }
 
@@ -215,7 +215,7 @@ pub const MutableString = struct {
         try self.list.ensureUnusedCapacity(self.allocator, count);
         const old = self.list.items.len;
         self.list.items.len += count;
-        std.debug.assert(count == bun.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
+        bun.assert(count == bun.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
     }
 
     pub inline fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {

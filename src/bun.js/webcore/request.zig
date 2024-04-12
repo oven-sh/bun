@@ -372,7 +372,7 @@ pub const Request = struct {
                     });
 
                     if (comptime Environment.allow_assert) {
-                        std.debug.assert(this.sizeOfURL() == url_bytelength);
+                        bun.assert(this.sizeOfURL() == url_bytelength);
                     }
 
                     if (url_bytelength < 128) {
@@ -384,7 +384,7 @@ pub const Request = struct {
                         }) catch @panic("Unexpected error while printing URL");
 
                         if (comptime Environment.allow_assert) {
-                            std.debug.assert(this.sizeOfURL() == url.len);
+                            bun.assert(this.sizeOfURL() == url.len);
                         }
 
                         var href = bun.JSC.URL.hrefFromString(bun.String.fromBytes(url));
@@ -434,7 +434,7 @@ pub const Request = struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.sizeOfURL() == req_url.len);
+                bun.assert(this.sizeOfURL() == req_url.len);
             }
             this.url = bun.String.createUTF8(req_url);
         }

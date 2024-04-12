@@ -18782,7 +18782,7 @@ pub const struct_bio_st = extern struct {
 
     pub fn slice(this: *struct_bio_st) []u8 {
         var buf_mem: ?*BUF_MEM = null;
-        std.debug.assert(BIO_get_mem_ptr(this, &buf_mem) > -1);
+        bun.assert(BIO_get_mem_ptr(this, &buf_mem) > -1);
         if (buf_mem) |buf| {
             if (buf.data == null) return &[_]u8{};
 
@@ -19033,12 +19033,12 @@ pub const SSL = opaque {
         _ = SSL_clear_mode(ssl, mode);
 
         const alpns = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-        std.debug.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
+        bun.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
 
         SSL_enable_signed_cert_timestamps(ssl);
         SSL_enable_ocsp_stapling(ssl);
 
-        // std.debug.assert(SSL_set_strict_cipher_list(ssl, SSL_DEFAULT_CIPHER_LIST) == 0);
+        // bun.assert(SSL_set_strict_cipher_list(ssl, SSL_DEFAULT_CIPHER_LIST) == 0);
 
         SSL_set_enable_ech_grease(ssl, 1);
     }
@@ -19205,22 +19205,22 @@ pub const BIOMethod = struct {
     ) *BIO_METHOD {
         const method = BIO_meth_new(BIO_get_new_index() | BIO_TYPE_SOURCE_SINK, name);
         if (comptime create__) |create_| {
-            std.debug.assert(BIO_meth_set_create(method, create_) > 0);
+            bun.assert(BIO_meth_set_create(method, create_) > 0);
         }
         if (comptime destroy__) |destroy_| {
-            std.debug.assert(BIO_meth_set_destroy(method, destroy_) > 0);
+            bun.assert(BIO_meth_set_destroy(method, destroy_) > 0);
         }
         if (comptime write__) |write_| {
-            std.debug.assert(BIO_meth_set_write(method, write_) > 0);
+            bun.assert(BIO_meth_set_write(method, write_) > 0);
         }
         if (comptime read__) |read_| {
-            std.debug.assert(BIO_meth_set_read(method, read_) > 0);
+            bun.assert(BIO_meth_set_read(method, read_) > 0);
         }
         if (comptime gets__) |gets_| {
-            std.debug.assert(BIO_meth_set_gets(method, gets_) > 0);
+            bun.assert(BIO_meth_set_gets(method, gets_) > 0);
         }
         if (comptime ctrl__) |ctrl_| {
-            std.debug.assert(BIO_meth_set_ctrl(method, ctrl_) > 0);
+            bun.assert(BIO_meth_set_ctrl(method, ctrl_) > 0);
         }
 
         return method;

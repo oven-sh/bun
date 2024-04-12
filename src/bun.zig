@@ -129,7 +129,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     }
 
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
-        std.debug.assert(FDImpl.decode(fd).kind == kind);
+        assert(FDImpl.decode(fd).kind == kind);
     }
 
     pub fn cwd() FileDescriptor {
@@ -262,7 +262,7 @@ pub fn len(value: anytype) usize {
                 return indexOfSentinel(info.child, sentinel, value);
             },
             .C => {
-                std.debug.assert(value != null);
+                assert(value != null);
                 return indexOfSentinel(info.child, 0, value);
             },
             .Slice => value.len,
@@ -398,14 +398,14 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    if (comptime Environment.allow_assert) std.debug.assert(dest.len >= src.len);
+    if (comptime Environment.allow_assert) assert(dest.len >= src.len);
     if (@intFromPtr(src.ptr) == @intFromPtr(dest.ptr) or src.len == 0) return;
 
     const input: []const u8 = std.mem.sliceAsBytes(src);
     const output: []u8 = std.mem.sliceAsBytes(dest);
 
-    std.debug.assert(input.len > 0);
-    std.debug.assert(output.len > 0);
+    assert(input.len > 0);
+    assert(output.len > 0);
 
     const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
         @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
@@ -515,7 +515,7 @@ pub fn rand(bytes: []u8) void {
 pub const ObjectPool = @import("./pool.zig").ObjectPool;
 
 pub fn assertNonBlocking(fd: anytype) void {
-    std.debug.assert(
+    assert(
         (std.os.fcntl(fd, std.os.F.GETFL, 0) catch unreachable) & std.os.O.NONBLOCK != 0,
     );
 }
@@ -530,7 +530,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
         @panic("TODO on Windows");
     }
-    std.debug.assert(fd != invalid_fd);
+    assert(fd != invalid_fd);
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd.cast(),
@@ -577,7 +577,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         }
         return;
     }
-    std.debug.assert(fd != invalid_fd);
+    assert(fd != invalid_fd);
 
     var polls = [_]std.os.pollfd{
         .{
@@ -675,7 +675,7 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
         @as(u32, @truncate(slice.len)),
     };
     if (comptime Environment.allow_assert)
-        std.debug.assert(strings.eqlLong(slice, buffer[r[0]..][0..r[1]], false));
+        assert(strings.eqlLong(slice, buffer[r[0]..][0..r[1]], false));
     return r;
 }
 
@@ -815,7 +815,7 @@ pub const FDHashMapContext = struct {
         // a file descriptor is i32 on linux, u64 on windows
         // the goal here is to do zero work and widen the 32 bit type to 64
         // this should compile error if FileDescriptor somehow is larger than 64 bits.
-        comptime std.debug.assert(@bitSizeOf(FileDescriptor) <= 64);
+        comptime assert(@bitSizeOf(FileDescriptor) <= 64);
         return @intCast(fd.int());
     }
     pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
@@ -1350,7 +1350,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
                 return i;
             },
             .C => {
-                std.debug.assert(ptr != null);
+                assert(ptr != null);
                 return indexOfSentinel(ptr_info.child, end, ptr);
             },
             .Slice => {
@@ -1411,7 +1411,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
                 .C => {
                     new_ptr_info.sentinel = &end;
                     // C pointers are always allowzero, but we don't want the return type to be.
-                    std.debug.assert(new_ptr_info.is_allowzero);
+                    assert(new_ptr_info.is_allowzero);
                     new_ptr_info.is_allowzero = false;
                 },
             }
@@ -1450,7 +1450,7 @@ pub fn cstring(input: []const u8) [:0]const u8 {
         return "";
 
     if (comptime Environment.allow_assert) {
-        std.debug.assert(
+        assert(
             input.ptr[input.len] == 0,
         );
     }
@@ -2822,7 +2822,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
 
         pub fn destroy(self: *T) void {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(self.ref_count == 0);
+                assert(self.ref_count == 0);
                 allocation_logger("destroy() = {*}", .{self});
             }
 
@@ -2870,7 +2870,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
             ptr.* = t;
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(ptr.ref_count == 1);
+                assert(ptr.ref_count == 1);
                 allocation_logger("new() = {*}", .{ptr});
             }
 
@@ -2944,7 +2944,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
         err;
 
     if (Environment.allow_assert) {
-        std.debug.assert(num != 0);
+        assert(num != 0);
     }
 
     if (Environment.os == .windows) {
@@ -2952,7 +2952,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
         num = @abs(num);
     } else {
         if (Environment.allow_assert) {
-            std.debug.assert(num > 0);
+            assert(num > 0);
         }
     }
 
@@ -3085,3 +3085,39 @@ pub fn SliceIterator(comptime T: type) type {
 }
 
 pub const Futex = @import("./futex.zig");
+
+noinline fn assertionFailure() noreturn {
+    if (@inComptime()) {
+        @compileError("assertion failure");
+    }
+
+    @setCold(true);
+    Output.panic("Internal assertion failure. This is a bug in Bun.", .{});
+}
+
+pub inline fn debugAssert(cheap_value_only_plz: bool) void {
+    if (comptime !Environment.isDebug) {
+        return;
+    }
+
+    if (!cheap_value_only_plz) {
+        unreachable;
+    }
+}
+
+pub inline fn assert(value: bool) void {
+    if (comptime !Environment.allow_assert) {
+        return;
+    }
+
+    if (!value) {
+        if (comptime Environment.isDebug) unreachable;
+        assertionFailure();
+    }
+}
+
+pub inline fn unsafeAssert(condition: bool) void {
+    if (!condition) {
+        unreachable;
+    }
+}

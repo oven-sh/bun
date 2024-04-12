@@ -954,7 +954,7 @@ pub const SocketContext = opaque {
         }
     }
 
-    pub fn close(this: *SocketContext, ssl: bool) void {
+    fn close(this: *SocketContext, ssl: bool) void {
         debug("us_socket_context_close({d})", .{@intFromPtr(this)});
         us_socket_context_close(@as(i32, @intFromBool(ssl)), this);
     }

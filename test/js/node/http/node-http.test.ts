@@ -1751,7 +1751,7 @@ it("#10177 response.write with non-ascii latin1 should not cause duplicated char
   const expected = "á" + "-".repeat(254) + "x";
   const server = require("http")
     .createServer((_, response) => {
-      response.write("á" + "-".repeat(254) + "x");
+      response.write(expected);
       response.write("");
       response.end();
     })
@@ -1773,7 +1773,7 @@ it("#10177 response.write with non-ascii latin1 should not cause duplicated char
           expect(result).toBe(expected);
         }
       } finally {
-        server.close();
+        server.closeAllConnections();
         Bun.gc(true);
       }
     });

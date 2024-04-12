@@ -4,7 +4,8 @@ import { bunEnv } from "harness";
 import { appendFileSync, closeSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir, devNull } from "os";
 import { join } from "path";
-import { TestBuilder } from "./util";
+import { createTestBuilder } from "./util";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 $.env(bunEnv);
 $.cwd(process.cwd());
@@ -83,6 +84,8 @@ describe("fd leak", () => {
       writeFileSync(tempfile, testcode);
 
       const impl = /* ts */ `
+              const TestBuilder = createTestBuilder(import.meta.path);
+
               const threshold = ${threshold}
               let prev: number | undefined = undefined;
               let prevprev: number | undefined = undefined;

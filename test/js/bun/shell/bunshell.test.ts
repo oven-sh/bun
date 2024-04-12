@@ -10,7 +10,8 @@ import { mkdir, mkdtemp, realpath, rm, stat } from "fs/promises";
 import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
-import { TestBuilder, sortedShellOutput } from "./util";
+import { createTestBuilder, sortedShellOutput } from "./util";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 $.env(bunEnv);
 $.cwd(process.cwd());

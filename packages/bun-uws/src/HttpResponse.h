@@ -573,14 +573,6 @@ public:
         return this;
     }
 
-    /* Remove handler for writable HTTP response */
-    HttpResponse *clearOnWritable() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        httpResponseData->onWritable = nullptr;
-        return this;
-    }
-
     /* Attach handler for aborted HTTP request */
     HttpResponse *onAborted(MoveOnlyFunction<void()> &&handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();

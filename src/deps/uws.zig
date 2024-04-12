@@ -893,7 +893,7 @@ pub const SocketContext = opaque {
         us_socket_context_free(@as(i32, 0), this);
     }
 
-    pub fn cleanCallbacks(ctx: *SocketContext, comptime is_ssl: bool) void {
+    pub fn cleanCallbacks(ctx: *SocketContext, is_ssl: bool) void {
         const ssl_int: i32 = @intFromBool(is_ssl);
         // replace callbacks with dummy ones
         const DummyCallbacks = struct {
@@ -943,6 +943,8 @@ pub const SocketContext = opaque {
 
     /// closes and deinit the SocketContexts
     pub fn deinit(this: *SocketContext, ssl: bool) void {
+        // at this point we dont care about the callback anymore because we are deiniting after this
+        this.cleanCallbacks(ssl);
         this.close(ssl);
         //always deinit in next iteration
         if (ssl) {

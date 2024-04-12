@@ -1747,7 +1747,7 @@ if (process.platform !== "win32") {
   });
 }
 
-it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", async () => {
+it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", done => {
   // x = ascii
   // á = latin1 supplementary character
   // 📙 = emoji
@@ -1760,17 +1760,24 @@ it("#10177 response.write with non-ascii latin1 should not cause duplicated char
   // 16Kb = cork buffer
   // 64Kb = large than cork buffer
   const sizes = [128, 256, 1024, 8 * 1024, 16 * 1024, 64 * 1024];
-  for (const char of chars) {
-    for (const size of sizes) {
-      const expected = char + "-".repeat(size) + "x";
-      const { promise, resolve } = Promise.withResolvers();
-      const server = require("http")
-        .createServer((_, response) => {
-          response.write(expected);
-          response.write("");
-          response.end();
-        })
-        .listen(0, "localhost", async (err, hostname, port) => {
+  let expected = "";
+
+  function finish(err) {
+    server.closeAllConnections();
+    Bun.gc(true);
+    done(err);
+  }
+  const server = require("http")
+    .createServer((_, response) => {
+      response.write(expected);
+      response.write("");
+      response.end();
+    })
+    .listen(0, "localhost", async (err, hostname, port) => {
+      for (const char of chars) {
+        for (const size of sizes) {
+          expected = char + "-".repeat(size) + "x";
+
           try {
             expect(err).toBeFalsy();
             expect(port).toBeGreaterThan(0);
@@ -1787,13 +1794,11 @@ it("#10177 response.write with non-ascii latin1 should not cause duplicated char
             for (const result of all) {
               expect(result).toBe(expected);
             }
-          } finally {
-            server.closeAllConnections();
-            Bun.gc(true);
-            resolve();
+          } catch (err) {
+            return finish(err);
           }
-        });
-      await promise;
-    }
-  }
+        }
+      }
+      finish();
+    });
 });

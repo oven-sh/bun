@@ -1748,35 +1748,52 @@ if (process.platform !== "win32") {
 }
 
 it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", async () => {
-  const expected = "á" + "-".repeat(254) + "x";
-  const server = require("http")
-    .createServer((_, response) => {
-      response.write(expected);
-      response.write("");
-      response.end();
-    })
-    .listen(0, "localhost", async (err, hostname, port) => {
-      try {
-        expect(err).toBeFalsy();
-        expect(port).toBeGreaterThan(0);
-        const url = `http://${hostname}:${port}`;
-        const count = 1000;
-        const all = [];
-        const batchSize = 20;
-        while (all.length < count) {
-          const batch = Array.from({ length: batchSize }, () => fetch(url).then(a => a.text()));
+  // x = ascii
+  // á = latin1 supplementary character
+  // 📙 = emoji
+  // 👍🏽 = its a grapheme of 👍 🟤
+  // "\u{1F600}" = utf16
+  const chars = ["x", "á", "📙", "👍🏽", "\u{1F600}"];
 
-          all.push(...(await Promise.all(batch)));
-        }
+  // 128 = small than waterMark, 256 = waterMark, 1024 = large than waterMark
+  // 8Kb = small than cork buffer
+  // 16Kb = cork buffer
+  // 64Kb = large than cork buffer
+  const sizes = [128, 256, 1024, 8 * 1024, 16 * 1024, 64 * 1024];
+  for (const char of chars) {
+    for (const size of sizes) {
+      const expected = char + "-".repeat(size) + "x";
+      const { promise, resolve } = Promise.withResolvers();
+      const server = require("http")
+        .createServer((_, response) => {
+          response.write(expected);
+          response.write("");
+          response.end();
+        })
+        .listen(0, "localhost", async (err, hostname, port) => {
+          try {
+            expect(err).toBeFalsy();
+            expect(port).toBeGreaterThan(0);
+            const url = `http://${hostname}:${port}`;
+            const count = 20;
+            const all = [];
+            const batchSize = 20;
+            while (all.length < count) {
+              const batch = Array.from({ length: batchSize }, () => fetch(url).then(a => a.text()));
 
-        for (const result of all) {
-          expect(result).toBe(expected);
-        }
-      } finally {
-        server.closeAllConnections();
-        Bun.gc(true);
-      }
-    });
-  await Bun.sleep(1000);
-  Bun.gc(true);
+              all.push(...(await Promise.all(batch)));
+            }
+
+            for (const result of all) {
+              expect(result).toBe(expected);
+            }
+          } finally {
+            server.closeAllConnections();
+            Bun.gc(true);
+            resolve();
+          }
+        });
+      await promise;
+    }
+  }
 });

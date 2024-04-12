@@ -828,11 +828,14 @@ pub const Listener = struct {
 
         var listener = this.listener orelse return JSValue.jsUndefined();
         this.listener = null;
-        listener.close(this.ssl);
+
+        const forceClose = arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null;
+        if (!forceClose) {
+            listener.close(this.ssl);
+        }
 
         this.poll_ref.unref(this.handlers.vm);
 
-        const forceClose = arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null;
         if (this.handlers.active_connections == 0 or forceClose) {
             this.handlers.unprotect();
             // context deinit will close all connections

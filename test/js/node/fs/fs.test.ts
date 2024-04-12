@@ -2980,4 +2980,4 @@ it("using writeFile on an fd does not truncate it", () => {
   fs.closeSync(fd);
   const content = fs.readFileSync(join(temp, "file.txt"), "utf8");
   expect(content).toBe("xx");
-})
+});

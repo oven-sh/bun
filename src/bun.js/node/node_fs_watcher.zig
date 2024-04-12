@@ -147,7 +147,7 @@ pub const FSWatcher = struct {
         pub fn deinit(this: *FSWatchTask) void {
             this.cleanEntries();
             if (comptime Environment.allow_assert) {
-                std.debug.assert(&this.ctx.current_task != this);
+                bun.assert(&this.ctx.current_task != this);
             }
             this.destroy();
         }

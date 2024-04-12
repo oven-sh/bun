@@ -192,7 +192,7 @@ pub const LoadFromDiskResult = union(enum) {
 };
 
 pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
-    if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
+    if (comptime Environment.allow_assert) assert(FileSystem.instance_loaded);
 
     const buf = (if (filename.len > 0)
         File.readFrom(std.fs.cwd(), filename, allocator).unwrap()
@@ -532,7 +532,7 @@ pub const Tree = struct {
         }
 
         if (next.dependencies.len == 0) {
-            if (comptime Environment.allow_assert) std.debug.assert(builder.list.len == next.id + 1);
+            if (comptime Environment.allow_assert) assert(builder.list.len == next.id + 1);
             _ = builder.list.pop();
         }
     }
@@ -1450,7 +1450,7 @@ pub const Printer = struct {
                             needs_comma = false;
                         }
                         const version_name = dependency_version.literal.slice(string_buf);
-                        const needs_quote = always_needs_quote or std.mem.indexOfAny(u8, version_name, " |\t-/!") != null or strings.hasPrefixComptime(version_name, "npm:");
+                        const needs_quote = always_needs_quote or bun.strings.indexAnyComptime(version_name, " |\t-/!") != null or strings.hasPrefixComptime(version_name, "npm:");
 
                         if (needs_quote) {
                             try writer.writeByte('"');
@@ -1512,7 +1512,7 @@ pub const Printer = struct {
                                 behavior = dep.behavior;
 
                                 // assert its sorted
-                                if (comptime Environment.allow_assert) std.debug.assert(dependency_behavior_change_count < 3);
+                                if (comptime Environment.allow_assert) assert(dependency_behavior_change_count < 3);
                             }
 
                             try writer.writeAll("    ");
@@ -1539,19 +1539,19 @@ pub const Printer = struct {
 };
 
 pub fn verifyData(this: *const Lockfile) !void {
-    std.debug.assert(this.format == Lockfile.FormatVersion.current);
+    assert(this.format == Lockfile.FormatVersion.current);
     var i: usize = 0;
     while (i < this.packages.len) : (i += 1) {
         const package: Lockfile.Package = this.packages.get(i);
-        std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
-        std.debug.assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
-        std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
-        std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
-        std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
+        assert(this.str(&package.name).len == @as(usize, package.name.len()));
+        assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
+        assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
+        assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
+        assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
         const dependencies = package.dependencies.get(this.buffers.dependencies.items);
         for (dependencies) |dependency| {
-            std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
-            std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
+            assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
+            assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
         }
     }
 }
@@ -1608,7 +1608,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
             Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
             Global.crash();
         };
-        std.debug.assert(FileSystem.instance_loaded);
+        assert(FileSystem.instance_loaded);
     }
 
     var bytes = std.ArrayList(u8).init(bun.default_allocator);
@@ -1733,7 +1733,7 @@ pub fn getPackageID(
 
     switch (entry) {
         .PackageID => |id| {
-            if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
+            if (comptime Environment.allow_assert) assert(id < resolutions.len);
 
             if (resolutions[id].eql(resolution, buf, buf)) {
                 return id;
@@ -1745,7 +1745,7 @@ pub fn getPackageID(
         },
         .PackageIDMultiple => |ids| {
             for (ids.items) |id| {
-                if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
+                if (comptime Environment.allow_assert) assert(id < resolutions.len);
 
                 if (resolutions[id].eql(resolution, buf, buf)) {
                     return id;
@@ -1812,7 +1812,7 @@ pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) !Lockfile.Pack
 fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) !Lockfile.Package {
     defer {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(this.getPackageID(package_.name_hash, null, &package_.resolution) != null);
+            assert(this.getPackageID(package_.name_hash, null, &package_.resolution) != null);
         }
     }
     var package = package_;
@@ -1874,7 +1874,7 @@ pub const StringBuilder = struct {
     }
 
     pub fn clamp(this: *StringBuilder) void {
-        if (comptime Environment.allow_assert) std.debug.assert(this.cap >= this.len);
+        if (comptime Environment.allow_assert) assert(this.cap >= this.len);
 
         const excess = this.cap - this.len;
 
@@ -1906,15 +1906,15 @@ pub const StringBuilder = struct {
             };
         }
         if (comptime Environment.allow_assert) {
-            std.debug.assert(this.len <= this.cap); // didn't count everything
-            std.debug.assert(this.ptr != null); // must call allocate first
+            assert(this.len <= this.cap); // didn't count everything
+            assert(this.ptr != null); // must call allocate first
         }
 
         bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
         const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
         this.len += slice.len;
 
-        if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+        if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
         return switch (Type) {
             String => String.init(this.lockfile.buffers.string_bytes.items, final_slice),
@@ -1933,8 +1933,8 @@ pub const StringBuilder = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(this.len <= this.cap); // didn't count everything
-            std.debug.assert(this.ptr != null); // must call allocate first
+            assert(this.len <= this.cap); // didn't count everything
+            assert(this.ptr != null); // must call allocate first
         }
 
         const string_entry = this.lockfile.string_pool.getOrPut(hash) catch unreachable;
@@ -1946,7 +1946,7 @@ pub const StringBuilder = struct {
             string_entry.value_ptr.* = String.init(this.lockfile.buffers.string_bytes.items, final_slice);
         }
 
-        if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+        if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
         return switch (Type) {
             String => string_entry.value_ptr.*,
@@ -2070,7 +2070,7 @@ pub const OverrideMap = struct {
         builder: *Lockfile.StringBuilder,
     ) !void {
         if (Environment.allow_assert) {
-            std.debug.assert(this.map.entries.len == 0); // only call parse once
+            assert(this.map.entries.len == 0); // only call parse once
         }
         if (expr.asProperty("overrides")) |overrides| {
             try this.parseFromOverrides(lockfile, root_package, json_source, log, overrides.expr, builder);
@@ -2397,7 +2397,7 @@ pub const Package = extern struct {
 
             pub fn first(this: Package.Scripts.List) Lockfile.Scripts.Entry {
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(this.items[this.first_index] != null);
+                    assert(this.items[this.first_index] != null);
                 }
                 return this.items[this.first_index].?;
             }
@@ -2925,7 +2925,7 @@ pub const Package = extern struct {
             };
 
             const total_len = dependencies_list.items.len + total_dependencies_count;
-            if (comptime Environment.allow_assert) std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
+            if (comptime Environment.allow_assert) assert(dependencies_list.items.len == resolutions_list.items.len);
 
             var dependencies: []Dependency = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
             @memset(dependencies, Dependency{});
@@ -3025,7 +3025,7 @@ pub const Package = extern struct {
                 const version_strings = map.value.get(manifest.external_strings_for_versions);
                 total_dependencies_count += map.value.len;
 
-                if (comptime Environment.isDebug) std.debug.assert(keys.len == version_strings.len);
+                if (comptime Environment.isDebug) assert(keys.len == version_strings.len);
 
                 for (keys, version_strings) |key, ver| {
                     string_builder.count(key.slice(string_buf));
@@ -3069,7 +3069,7 @@ pub const Package = extern struct {
             };
 
             const total_len = dependencies_list.items.len + total_dependencies_count;
-            if (comptime Environment.allow_assert) std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
+            if (comptime Environment.allow_assert) assert(dependencies_list.items.len == resolutions_list.items.len);
 
             var dependencies = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
             @memset(dependencies, .{});
@@ -3080,7 +3080,7 @@ pub const Package = extern struct {
                 const keys = map.name.get(manifest.external_strings);
                 const version_strings = map.value.get(manifest.external_strings_for_versions);
 
-                if (comptime Environment.isDebug) std.debug.assert(keys.len == version_strings.len);
+                if (comptime Environment.isDebug) assert(keys.len == version_strings.len);
                 const is_peer = comptime strings.eqlComptime(group.field, "peer_dependencies");
 
                 list: for (keys, version_strings, 0..) |key, version_string_, i| {
@@ -3658,8 +3658,8 @@ pub const Package = extern struct {
                     );
                 });
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(path.len() > 0);
-                    std.debug.assert(!std.fs.path.isAbsolute(path.slice(buf)));
+                    assert(path.len() > 0);
+                    assert(!std.fs.path.isAbsolute(path.slice(buf)));
                 }
                 dependency_version.literal = path;
                 dependency_version.value.workspace = path;
@@ -3776,7 +3776,7 @@ pub const Package = extern struct {
 
         pub fn insert(self: *WorkspaceMap, key: string, value: Entry) !void {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(!strings.containsChar(key, std.fs.path.sep_windows));
+                assert(!strings.containsChar(key, std.fs.path.sep_windows));
             }
 
             if (comptime Environment.isDebug) {
@@ -4065,7 +4065,7 @@ pub const Package = extern struct {
                     }
 
                     const dir_fd = entry.cache.fd;
-                    std.debug.assert(dir_fd != bun.invalid_fd); // kind() should've opened
+                    assert(dir_fd != bun.invalid_fd); // kind() should've opened
                     defer fallback.fixed_buffer_allocator.reset();
 
                     const workspace_entry = processWorkspaceName(
@@ -4428,7 +4428,7 @@ pub const Package = extern struct {
 
         const off = lockfile.buffers.dependencies.items.len;
         const total_len = off + total_dependencies_count;
-        if (comptime Environment.allow_assert) std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
+        if (comptime Environment.allow_assert) assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
 
         const package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
 
@@ -4493,7 +4493,7 @@ pub const Package = extern struct {
                                     extern_strings[i] = string_builder.append(ExternalString, bin_prop.value.?.asString(allocator) orelse break :bin);
                                     i += 1;
                                 }
-                                if (comptime Environment.allow_assert) std.debug.assert(i == extern_strings.len);
+                                if (comptime Environment.allow_assert) assert(i == extern_strings.len);
                                 package.bin = .{
                                     .tag = .map,
                                     .value = .{ .map = ExternalStringList.init(lockfile.buffers.extern_strings.items, extern_strings) },
@@ -4882,7 +4882,7 @@ pub const Package = extern struct {
                     debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
                     if (comptime strings.eqlComptime(field.name, "meta")) {
                         for (value) |meta| {
-                            std.debug.assert(meta.has_install_script != .old);
+                            assert(meta.has_install_script != .old);
                         }
                     }
                 }
@@ -5294,7 +5294,7 @@ const Buffers = struct {
         {
             var external_deps = external_dependency_list.ptr;
             const dependencies = this.dependencies.items;
-            if (comptime Environment.allow_assert) std.debug.assert(external_dependency_list.len == dependencies.len);
+            if (comptime Environment.allow_assert) assert(external_dependency_list.len == dependencies.len);
             for (dependencies) |*dep| {
                 dep.* = Dependency.toDependency(external_deps[0], extern_context);
                 external_deps += 1;
@@ -5370,16 +5370,16 @@ pub const Serializer = struct {
             for (this.packages.items(.resolution)) |res| {
                 switch (res.tag) {
                     .folder => {
-                        std.debug.assert(!strings.containsChar(this.str(&res.value.folder), std.fs.path.sep_windows));
+                        assert(!strings.containsChar(this.str(&res.value.folder), std.fs.path.sep_windows));
                     },
                     .symlink => {
-                        std.debug.assert(!strings.containsChar(this.str(&res.value.symlink), std.fs.path.sep_windows));
+                        assert(!strings.containsChar(this.str(&res.value.symlink), std.fs.path.sep_windows));
                     },
                     .local_tarball => {
-                        std.debug.assert(!strings.containsChar(this.str(&res.value.local_tarball), std.fs.path.sep_windows));
+                        assert(!strings.containsChar(this.str(&res.value.local_tarball), std.fs.path.sep_windows));
                     },
                     .workspace => {
-                        std.debug.assert(!strings.containsChar(this.str(&res.value.workspace), std.fs.path.sep_windows));
+                        assert(!strings.containsChar(this.str(&res.value.workspace), std.fs.path.sep_windows));
                     },
                     else => {},
                 }
@@ -5688,7 +5688,7 @@ pub const Serializer = struct {
             }
         }
 
-        if (comptime Environment.allow_assert) std.debug.assert(stream.pos == total_buffer_size);
+        if (comptime Environment.allow_assert) assert(stream.pos == total_buffer_size);
 
         // const end = try reader.readInt(u64, .little);
         return res;
@@ -5812,7 +5812,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
             .PackageID => |id| {
                 const resolutions = this.packages.items(.resolution);
 
-                if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
+                if (comptime Environment.allow_assert) assert(id < resolutions.len);
                 if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                     return id;
                 }
@@ -5821,7 +5821,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
                 const resolutions = this.packages.items(.resolution);
 
                 for (ids.items) |id| {
-                    if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
+                    if (comptime Environment.allow_assert) assert(id < resolutions.len);
                     if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                         return id;
                     }
@@ -6191,3 +6191,5 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         }
     }
 }
+
+const assert = bun.assert;

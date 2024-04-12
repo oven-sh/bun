@@ -22,7 +22,7 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         const result = whichWin(&convert_buf, path, cwd, bin) orelse return null;
         const result_converted = bun.strings.convertUTF16toUTF8InBuffer(buf, result) catch unreachable;
         buf[result_converted.len] = 0;
-        std.debug.assert(result_converted.ptr == buf.ptr);
+        bun.assert(result_converted.ptr == buf.ptr);
         return buf[0..result_converted.len :0];
     }
 
@@ -78,7 +78,7 @@ pub fn endsWithExtension(str: []const u8) bool {
     if (str[str.len - 4] != '.') return false;
     const file_ext = str[str.len - 3 ..];
     inline for (win_extensions) |ext| {
-        comptime std.debug.assert(ext.len == 3);
+        comptime bun.assert(ext.len == 3);
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(file_ext, ext)) return true;
     }
     return false;
@@ -173,7 +173,7 @@ test "which" {
     var buf: bun.fs.PathBuffer = undefined;
     const realpath = bun.getenvZ("PATH") orelse unreachable;
     const whichbin = which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "which");
-    try std.testing.expectEqualStrings(whichbin orelse return std.debug.assert(false), "/usr/bin/which");
+    try std.testing.expectEqualStrings(whichbin orelse return bun.assert(false), "/usr/bin/which");
     try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "baconnnnnn"));
     try std.testing.expect(null != which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "zig"));
     try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "bin"));

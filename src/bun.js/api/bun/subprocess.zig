@@ -31,7 +31,7 @@ pub inline fn assertStdioResult(result: StdioResult) void {
     if (comptime Environment.allow_assert) {
         if (Environment.isPosix) {
             if (result) |fd| {
-                std.debug.assert(fd != bun.invalid_fd);
+                bun.assert(fd != bun.invalid_fd);
             }
         }
     }
@@ -1055,11 +1055,11 @@ pub const Subprocess = struct {
 
         fn deinit(this: *PipeReader) void {
             if (comptime Environment.isPosix) {
-                std.debug.assert(this.reader.isDone());
+                bun.assert(this.reader.isDone());
             }
 
             if (comptime Environment.isWindows) {
-                std.debug.assert(this.reader.source == null or this.reader.source.?.isClosed());
+                bun.assert(this.reader.source == null or this.reader.source.?.isClosed());
             }
 
             if (this.state == .done) {
@@ -1238,7 +1238,7 @@ pub const Subprocess = struct {
                     };
                 },
                 .memfd => |memfd| {
-                    std.debug.assert(memfd != bun.invalid_fd);
+                    bun.assert(memfd != bun.invalid_fd);
                     return Writable{ .memfd = memfd };
                 },
                 .fd => {
@@ -1485,7 +1485,7 @@ pub const Subprocess = struct {
         // access GC'd values during the finalizer
         this.this_jsvalue = .zero;
 
-        std.debug.assert(!this.hasPendingActivity() or JSC.VirtualMachine.get().isShuttingDown());
+        bun.assert(!this.hasPendingActivity() or JSC.VirtualMachine.get().isShuttingDown());
         this.finalizeStreams();
 
         this.process.detach();
@@ -1591,6 +1591,7 @@ pub const Subprocess = struct {
         var argv0: ?[*:0]const u8 = null;
 
         var windows_hide: bool = false;
+        var windows_verbatim_arguments: bool = false;
 
         {
             if (args.isEmptyOrUndefinedOrNull()) {
@@ -1869,6 +1870,12 @@ pub const Subprocess = struct {
                             windows_hide = val.asBoolean();
                         }
                     }
+
+                    if (args.get(globalThis, "windowsVerbatimArguments")) |val| {
+                        if (val.isBoolean()) {
+                            windows_verbatim_arguments = val.asBoolean();
+                        }
+                    }
                 }
             }
         }
@@ -1966,6 +1973,7 @@ pub const Subprocess = struct {
 
             .windows = if (Environment.isWindows) .{
                 .hide_window = windows_hide,
+                .verbatim_arguments = windows_verbatim_arguments,
                 .loop = JSC.EventLoopHandle.init(jsc_vm),
             } else {},
         };

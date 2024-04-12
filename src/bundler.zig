@@ -1719,7 +1719,7 @@ pub const Bundler = struct {
                     bun.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname.ext);
                     len += absolute_pathname.ext.len;
 
-                    if (comptime Environment.allow_assert) std.debug.assert(len > 0);
+                    if (comptime Environment.allow_assert) bun.assert(len > 0);
 
                     const decoded_entry_point_path = tmp_buildfile_buf2[0..len];
                     break :brk try bundler.resolver.resolve(bundler.fs.top_level_dir, decoded_entry_point_path, .entry_point);

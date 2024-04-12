@@ -1450,7 +1450,7 @@ pub const Printer = struct {
                             needs_comma = false;
                         }
                         const version_name = dependency_version.literal.slice(string_buf);
-                        const needs_quote = always_needs_quote or std.mem.indexOfAny(u8, version_name, " |\t-/!") != null or strings.hasPrefixComptime(version_name, "npm:");
+                        const needs_quote = always_needs_quote or bun.strings.indexAnyComptime(version_name, " |\t-/!") != null or strings.hasPrefixComptime(version_name, "npm:");
 
                         if (needs_quote) {
                             try writer.writeByte('"');

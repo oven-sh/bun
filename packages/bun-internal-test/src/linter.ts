@@ -16,6 +16,7 @@ const write = (text: string) => {
   report += text;
 };
 for (const [banned, suggestion] of Object.entries(BANNED)) {
+  if (banned.length === 0) continue;
   // Run git grep to find occurrences of std.debug.assert in .zig files
   let stdout = await $`git grep -n "${banned}" "src/**/**.zig"`.text();
 

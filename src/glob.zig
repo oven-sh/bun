@@ -244,7 +244,7 @@ pub fn GlobWalker_(
                 }
 
                 if (bun.Environment.allow_assert) {
-                    std.debug.assert(this.fds_open == 0);
+                    bun.assert(this.fds_open == 0);
                 }
             }
 
@@ -264,7 +264,7 @@ pub fn GlobWalker_(
                 if (bun.Environment.allow_assert) {
                     this.fds_open += 1;
                     // If this is over 2 then this means that there is a bug in the iterator code
-                    std.debug.assert(this.fds_open <= 2);
+                    bun.assert(this.fds_open <= 2);
                 }
             }
 

@@ -7,7 +7,7 @@ const ThreadPool = @This();
 const Futex = @import("./futex.zig");
 
 const Environment = bun.Environment;
-const assert = std.debug.assert;
+const assert = bun.assert;
 const Atomic = std.atomic.Value;
 pub const OnSpawnCallback = *const fn (ctx: ?*anyopaque) ?*anyopaque;
 
@@ -389,7 +389,7 @@ test "parallel for loop" {
         pub fn run(ctx: *@This(), value: u32, _: usize) void {
             std.time.sleep(value);
             ctx.completed += 1;
-            std.debug.assert(ctx.completed <= ctx.total);
+            bun.assert(ctx.completed <= ctx.total);
         }
     };
     const runny = try std.heap.page_allocator.create(Runner);

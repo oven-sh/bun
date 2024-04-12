@@ -96,7 +96,6 @@ pub fn crashHandler(
     begin_addr: ?usize,
 ) noreturn {
     @setCold(true);
-    std.crypto.random
 
     // If a segfault happens while panicking, we want it to actually segfault, not trigger
     // the handler.

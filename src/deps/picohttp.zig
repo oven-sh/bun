@@ -1,14 +1,15 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const c = @import("picohttpparser.zig");
-const ExactSizeMatcher = @import("root").bun.ExactSizeMatcher;
+const ExactSizeMatcher = bun.ExactSizeMatcher;
 const Match = ExactSizeMatcher(2);
-const Output = @import("root").bun.Output;
-const Environment = @import("root").bun.Environment;
-const StringBuilder = @import("root").bun.StringBuilder;
+const Output = bun.Output;
+const Environment = bun.Environment;
+const StringBuilder = bun.StringBuilder;
 
 const fmt = std.fmt;
 
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 pub const Header = struct {
     name: []const u8,

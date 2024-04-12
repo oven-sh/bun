@@ -12,7 +12,7 @@ const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const std = @import("std");
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -50,7 +50,7 @@ const Report = @import("./report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 
 pub fn MacroJSValueType_() type {
@@ -1719,7 +1719,7 @@ pub const Bundler = struct {
                     bun.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname.ext);
                     len += absolute_pathname.ext.len;
 
-                    if (comptime Environment.allow_assert) std.debug.assert(len > 0);
+                    if (comptime Environment.allow_assert) bun.assert(len > 0);
 
                     const decoded_entry_point_path = tmp_buildfile_buf2[0..len];
                     break :brk try bundler.resolver.resolve(bundler.fs.top_level_dir, decoded_entry_point_path, .entry_point);

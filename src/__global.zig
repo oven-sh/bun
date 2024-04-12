@@ -2,9 +2,9 @@ const std = @import("std");
 const Environment = @import("./env.zig");
 
 const Output = @import("output.zig");
-const use_mimalloc = @import("root").bun.use_mimalloc;
+const use_mimalloc = bun.use_mimalloc;
 const StringTypes = @import("./string_types.zig");
-const Mimalloc = @import("root").bun.Mimalloc;
+const Mimalloc = bun.Mimalloc;
 const bun = @import("root").bun;
 
 const version_string = Environment.version_string;
@@ -61,7 +61,7 @@ else
 
 pub inline fn getStartTime() i128 {
     if (Environment.isTest) return 0;
-    return @import("root").bun.start_time;
+    return bun.start_time;
 }
 
 pub fn setThreadName(name: [:0]const u8) void {
@@ -160,11 +160,9 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
     }
 }
 
-// std.debug.assert but happens at runtime
-pub fn invariant(condition: bool, comptime fmt: string, args: anytype) void {
-    if (!condition) {
-        bun.Output.panic(fmt, args);
-    }
+pub fn notimpl() noreturn {
+    @setCold(true);
+    Global.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover
@@ -174,7 +172,7 @@ pub fn crash() noreturn {
 }
 
 const Global = @This();
-const string = @import("root").bun.string;
+const string = bun.string;
 
 pub const BunInfo = struct {
     bun_version: string,

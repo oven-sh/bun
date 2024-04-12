@@ -458,15 +458,15 @@ pub const RunCommand = struct {
         // a relative lookup, because in the case we do find it, we have to
         // generate this full path anyways.
         if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path and bun.strings.hasSuffixComptime(executable, ".exe")) {
-            std.debug.assert(std.fs.path.isAbsolute(executable));
+            bun.assert(std.fs.path.isAbsolute(executable));
 
             // Using @constCast is safe because we know that
             // `direct_launch_buffer` is the data destination that assumption is
             // backed by the immediate assertion.
             var wpath = @constCast(bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable));
-            std.debug.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
+            bun.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
 
-            std.debug.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
+            bun.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
             wpath.len += ".bunx".len - ".exe".len;
             @memcpy(wpath[wpath.len - "bunx".len ..], comptime bun.strings.w("bunx"));
 
@@ -806,7 +806,7 @@ pub const RunCommand = struct {
                         .ALREADY_EXISTS => {},
                         else => {
                             {
-                                std.debug.assert(target_path_buffer[dir_slice.len] == '\\');
+                                bun.assert(target_path_buffer[dir_slice.len] == '\\');
                                 target_path_buffer[dir_slice.len] = 0;
                                 std.os.mkdirW(target_path_buffer[0..dir_slice.len :0], 0) catch {};
                                 target_path_buffer[dir_slice.len] = '\\';
@@ -929,23 +929,14 @@ pub const RunCommand = struct {
         return root_dir_info;
     }
 
-    pub fn configurePathForRun(
+    pub fn configurePathForRunWithPackageJsonDir(
         ctx: Command.Context,
-        root_dir_info: *DirInfo,
+        package_json_dir: string,
         this_bundler: *bundler.Bundler,
         ORIGINAL_PATH: ?*string,
         cwd: string,
         force_using_bun: bool,
-    ) !void {
-        var package_json_dir: string = "";
-
-        if (root_dir_info.enclosing_package_json) |package_json| {
-            if (root_dir_info.package_json == null) {
-                // no trailing slash
-                package_json_dir = std.mem.trimRight(u8, package_json.source.path.name.dir, "/");
-            }
-        }
-
+    ) ![]u8 {
         const PATH = this_bundler.env.get("PATH") orelse "";
         if (ORIGINAL_PATH) |original_path| {
             original_path.* = PATH;
@@ -1015,7 +1006,29 @@ pub const RunCommand = struct {
             try new_path.appendSlice(PATH);
         }
 
-        this_bundler.env.map.put("PATH", new_path.items) catch bun.outOfMemory();
+        return new_path.items;
+    }
+
+    pub fn configurePathForRun(
+        ctx: Command.Context,
+        root_dir_info: *DirInfo,
+        this_bundler: *bundler.Bundler,
+        ORIGINAL_PATH: ?*string,
+        cwd: string,
+        force_using_bun: bool,
+    ) !void {
+        var package_json_dir: string = "";
+
+        if (root_dir_info.enclosing_package_json) |package_json| {
+            if (root_dir_info.package_json == null) {
+                // no trailing slash
+
+                package_json_dir = strings.withoutTrailingSlash(package_json.source.path.name.dir);
+            }
+        }
+
+        const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_bundler, ORIGINAL_PATH, cwd, force_using_bun);
+        this_bundler.env.map.put("PATH", new_path) catch bun.outOfMemory();
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
@@ -1615,7 +1628,7 @@ pub const RunCommand = struct {
     }
 
     pub fn execAsIfNode(ctx: Command.Context) !void {
-        std.debug.assert(CLI.pretend_to_be_node);
+        bun.assert(CLI.pretend_to_be_node);
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const trigger = bun.pathLiteral("/[eval]");
@@ -1673,12 +1686,12 @@ pub const BunXFastPath = struct {
         if (!bun.FeatureFlags.windows_bunx_fast_path) return;
 
         var ctx = ctx_const;
-        std.debug.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
+        bun.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
         debug("Attempting to find and load bunx file: '{}'", .{bun.fmt.utf16(path_to_use)});
         if (Environment.allow_assert) {
-            std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
+            bun.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
         }
         const handle = (bun.sys.openFileAtWindows(
             bun.invalid_fd, // absolute path is given

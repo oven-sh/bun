@@ -22,7 +22,7 @@ const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const ParseResult = bun.bundler.ParseResult;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Bundler = bun.Bundler;
@@ -34,47 +34,47 @@ const js_ast = bun.JSAst;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
-const ZigString = @import("root").bun.JSC.ZigString;
+const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../runtime.zig");
 const Router = @import("./api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const WebCore = @import("root").bun.JSC.WebCore;
+const WebCore = bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const String = bun.String;
 const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
-const js = @import("root").bun.JSC.C;
-const JSC = @import("root").bun.JSC;
+const js = bun.JSC.C;
+const JSC = bun.JSC;
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
-const JSValue = @import("root").bun.JSC.JSValue;
+const JSValue = bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
 
-const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
-const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
-const Node = @import("root").bun.JSC.Node;
-const ZigException = @import("root").bun.JSC.ZigException;
-const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = @import("root").bun.JSC.ErrorableResolvedSource;
-const ResolvedSource = @import("root").bun.JSC.ResolvedSource;
-const JSPromise = @import("root").bun.JSC.JSPromise;
-const JSInternalPromise = @import("root").bun.JSC.JSInternalPromise;
-const JSModuleLoader = @import("root").bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = @import("root").bun.JSC.JSPromiseRejectionOperation;
-const Exception = @import("root").bun.JSC.Exception;
-const ErrorableZigString = @import("root").bun.JSC.ErrorableZigString;
-const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
-const VM = @import("root").bun.JSC.VM;
-const JSFunction = @import("root").bun.JSC.JSFunction;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const ExceptionValueRef = bun.JSC.ExceptionValueRef;
+const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
+const ConsoleObject = bun.JSC.ConsoleObject;
+const Node = bun.JSC.Node;
+const ZigException = bun.JSC.ZigException;
+const ZigStackTrace = bun.JSC.ZigStackTrace;
+const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
+const ResolvedSource = bun.JSC.ResolvedSource;
+const JSPromise = bun.JSC.JSPromise;
+const JSInternalPromise = bun.JSC.JSInternalPromise;
+const JSModuleLoader = bun.JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
+const Exception = bun.JSC.Exception;
+const ErrorableZigString = bun.JSC.ErrorableZigString;
+const ZigGlobalObject = bun.JSC.ZigGlobalObject;
+const VM = bun.JSC.VM;
+const JSFunction = bun.JSC.JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
@@ -263,7 +263,7 @@ pub const SavedSourceMap = struct {
         return SourceMap.Mapping.find(parsed_mappings.mappings, line, column);
     }
 };
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
     return JSC.VirtualMachine.get().global;
@@ -1065,7 +1065,7 @@ pub const VirtualMachine = struct {
 
         pub export fn Debugger__didConnect() void {
             var this = VirtualMachine.get();
-            std.debug.assert(this.debugger.?.wait_for_connection);
+            bun.assert(this.debugger.?.wait_for_connection);
             this.debugger.?.wait_for_connection = false;
             this.debugger.?.poll_ref.unref(this);
         }
@@ -1600,7 +1600,7 @@ pub const VirtualMachine = struct {
 
     pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
         JSC.markBinding(@src());
-        std.debug.assert(input_.len > 0);
+        bun.assert(input_.len > 0);
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
         this.ref_strings_mutex.lock();
         defer this.ref_strings_mutex.unlock();
@@ -1629,7 +1629,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
-        std.debug.assert(input_.len > 0);
+        bun.assert(input_.len > 0);
         var _was_new = false;
         return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
     }
@@ -1642,7 +1642,7 @@ pub const VirtualMachine = struct {
         log: *logger.Log,
         comptime flags: FetchFlags,
     ) anyerror!ResolvedSource {
-        std.debug.assert(VirtualMachine.isLoaded());
+        bun.assert(VirtualMachine.isLoaded());
 
         if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
             return builtin;
@@ -1726,7 +1726,7 @@ pub const VirtualMachine = struct {
         is_esm: bool,
         comptime is_a_file_path: bool,
     ) !void {
-        std.debug.assert(VirtualMachine.isLoaded());
+        bun.assert(VirtualMachine.isLoaded());
         // macOS threadlocal vars are very slow
         // we won't change threads in this function
         // so we can copy it here

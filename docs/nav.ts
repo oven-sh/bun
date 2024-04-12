@@ -180,6 +180,9 @@ export default {
     page("install/lifecycle", "Lifecycle scripts", {
       description: "How Bun handles package lifecycle scripts with trustedDependencies",
     }),
+    page("cli/filter", "Filter", {
+      description: "Run scripts in multiple packages in parallel",
+    }),
     page("install/lockfile", "Lockfile", {
       description:
         "Bun's binary lockfile `bun.lockb` tracks your resolved dependency tree, making future installs fast and repeatable.",

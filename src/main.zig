@@ -15,7 +15,7 @@ pub const std_options = struct {
 pub const io_mode = .blocking;
 
 comptime {
-    std.debug.assert(builtin.target.cpu.arch.endian() == .little);
+    bun.assert(builtin.target.cpu.arch.endian() == .little);
 }
 
 extern fn bun_warn_avx_missing(url: [*:0]const u8) void;

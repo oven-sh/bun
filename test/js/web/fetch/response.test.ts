@@ -6,6 +6,10 @@ test("zero args returns an otherwise empty 200 response", () => {
   expect(response.statusText).toBe("");
 });
 
+test("calling cancel() on response body doesn't throw", () => {
+  expect(() => new Response("").body?.cancel()).not.toThrow();
+});
+
 test("undefined args don't throw", () => {
   const response = new Response("", {
     status: undefined,

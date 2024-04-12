@@ -1,19 +1,19 @@
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 const ZigString = JSC.ZigString;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
@@ -32,8 +32,8 @@ const Async = bun.Async;
 //         this.holder = owner;
 //         if (this.ptr == null) {
 //             this.ptr = bun.default_allocator.alloc(u8, 16384) catch @panic("Out of memory allocating corker");
-//             std.debug.assert(this.list.cap == 0);
-//             std.debug.assert(this.list.len == 0);
+//             bun.assert(this.list.cap == 0);
+//             bun.assert(this.list.len == 0);
 //             this.list.cap = 16384;
 //             this.list.ptr = this.ptr.?;
 //             this.list.len = 0;
@@ -298,7 +298,7 @@ const Handlers = struct {
 
     pub fn unprotect(this: *Handlers) void {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(this.protection_count > 0);
+            bun.assert(this.protection_count > 0);
             this.protection_count -= 1;
         }
         this.onOpen.unprotect();
@@ -790,7 +790,7 @@ pub const Listener = struct {
         log("onCreate", .{});
         var listener: *Listener = socket.context().?.ext(ssl, *Listener).?.*;
         const Socket = NewSocket(ssl);
-        std.debug.assert(ssl == listener.ssl);
+        bun.assert(ssl == listener.ssl);
 
         var this_socket = listener.handlers.vm.allocator.create(Socket) catch @panic("Out of memory");
         this_socket.* = Socket{
@@ -856,8 +856,8 @@ pub const Listener = struct {
         this.strong_self.deinit();
         this.strong_data.deinit();
         this.poll_ref.unref(this.handlers.vm);
-        std.debug.assert(this.listener == null);
-        std.debug.assert(this.handlers.active_connections == 0);
+        bun.assert(this.listener == null);
+        bun.assert(this.handlers.active_connections == 0);
         this.handlers.unprotect();
 
         if (this.socket_context) |ctx| {
@@ -2142,7 +2142,7 @@ fn NewSocket(comptime ssl: bool) type {
             var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
             const result_size = BoringSSL.i2d_SSL_SESSION(session, &buffer_ptr);
-            std.debug.assert(result_size == size);
+            bun.assert(result_size == size);
             return buffer;
         }
 
@@ -2409,7 +2409,7 @@ fn NewSocket(comptime ssl: bool) type {
             const buffer_ptr = @as(*anyopaque, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
             const result_size = BoringSSL.SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size);
-            std.debug.assert(result_size == size);
+            bun.assert(result_size == size);
             return buffer;
         }
 
@@ -2441,7 +2441,7 @@ fn NewSocket(comptime ssl: bool) type {
             const buffer_ptr = @as(*anyopaque, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
             const result_size = BoringSSL.SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size);
-            std.debug.assert(result_size == size);
+            bun.assert(result_size == size);
             return buffer;
         }
 

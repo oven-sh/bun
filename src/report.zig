@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -291,13 +291,6 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     if (comptime Environment.isDebug and !Environment.isWindows) {
         error_return_trace = @errorReturnTrace();
     }
-
-    // if (!Environment.isWindows) {
-    //     if (comptime !@import("root").bun.JSC.is_bindgen) {
-    //         std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-    //         Bun__crashReportDumpStackTrace(&crash_report_writer);
-    //     }
-    // }
 
     if (!had_printed_fatal) {
         crash_report_writer.print("\nAsk for #help in https://bun.sh/discord or go to https://bun.sh/issues\n\n", .{});

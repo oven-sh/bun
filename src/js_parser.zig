@@ -3,7 +3,7 @@
 /// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
 /// ** IMPORTANT **
 pub const std = @import("std");
-pub const logger = @import("root").bun.logger;
+pub const logger = bun.logger;
 pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
 pub const js_ast = bun.JSAst;
@@ -43,7 +43,7 @@ pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Index = @import("./ast/base.zig").Index;
 
 fn _disabledAssert(_: bool) void {
@@ -51,7 +51,7 @@ fn _disabledAssert(_: bool) void {
     unreachable;
 }
 
-const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
+const assert = if (Environment.allow_assert) bun.assert else _disabledAssert;
 const debug = Output.scoped(.JSParser, false);
 const ExprListLoc = struct {
     list: ExprNodeList,
@@ -137,13 +137,13 @@ const JSXImport = enum {
         pub fn runtimeImportNames(this: *const Symbols, buf: *[3]string) []const string {
             var i: usize = 0;
             if (this.jsxDEV != null) {
-                std.debug.assert(this.jsx == null); // we should never end up with this in the same file
+                bun.assert(this.jsx == null); // we should never end up with this in the same file
                 buf[0] = "jsxDEV";
                 i += 1;
             }
 
             if (this.jsx != null) {
-                std.debug.assert(this.jsxDEV == null); // we should never end up with this in the same file
+                bun.assert(this.jsxDEV == null); // we should never end up with this in the same file
                 buf[0] = "jsx";
                 i += 1;
             }
@@ -2839,7 +2839,7 @@ pub const Parser = struct {
         transform_only: bool = false,
 
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
-            std.debug.assert(!this.bundle);
+            bun.assert(!this.bundle);
 
             if (did_use_jsx) {
                 if (this.jsx.parse) {
@@ -3467,7 +3467,7 @@ pub const Parser = struct {
                         .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(stmts_),
                     });
                 }
-                std.debug.assert(remaining_stmts.len == 0);
+                bun.assert(remaining_stmts.len == 0);
             }
 
             if (p.commonjs_named_exports.count() > 0) {
@@ -3880,7 +3880,7 @@ pub const Parser = struct {
         // 3) we are not bundling.
         //
         if (exports_kind == .esm and (uses_dirname or uses_filename)) {
-            std.debug.assert(!p.options.bundle);
+            bun.assert(!p.options.bundle);
             const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
             var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
             var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
@@ -5003,7 +5003,7 @@ fn NewParser_(
         }
 
         pub inline fn transposeRequireResolveKnownString(p: *P, arg: Expr) Expr {
-            std.debug.assert(arg.data == .e_string);
+            bun.assert(arg.data == .e_string);
 
             // Ignore calls to import() if the control flow is provably dead here.
             // We don't want to spend time scanning the required files if they will
@@ -15553,7 +15553,7 @@ fn NewParser_(
         }
 
         fn recordDeclaredSymbol(p: *P, ref: Ref) anyerror!void {
-            std.debug.assert(ref.isSymbol());
+            bun.assert(ref.isSymbol());
             try p.declared_symbols.append(p.allocator, DeclaredSymbol{
                 .ref = ref,
                 .is_top_level = p.current_scope == p.module_scope,
@@ -17119,7 +17119,7 @@ fn NewParser_(
         fn recordUsageOfRuntimeRequire(p: *P) void {
             // target bun does not have __require
             if (!p.options.features.use_import_meta_require) {
-                std.debug.assert(p.options.features.allow_runtime);
+                bun.assert(p.options.features.allow_runtime);
 
                 p.ensureRequireSymbol();
                 p.recordUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
@@ -17127,7 +17127,7 @@ fn NewParser_(
         }
 
         inline fn valueForRequire(p: *P, loc: logger.Loc) Expr {
-            std.debug.assert(!p.isSourceRuntime());
+            bun.assert(!p.isSourceRuntime());
             return Expr{
                 .data = .{
                     .e_require_call_target = {},
@@ -18577,7 +18577,7 @@ fn NewParser_(
 
                                     // This is to handle TS decorators, mostly.
                                     var class_stmts = p.lowerClass(.{ .stmt = s2 });
-                                    std.debug.assert(class_stmts[0].data == .s_class);
+                                    bun.assert(class_stmts[0].data == .s_class);
 
                                     if (class_stmts.len > 1) {
                                         data.value.stmt = class_stmts[0];
@@ -20342,7 +20342,7 @@ fn NewParser_(
 
                 .m_dot => |_refs| {
                     var refs = _refs;
-                    std.debug.assert(refs.items.len >= 2);
+                    bun.assert(refs.items.len >= 2);
                     defer refs.deinit(p.allocator);
 
                     var dots = p.newExpr(

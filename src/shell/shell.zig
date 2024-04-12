@@ -1148,7 +1148,7 @@ pub const Parser = struct {
 
     fn expectIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) Token {
         const tagname = comptime extractIfClauseTextToken(if_clause_token);
-        if (bun.Environment.allow_assert) std.debug.assert(@as(TokenTag, self.peek()) == .Text);
+        if (bun.Environment.allow_assert) assert(@as(TokenTag, self.peek()) == .Text);
         if (self.peek() == .Text and
             self.delimits(self.peek_n(1)) and
             std.mem.eql(u8, self.text(self.peek().Text), tagname))
@@ -1739,7 +1739,7 @@ pub const Parser = struct {
         return switch (atoms.items.len) {
             0 => null,
             1 => {
-                if (bun.Environment.allow_assert) std.debug.assert(atoms.capacity == 1);
+                if (bun.Environment.allow_assert) assert(atoms.capacity == 1);
                 return AST.Atom.new_simple(atoms.items[0]);
             },
             else => .{ .compound = .{
@@ -1772,7 +1772,7 @@ pub const Parser = struct {
     }
 
     fn expect(self: *Parser, toktag: TokenTag) Token {
-        if (bun.Environment.allow_assert) std.debug.assert(toktag == @as(TokenTag, self.peek()));
+        if (bun.Environment.allow_assert) assert(toktag == @as(TokenTag, self.peek()));
         if (self.check(toktag)) {
             return self.advance();
         }
@@ -1793,7 +1793,7 @@ pub const Parser = struct {
     }
 
     fn expect_delimit(self: *Parser) Token {
-        if (bun.Environment.allow_assert) std.debug.assert(self.delimits(self.peek()));
+        if (bun.Environment.allow_assert) assert(self.delimits(self.peek()));
         if (self.check(.Delimit) or self.check(.Semicolon) or self.check(.Newline) or self.check(.Eof) or (self.inside_subshell != null and self.check(self.inside_subshell.?.closing_tok()))) {
             return self.advance();
         }
@@ -2057,7 +2057,7 @@ pub const Token = union(TokenTag) {
         end: u32,
 
         pub fn len(range: TextRange) u32 {
-            if (bun.Environment.allow_assert) std.debug.assert(range.start <= range.end);
+            if (bun.Environment.allow_assert) assert(range.start <= range.end);
             return range.end - range.start;
         }
     };
@@ -2629,6 +2629,16 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     }
                     continue;
                 }
+                // Treat newline preceded by backslash as whitespace
+                else if (char == '\n') {
+                    if (comptime bun.Environment.allow_assert) {
+                        assert(input.escaped);
+                    }
+                    if (self.chars.state != .Double) {
+                        try self.break_word_impl(true, true, false);
+                    }
+                    continue;
+                }
 
                 try self.appendCharToStrPool(char);
             }
@@ -2979,9 +2989,11 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 },
                 .normal => try self.tokens.append(.OpenParen),
             }
+            const prev_quote_state = self.chars.state;
             var sublexer = self.make_sublexer(kind);
             try sublexer.lex();
             self.continue_from_sublexer(&sublexer);
+            self.chars.state = prev_quote_state;
         }
 
         fn appendStringToStrPool(self: *@This(), bunstr: bun.String) !void {
@@ -3440,6 +3452,7 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
                         else => return .{ .char = char, .escaped = false },
                     }
                 },
+                // We checked `self.state == .Single` above so this is impossible
                 .Single => unreachable,
             }
 
@@ -4121,7 +4134,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
         }
 
         pub fn initWithSlice(vals: []const T) @This() {
-            if (bun.Environment.allow_assert) std.debug.assert(vals.len <= std.math.maxInt(u32));
+            if (bun.Environment.allow_assert) assert(vals.len <= std.math.maxInt(u32));
             if (vals.len <= INLINED_MAX) {
                 var this: @This() = @This().zeroes;
                 @memcpy(this.inlined.items[0..vals.len], vals);
@@ -4454,7 +4467,7 @@ pub const TestingAPIs = struct {
 
         const script_ast = Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], jsstrings.items[0..], &out_parser, &out_lex_result) catch |err| {
             if (err == ParseError.Lex) {
-                if (bun.Environment.allow_assert) std.debug.assert(out_lex_result != null);
+                if (bun.Environment.allow_assert) assert(out_lex_result != null);
                 const str = out_lex_result.?.combineErrors(arena.allocator());
                 globalThis.throwPretty("{s}", .{str});
                 return .undefined;
@@ -4480,3 +4493,5 @@ pub const TestingAPIs = struct {
         return bun_str.toJS(globalThis);
     }
 };
+
+const assert = bun.assert;

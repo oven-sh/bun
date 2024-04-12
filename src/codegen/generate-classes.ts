@@ -1741,7 +1741,7 @@ pub const ${className(typeName)} = struct {
         JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = ${symbolName(typeName, "create")}(globalObject, this);
-            std.debug.assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
+            @import("root").bun.assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
             return value__;
         } else {
             return ${symbolName(typeName, "create")}(globalObject, this);
@@ -1759,7 +1759,7 @@ pub const ${className(typeName)} = struct {
     /// Detach the ptr from the thisValue
     pub fn detachPtr(_: *${typeName}, value: JSC.JSValue) void {
       JSC.markBinding(@src());
-      std.debug.assert(${symbolName(typeName, "dangerouslySetPtr")}(value, null));
+      bun.assert(${symbolName(typeName, "dangerouslySetPtr")}(value, null));
     }
 
     extern fn ${symbolName(typeName, "fromJS")}(JSC.JSValue) ?*${typeName};

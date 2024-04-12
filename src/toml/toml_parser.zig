@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const toml_lexer = @import("./toml_lexer.zig");
 const Lexer = toml_lexer.Lexer;
 const importRecord = @import("../import_record.zig");
@@ -26,7 +26,7 @@ const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
 const StmtNodeList = js_ast.StmtNodeList;
 const BindingNodeList = js_ast.BindingNodeList;
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 const LocRef = js_ast.LocRef;
 const S = js_ast.S;

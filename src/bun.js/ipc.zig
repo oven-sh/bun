@@ -4,11 +4,11 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
@@ -242,7 +242,7 @@ const SocketIPCData = struct {
 
     pub fn writeVersionPacket(this: *SocketIPCData) void {
         if (Environment.allow_assert) {
-            std.debug.assert(this.has_written_version == 0);
+            bun.assert(this.has_written_version == 0);
         }
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
@@ -258,7 +258,7 @@ const SocketIPCData = struct {
 
     pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue) bool {
         if (Environment.allow_assert) {
-            std.debug.assert(ipc_data.has_written_version == 1);
+            bun.assert(ipc_data.has_written_version == 1);
         }
 
         // TODO: probably we should not direct access ipc_data.outgoing.list.items here
@@ -267,10 +267,10 @@ const SocketIPCData = struct {
         const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value) catch
             return false;
 
-        std.debug.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
+        bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
 
         if (start_offset == 0) {
-            std.debug.assert(ipc_data.outgoing.cursor == 0);
+            bun.assert(ipc_data.outgoing.cursor == 0);
             const n = ipc_data.socket.write(ipc_data.outgoing.list.items.ptr[start_offset..payload_length], false);
             if (n == payload_length) {
                 ipc_data.outgoing.reset();
@@ -346,7 +346,7 @@ const NamedPipeIPCData = struct {
 
     pub fn writeVersionPacket(this: *NamedPipeIPCData) void {
         if (Environment.allow_assert) {
-            std.debug.assert(this.has_written_version == 0);
+            bun.assert(this.has_written_version == 0);
         }
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
@@ -364,7 +364,7 @@ const NamedPipeIPCData = struct {
 
     pub fn serializeAndSend(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue) bool {
         if (Environment.allow_assert) {
-            std.debug.assert(this.has_written_version == 1);
+            bun.assert(this.has_written_version == 1);
         }
 
         const start_offset = this.writer.outgoing.list.items.len;
@@ -372,10 +372,10 @@ const NamedPipeIPCData = struct {
         const payload_length: usize = serialize(this, &this.writer.outgoing, global, value) catch
             return false;
 
-        std.debug.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
+        bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
 
         if (start_offset == 0) {
-            std.debug.assert(this.writer.outgoing.cursor == 0);
+            bun.assert(this.writer.outgoing.cursor == 0);
             if (this.connected) {
                 _ = this.writer.flush();
             }
@@ -634,8 +634,8 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             ipc.incoming.len += @as(u32, @truncate(buffer.len));
             var slice = ipc.incoming.slice();
 
-            std.debug.assert(ipc.incoming.len <= ipc.incoming.cap);
-            std.debug.assert(bun.isSliceInBuffer(buffer, ipc.incoming.allocatedSlice()));
+            bun.assert(ipc.incoming.len <= ipc.incoming.cap);
+            bun.assert(bun.isSliceInBuffer(buffer, ipc.incoming.allocatedSlice()));
 
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
                 .Pointer => this.globalThis,

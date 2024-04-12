@@ -1,15 +1,15 @@
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
@@ -31,7 +31,7 @@ pub inline fn assertStdioResult(result: StdioResult) void {
     if (comptime Environment.allow_assert) {
         if (Environment.isPosix) {
             if (result) |fd| {
-                std.debug.assert(fd != bun.invalid_fd);
+                bun.assert(fd != bun.invalid_fd);
             }
         }
     }
@@ -1055,11 +1055,11 @@ pub const Subprocess = struct {
 
         fn deinit(this: *PipeReader) void {
             if (comptime Environment.isPosix) {
-                std.debug.assert(this.reader.isDone());
+                bun.assert(this.reader.isDone());
             }
 
             if (comptime Environment.isWindows) {
-                std.debug.assert(this.reader.source == null or this.reader.source.?.isClosed());
+                bun.assert(this.reader.source == null or this.reader.source.?.isClosed());
             }
 
             if (this.state == .done) {
@@ -1238,7 +1238,7 @@ pub const Subprocess = struct {
                     };
                 },
                 .memfd => |memfd| {
-                    std.debug.assert(memfd != bun.invalid_fd);
+                    bun.assert(memfd != bun.invalid_fd);
                     return Writable{ .memfd = memfd };
                 },
                 .fd => {
@@ -1485,7 +1485,7 @@ pub const Subprocess = struct {
         // access GC'd values during the finalizer
         this.this_jsvalue = .zero;
 
-        std.debug.assert(!this.hasPendingActivity() or JSC.VirtualMachine.get().isShuttingDown());
+        bun.assert(!this.hasPendingActivity() or JSC.VirtualMachine.get().isShuttingDown());
         this.finalizeStreams();
 
         this.process.detach();
@@ -1555,7 +1555,7 @@ pub const Subprocess = struct {
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) JSValue {
-        var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
+        var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
 

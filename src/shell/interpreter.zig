@@ -50,7 +50,7 @@ const ShellError = shell.ShellError;
 const ast = shell.AST;
 const SmolList = shell.SmolList;
 
-const GlobWalker = @import("../glob.zig").GlobWalker_(null, true);
+const GlobWalker = Glob.GlobWalker_(null, Glob.SyscallAccessor, true);
 
 const stdin_no = 0;
 const stdout_no = 1;
@@ -65,13 +65,7 @@ pub fn OOM(e: anyerror) noreturn {
 
 const log = bun.Output.scoped(.SHELL, false);
 
-pub fn assert(cond: bool, comptime msg: []const u8) void {
-    if (bun.Environment.allow_assert) {
-        std.debug.assert(cond);
-    } else {
-        @panic("Assertion failed: " ++ msg);
-    }
-}
+const assert = bun.assert;
 
 pub const ExitCode = u16;
 
@@ -207,7 +201,7 @@ const CowFd = struct {
     }
 
     pub fn deinit(this: *CowFd) void {
-        std.debug.assert(this.refcount == 0);
+        assert(this.refcount == 0);
         _ = bun.sys.close(this.__fd);
         bun.default_allocator.destroy(this);
     }
@@ -320,7 +314,7 @@ pub const IO = struct {
             comptime fmt_: []const u8,
             args: anytype,
         ) void {
-            if (bun.Environment.allow_assert) std.debug.assert(this.* == .fd);
+            if (bun.Environment.allow_assert) assert(this.* == .fd);
             this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args);
         }
 
@@ -878,8 +872,8 @@ pub const Interpreter = struct {
             this.__cwd.appendSlice(new_cwd[0 .. new_cwd.len + 1]) catch bun.outOfMemory();
 
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.__cwd.items[this.__cwd.items.len -| 1] == 0);
-                std.debug.assert(this.__prev_cwd.items[this.__prev_cwd.items.len -| 1] == 0);
+                assert(this.__cwd.items[this.__cwd.items.len -| 1] == 0);
+                assert(this.__prev_cwd.items[this.__prev_cwd.items.len -| 1] == 0);
             }
 
             this.cwd_fd = new_cwd_fd;
@@ -995,7 +989,7 @@ pub const Interpreter = struct {
             &lex_result,
         ) catch |err| {
             if (err == shell.ParseError.Lex) {
-                std.debug.assert(lex_result != null);
+                assert(lex_result != null);
                 const str = lex_result.?.combineErrors(arena.allocator());
                 globalThis.throwPretty("{s}", .{str});
                 return null;
@@ -1003,7 +997,7 @@ pub const Interpreter = struct {
 
             if (parser) |*p| {
                 if (bun.Environment.allow_assert) {
-                    std.debug.assert(p.errors.items.len > 0);
+                    assert(p.errors.items.len > 0);
                 }
                 const errstr = p.combineErrors();
                 globalThis.throwPretty("{s}", .{errstr});
@@ -1063,6 +1057,20 @@ pub const Interpreter = struct {
         if (lex_result.errors.len > 0) {
             out_lex_result.* = lex_result;
             return shell.ParseError.Lex;
+        }
+
+        if (comptime bun.Environment.allow_assert) {
+            const print = bun.Output.scoped(.ShellTokens, true);
+            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch @panic("OOPS");
+            defer test_tokens.deinit();
+            for (lex_result.tokens) |tok| {
+                const test_tok = shell.Test.TestToken.from_real(tok, lex_result.strpool);
+                test_tokens.append(test_tok) catch @panic("OOPS");
+            }
+
+            const str = std.json.stringifyAlloc(bun.default_allocator, test_tokens.items[0..], .{}) catch @panic("OOPS");
+            defer bun.default_allocator.free(str);
+            print("Tokens: {s}", .{str});
         }
 
         out_parser.* = try bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs);
@@ -1125,11 +1133,11 @@ pub const Interpreter = struct {
         cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch bun.outOfMemory();
 
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
+            assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
         }
 
         log("Duping stdin", .{});
-        const stdin_fd = switch (ShellSyscall.dup(shell.STDIN_FD)) {
+        const stdin_fd = switch (if (bun.Output.Source.Stdio.isStdinNull()) bun.sys.openNullDevice() else ShellSyscall.dup(shell.STDIN_FD)) {
             .result => |fd| fd,
             .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
         };
@@ -1196,7 +1204,7 @@ pub const Interpreter = struct {
             &out_lex_result,
         ) catch |err| {
             if (err == bun.shell.ParseError.Lex) {
-                std.debug.assert(out_lex_result != null);
+                assert(out_lex_result != null);
                 const str = out_lex_result.?.combineErrors(arena.allocator());
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ std.fs.path.basename(path), str });
                 bun.Global.exit(1);
@@ -1259,7 +1267,7 @@ pub const Interpreter = struct {
         var out_lex_result: ?bun.shell.LexResult = null;
         const script = ThisInterpreter.parse(&arena, src, jsobjs, &[_]bun.String{}, &out_parser, &out_lex_result) catch |err| {
             if (err == bun.shell.ParseError.Lex) {
-                std.debug.assert(out_lex_result != null);
+                assert(out_lex_result != null);
                 const str = out_lex_result.?.combineErrors(arena.allocator());
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ path_for_errors, str });
                 bun.Global.exit(1);
@@ -1315,13 +1323,13 @@ pub const Interpreter = struct {
             const event_loop = this.event_loop;
 
             log("Duping stdout", .{});
-            const stdout_fd = switch (ShellSyscall.dup(shell.STDOUT_FD)) {
+            const stdout_fd = switch (if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(bun.STDOUT_FD)) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
 
             log("Duping stderr", .{});
-            const stderr_fd = switch (ShellSyscall.dup(shell.STDERR_FD)) {
+            const stderr_fd = switch (if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(bun.STDERR_FD)) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
@@ -1713,7 +1721,7 @@ pub const Interpreter = struct {
 
             pub fn pushResultSlice(this: *Result, buf: [:0]const u8) void {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(buf[buf.len] == 0);
+                    assert(buf[buf.len] == 0);
                 }
 
                 switch (this.*) {
@@ -1733,7 +1741,7 @@ pub const Interpreter = struct {
 
             pub fn pushResult(this: *Result, buf: *std.ArrayList(u8)) void {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(buf.items[buf.items.len - 1] == 0);
+                    assert(buf.items[buf.items.len - 1] == 0);
                 }
 
                 switch (this.*) {
@@ -1793,8 +1801,8 @@ pub const Interpreter = struct {
 
         pub fn start(this: *Expansion) void {
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.child_state == .idle);
-                std.debug.assert(this.word_idx == 0);
+                assert(this.child_state == .idle);
+                assert(this.word_idx == 0);
             }
 
             this.state = .normal;
@@ -1839,7 +1847,7 @@ pub const Interpreter = struct {
                         }
 
                         // Shouldn't fall through to here
-                        std.debug.assert(this.word_idx >= this.node.atomsLen());
+                        assert(this.word_idx >= this.node.atomsLen());
                         return;
                     },
                     .braces => {
@@ -1854,7 +1862,7 @@ pub const Interpreter = struct {
                         var expanded_strings = brk: {
                             const stack_max = comptime 16;
                             comptime {
-                                std.debug.assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
+                                assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
                             }
                             var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, this.base.interpreter.allocator);
                             const expanded_strings = maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count) catch bun.outOfMemory();
@@ -2090,14 +2098,14 @@ pub const Interpreter = struct {
         fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) void {
             _ = exit_code;
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.state != .done and this.state != .err);
-                std.debug.assert(this.child_state != .idle);
+                assert(this.state != .done and this.state != .err);
+                assert(this.child_state != .idle);
             }
 
             // Command substitution
             if (child.ptr.is(Script)) {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.child_state == .cmd_subst);
+                    assert(this.child_state == .cmd_subst);
                 }
 
                 const stdout = this.child_state.cmd_subst.cmd.base.shell.buffered_stdout().slice();
@@ -2121,7 +2129,7 @@ pub const Interpreter = struct {
         fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) void {
             log("{} onGlobWalkDone", .{this});
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.child_state == .glob);
+                assert(this.child_state == .glob);
             }
 
             if (task.err) |*err| {
@@ -2787,9 +2795,9 @@ pub const Interpreter = struct {
 
         pub fn start(this: *Stmt) void {
             if (bun.Environment.allow_assert) {
-                std.debug.assert(this.idx == 0);
-                std.debug.assert(this.last_exit_code == null);
-                std.debug.assert(this.currently_executing == null);
+                assert(this.idx == 0);
+                assert(this.last_exit_code == null);
+                assert(this.currently_executing == null);
             }
             this.next();
         }
@@ -2919,9 +2927,9 @@ pub const Interpreter = struct {
         fn start(this: *Binary) void {
             log("binary start {x} ({s})", .{ @intFromPtr(this), @tagName(this.node.op) });
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.left == null);
-                std.debug.assert(this.right == null);
-                std.debug.assert(this.currently_executing == null);
+                assert(this.left == null);
+                assert(this.right == null);
+                assert(this.currently_executing == null);
             }
 
             this.currently_executing = this.makeChild(true);
@@ -2983,8 +2991,8 @@ pub const Interpreter = struct {
 
         pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) void {
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.left == null or this.right == null);
-                std.debug.assert(this.currently_executing != null);
+                assert(this.left == null or this.right == null);
+                assert(this.currently_executing != null);
             }
             log("binary child done {x} ({s}) {s}", .{ @intFromPtr(this), @tagName(this.node.op), if (this.left == null) "left" else "right" });
 
@@ -3184,7 +3192,7 @@ pub const Interpreter = struct {
             };
 
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.exited_count == 0);
+                assert(this.exited_count == 0);
             }
             log("pipeline start {x} (count={d})", .{ @intFromPtr(this), this.node.items.len });
             if (this.node.items.len == 0) {
@@ -3194,7 +3202,7 @@ pub const Interpreter = struct {
             }
 
             for (cmds) |*cmd_or_result| {
-                std.debug.assert(cmd_or_result.* == .cmd);
+                assert(cmd_or_result.* == .cmd);
                 log("Pipeline start cmd", .{});
                 var cmd = cmd_or_result.cmd;
                 cmd.call("start", .{}, void);
@@ -3203,7 +3211,7 @@ pub const Interpreter = struct {
 
         pub fn onIOWriterChunk(this: *Pipeline, _: usize, err: ?JSC.SystemError) void {
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.state == .waiting_write_err);
+                assert(this.state == .waiting_write_err);
             }
 
             if (err) |e| {
@@ -3217,7 +3225,7 @@ pub const Interpreter = struct {
 
         pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) void {
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.cmds.?.len > 0);
+                assert(this.cmds.?.len > 0);
             }
 
             const idx = brk: {
@@ -3483,7 +3491,7 @@ pub const Interpreter = struct {
 
         pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) void {
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.state == .wait_write_err);
+                assert(this.state == .wait_write_err);
             }
 
             if (err) |e| {
@@ -3820,7 +3828,7 @@ pub const Interpreter = struct {
                         }
                     },
                     .waiting_write_err => return,
-                    .done => std.debug.assert(false),
+                    .done => assert(false),
                 }
             }
 
@@ -3898,7 +3906,7 @@ pub const Interpreter = struct {
         }
 
         pub fn onStatTaskComplete(this: *CondExpr, result: Maybe(bun.Stat)) void {
-            if (bun.Environment.allow_assert) std.debug.assert(this.state == .waiting_stat);
+            if (bun.Environment.allow_assert) assert(this.state == .waiting_stat);
 
             this.state = .{
                 .stat_complete = .{ .stat = result },
@@ -4478,7 +4486,7 @@ pub const Interpreter = struct {
                 this.base.throw(&bun.shell.ShellErr.newSys(err));
                 return;
             }
-            std.debug.assert(this.state == .waiting_write_err);
+            assert(this.state == .waiting_write_err);
             this.parent.childDone(this, 1);
             return;
         }
@@ -4577,7 +4585,7 @@ pub const Interpreter = struct {
                     if (coro_result == .yield) return;
 
                     if (comptime bun.Environment.allow_assert) {
-                        std.debug.assert(this.exec == .bltn);
+                        assert(this.exec == .bltn);
                     }
 
                     log("Builtin name: {s}", .{@tagName(this.exec)});
@@ -4863,7 +4871,7 @@ pub const Interpreter = struct {
 
         pub fn bufferedOutputCloseStdout(this: *Cmd, err: ?JSC.SystemError) void {
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.exec == .subproc);
+                assert(this.exec == .subproc);
             }
             log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
             if (err) |e| {
@@ -4880,7 +4888,7 @@ pub const Interpreter = struct {
 
         pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?JSC.SystemError) void {
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.exec == .subproc);
+                assert(this.exec == .subproc);
             }
             log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
             if (err) |e| {
@@ -5048,12 +5056,12 @@ pub const Interpreter = struct {
                     comptime fmt_: []const u8,
                     args: anytype,
                 ) void {
-                    if (bun.Environment.allow_assert) std.debug.assert(this.* == .fd);
+                    if (bun.Environment.allow_assert) assert(this.* == .fd);
                     this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args);
                 }
 
                 pub fn enqueue(this: *@This(), ptr: anytype, buf: []const u8) void {
-                    if (bun.Environment.allow_assert) std.debug.assert(this.* == .fd);
+                    if (bun.Environment.allow_assert) assert(this.* == .fd);
                     this.fd.writer.enqueue(ptr, this.fd.captured, buf);
                 }
             };
@@ -6672,7 +6680,7 @@ pub const Interpreter = struct {
 
             pub fn onIOWriterChunk(this: *Export, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.printing);
+                    assert(this.printing);
                 }
 
                 const exit_code: ExitCode = if (e != null) brk: {
@@ -6798,7 +6806,7 @@ pub const Interpreter = struct {
 
             pub fn onIOWriterChunk(this: *Echo, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.state == .waiting);
+                    assert(this.state == .waiting);
                 }
 
                 if (e != null) {
@@ -6923,7 +6931,7 @@ pub const Interpreter = struct {
 
             fn argComplete(this: *Which) void {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.state == .multi_args and this.state.multi_args.state == .waiting_write);
+                    assert(this.state == .multi_args and this.state.multi_args.state == .waiting_write);
                 }
 
                 this.state.multi_args.arg_idx += 1;
@@ -6933,7 +6941,7 @@ pub const Interpreter = struct {
 
             pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.state == .one_arg or
+                    assert(this.state == .one_arg or
                         (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
                 }
 
@@ -7049,7 +7057,7 @@ pub const Interpreter = struct {
 
             pub fn onIOWriterChunk(this: *Cd, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.state == .waiting_write_stderr);
+                    assert(this.state == .waiting_write_stderr);
                 }
 
                 if (e != null) {
@@ -7130,7 +7138,7 @@ pub const Interpreter = struct {
 
             pub fn onIOWriterChunk(this: *Pwd, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.state == .waiting_io);
+                    assert(this.state == .waiting_io);
                 }
 
                 if (e != null) {
@@ -8156,7 +8164,7 @@ pub const Interpreter = struct {
                             const check_target = &this.state.check_target;
 
                             if (comptime bun.Environment.allow_assert) {
-                                std.debug.assert(check_target.task.result != null);
+                                assert(check_target.task.result != null);
                             }
 
                             const maybe_fd: ?bun.FileDescriptor = switch (check_target.task.result.?) {
@@ -8275,8 +8283,8 @@ pub const Interpreter = struct {
                 _ = task;
 
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.state == .check_target);
-                    std.debug.assert(this.state.check_target.task.result != null);
+                    assert(this.state == .check_target);
+                    assert(this.state.check_target.task.result != null);
                 }
 
                 this.state.check_target.state = .done;
@@ -8286,8 +8294,8 @@ pub const Interpreter = struct {
 
             pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.state == .executing);
-                    std.debug.assert(this.state.executing.tasks_done < this.state.executing.task_count);
+                    assert(this.state == .executing);
+                    assert(this.state.executing.tasks_done < this.state.executing.task_count);
                 }
 
                 var exec = &this.state.executing;
@@ -8740,7 +8748,7 @@ pub const Interpreter = struct {
             pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) void {
                 log("Rm(0x{x}).onIOWriterChunk()", .{@intFromPtr(this)});
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
+                    assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
                         (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.SeqCst) > 0));
                 }
 
@@ -9199,13 +9207,13 @@ pub const Interpreter = struct {
                         .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
                         .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.event_loop),
                     };
-                    std.debug.assert(parent_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
+                    assert(parent_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
 
                     JSC.WorkPool.schedule(&subtask.task);
                 }
 
-                pub fn getcwd(this: *ShellRmTask) if (bun.Environment.isWindows) CwdPath else bun.FileDescriptor {
-                    return if (bun.Environment.isWindows) this.cwd_path.? else bun.toFD(this.cwd);
+                pub fn getcwd(this: *ShellRmTask) bun.FileDescriptor {
+                    return this.cwd;
                 }
 
                 pub fn verboseDeleted(this: *@This(), dir_task: *DirTask, path: [:0]const u8) Maybe(void) {
@@ -9540,8 +9548,7 @@ pub const Interpreter = struct {
                         }
                     };
                     const dirfd = bun.toFD(this.cwd);
-                    _ = dirfd; // autofix
-                    switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, 0)) {
+                    switch (ShellSyscall.unlinkatWithFlags(dirfd, path, 0)) {
                         .result => return this.verboseDeleted(parent_dir_task, path),
                         .err => |e| {
                             print("unlinkatWithFlags({s}) = {s}", .{ path, @tagName(e.getErrno()) });
@@ -9696,7 +9703,7 @@ pub const Interpreter = struct {
 
             pub fn onIOWriterChunk(this: *Exit, _: usize, maybe_e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(this.state == .waiting_io);
+                    assert(this.state == .waiting_io);
                 }
                 if (maybe_e) |e| {
                     defer e.deref();
@@ -10704,7 +10711,7 @@ pub const Interpreter = struct {
             log("IOWriter(0x{x}, fd={}) getBufferImpl writer_len={} writer_written={}", .{ @intFromPtr(this), this.fd, writer.len, writer.written });
             const remaining = writer.len - writer.written;
             if (bun.Environment.allow_assert) {
-                std.debug.assert(!(writer.len == writer.written));
+                assert(!(writer.len == writer.written));
             }
             return this.buf.items[this.total_bytes_written .. this.total_bytes_written + remaining];
         }
@@ -10724,7 +10731,7 @@ pub const Interpreter = struct {
                 this.skipDead();
             } else {
                 if (bun.Environment.allow_assert) {
-                    if (!is_dead) std.debug.assert(current_writer.written == current_writer.len);
+                    if (!is_dead) assert(current_writer.written == current_writer.len);
                 }
                 this.__idx += 1;
             }
@@ -10755,7 +10762,7 @@ pub const Interpreter = struct {
                 if (bun.Environment.allow_assert) {
                     if (this.writers.len() > 0) {
                         const first = this.writers.getConst(this.__idx);
-                        std.debug.assert(this.buf.items.len >= first.len);
+                        assert(this.buf.items.len >= first.len);
                     }
                 }
             }
@@ -10820,7 +10827,7 @@ pub const Interpreter = struct {
 
         pub fn __deinit(this: *This) void {
             print("IOWriter(0x{x}, fd={}) deinit", .{ @intFromPtr(this), this.fd });
-            if (bun.Environment.allow_assert) std.debug.assert(this.ref_count == 0);
+            if (bun.Environment.allow_assert) assert(this.ref_count == 0);
             this.buf.deinit(bun.default_allocator);
             if (comptime bun.Environment.isPosix) {
                 if (this.writer.handle == .poll and this.writer.handle.poll.isRegistered()) {
@@ -11166,6 +11173,8 @@ pub const IOWriterChildPtr = struct {
 /// - Sometimes windows doesn't have `*at()` functions like `rmdirat` so we have to join the directory path with the target path
 /// - Converts Posix absolute paths to Windows absolute paths on Windows
 const ShellSyscall = struct {
+    pub const unlinkatWithFlags = Syscall.unlinkatWithFlags;
+    pub const rmdirat = Syscall.rmdirat;
     fn getPath(dirfd: anytype, to: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8) Maybe([:0]const u8) {
         if (bun.Environment.isPosix) @compileError("Don't use this");
         if (bun.strings.eqlComptime(to[0..to.len], "/dev/null")) {
@@ -11279,58 +11288,6 @@ const ShellSyscall = struct {
         }
         return Syscall.dup(fd);
     }
-
-    pub fn unlinkatWithFlags(dirfd: anytype, to: [:0]const u8, flags: c_uint) Maybe(void) {
-        if (bun.Environment.isWindows) {
-            if (flags & std.os.AT.REMOVEDIR != 0) return ShellSyscall.rmdirat(dirfd, to);
-
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const path = brk: {
-                switch (ShellSyscall.getPath(dirfd, to, &buf)) {
-                    .err => |e| return .{ .err = e },
-                    .result => |p| break :brk p,
-                }
-            };
-
-            return switch (Syscall.unlink(path)) {
-                .result => return Maybe(void).success,
-                .err => |e| {
-                    log("unlinkatWithFlags({s}) = {s}", .{ path, @tagName(e.getErrno()) });
-                    return .{ .err = e.withPath(bun.default_allocator.dupe(u8, path) catch bun.outOfMemory()) };
-                },
-            };
-        }
-        if (@TypeOf(dirfd) != bun.FileDescriptor) {
-            @compileError("Bad type: " ++ @typeName(@TypeOf(dirfd)));
-        }
-        return Syscall.unlinkatWithFlags(dirfd, to, flags);
-    }
-
-    pub fn rmdirat(dirfd: anytype, to: [:0]const u8) Maybe(void) {
-        if (bun.Environment.isWindows) {
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const path: []const u8 = brk: {
-                switch (getPath(dirfd, to, &buf)) {
-                    .result => |p| break :brk p,
-                    .err => |e| return .{ .err = e },
-                }
-            };
-            var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
-            const wpath = bun.strings.toWPath(&wide_buf, path);
-            while (true) {
-                if (windows.RemoveDirectoryW(wpath) == 0) {
-                    const errno = Syscall.getErrno(420);
-                    if (errno == .INTR) continue;
-                    log("rmdirat({s}) = {d}: {s}", .{ path, @intFromEnum(errno), @tagName(errno) });
-                    return .{ .err = Syscall.Error.fromCode(errno, .rmdir) };
-                }
-                log("rmdirat({s}) = {d}", .{ path, 0 });
-                return Maybe(void).success;
-            }
-        }
-
-        return Syscall.rmdirat(dirfd, to);
-    }
 };
 
 /// A task that can write to stdout and/or stderr
@@ -11354,7 +11311,7 @@ pub fn OutputTask(
         },
 
         pub fn deinit(this: *@This()) void {
-            if (comptime bun.Environment.allow_assert) std.debug.assert(this.state == .done);
+            if (comptime bun.Environment.allow_assert) assert(this.state == .done);
             vtable.onDone(this.parent);
             this.output.deinit();
             bun.destroy(this);

@@ -66,3 +66,16 @@ describe("Url.prototype.parse", () => {
     });
   });
 });
+
+it("URL constructor throws ERR_MISSING_ARGS", () => {
+  var err;
+  try {
+    // @ts-expect-error
+    new URL();
+  } catch (e) {
+    err = e;
+  }
+
+  // @ts-expect-error
+  expect(err?.code).toEqual("ERR_MISSING_ARGS");
+});

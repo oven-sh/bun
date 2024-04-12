@@ -1,5 +1,6 @@
 // TODO(@paperdave): merge all functionality into panic_handler.zig
 const std = @import("std");
+const bun = @import("root").bun;
 
 fn setup_sigactions(act: ?*const os.Sigaction) !void {
     try os.sigaction(os.SIG.ABRT, act, null);
@@ -29,13 +30,12 @@ noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*cons
 }
 
 noinline fn sigpipe_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
-    const bun = @import("root").bun;
     bun.Output.debug("SIGPIPE received\n", .{});
 }
 
 pub fn reloadHandlers() !void {
-    if (comptime @import("root").bun.Environment.isWindows) {
-        return @import("root").bun.todo(@src(), {});
+    if (comptime bun.Environment.isWindows) {
+        return bun.todo(@src(), {});
     }
     try os.sigaction(os.SIG.PIPE, null, null);
     try setup_sigactions(null);
@@ -47,7 +47,7 @@ pub fn reloadHandlers() !void {
     };
 
     try setup_sigactions(&act);
-    @import("root").bun.spawn.WaiterThread.reloadHandlers();
+    bun.spawn.WaiterThread.reloadHandlers();
     bun_ignore_sigpipe();
 }
 const os = std.os;
@@ -60,7 +60,7 @@ pub fn start() !void {
 
     try setup_sigactions(&act);
     bun_ignore_sigpipe();
-    @import("root").bun.spawn.WaiterThread.reloadHandlers();
+    bun.spawn.WaiterThread.reloadHandlers();
 }
 
 extern fn bun_ignore_sigpipe() void;

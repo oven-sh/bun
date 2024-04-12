@@ -2105,19 +2105,19 @@ pub const Token = union(TokenTag) {
         };
     }
 
-    pub fn debug(self: Token, buf: []const u8) void {
-        switch (self) {
-            .Var => |txt| {
-                std.debug.print("(var) {s}\n", .{buf[txt.start..txt.end]});
-            },
-            .Text => |txt| {
-                std.debug.print("(txt) {s}\n", .{buf[txt.start..txt.end]});
-            },
-            else => {
-                std.debug.print("{s}\n", .{@tagName(self)});
-            },
-        }
-    }
+    // pub fn debug(self: Token, buf: []const u8) void {
+    //     switch (self) {
+    //         .Var => |txt| {
+    //             std.debug.print("(var) {s}\n", .{buf[txt.start..txt.end]});
+    //         },
+    //         .Text => |txt| {
+    //             std.debug.print("(txt) {s}\n", .{buf[txt.start..txt.end]});
+    //         },
+    //         else => {
+    //             std.debug.print("{s}\n", .{@tagName(self)});
+    //         },
+    //     }
+    // }
 };
 
 pub const LexerAscii = NewLexer(.ascii);
@@ -3254,13 +3254,13 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return self.chars.read_char();
         }
 
-        fn debug_tokens(self: *const @This()) void {
-            std.debug.print("Tokens: \n", .{});
-            for (self.tokens.items, 0..) |tok, i| {
-                std.debug.print("{d}: ", .{i});
-                tok.debug(self.strpool.items[0..self.strpool.items.len]);
-            }
-        }
+        // fn debug_tokens(self: *const @This()) void {
+        //     std.debug.print("Tokens: \n", .{});
+        //     for (self.tokens.items, 0..) |tok, i| {
+        //         std.debug.print("{d}: ", .{i});
+        //         tok.debug(self.strpool.items[0..self.strpool.items.len]);
+        //     }
+        // }
     };
 }
 

@@ -92,7 +92,7 @@ describe("fd leak", () => {
               for (let i = 0; i < ${runs}; i++) {
                 Bun.gc(true);
                 await (async function() {
-                  await ${builder.toString().slice("() =>".length)}.quiet().run()
+                  await ${builder.toString().slice("() =>".length)}.quiet().runAsTest('iter:', i)
                 })()
                 Bun.gc(true);
                 Bun.gc(true);
@@ -114,7 +114,9 @@ describe("fd leak", () => {
         env: bunEnv,
       });
       // console.log('STDOUT:', stdout.toString(), '\n\nSTDERR:', stderr.toString());
-      console.log("\n\nSTDERR:", stderr.toString());
+      if (exitCode != 0) {
+        console.log("\n\nSTDERR:", stderr.toString());
+      }
       expect(exitCode).toBe(0);
     }, 100_000);
   }

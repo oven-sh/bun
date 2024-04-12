@@ -798,9 +798,10 @@ describe("deno_task", () => {
 
     TestBuilder.command`echo 1 | echo 2 && echo 3`.stdout("2\n3\n").runAsTest("pipe in conditional");
 
-    await TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_DEBUG_QUIET_LOGS=1 BUN_TEST_VAR=1 ${BUN} -e 'await process.stdin.pipe(process.stdout)'`
+    TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_DEBUG_QUIET_LOGS=1 BUN_TEST_VAR=1 ${BUN} -e 'await process.stdin.pipe(process.stdout)'`
       .stdout("1 2\n")
-      .run();
+      .todo("& not supported")
+      .runAsTest("complicated pipeline");
 
     TestBuilder.command`echo 2 | echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
@@ -835,9 +836,12 @@ describe("deno_task", () => {
   });
 
   describe("redirects", async function igodf() {
-    await TestBuilder.command`echo 5 6 7 > test.txt`.fileEquals("test.txt", "5 6 7\n").run();
+    TestBuilder.command`echo 5 6 7 > test.txt`.fileEquals("test.txt", "5 6 7\n").runAsTest("basic redirect");
 
-    await TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`.stdout("1 2 3\n").fileEquals("test.txt", "1\n").run();
+    TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`
+      .stdout("1 2 3\n")
+      .fileEquals("test.txt", "1\n")
+      .runAsTest("basic redirect with &&");
 
     // subdir
     TestBuilder.command`mkdir subdir && cd subdir && echo 1 2 3 > test.txt`

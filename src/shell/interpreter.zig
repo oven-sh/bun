@@ -2910,10 +2910,7 @@ pub const Interpreter = struct {
             parent: ParentPtr,
             io: IO,
         ) *Binary {
-            var binary = interpreter.allocator.create(Binary) catch |err| {
-                std.debug.print("Ruh roh: {any}\n", .{err});
-                @panic("Ruh roh");
-            };
+            var binary = interpreter.allocator.create(Binary) catch |err| std.debug.panic("Ruh roh: {any}\n", .{err});
             binary.node = node;
             binary.base = .{ .kind = .binary, .interpreter = interpreter, .shell = shell_state };
             binary.parent = parent;
@@ -4350,10 +4347,7 @@ pub const Interpreter = struct {
             parent: ParentPtr,
             io: IO,
         ) *Cmd {
-            var cmd = interpreter.allocator.create(Cmd) catch |err| {
-                std.debug.print("Ruh roh: {any}\n", .{err});
-                @panic("Ruh roh");
-            };
+            var cmd = interpreter.allocator.create(Cmd) catch |err| std.debug.panic("Ruh roh: {any}\n", .{err});
             cmd.* = .{
                 .base = .{ .kind = .cmd, .interpreter = interpreter, .shell = shell_state },
                 .node = node,
@@ -10916,10 +10910,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         fn unknownTag(tag: Ptr.TagInt) void {
-            if (comptime bun.Environment.allow_assert) {
-                std.debug.print("Bad tag: {d}\n", .{tag});
-                @panic("Bad tag");
-            }
+            if (bun.Environment.allow_assert) std.debug.panic("Bad tag: {d}\n", .{tag});
         }
 
         fn tagInt(this: @This()) Ptr.TagInt {

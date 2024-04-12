@@ -929,23 +929,14 @@ pub const RunCommand = struct {
         return root_dir_info;
     }
 
-    pub fn configurePathForRun(
+    pub fn configurePathForRunWithPackageJsonDir(
         ctx: Command.Context,
-        root_dir_info: *DirInfo,
+        package_json_dir: string,
         this_bundler: *bundler.Bundler,
         ORIGINAL_PATH: ?*string,
         cwd: string,
         force_using_bun: bool,
-    ) !void {
-        var package_json_dir: string = "";
-
-        if (root_dir_info.enclosing_package_json) |package_json| {
-            if (root_dir_info.package_json == null) {
-                // no trailing slash
-                package_json_dir = strings.withoutTrailingSlash(package_json.source.path.name.dir);
-            }
-        }
-
+    ) ![]u8 {
         const PATH = this_bundler.env.get("PATH") orelse "";
         if (ORIGINAL_PATH) |original_path| {
             original_path.* = PATH;
@@ -1015,7 +1006,29 @@ pub const RunCommand = struct {
             try new_path.appendSlice(PATH);
         }
 
-        this_bundler.env.map.put("PATH", new_path.items) catch bun.outOfMemory();
+        return new_path.items;
+    }
+
+    pub fn configurePathForRun(
+        ctx: Command.Context,
+        root_dir_info: *DirInfo,
+        this_bundler: *bundler.Bundler,
+        ORIGINAL_PATH: ?*string,
+        cwd: string,
+        force_using_bun: bool,
+    ) !void {
+        var package_json_dir: string = "";
+
+        if (root_dir_info.enclosing_package_json) |package_json| {
+            if (root_dir_info.package_json == null) {
+                // no trailing slash
+
+                package_json_dir = strings.withoutTrailingSlash(package_json.source.path.name.dir);
+            }
+        }
+
+        const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_bundler, ORIGINAL_PATH, cwd, force_using_bun);
+        this_bundler.env.map.put("PATH", new_path) catch bun.outOfMemory();
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {

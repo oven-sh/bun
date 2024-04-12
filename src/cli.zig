@@ -34,6 +34,7 @@ const bundler = bun.bundler;
 const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
+const FilterRun = @import("./cli/filter_run.zig");
 
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
@@ -186,6 +187,7 @@ pub const Arguments = struct {
     };
 
     const auto_or_run_params = [_]ParamType{
+        clap.parseParam("--filter <STR>...                 Run a script in all workspace packages matching the pattern") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     };
@@ -430,6 +432,10 @@ pub const Arguments = struct {
             };
         } else {
             cwd = try bun.getcwdAlloc(allocator);
+        }
+
+        if (cmd == .RunCommand or cmd == .AutoCommand) {
+            ctx.filters = args.options("--filter");
         }
 
         if (cmd == .TestCommand) {
@@ -1154,6 +1160,8 @@ pub const Command = struct {
         bundler_options: BundlerOptions = BundlerOptions{},
         runtime_options: RuntimeOptions = RuntimeOptions{},
 
+        filters: []const []const u8 = &[_][]const u8{},
+
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
 
@@ -1703,6 +1711,13 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
 
+                if (ctx.filters.len > 0) {
+                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
+
                 if (ctx.positionals.len > 0) {
                     if (try RunCommand.exec(ctx, false, true, false)) {
                         return;
@@ -1725,6 +1740,7 @@ pub const Command = struct {
             },
             .AutoCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
+
                 var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {
@@ -1736,6 +1752,13 @@ pub const Command = struct {
                         },
                     }
                 };
+
+                if (ctx.filters.len > 0) {
+                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
 
                 if (ctx.runtime_options.eval.script.len > 0) {
                     const trigger = bun.pathLiteral("/[eval]");
@@ -1821,6 +1844,9 @@ pub const Command = struct {
                 }
 
                 if (ctx.positionals.len > 0 and extension.len == 0) {
+                    if (ctx.filters.len > 0) {
+                        Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
+                    }
                     if (try RunCommand.exec(ctx, true, false, true)) {
                         return;
                     }

@@ -1758,8 +1758,10 @@ it("#10177 response.write with non-ascii latin1 should not cause duplicated char
   // 128 = small than waterMark, 256 = waterMark, 1024 = large than waterMark
   // 8Kb = small than cork buffer
   // 16Kb = cork buffer
-  // 64Kb = large than cork buffer
-  const sizes = [128, 256, 1024, 8 * 1024, 16 * 1024, 64 * 1024];
+  // 32Kb = large than cork buffer
+  const start_size = 128;
+  const increment_step = 1024;
+  const end_size = 32 * 1024;
   let expected = "";
 
   function finish(err) {
@@ -1778,7 +1780,7 @@ it("#10177 response.write with non-ascii latin1 should not cause duplicated char
       expect(port).toBeGreaterThan(0);
 
       for (const char of chars) {
-        for (const size of sizes) {
+        for (let size = start_size; size <= end_size; size += increment_step) {
           expected = char + "-".repeat(size) + "x";
 
           try {

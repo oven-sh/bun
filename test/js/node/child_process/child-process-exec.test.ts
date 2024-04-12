@@ -1,4 +1,5 @@
 import { test, expect, describe } from "bun:test";
+import { bunExe } from "harness";
 import { exec } from "node:child_process";
 
 // https://github.com/oven-sh/bun/issues/5319
@@ -88,4 +89,18 @@ describe("child_process.exec", () => {
       expect(other).toBe("");
     });
   });
+});
+
+test("exec with verbatim arguments", async () => {
+  const { resolve, reject, promise } = Promise.withResolvers();
+
+  const fixture = require.resolve("./fixtures/child-process-echo-argv.js");
+  const child = exec(`${bunExe()} ${fixture} tasklist /FI "IMAGENAME eq chrome.exe"`, (err, stdout, stderr) => {
+    if (err) return reject(err);
+    return resolve({ stdout, stderr });
+  });
+  expect(!!child).toBe(true);
+
+  const { stdout } = await promise;
+  expect(stdout.trim().split("\n")).toEqual([`tasklist`, `/FI`, `IMAGENAME eq chrome.exe`]);
 });

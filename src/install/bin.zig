@@ -364,7 +364,7 @@ pub const Bin = extern struct {
                 var filename3_buf: bun.WPathBuffer = undefined;
 
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(strings.hasPrefixComptime(target_path, "..\\"));
+                    bun.assert(strings.hasPrefixComptime(target_path, "..\\"));
                 }
 
                 const target_wpath = bun.strings.toWPathNormalized(&filename1_buf, target_path[3..]);

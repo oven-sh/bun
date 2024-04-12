@@ -280,7 +280,7 @@ fn expandFlat(
             .open => |expansion_variants| {
                 depth += 1;
                 if (bun.Environment.allow_assert) {
-                    std.debug.assert(expansion_variants.end - expansion_variants.idx >= 1);
+                    assert(expansion_variants.end - expansion_variants.idx >= 1);
                 }
 
                 var variants = expansion_table[expansion_variants.idx..expansion_variants.end];
@@ -418,7 +418,7 @@ pub const Parser = struct {
     }
 
     fn expect(self: *Parser, toktag: TokenTag) Token {
-        std.debug.assert(toktag == @as(TokenTag, self.peek()));
+        assert(toktag == @as(TokenTag, self.peek()));
         if (self.check(toktag)) {
             return self.advance();
         }
@@ -586,7 +586,7 @@ pub fn buildExpansionTable(
     if (bun.Environment.allow_assert) {
         for (table.items[0..], 0..) |variant, kdjsd| {
             _ = kdjsd;
-            std.debug.assert(variant.start != 0 and variant.end != 0);
+            assert(variant.start != 0 and variant.end != 0);
         }
     }
 }
@@ -727,7 +727,7 @@ pub fn NewLexer(comptime encoding: Encoding) type {
         fn rollbackBraces(self: *@This(), starting_idx: u32) !void {
             if (bun.Environment.allow_assert) {
                 const first = &self.tokens.items[starting_idx];
-                std.debug.assert(first.* == .open);
+                assert(first.* == .open);
             }
 
             var braces: u8 = 0;
@@ -804,3 +804,5 @@ pub fn NewLexer(comptime encoding: Encoding) type {
         }
     };
 }
+
+const assert = bun.assert;

@@ -943,8 +943,6 @@ pub const SocketContext = opaque {
 
     /// closes and deinit the SocketContexts
     pub fn deinit(this: *SocketContext, ssl: bool) void {
-        // at this point we dont care about the callback anymore because we are deiniting after this
-        this.cleanCallbacks(ssl);
         this.close(ssl);
         //always deinit in next iteration
         if (ssl) {
@@ -956,6 +954,7 @@ pub const SocketContext = opaque {
 
     fn close(this: *SocketContext, ssl: bool) void {
         debug("us_socket_context_close({d})", .{@intFromPtr(this)});
+        this.cleanCallbacks(ssl);
         us_socket_context_close(@as(i32, @intFromBool(ssl)), this);
     }
 

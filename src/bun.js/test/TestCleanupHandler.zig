@@ -54,7 +54,7 @@ const Cleanable = packed struct {
     const name = bun.meta.typeName;
 
     pub fn run(this: Cleanable, vm: *JSC.VirtualMachine) void {
-        switch (this.tag()) {
+        switch (this.ptr.tag()) {
             inline @field(Tag, name(Subprocess)),
             @field(Tag, name(TLSSocket)),
             @field(Tag, name(TCPSocket)),
@@ -65,7 +65,7 @@ const Cleanable = packed struct {
             @field(Tag, name(DebugHTTPSServer)),
             @field(Tag, name(ShellSubprocess)),
             => |tag| {
-                this.as(
+                this.ptr.as(
                     Type.typeFromTag(
                         @intFromEnum(
                             @field(

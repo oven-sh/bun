@@ -13,7 +13,7 @@ const cwd_root = tempDirWithFiles("testworkspace", {
         name: "pkga",
         scripts: {
           present: "echo scripta",
-          long: "bun run sleep.js",
+          long: `${bunExe()} run sleep.js`,
         },
       }),
     },
@@ -25,7 +25,7 @@ const cwd_root = tempDirWithFiles("testworkspace", {
         name: "pkgb",
         scripts: {
           present: "echo scriptb",
-          long: "bun run sleep.js",
+          long: `${bunExe()} run sleep.js`,
         },
       }),
     },
@@ -227,9 +227,9 @@ describe("bun", () => {
         "package.json": JSON.stringify({
           name: "dep0",
           scripts: {
-            prescript: "bun run write.js",
-            script: "bun run readwrite.js",
-            postscript: "bun run read.js",
+            prescript: `${bunExe()} run write.js`,
+            script: `${bunExe()} run readwrite.js`,
+            postscript: `${bunExe()} run read.js`,
           },
         }),
       },
@@ -250,7 +250,7 @@ describe("bun", () => {
         "package.json": JSON.stringify({
           name: "dep0",
           scripts: {
-            script: "bun run index.js",
+            script: `${bunExe()} run index.js`,
           },
         }),
       },
@@ -262,7 +262,7 @@ describe("bun", () => {
             dep0: "*",
           },
           scripts: {
-            script: "bun run index.js",
+            script: `${bunExe()} run index.js`,
           },
         }),
       },
@@ -286,9 +286,9 @@ describe("bun", () => {
         "package.json": JSON.stringify({
           name: "dep0",
           scripts: {
-            prescript: "bun run write.js",
-            script: "bun run readwrite.js",
-            postscript: "bun run read.js",
+            prescript: `${bunExe()} run write.js`,
+            script: `${bunExe()} run readwrite.js`,
+            postscript: `${bunExe()} run read.js`,
           },
           dependencies: {
             dep1: "*",
@@ -303,7 +303,7 @@ describe("bun", () => {
             dep0: "*",
           },
           scripts: {
-            script: "bun run index.js",
+            script: `${bunExe()} run index.js`,
           },
         }),
       },

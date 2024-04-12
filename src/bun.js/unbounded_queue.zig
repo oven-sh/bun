@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 const os = std.os;
 const mem = std.mem;
@@ -7,7 +8,7 @@ const atomic = std.atomic;
 const builtin = std.builtin;
 const testing = std.testing;
 
-const assert = @import("root").bun.assert;
+const assert = bun.assert;
 
 const mpsc = @This();
 

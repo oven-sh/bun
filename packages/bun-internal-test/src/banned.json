@@ -1,4 +1,5 @@
 {
   "std.debug.assert": "Use bun.assert instead",
+  "@import(\"root\").bun.": "Only import 'bun' once",
   "": ""
 }

@@ -414,20 +414,10 @@ pub const Arguments = struct {
             cwd = brk: {
                 var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_);
-
-                // On POSIX, we don't actually call chdir() on the path
-                //
-                // On Windows, we do change the current directory.
-                // Not all system calls on Windows support passing a dirfd (and libuv entirely doesn't)
-                // So we have to do it the real way
-                if (comptime Environment.isWindows) {
-                    var wbuf: bun.WPathBuffer = undefined;
-                    bun.sys.chdir(bun.strings.toWPathNormalized(&wbuf, out)).unwrap() catch |err| {
-                        Output.prettyErrorln("{}\n", .{err});
-                        Global.exit(1);
-                    };
-                }
-
+                bun.sys.chdir(out).unwrap() catch |err| {
+                    Output.prettyErrorln("{}\n", .{err});
+                    Global.exit(1);
+                };
                 break :brk try allocator.dupe(u8, out);
             };
         } else {

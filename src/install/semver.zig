@@ -51,7 +51,7 @@ pub const String = extern struct {
         buf: string,
         in: string,
     ) String {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             const out = realInit(buf, in);
             if (!out.isInline()) {
                 assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);

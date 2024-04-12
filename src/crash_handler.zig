@@ -270,15 +270,12 @@ pub fn crashHandler(
 /// This is called when `main` returns a Zig error.
 /// We don't want to treat it as a crash under certain error codes.
 pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTrace) noreturn {
-    if (bun.Environment.isDebug) {
-        if (bun.verbose_error_trace) {
-            if (error_return_trace) |trace| {
-                Output.errGeneric("CLI returned {s}", .{@errorName(err)});
-                std.debug.dumpStackTrace(trace.*);
-                Global.exit(1);
-            } else {
-                Output.debugWarn("error return trace not available for the following error", .{});
-            }
+    if (verbose_error_trace) {
+        if (error_return_trace) |trace| {
+            handleErrorReturnTraceExtra(err, trace, true);
+            Global.exit(1);
+        } else {
+            Output.debugWarn("error return trace not available for the following error", .{});
         }
     }
 
@@ -538,7 +535,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 
     if (error_return_trace) |trace| {
         if (bun.Environment.isDebug) {
-            std.debug.dumpStackTrace(trace.*);
+            dumpStackTrace(trace.*);
         }
 
         // TODO: enable release-mode error return traces
@@ -1059,19 +1056,11 @@ fn crash() noreturn {
 
 pub var verbose_error_trace = false;
 
-/// In many places we catch errors, the trace for them is absorbed and only a
-/// single line (the error name) is printed. When this is set, we will print
-/// trace strings for those errors (or full stacks in debug builds).
-///
-/// This can be enabled by passing `--verbose-error-trace` to the CLI.
-/// In release builds with error return tracing enabled, this is also exposed.
-/// You can test if this feature is available by checking `bun --help` for the flag.
-pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.StackTrace) void {
+fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTrace, comptime is_root: bool) void {
     if (!builtin.have_error_return_tracing) return;
     if (!verbose_error_trace) return;
 
     if (maybe_trace) |trace| {
-
         // The format of the panic trace is slightly different in debug
         // builds Mainly, we demangle the backtrace immediately instead
         // of using a trace string.
@@ -1088,17 +1077,31 @@ pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.S
         };
 
         if (is_debug) {
-            Output.note("caught error.{s}:", .{@errorName(err)});
-            std.debug.dumpStackTrace(trace.*);
+            Output.note(if (is_root) "CLI returned error.{s}" else "caught error.{s}:", .{@errorName(err)});
+            dumpStackTrace(trace.*);
         } else {
-            Output.prettyErrorln("<cyan>trace<r>: error.{s}: <d>{}<r>", .{
+            Output.prettyErrorln(if (is_root)
+                "<cyan>trace<r>: Bun returned with error.{s}: <d>{}<r>"
+            else
+                "<cyan>trace<r>: error.{s}: <d>{}<r>", .{
                 @errorName(err),
                 TraceString{
                     .trace = trace,
-                    .reason = .{ .cli_returned_error = err },
+                    .reason = .{ .zig_error = err },
                     .action = .view_trace,
                 },
             });
         }
     }
+}
+
+/// In many places we catch errors, the trace for them is absorbed and only a
+/// single line (the error name) is printed. When this is set, we will print
+/// trace strings for those errors (or full stacks in debug builds).
+///
+/// This can be enabled by passing `--verbose-error-trace` to the CLI.
+/// In release builds with error return tracing enabled, this is also exposed.
+/// You can test if this feature is available by checking `bun --help` for the flag.
+pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.StackTrace) void {
+    handleErrorReturnTraceExtra(err, maybe_trace, false);
 }

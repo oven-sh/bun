@@ -579,9 +579,6 @@ pub const RunCommand = struct {
                                 basenameOrBun(executable),
                                 signal.name() orelse "unknown",
                             });
-                            if (@errorReturnTrace()) |trace| {
-                                std.debug.dumpStackTrace(trace.*);
-                            }
                         }
 
                         Output.flush();

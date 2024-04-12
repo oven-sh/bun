@@ -954,6 +954,7 @@ pub const SocketContext = opaque {
 
     fn close(this: *SocketContext, ssl: bool) void {
         debug("us_socket_context_close({d})", .{@intFromPtr(this)});
+        // we clean the callbacks to avoid UAF, we are probably deiniting after this in the next tick
         this.cleanCallbacks(ssl);
         us_socket_context_close(@as(i32, @intFromBool(ssl)), this);
     }

@@ -404,7 +404,9 @@ pub fn GlobWalker_(
                 }
 
                 if (comptime count_fds) {
-                    std.debug.assert(this.fds_open == 0);
+                    if (bun.Environment.allow_assert) {
+                        bun.assert(this.fds_open == 0);
+                    }
                 }
             }
 
@@ -424,7 +426,7 @@ pub fn GlobWalker_(
                 if (comptime count_fds) {
                     this.fds_open += 1;
                     // If this is over 2 then this means that there is a bug in the iterator code
-                    std.debug.assert(this.fds_open <= 2);
+                    bun.assert(this.fds_open <= 2);
                 }
             }
 

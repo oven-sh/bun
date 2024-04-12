@@ -322,8 +322,8 @@ pub const Prompt = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(input.items.len > 0);
-            std.debug.assert(input.items[input.items.len - 1] != '\r');
+            bun.assert(input.items.len > 0);
+            bun.assert(input.items[input.items.len - 1] != '\r');
         }
 
         // 8. Let result be null if the user aborts, or otherwise the string

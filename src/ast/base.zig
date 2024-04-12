@@ -262,7 +262,7 @@ pub const Ref = packed struct(u64) {
     }
 
     pub fn initSourceEnd(old: Ref) Ref {
-        std.debug.assert(old.tag != .invalid);
+        bun.assert(old.tag != .invalid);
         return init(old.inner_index, old.source_index, old.tag == .source_contents_slice);
     }
 

@@ -1729,7 +1729,7 @@ pub const Command = struct {
             .RunAsNodeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunAsNodeCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RunAsNodeCommand);
-                std.debug.assert(pretend_to_be_node);
+                bun.assert(pretend_to_be_node);
                 try RunCommand.execAsIfNode(ctx);
             },
             .UpgradeCommand => {

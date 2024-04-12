@@ -1,5 +1,5 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const assert = bun.assert;
 const Platform = bun.analytics.GenerateHeader.GeneratePlatform;
 const os = struct {
     pub usingnamespace std.os;

@@ -1556,7 +1556,7 @@ pub const Request = opaque {
         return ptr[0..req.uws_req_get_method(&ptr)];
     }
     pub fn header(req: *Request, name: []const u8) ?[]const u8 {
-        std.debug.assert(std.ascii.isLower(name[0]));
+        bun.assert(std.ascii.isLower(name[0]));
 
         var ptr: [*]const u8 = undefined;
         const len = req.uws_req_get_header(name.ptr, name.len, &ptr);

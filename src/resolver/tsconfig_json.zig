@@ -321,14 +321,14 @@ pub const TSConfigJSON = struct {
         }
 
         if (Environment.isDebug and has_base_url) {
-            std.debug.assert(result.base_url.len > 0);
+            assert(result.base_url.len > 0);
         }
 
         const _result = allocator.create(TSConfigJSON) catch unreachable;
         _result.* = result;
 
         if (Environment.isDebug and has_base_url) {
-            std.debug.assert(_result.base_url.len > 0);
+            assert(_result.base_url.len > 0);
         }
         return _result;
     }
@@ -443,3 +443,5 @@ pub const TSConfigJSON = struct {
         return false;
     }
 };
+
+const assert = bun.assert;

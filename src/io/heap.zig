@@ -1,5 +1,6 @@
 const std = @import("std");
-const assert = @import("root").bun.assert;
+const bun = @import("root").bun;
+const assert = bun.assert;
 
 /// An intrusive heap implementation backed by a pairing heap[1] implementation.
 ///

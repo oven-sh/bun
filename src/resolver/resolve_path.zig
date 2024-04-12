@@ -569,11 +569,10 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                 }
             }
         } else {
-            // TODO(dylan-conway): use strings.indexOfAny instead of std
-            if (std.mem.indexOfAny(T, path[3..], comptime strings.literal(T, "/\\"))) |idx| {
+            if (bun.strings.indexAnyComptimeT(T, path[3..], comptime strings.literal(T, "/\\"))) |idx| {
                 // TODO: handle input "//abc//def" should be picked up as a unc path
                 if (path.len > idx + 4 and !Platform.windows.isSeparatorT(T, path[idx + 4])) {
-                    if (std.mem.indexOfAny(T, path[idx + 4 ..], comptime strings.literal(T, "/\\"))) |idx2| {
+                    if (bun.strings.indexAnyComptimeT(T, path[idx + 4 ..], comptime strings.literal(T, "/\\"))) |idx2| {
                         return .{ idx + idx2 + 4, idx + 3 };
                     } else {
                         return .{ path.len, idx + 3 };
@@ -623,15 +622,9 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
         !Platform.windows.isSeparatorT(T, path[2]) and
         path[2] != '.')
     {
-        if (comptime T == u8) {
-            if (strings.indexOfAny(path[3..], "/\\")) |idx| {
-                // TODO: handle input "//abc//def" should be picked up as a unc path
-                return path[0 .. idx + 4];
-            }
-        } else {
-            if (std.mem.indexOfAny(T, path[3..], "/\\")) |idx| {
-                return path[0 .. idx + 4];
-            }
+        if (bun.strings.indexAnyComptimeT(T, path[3..], "/\\")) |idx| {
+            // TODO: handle input "//abc//def" should be picked up as a unc path
+            return path[0 .. idx + 4];
         }
     }
     if (isSepAnyT(T, path[0])) return path[0..1];

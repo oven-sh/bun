@@ -225,6 +225,15 @@ pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     return null;
 }
 
+pub inline fn indexAnyComptimeT(comptime T: type, target: []const T, comptime chars: []const T) ?usize {
+    for (target, 0..) |parent, i| {
+        inline for (chars) |char| {
+            if (char == parent) return i;
+        }
+    }
+    return null;
+}
+
 pub inline fn indexEqualAny(in: anytype, target: string) ?usize {
     for (in, 0..) |str, i| if (eqlLong(str, target, true)) return i;
     return null;

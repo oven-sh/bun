@@ -41,6 +41,9 @@ $CXXFLAGS = '/O2'
 if ($Baseline) {
   $CFLAGS += ' -march=nehalem'
   $CXXFLAGS += ' -march=nehalem'
+} else {
+  $CFLAGS += ' -march=haswell'
+  $CXXFLAGS += ' -march=haswell'
 }
 
 $CMAKE_FLAGS = @(

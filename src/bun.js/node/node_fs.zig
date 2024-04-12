@@ -5338,7 +5338,7 @@ pub const NodeFS = struct {
     pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
         const fd = switch (args.file) {
             .path => brk: {
-                const path = args.file.path.sliceZ(pathbuf);
+                const path = args.file.path.sliceZWithForceCopy(pathbuf);
 
                 const open_result = Syscall.openat(
                     args.dirfd,

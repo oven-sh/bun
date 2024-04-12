@@ -126,14 +126,14 @@ pub const FilterSet = struct {
         var buf: bun.PathBuffer = undefined;
         // TODO fixed buffer allocator with fallback?
         var self = FilterSet{ .allocator = allocator, .filters = try allocator.alloc(Pattern, filters.len) };
-        for (0.., filters) |idx, filter_utf8_| {
+        for (self.filters, filters) |*pattern, filter_utf8_| {
             var filter_utf8 = filter_utf8_;
             const is_path = filter_utf8.len > 0 and filter_utf8[0] == '.';
             if (is_path) {
                 const parts = [_]string{filter_utf8};
                 filter_utf8 = bun.path.joinAbsStringBuf(cwd, &buf, &parts, .auto);
             }
-            var filter_utf32 = std.ArrayListUnmanaged(u32){};
+            var filter_utf32 = try std.ArrayListUnmanaged(u32).initCapacity(allocator, filter_utf8.len + 1);
             var codepointer_iter = strings.UnsignedCodepointIterator.init(filter_utf8);
             var cursor = strings.UnsignedCodepointIterator.Cursor{};
             while (codepointer_iter.next(&cursor)) {
@@ -143,7 +143,7 @@ pub const FilterSet = struct {
                 try filter_utf32.append(self.allocator, cursor.c);
             }
             self.has_name_filters = self.has_name_filters or !is_path;
-            self.filters[idx] = Pattern{
+            pattern.* = Pattern{
                 .codepoints = filter_utf32.items,
                 .kind = if (is_path) .path else .name,
             };
@@ -181,28 +181,6 @@ pub const FilterSet = struct {
         return false;
     }
 };
-
-pub fn getPackageName(allocator: std.mem.Allocator, log: *bun.logger.Log, path: []const u8) !?[]u8 {
-    const json_file = try std.fs.cwd().openFile(
-        path,
-        .{ .mode = .read_only },
-    );
-    defer json_file.close();
-
-    const json_stat_size = try json_file.getEndPos();
-    const json_buf = try allocator.alloc(u8, json_stat_size + 64);
-    defer allocator.free(json_buf);
-
-    const json_len = try json_file.preadAll(json_buf, 0);
-    const json_source = bun.logger.Source.initPathString(path, json_buf[0..json_len]);
-
-    var parser = try json_parser.PackageJSONVersionChecker.init(allocator, &json_source, log);
-    _ = try parser.parseExpr();
-    if (!parser.has_found_name) {
-        return null;
-    }
-    return try allocator.dupe(u8, parser.found_name);
-}
 
 pub const PackageFilterIterator = struct {
     patterns: []const []const u8,

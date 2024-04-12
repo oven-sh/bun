@@ -1,7 +1,7 @@
 import { file, spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
 import { bunEnv, bunExe, bunEnv as env, isWindows } from "harness";
-import { mkdtemp, realpath, rm, writeFile, exists } from "fs/promises";
+import { mkdtemp, realpath, rm, writeFile, exists, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
@@ -418,4 +418,29 @@ import { prueba } from "pruebadfasdfasdkafasdyuif.js";
   });
   // The exit code will not be 1 if it panics.
   expect(await exited).toBe(1);
+});
+
+it("should show the correct working directory when run with --cwd", async () => {
+  await mkdir(join(run_dir, "subdir"));
+  await writeFile(
+    join(run_dir, "subdir", "test.js"),
+    `
+    console.log(process.cwd());
+  `,
+  );
+  const res = Bun.spawn({
+    cmd: [bunExe(), "run", "--cwd", "subdir", "test.js"],
+    cwd: run_dir,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
+    },
+  });
+
+  // The exit code will not be 1 if it panics.
+  expect(await res.exited).toBe(0);
+  expect(await Bun.readableStreamToText(res.stdout)).toMatch(/subdir/);
 });

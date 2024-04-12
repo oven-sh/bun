@@ -1065,7 +1065,7 @@ pub const VirtualMachine = struct {
 
         pub export fn Debugger__didConnect() void {
             var this = VirtualMachine.get();
-            std.debug.assert(this.debugger.?.wait_for_connection);
+            bun.assert(this.debugger.?.wait_for_connection);
             this.debugger.?.wait_for_connection = false;
             this.debugger.?.poll_ref.unref(this);
         }
@@ -1600,7 +1600,7 @@ pub const VirtualMachine = struct {
 
     pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
         JSC.markBinding(@src());
-        std.debug.assert(input_.len > 0);
+        bun.assert(input_.len > 0);
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
         this.ref_strings_mutex.lock();
         defer this.ref_strings_mutex.unlock();
@@ -1629,7 +1629,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
-        std.debug.assert(input_.len > 0);
+        bun.assert(input_.len > 0);
         var _was_new = false;
         return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
     }
@@ -1642,7 +1642,7 @@ pub const VirtualMachine = struct {
         log: *logger.Log,
         comptime flags: FetchFlags,
     ) anyerror!ResolvedSource {
-        std.debug.assert(VirtualMachine.isLoaded());
+        bun.assert(VirtualMachine.isLoaded());
 
         if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
             return builtin;
@@ -1726,7 +1726,7 @@ pub const VirtualMachine = struct {
         is_esm: bool,
         comptime is_a_file_path: bool,
     ) !void {
-        std.debug.assert(VirtualMachine.isLoaded());
+        bun.assert(VirtualMachine.isLoaded());
         // macOS threadlocal vars are very slow
         // we won't change threads in this function
         // so we can copy it here

@@ -1,5 +1,5 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const assert = @import("root").bun.assert;
 const is_darwin = @import("builtin").target.isDarwin();
 
 pub const Time = struct {

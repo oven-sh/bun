@@ -487,7 +487,7 @@ pub const StandaloneModuleGraph = struct {
             var outfile_buf: bun.OSPathBuffer = undefined;
             const outfile_slice = brk: {
                 const outfile_w = bun.strings.toWPathNormalized(&outfile_buf, std.fs.path.basenameWindows(outfile));
-                std.debug.assert(outfile_w.ptr == &outfile_buf);
+                bun.assert(outfile_w.ptr == &outfile_buf);
                 const outfile_buf_u16 = bun.reinterpretSlice(u16, &outfile_buf);
                 if (!bun.strings.endsWithComptime(outfile, ".exe")) {
                     // append .exe
@@ -652,7 +652,7 @@ pub const StandaloneModuleGraph = struct {
             end -= offsets.byte_count;
             @memcpy(to_read[0..offsets.byte_count], end[0..offsets.byte_count]);
             if (comptime Environment.allow_assert) {
-                std.debug.assert(bun.strings.eqlLong(to_read, end[0..offsets.byte_count], true));
+                bun.assert(bun.strings.eqlLong(to_read, end[0..offsets.byte_count], true));
             }
         }
 

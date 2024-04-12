@@ -12,7 +12,7 @@ const MainPanicHandler = panic_handler.NewPanicHandler(std.builtin.default_panic
 pub const io_mode = .blocking;
 
 comptime {
-    std.debug.assert(builtin.target.cpu.arch.endian() == .little);
+    bun.assert(builtin.target.cpu.arch.endian() == .little);
 }
 
 pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, addr: ?usize) noreturn {

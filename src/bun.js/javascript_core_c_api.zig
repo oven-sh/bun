@@ -33,14 +33,14 @@ pub const OpaqueJSString = opaque {
 
     pub fn characters16(this: *OpaqueJSString) UTF16Ptr {
         if (comptime bun.Environment.allow_assert)
-            std.debug.assert(this.is16Bit());
+            bun.assert(this.is16Bit());
 
         return JSStringGetCharactersPtr(this);
     }
 
     pub fn characters8(this: *OpaqueJSString) UTF8Ptr {
         if (comptime bun.Environment.allow_assert)
-            std.debug.assert(!this.is16Bit());
+            bun.assert(!this.is16Bit());
 
         return JSStringGetCharacters8Ptr(this);
     }

@@ -7,7 +7,7 @@ const atomic = std.atomic;
 const builtin = std.builtin;
 const testing = std.testing;
 
-const assert = std.debug.assert;
+const assert = @import("root").bun.assert;
 
 const mpsc = @This();
 

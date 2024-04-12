@@ -52,19 +52,19 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn scriptName(this: *const LifecycleScriptSubprocess) []const u8 {
-        std.debug.assert(this.current_script_index < Lockfile.Scripts.names.len);
+        bun.assert(this.current_script_index < Lockfile.Scripts.names.len);
         return Lockfile.Scripts.names[this.current_script_index];
     }
 
     pub fn onReaderDone(this: *LifecycleScriptSubprocess) void {
-        std.debug.assert(this.remaining_fds > 0);
+        bun.assert(this.remaining_fds > 0);
         this.remaining_fds -= 1;
 
         this.maybeFinished();
     }
 
     pub fn onReaderError(this: *LifecycleScriptSubprocess, err: bun.sys.Error) void {
-        std.debug.assert(this.remaining_fds > 0);
+        bun.assert(this.remaining_fds > 0);
         this.remaining_fds -= 1;
 
         Output.prettyErrorln("<r><red>error<r>: Failed to read <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
@@ -384,7 +384,7 @@ pub const LifecycleScriptSubprocess = struct {
 
     pub fn resetPolls(this: *LifecycleScriptSubprocess) void {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(this.remaining_fds == 0);
+            bun.assert(this.remaining_fds == 0);
         }
 
         if (this.process) |process| {

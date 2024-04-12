@@ -506,7 +506,7 @@ pub const Body = struct {
                     };
                 }
 
-                std.debug.assert(str.tag == .WTFStringImpl);
+                assert(str.tag == .WTFStringImpl);
 
                 return Body.Value{
                     .WTFStringImpl = str.value.WTFStringImpl,
@@ -703,7 +703,7 @@ pub const Body = struct {
             switch (this.*) {
                 .Blob => {
                     const new_blob = this.Blob;
-                    std.debug.assert(new_blob.allocator == null); // owned by Body
+                    assert(new_blob.allocator == null); // owned by Body
                     this.* = .{ .Used = {} };
                     return new_blob;
                 },
@@ -943,7 +943,7 @@ pub const Body = struct {
 
         body.value = Value.fromJS(globalThis, value) orelse return null;
         if (body.value == .Blob)
-            std.debug.assert(body.value.Blob.allocator == null); // owned by Body
+            assert(body.value.Blob.allocator == null); // owned by Body
 
         return body;
     }
@@ -1348,7 +1348,7 @@ pub const BodyValueBufferer = struct {
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
         signal.clear();
-        std.debug.assert(signal.isDead());
+        assert(signal.isDead());
 
         const assignment_result: JSValue = ArrayBufferSink.JSSink.assignToStream(
             globalThis,
@@ -1360,7 +1360,7 @@ pub const BodyValueBufferer = struct {
         assignment_result.ensureStillAlive();
 
         // assert that it was updated
-        std.debug.assert(!signal.isDead());
+        assert(!signal.isDead());
 
         if (assignment_result.isError()) {
             return error.PipeFailed;
@@ -1398,7 +1398,7 @@ pub const BodyValueBufferer = struct {
     }
 
     fn bufferLockedBodyValue(sink: *@This(), value: *JSC.WebCore.Body.Value) !void {
-        std.debug.assert(value.* == .Locked);
+        assert(value.* == .Locked);
         const locked = &value.Locked;
         if (locked.readable.get()) |stream| {
             // keep the stream alive until we're done with it
@@ -1421,8 +1421,8 @@ pub const BodyValueBufferer = struct {
                     return error.UnsupportedStreamType;
                 },
                 .Bytes => |byte_stream| {
-                    std.debug.assert(byte_stream.pipe.ctx == null);
-                    std.debug.assert(sink.byte_stream == null);
+                    assert(byte_stream.pipe.ctx == null);
+                    assert(sink.byte_stream == null);
 
                     const bytes = byte_stream.buffer.items;
                     // If we've received the complete body by the time this function is called
@@ -1496,3 +1496,5 @@ pub const BodyValueBufferer = struct {
         }
     }
 };
+
+const assert = bun.assert;

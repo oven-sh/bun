@@ -442,7 +442,7 @@ pub const InstallCompletionsCommand = struct {
             else => unreachable,
         };
 
-        std.debug.assert(completions_dir.len > 0);
+        bun.assert(completions_dir.len > 0);
 
         var output_file = output_dir.createFileZ(filename, .{
             .truncate = true,

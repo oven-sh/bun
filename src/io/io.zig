@@ -11,7 +11,7 @@ const log = bun.Output.scoped(.loop, false);
 const TimerHeap = heap.Intrusive(Timer, void, Timer.less);
 
 const os = std.os;
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 pub const Source = @import("./source.zig").Source;
 
@@ -71,7 +71,7 @@ pub const Loop = struct {
     }
 
     pub fn schedule(this: *Loop, request: *Request) void {
-        std.debug.assert(!request.scheduled);
+        bun.assert(!request.scheduled);
         request.scheduled = true;
         this.pending.push(request);
         this.waker.wake();
@@ -620,7 +620,7 @@ pub const Timer = struct {
                     }
 
                     if (batch.last) |last| {
-                        std.debug.assert(last.next == null);
+                        bun.assert(last.next == null);
                         last.next = concurrent_task;
                     }
 
@@ -877,7 +877,7 @@ pub const Poll = struct {
 
         log("register: {s} ({})", .{ @tagName(flag), fd });
 
-        std.debug.assert(fd != bun.invalid_fd);
+        bun.assert(fd != bun.invalid_fd);
 
         if (one_shot) {
             this.flags.insert(.one_shot);

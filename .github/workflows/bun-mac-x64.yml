@@ -458,7 +458,7 @@ jobs:
           mode: upsert
           create_if_not_exists: false
           message: |
-            ✅ test failures on ${{ matrix.tag }} have been resolved.
+            ✅ test failures on ${{ matrix.tag }} have been resolved. Thank you.
 
             <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
       - id: fail

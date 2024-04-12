@@ -38,7 +38,7 @@ const INotify = struct {
         name_len: u32,
 
         pub fn name(this: *const INotifyEvent) [:0]u8 {
-            if (comptime Environment.allow_assert) std.debug.assert(this.name_len > 0);
+            if (comptime Environment.allow_assert) bun.assert(this.name_len > 0);
 
             // the name_len field is wrong
             // it includes alignment / padding
@@ -49,7 +49,7 @@ const INotify = struct {
     };
 
     pub fn watchPath(this: *INotify, pathname: [:0]const u8) !EventListIndex {
-        std.debug.assert(this.loaded_inotify);
+        bun.assert(this.loaded_inotify);
         const old_count = this.watch_count.fetchAdd(1, .Release);
         defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
         const watch_file_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MODIFY;
@@ -57,7 +57,7 @@ const INotify = struct {
     }
 
     pub fn watchDir(this: *INotify, pathname: [:0]const u8) !EventListIndex {
-        std.debug.assert(this.loaded_inotify);
+        bun.assert(this.loaded_inotify);
         const old_count = this.watch_count.fetchAdd(1, .Release);
         defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
         const watch_dir_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.DELETE | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.CREATE | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.ONLYDIR | std.os.linux.IN.MOVED_TO;
@@ -65,13 +65,13 @@ const INotify = struct {
     }
 
     pub fn unwatch(this: *INotify, wd: EventListIndex) void {
-        std.debug.assert(this.loaded_inotify);
+        bun.assert(this.loaded_inotify);
         _ = this.watch_count.fetchSub(1, .Release);
         std.os.inotify_rm_watch(this.inotify_fd, wd);
     }
 
     pub fn init(this: *INotify, _: []const u8) !void {
-        std.debug.assert(!this.loaded_inotify);
+        bun.assert(!this.loaded_inotify);
         this.loaded_inotify = true;
 
         if (bun.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
@@ -82,7 +82,7 @@ const INotify = struct {
     }
 
     pub fn read(this: *INotify) ![]*const INotifyEvent {
-        std.debug.assert(this.loaded_inotify);
+        bun.assert(this.loaded_inotify);
 
         restart: while (true) {
             Futex.wait(&this.watch_count, 0, null) catch unreachable;
@@ -524,7 +524,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn start(this: *Watcher) !void {
-            std.debug.assert(this.watchloop_handle == null);
+            bun.assert(this.watchloop_handle == null);
             this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
         }
 
@@ -620,7 +620,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         fn _watchLoop(this: *Watcher) !void {
             if (Environment.isMac) {
-                std.debug.assert(this.platform.fd > 0);
+                bun.assert(this.platform.fd > 0);
                 const KEvent = std.c.Kevent;
 
                 var changelist_array: [128]KEvent = std.mem.zeroes([128]KEvent);
@@ -1037,7 +1037,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         ) !void {
             if (comptime lock) this.mutex.lock();
             defer if (comptime lock) this.mutex.unlock();
-            std.debug.assert(file_path.len > 1);
+            bun.assert(file_path.len > 1);
             const pathname = bun.fs.PathName.init(file_path);
 
             const parent_dir = pathname.dirWithTrailingSlash();
@@ -1169,7 +1169,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
-            std.debug.assert(index != no_watch_item);
+            bun.assert(index != no_watch_item);
 
             this.evict_list[this.evict_list_i] = index;
             this.evict_list_i += 1;

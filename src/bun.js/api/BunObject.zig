@@ -1959,7 +1959,7 @@ pub const Crypto = struct {
             algorithm: PasswordObject.Algorithm.Value,
             comptime sync: bool,
         ) JSC.JSValue {
-            std.debug.assert(password.len > 0); // caller must check
+            assert(password.len > 0); // caller must check
 
             if (comptime sync) {
                 const value = HashJob.getValue(password, algorithm);
@@ -2001,7 +2001,7 @@ pub const Crypto = struct {
             algorithm: ?PasswordObject.Algorithm,
             comptime sync: bool,
         ) JSC.JSValue {
-            std.debug.assert(password.len > 0); // caller must check
+            assert(password.len > 0); // caller must check
 
             if (comptime sync) {
                 const value = VerifyJob.getValue(password, prev_hash, algorithm);
@@ -2967,7 +2967,7 @@ pub fn serve(
 }
 
 pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u16, len: usize) JSValue {
-    std.debug.assert(len > 0);
+    assert(len > 0);
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
@@ -2982,7 +2982,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
         .allocated => |escaped_html| {
             if (comptime Environment.allow_assert) {
                 // assert that re-encoding the string produces the same result
-                std.debug.assert(
+                assert(
                     std.mem.eql(
                         u16,
                         (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false, false) catch unreachable).?,
@@ -2991,7 +2991,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
                 );
 
                 // assert we do not allocate a new string unnecessarily
-                std.debug.assert(
+                assert(
                     !std.mem.eql(
                         u16,
                         input_slice,
@@ -3000,7 +3000,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
                 );
 
                 // the output should always be longer than the input
-                std.debug.assert(escaped_html.len > input_slice.len);
+                assert(escaped_html.len > input_slice.len);
             }
 
             return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
@@ -3009,7 +3009,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
 }
 
 pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u8, len: usize) JSValue {
-    std.debug.assert(len > 0);
+    assert(len > 0);
 
     const input_slice = ptr[0..len];
     var stack_allocator = std.heap.stackFallback(256, globalObject.bunVM().allocator);
@@ -3028,10 +3028,10 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
         .allocated => |escaped_html| {
             if (comptime Environment.allow_assert) {
                 // the output should always be longer than the input
-                std.debug.assert(escaped_html.len > input_slice.len);
+                assert(escaped_html.len > input_slice.len);
 
                 // assert we do not allocate a new string unnecessarily
-                std.debug.assert(
+                assert(
                     !std.mem.eql(
                         u8,
                         input_slice,
@@ -3913,7 +3913,7 @@ pub const Timer = struct {
                 if (comptime Environment.allow_assert)
                     // If this is ever -1, it's invalid.
                     // It should always be at least 1.
-                    std.debug.assert(this.interval > 0);
+                    assert(this.interval > 0);
 
                 if (!Timeout.runFromConcurrentTask(timer_id, vm, this, reschedule) or this.cancelled) {
                     this.deinit();
@@ -3944,7 +3944,7 @@ pub const Timer = struct {
             }
 
             pub fn schedule(this: *TimerReference, interval: ?i32) void {
-                std.debug.assert(!this.cancelled);
+                assert(!this.cancelled);
                 _ = this.scheduled_count.fetchAdd(1, .Monotonic);
                 const ms: usize = @max(interval orelse this.interval, 1);
                 if (Environment.isWindows) {
@@ -4774,7 +4774,7 @@ pub const FFIObject = struct {
 
         var addr: usize = @intFromPtr(array_buffer.ptr);
         // const Sizes = @import("../bindings/sizes.zig");
-        // std.debug.assert(addr == @intFromPtr(value.asEncoded().ptr) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector);
+        // assert(addr == @intFromPtr(value.asEncoded().ptr) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector);
 
         if (byteOffset) |off| {
             if (!off.isEmptyOrUndefinedOrNull()) {
@@ -4808,7 +4808,7 @@ pub const FFIObject = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(JSC.JSValue.fromPtrAddress(addr).asPtrAddress() == addr);
+            assert(JSC.JSValue.fromPtrAddress(addr).asPtrAddress() == addr);
         }
 
         return JSC.JSValue.fromPtrAddress(addr);
@@ -5281,3 +5281,5 @@ comptime {
     _ = Crypto.JSPasswordObject.JSPasswordObject__create;
     BunObject.exportAll();
 }
+
+const assert = bun.assert;

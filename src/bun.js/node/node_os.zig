@@ -865,7 +865,7 @@ pub const OS = struct {
 /// `@TypeOf(mask)` must be one of u32 (IPv4) or u128 (IPv6)
 fn netmaskToCIDRSuffix(mask: anytype) ?u8 {
     const T = @TypeOf(mask);
-    comptime std.debug.assert(T == u32 or T == u128);
+    comptime bun.assert(T == u32 or T == u128);
 
     const mask_bits = @byteSwap(mask);
 

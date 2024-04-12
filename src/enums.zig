@@ -2,7 +2,7 @@
 // This exists mostly as a workaround for https://github.com/ziglang/zig/issues/16980
 
 const std = @import("std");
-const assert = std.debug.assert;
+const assert = @import("root").bun.assert;
 const testing = std.testing;
 const EnumField = std.builtin.Type.EnumField;
 

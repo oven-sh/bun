@@ -270,7 +270,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             header_values: ?[*]const JSC.ZigString,
             header_count: usize,
         ) callconv(.C) ?*HTTPClient {
-            std.debug.assert(global.bunVM().event_loop_handle != null);
+            bun.assert(global.bunVM().event_loop_handle != null);
 
             var client_protocol_hash: u64 = 0;
             const body = buildRequestBody(
@@ -413,10 +413,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleOpen(this: *HTTPClient, socket: Socket) void {
             log("onOpen", .{});
-            std.debug.assert(socket.socket == this.tcp.?.socket);
+            bun.assert(socket.socket == this.tcp.?.socket);
 
-            std.debug.assert(this.input_body_buf.len > 0);
-            std.debug.assert(this.to_send.len == 0);
+            bun.assert(this.input_body_buf.len > 0);
+            bun.assert(this.to_send.len == 0);
 
             if (comptime ssl) {
                 if (this.hostname.len > 0) {
@@ -443,10 +443,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            std.debug.assert(socket.socket == this.tcp.?.socket);
+            bun.assert(socket.socket == this.tcp.?.socket);
 
             if (comptime Environment.allow_assert)
-                std.debug.assert(!socket.isShutdown());
+                bun.assert(!socket.isShutdown());
 
             var body = data;
             if (this.body.items.len > 0) {
@@ -485,7 +485,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn handleEnd(this: *HTTPClient, socket: Socket) void {
             log("onEnd", .{});
 
-            std.debug.assert(socket.socket == this.tcp.?.socket);
+            bun.assert(socket.socket == this.tcp.?.socket);
             this.terminate(ErrorCode.ended);
         }
 
@@ -611,7 +611,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this: *HTTPClient,
             socket: Socket,
         ) void {
-            std.debug.assert(socket.socket == this.tcp.?.socket);
+            bun.assert(socket.socket == this.tcp.?.socket);
 
             if (this.to_send.len == 0)
                 return;
@@ -705,7 +705,7 @@ pub const Mask = struct {
             }
 
             // hint to the compiler not to vectorize the next loop
-            std.debug.assert(input.len < strings.ascii_vector_size);
+            bun.assert(input.len < strings.ascii_vector_size);
         }
 
         if (comptime !skip_mask) {
@@ -851,8 +851,8 @@ const Copy = union(enum) {
 
     pub fn copy(this: @This(), globalThis: *JSC.JSGlobalObject, buf: []u8, content_byte_len: usize, opcode: Opcode) void {
         if (this == .raw) {
-            std.debug.assert(buf.len >= this.raw.len);
-            std.debug.assert(buf.ptr != this.raw.ptr);
+            bun.assert(buf.len >= this.raw.len);
+            bun.assert(buf.ptr != this.raw.ptr);
             @memcpy(buf[0..this.raw.len], this.raw);
             return;
         }
@@ -882,14 +882,14 @@ const Copy = union(enum) {
         header.final = true;
         header.opcode = opcode;
 
-        std.debug.assert(WebsocketHeader.frameSizeIncludingMask(content_byte_len) == buf.len);
+        bun.assert(WebsocketHeader.frameSizeIncludingMask(content_byte_len) == buf.len);
 
         switch (this) {
             .utf16 => |utf16| {
                 header.len = WebsocketHeader.packLength(content_byte_len);
                 const encode_into_result = strings.copyUTF16IntoUTF8(to_mask, []const u16, utf16, true);
-                std.debug.assert(@as(usize, encode_into_result.written) == content_byte_len);
-                std.debug.assert(@as(usize, encode_into_result.read) == utf16.len);
+                bun.assert(@as(usize, encode_into_result.written) == content_byte_len);
+                bun.assert(@as(usize, encode_into_result.read) == utf16.len);
                 header.len = WebsocketHeader.packLength(encode_into_result.written);
                 var fib = std.io.fixedBufferStream(buf);
                 header.writeHeader(fib.writer(), encode_into_result.written) catch unreachable;
@@ -898,10 +898,10 @@ const Copy = union(enum) {
             },
             .latin1 => |latin1| {
                 const encode_into_result = strings.copyLatin1IntoUTF8(to_mask, []const u8, latin1);
-                std.debug.assert(@as(usize, encode_into_result.written) == content_byte_len);
+                bun.assert(@as(usize, encode_into_result.written) == content_byte_len);
 
                 // latin1 can contain non-ascii
-                std.debug.assert(@as(usize, encode_into_result.read) == latin1.len);
+                bun.assert(@as(usize, encode_into_result.read) == latin1.len);
 
                 header.len = WebsocketHeader.packLength(encode_into_result.written);
                 var fib = std.io.fixedBufferStream(buf);
@@ -969,7 +969,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             if (comptime Environment.isPosix) {
                 if (vm.event_loop_handle) |other| {
-                    std.debug.assert(other == loop);
+                    bun.assert(other == loop);
                 }
             }
 
@@ -1130,7 +1130,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn consume(this: *WebSocket, data_: []const u8, left_in_fragment: usize, kind: Opcode, is_final: bool) usize {
-            std.debug.assert(data_.len <= left_in_fragment);
+            bun.assert(data_.len <= left_in_fragment);
 
             // did all the data fit in the buffer?
             // we can avoid copying & allocating a temporary buffer
@@ -1181,7 +1181,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                 // handleWithoutDeinit is supposed to clear the handler from WebSocket*
                 // to prevent an infinite loop
-                std.debug.assert(this.initial_data_handler == null);
+                bun.assert(this.initial_data_handler == null);
 
                 // If we disconnected for any reason in the re-entrant case, we should just ignore the data
                 if (this.outgoing_websocket == null or this.tcp.isShutdown() or this.tcp.isClosed())
@@ -1238,7 +1238,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     // +---------------------------------------------------------------+
                     .need_header => {
                         if (data.len < 2) {
-                            std.debug.assert(data.len > 0);
+                            bun.assert(data.len > 0);
                             if (this.header_fragment == null) {
                                 this.header_fragment = data[0];
                                 break;
@@ -1531,7 +1531,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         fn sendData(this: *WebSocket, bytes: Copy, do_write: bool, opcode: Opcode) bool {
             var content_byte_len: usize = 0;
             const write_len = bytes.len(&content_byte_len);
-            std.debug.assert(write_len > 0);
+            bun.assert(write_len > 0);
 
             var writable = this.send_buffer.writableWithSize(write_len) catch unreachable;
             bytes.copy(this.globalThis, writable[0..write_len], content_byte_len, opcode);
@@ -1539,9 +1539,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             if (do_write) {
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(!this.tcp.isShutdown());
-                    std.debug.assert(!this.tcp.isClosed());
-                    std.debug.assert(this.tcp.isEstablished());
+                    bun.assert(!this.tcp.isShutdown());
+                    bun.assert(!this.tcp.isClosed());
+                    bun.assert(this.tcp.isEstablished());
                 }
                 return this.sendBuffer(this.send_buffer.readableSlice(0));
             }
@@ -1553,7 +1553,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this: *WebSocket,
             out_buf: []const u8,
         ) bool {
-            std.debug.assert(out_buf.len > 0);
+            bun.assert(out_buf.len > 0);
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             const wrote = this.tcp.write(out_buf, false);
             if (wrote < 0) {
@@ -1646,7 +1646,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleEnd(this: *WebSocket, socket: Socket) void {
-            std.debug.assert(socket.socket == this.tcp.socket);
+            bun.assert(socket.socket == this.tcp.socket);
             this.terminate(ErrorCode.ended);
         }
 
@@ -1655,7 +1655,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             socket: Socket,
         ) void {
             if (this.close_received) return;
-            std.debug.assert(socket.socket == this.tcp.socket);
+            bun.assert(socket.socket == this.tcp.socket);
             const send_buf = this.send_buffer.readableSlice(0);
             if (send_buf.len == 0)
                 return;
@@ -1733,7 +1733,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     const bytes = Copy{ .utf16 = str.utf16SliceAligned() };
                     var byte_len: usize = 0;
                     const frame_size = bytes.len(&byte_len);
-                    std.debug.assert(frame_size <= stack_frame_size);
+                    bun.assert(frame_size <= stack_frame_size);
                     bytes.copy(this.globalThis, inline_buf[0..frame_size], byte_len, opcode);
                     _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
                     return;

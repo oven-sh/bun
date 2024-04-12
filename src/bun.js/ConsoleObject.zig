@@ -2876,7 +2876,7 @@ pub const Formatter = struct {
                 writer.writeAll(" />");
             },
             .Object => {
-                std.debug.assert(value.isCell());
+                bun.assert(value.isCell());
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
@@ -3058,7 +3058,7 @@ pub const Formatter = struct {
                 const target = value.getProxyInternalField(.target);
                 if (Environment.allow_assert) {
                     // Proxy does not allow non-objects here.
-                    std.debug.assert(target.isCell());
+                    bun.assert(target.isCell());
                 }
                 // TODO: if (options.showProxy), print like `Proxy { target: ..., handlers: ... }`
                 // this is default off so it is not used.

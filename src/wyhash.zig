@@ -1,6 +1,7 @@
 //
 // this file is a copy of Wyhash from the zig standard library, version v0.11.0-dev.2609+5e19250a1
 //
+const assert = if (@hasDecl(@import("root"), "bun")) @import("root").bun.assert else @import("std").debug.assert;
 
 const std = @import("std");
 const mem = std.mem;
@@ -51,7 +52,7 @@ const WyhashStateless = struct {
     }
 
     inline fn round(self: *WyhashStateless, b: []const u8) void {
-        std.debug.assert(b.len == 32);
+        assert(b.len == 32);
 
         self.seed = mix0(
             read_bytes(8, b[0..]),
@@ -65,7 +66,7 @@ const WyhashStateless = struct {
     }
 
     pub inline fn update(self: *WyhashStateless, b: []const u8) void {
-        std.debug.assert(b.len % 32 == 0);
+        assert(b.len % 32 == 0);
 
         var off: usize = 0;
         while (off < b.len) : (off += 32) {
@@ -77,7 +78,7 @@ const WyhashStateless = struct {
     }
 
     pub inline fn final(self: *WyhashStateless, b: []const u8) u64 {
-        std.debug.assert(b.len < 32);
+        assert(b.len < 32);
 
         const seed = self.seed;
         const rem_len = @as(u5, @intCast(b.len));

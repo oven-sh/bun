@@ -82,7 +82,7 @@ pub fn encodeURLSafe(dest: []u8, source: []const u8) usize {
 }
 
 const zig_base64 = struct {
-    const assert = std.debug.assert;
+    const assert = bun.assert;
     const testing = std.testing;
     const mem = std.mem;
 

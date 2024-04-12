@@ -300,14 +300,14 @@ pub const Loader = struct {
 
         if (behavior != .disable and behavior != .load_all_without_inlining) {
             if (behavior == .prefix) {
-                std.debug.assert(prefix.len > 0);
+                bun.assert(prefix.len > 0);
 
                 while (iter.next()) |entry| {
                     if (strings.startsWith(entry.key_ptr.*, prefix)) {
                         key_buf_len += entry.key_ptr.len;
                         key_count += 1;
                         e_strings_to_allocate += 1;
-                        std.debug.assert(entry.key_ptr.len > 0);
+                        bun.assert(entry.key_ptr.len > 0);
                     }
                 }
             } else {
@@ -317,7 +317,7 @@ pub const Loader = struct {
                         key_count += 1;
                         e_strings_to_allocate += 1;
 
-                        std.debug.assert(entry.key_ptr.len > 0);
+                        bun.assert(entry.key_ptr.len > 0);
                     }
                 }
             }
@@ -360,7 +360,7 @@ pub const Loader = struct {
                         } else {
                             const hash = bun.hash(entry.key_ptr.*);
 
-                            std.debug.assert(hash != invalid_hash);
+                            bun.assert(hash != invalid_hash);
 
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
                                 e_strings[0] = js_ast.E.String{
@@ -862,7 +862,7 @@ const Parser = struct {
     }
 
     fn parseQuoted(this: *Parser, comptime quote: u8) ?string {
-        if (comptime Environment.allow_assert) std.debug.assert(this.src[this.pos] == quote);
+        if (comptime Environment.allow_assert) bun.assert(this.src[this.pos] == quote);
         const start = this.pos;
         const max_len = value_buffer.len;
         var end = start + 1;
@@ -883,7 +883,7 @@ const Parser = struct {
                         while (i < end and ptr < max_len) {
                             switch (this.src[i]) {
                                 '\\' => if (comptime quote == '"') {
-                                    if (comptime Environment.allow_assert) std.debug.assert(i + 1 < end);
+                                    if (comptime Environment.allow_assert) bun.assert(i + 1 < end);
                                     switch (this.src[i + 1]) {
                                         'n' => {
                                             value_buffer[ptr] = '\n';
@@ -1097,7 +1097,7 @@ pub const Map = struct {
                 bun.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
                 envp_buf[i] = env_buf.ptr;
             }
-            if (comptime Environment.allow_assert) std.debug.assert(i == envp_count);
+            if (comptime Environment.allow_assert) bun.assert(i == envp_count);
         }
         return envp_buf;
     }
@@ -1166,7 +1166,7 @@ pub const Map = struct {
 
     pub inline fn put(this: *Map, key: string, value: string) !void {
         if (Environment.isWindows and Environment.allow_assert) {
-            std.debug.assert(bun.strings.indexOfChar(key, '\x00') == null);
+            bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
         }
         try this.map.put(key, .{
             .value = value,

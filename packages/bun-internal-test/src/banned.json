@@ -1,0 +1,3 @@
+{
+  "std.debug.assert": "Use bun.assert instead"
+}

@@ -9,7 +9,7 @@ const StringBuilder = bun.StringBuilder;
 
 const fmt = std.fmt;
 
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 pub const Header = struct {
     name: []const u8,

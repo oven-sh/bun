@@ -32,7 +32,7 @@ pub const Ref = opaque {
     pub fn create(globalThis: *JSC.JSGlobalObject, value: JSValue) *Ref {
         JSC.markBinding(@src());
         var ref: *Ref = undefined;
-        std.debug.assert(
+        bun.assert(
             napi_create_reference(
                 globalThis,
                 value,
@@ -41,7 +41,7 @@ pub const Ref = opaque {
             ) == .ok,
         );
         if (comptime bun.Environment.isDebug) {
-            std.debug.assert(ref.get() == value);
+            bun.assert(ref.get() == value);
         }
         return ref;
     }
@@ -1184,19 +1184,19 @@ pub export fn napi_create_async_work(
 }
 pub export fn napi_delete_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_delete_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     work.deinit();
     return .ok;
 }
 pub export fn napi_queue_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_queue_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     work.schedule();
     return .ok;
 }
 pub export fn napi_cancel_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_cancel_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     if (work.cancel()) {
         return .ok;
     }
@@ -1531,14 +1531,14 @@ pub export fn napi_release_threadsafe_function(func: napi_threadsafe_function, m
 }
 pub export fn napi_unref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_unref_threadsafe_function", .{});
-    std.debug.assert(func.event_loop.global == env);
+    bun.assert(func.event_loop.global == env);
 
     func.unref();
     return .ok;
 }
 pub export fn napi_ref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_ref_threadsafe_function", .{});
-    std.debug.assert(func.event_loop.global == env);
+    bun.assert(func.event_loop.global == env);
 
     func.ref();
     return .ok;

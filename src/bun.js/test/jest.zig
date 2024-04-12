@@ -824,8 +824,8 @@ pub const DescribeScope = struct {
         if (comptime is_bindgen) return;
         if (new.parent) |scope| {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(DescribeScope.active != new);
-                std.debug.assert(scope == DescribeScope.active);
+                assert(DescribeScope.active != new);
+                assert(scope == DescribeScope.active);
             }
         } else if (DescribeScope.active) |scope| {
             // calling Bun.jest() within (already active) module
@@ -836,7 +836,7 @@ pub const DescribeScope = struct {
 
     pub fn pop(this: *DescribeScope) void {
         if (comptime is_bindgen) return;
-        if (comptime Environment.allow_assert) std.debug.assert(DescribeScope.active == this);
+        if (comptime Environment.allow_assert) assert(DescribeScope.active == this);
         DescribeScope.active = this.parent;
     }
 
@@ -917,8 +917,8 @@ pub const DescribeScope = struct {
 
         for (hooks.items) |cb| {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(cb.isObject());
-                std.debug.assert(cb.isCallable(globalObject.vm()));
+                assert(cb.isObject());
+                assert(cb.isCallable(globalObject.vm()));
             }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -974,8 +974,8 @@ pub const DescribeScope = struct {
 
         for (hooks.items) |cb| {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(cb.isObject());
-                std.debug.assert(cb.isCallable(globalThis.vm()));
+                assert(cb.isObject());
+                assert(cb.isCallable(globalThis.vm()));
             }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -1379,7 +1379,7 @@ pub const TestRunnerTask = struct {
     }
 
     pub fn timeout(this: *TestRunnerTask) void {
-        if (comptime Environment.allow_assert) std.debug.assert(!this.reported);
+        if (comptime Environment.allow_assert) assert(!this.reported);
 
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.throwTerminationException();
@@ -1389,7 +1389,7 @@ pub const TestRunnerTask = struct {
     pub fn handleResult(this: *TestRunnerTask, result: Result, comptime from: @Type(.EnumLiteral)) void {
         switch (comptime from) {
             .promise => {
-                if (comptime Environment.allow_assert) std.debug.assert(this.promise_state == .pending);
+                if (comptime Environment.allow_assert) assert(this.promise_state == .pending);
                 this.promise_state = .fulfilled;
 
                 if (this.done_callback_state == .pending and result == .pass) {
@@ -1397,7 +1397,7 @@ pub const TestRunnerTask = struct {
                 }
             },
             .callback => {
-                if (comptime Environment.allow_assert) std.debug.assert(this.done_callback_state == .pending);
+                if (comptime Environment.allow_assert) assert(this.done_callback_state == .pending);
                 this.done_callback_state = .fulfilled;
 
                 if (this.promise_state == .pending and result == .pass) {
@@ -1405,7 +1405,7 @@ pub const TestRunnerTask = struct {
                 }
             },
             .sync => {
-                if (comptime Environment.allow_assert) std.debug.assert(this.sync_state == .pending);
+                if (comptime Environment.allow_assert) assert(this.sync_state == .pending);
                 this.sync_state = .fulfilled;
             },
             .timeout, .unhandledRejection => {},
@@ -2019,3 +2019,5 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlo
 
     return result;
 }
+
+const assert = bun.assert;

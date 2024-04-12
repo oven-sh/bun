@@ -421,7 +421,7 @@ pub fn WindowsPipeReader(
                         }
                     }
                     // ops we should not hit this lets fail with EPIPE
-                    std.debug.assert(false);
+                    bun.assert(false);
                     return this.onRead(.{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .read) }, "", .progress);
                 },
             }
@@ -431,7 +431,7 @@ pub fn WindowsPipeReader(
             if (this.flags.is_done or !this.flags.is_paused) return .{ .result = {} };
             this.flags.is_paused = false;
             const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.BADF, .read) };
-            std.debug.assert(!source.isClosed());
+            bun.assert(!source.isClosed());
 
             switch (source) {
                 .file => |file| {
@@ -737,7 +737,7 @@ const PosixBufferedReader = struct {
 
     fn closeWithoutReporting(this: *PosixBufferedReader) void {
         if (this.getFd() != bun.invalid_fd) {
-            std.debug.assert(!this.flags.closed_without_reporting);
+            bun.assert(!this.flags.closed_without_reporting);
             this.flags.closed_without_reporting = true;
             if (this.flags.close_handle) this.handle.close(this, {});
         }
@@ -799,7 +799,7 @@ const PosixBufferedReader = struct {
             return;
         }
 
-        std.debug.assert(!this.flags.is_done);
+        bun.assert(!this.flags.is_done);
         this.flags.is_done = true;
     }
 
@@ -960,7 +960,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn from(to: *WindowsOutputReader, other: anytype, parent: anytype) void {
-        std.debug.assert(other.source != null and to.source == null);
+        bun.assert(other.source != null and to.source == null);
         to.* = .{
             .vtable = to.vtable,
             .flags = other.flags,
@@ -1055,7 +1055,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn done(this: *WindowsOutputReader) void {
-        if (this.source) |source| std.debug.assert(source.isClosed());
+        if (this.source) |source| bun.assert(source.isClosed());
 
         this.finish();
 
@@ -1075,7 +1075,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn startWithCurrentPipe(this: *WindowsOutputReader) bun.JSC.Maybe(void) {
-        std.debug.assert(!this.source.?.isClosed());
+        bun.assert(!this.source.?.isClosed());
         this.source.?.setData(this);
         this.buffer().clearRetainingCapacity();
         this.flags.is_done = false;
@@ -1088,7 +1088,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn start(this: *WindowsOutputReader, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
-        std.debug.assert(this.source == null);
+        bun.assert(this.source == null);
         const source = switch (Source.open(uv.Loop.get(), fd)) {
             .err => |err| return .{ .err = err },
             .result => |source| source,

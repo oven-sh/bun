@@ -501,7 +501,7 @@ jobs:
           mode: upsert
           create_if_not_exists: false
           message: |
-            ✅🪟 Test regressions on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }} have been resolved.
+            ✅🪟 Test regressions on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }} have been resolved. Thank you.
       - id: fail
         name: Fail the build
         if: steps.test.outputs.failing_tests != ''

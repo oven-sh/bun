@@ -42,7 +42,7 @@ const uws = bun.uws;
 const Blob = JSC.WebCore.Blob;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
-const assert = std.debug.assert;
+const assert = bun.assert;
 const Syscall = bun.sys;
 const uv = bun.windows.libuv;
 
@@ -115,7 +115,7 @@ pub const ReadableStream = struct {
                     var blob = JSC.WebCore.Blob.initWithStore(blobby.lazy.blob, globalThis);
                     blob.store.?.ref();
                     // it should be lazy, file shouldn't have opened yet.
-                    std.debug.assert(!blobby.started);
+                    bun.assert(!blobby.started);
                     stream.done(globalThis);
                     return AnyBlob{ .Blob = blob };
                 }
@@ -1122,8 +1122,8 @@ pub const Sink = struct {
             if (stack_size >= str.len * 2) {
                 var buf: [stack_size]u8 = undefined;
                 const copied = strings.copyUTF16IntoUTF8(&buf, []const u16, str, true);
-                std.debug.assert(copied.written <= stack_size);
-                std.debug.assert(copied.read <= stack_size);
+                bun.assert(copied.written <= stack_size);
+                bun.assert(copied.read <= stack_size);
                 if (input.isDone()) {
                     const result = writeFn(ctx, .{ .temporary_and_done = bun.ByteList.init(buf[0..copied.written]) });
                     return result;
@@ -1264,7 +1264,7 @@ pub const ArrayBufferSink = struct {
     as_uint8array: bool = false,
 
     pub fn connect(this: *ArrayBufferSink, signal: Signal) void {
-        std.debug.assert(this.reader == null);
+        bun.assert(this.reader == null);
         this.signal = signal;
     }
 
@@ -1411,7 +1411,7 @@ pub const ArrayBufferSink = struct {
             return .{ .result = ArrayBuffer.fromBytes(&[_]u8{}, .ArrayBuffer) };
         }
 
-        std.debug.assert(this.next == null);
+        bun.assert(this.next == null);
         var list = this.bytes.listManaged(this.allocator);
         this.bytes = bun.ByteList.init("");
         this.done = true;
@@ -1446,15 +1446,15 @@ const AutoFlusher = struct {
     }
 
     pub fn unregisterDeferredMicrotaskWithTypeUnchecked(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
-        std.debug.assert(this.auto_flusher.registered);
-        std.debug.assert(vm.eventLoop().deferred_tasks.unregisterTask(this));
+        bun.assert(this.auto_flusher.registered);
+        bun.assert(vm.eventLoop().deferred_tasks.unregisterTask(this));
         this.auto_flusher.registered = false;
     }
 
     pub fn registerDeferredMicrotaskWithTypeUnchecked(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
-        std.debug.assert(!this.auto_flusher.registered);
+        bun.assert(!this.auto_flusher.registered);
         this.auto_flusher.registered = true;
-        std.debug.assert(!vm.eventLoop().deferred_tasks.postTask(this, @ptrCast(&Type.onAutoFlush)));
+        bun.assert(!vm.eventLoop().deferred_tasks.postTask(this, @ptrCast(&Type.onAutoFlush)));
     }
 };
 
@@ -1990,7 +1990,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return this.has_backpressure and this.end_len > 0;
         }
         fn sendWithoutAutoFlusher(this: *@This(), buf: []const u8) bool {
-            std.debug.assert(!this.done);
+            bun.assert(!this.done);
             defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
 
             if (this.requested_end and !this.res.state().isHttpWriteCalled()) {
@@ -2103,7 +2103,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             this.flushPromise();
 
             if (this.buffer.cap == 0) {
-                std.debug.assert(this.pooled_buffer == null);
+                bun.assert(this.pooled_buffer == null);
                 if (comptime FeatureFlags.http_buffer_pooling) {
                     if (ByteListPool.getIfExists()) |pooled_node| {
                         this.pooled_buffer = pooled_node;
@@ -2675,7 +2675,7 @@ pub fn ReadableStreamSource(
             if (@hasDecl(Context, "setRawMode")) {
                 const flag = call_frame.argument(0);
                 if (Environment.allow_assert) {
-                    std.debug.assert(flag.isBoolean());
+                    bun.assert(flag.isBoolean());
                 }
                 return switch (this.context.setRawMode(flag == .true)) {
                     .result => .undefined,
@@ -2906,7 +2906,7 @@ pub const FileSink = struct {
     pub const Poll = IOWriter;
 
     fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
-        comptime std.debug.assert(Environment.isWindows);
+        comptime bun.assert(Environment.isWindows);
 
         var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(globalObject, jsvalue) orelse return));
         this.force_sync_on_windows = true;
@@ -3573,7 +3573,7 @@ pub const FileReader = struct {
                             return .{ .err = err };
                         },
                         .result => |opened| {
-                            std.debug.assert(opened.fd.isValid());
+                            bun.assert(opened.fd.isValid());
                             this.fd = opened.fd;
                             pollable = opened.pollable;
                             file_type = opened.file_type;
@@ -3917,7 +3917,7 @@ pub const FileReader = struct {
             const out = bun.ByteList.init(this.buffered.items);
             this.buffered = .{};
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.reader.buffer().items.ptr != out.ptr);
+                bun.assert(this.reader.buffer().items.ptr != out.ptr);
             }
             return out;
         }
@@ -4077,7 +4077,7 @@ pub const ByteBlobLoader = struct {
 
         this.remain -|= copied;
         this.offset +|= copied;
-        std.debug.assert(buffer.ptr != temporary.ptr);
+        bun.assert(buffer.ptr != temporary.ptr);
         @memcpy(buffer[0..temporary.len], temporary);
         if (this.remain == 0) {
             return .{ .into_array_and_done = .{ .value = array, .len = copied } };
@@ -4240,7 +4240,7 @@ pub const ByteStream = struct {
             return;
         }
 
-        std.debug.assert(!this.has_received_last_chunk);
+        bun.assert(!this.has_received_last_chunk);
         this.has_received_last_chunk = stream.isDone();
 
         if (this.pipe.ctx) |ctx| {
@@ -4251,10 +4251,10 @@ pub const ByteStream = struct {
         const chunk = stream.slice();
 
         if (this.pending.state == .pending) {
-            std.debug.assert(this.buffer.items.len == 0);
+            bun.assert(this.buffer.items.len == 0);
             const to_copy = this.pending_buffer[0..@min(chunk.len, this.pending_buffer.len)];
             const pending_buffer_len = this.pending_buffer.len;
-            std.debug.assert(to_copy.ptr != chunk.ptr);
+            bun.assert(to_copy.ptr != chunk.ptr);
             @memcpy(to_copy, chunk[0..to_copy.len]);
             this.pending_buffer = &.{};
 
@@ -4358,10 +4358,10 @@ pub const ByteStream = struct {
 
     pub fn onPull(this: *@This(), buffer: []u8, view: JSC.JSValue) StreamResult {
         JSC.markBinding(@src());
-        std.debug.assert(buffer.len > 0);
+        bun.assert(buffer.len > 0);
 
         if (this.buffer.items.len > 0) {
-            std.debug.assert(this.value() == .zero);
+            bun.assert(this.value() == .zero);
             const to_write = @min(
                 this.buffer.items.len - this.offset,
                 buffer.len,
@@ -4552,8 +4552,8 @@ pub fn NewReadyWatcher(
                 @panic("TODO on Windows");
             }
 
-            std.debug.assert(this.poll_ref.?.fd == fd_);
-            std.debug.assert(
+            bun.assert(this.poll_ref.?.fd == fd_);
+            bun.assert(
                 this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
             );
             this.poll_ref.?.disableKeepingProcessAlive(JSC.VirtualMachine.get());
@@ -4594,8 +4594,8 @@ pub fn NewReadyWatcher(
                 );
                 break :brk this.poll_ref.?;
             };
-            std.debug.assert(poll_ref.fd == fd);
-            std.debug.assert(!this.isWatching());
+            bun.assert(poll_ref.fd == fd);
+            bun.assert(!this.isWatching());
             switch (poll_ref.register(JSC.VirtualMachine.get().event_loop_handle.?, flag, true)) {
                 .err => |err| {
                     std.debug.panic("FilePoll.register failed: {d}", .{err.errno});

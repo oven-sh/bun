@@ -257,7 +257,7 @@ pub fn Batcher(comptime Type: type) type {
         }
 
         pub inline fn done(this: *@This()) void {
-            std.debug.assert(this.head.len == 0);
+            bun.assert(this.head.len == 0);
         }
 
         pub inline fn eat(this: *@This(), value: Type) *Type {

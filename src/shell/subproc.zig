@@ -226,7 +226,7 @@ pub const ShellSubprocess = struct {
                     };
                 },
                 .memfd => |memfd| {
-                    std.debug.assert(memfd != bun.invalid_fd);
+                    assert(memfd != bun.invalid_fd);
                     return Writable{ .memfd = memfd };
                 },
                 .fd => {
@@ -1223,7 +1223,7 @@ pub const PipeReader = struct {
     ) void {
         if (!this.isDone()) return;
         log("signalDoneToCmd ({x}: {s}) isDone={any}", .{ @intFromPtr(this), @tagName(this.out_type), this.isDone() });
-        if (bun.Environment.allow_assert) std.debug.assert(this.process != null);
+        if (bun.Environment.allow_assert) assert(this.process != null);
         if (this.process) |proc| {
             if (proc.cmd_parent) |cmd| {
                 if (this.captured_writer.err) |e| {
@@ -1357,11 +1357,11 @@ pub const PipeReader = struct {
     pub fn deinit(this: *PipeReader) void {
         log("PipeReader(0x{x}, {s}) deinit()", .{ @intFromPtr(this), @tagName(this.out_type) });
         if (comptime Environment.isPosix) {
-            std.debug.assert(this.reader.isDone() or this.state == .err);
+            assert(this.reader.isDone() or this.state == .err);
         }
 
         if (comptime Environment.isWindows) {
-            std.debug.assert(this.reader.source == null or this.reader.source.?.isClosed());
+            assert(this.reader.source == null or this.reader.source.?.isClosed());
         }
 
         if (this.state == .done) {
@@ -1396,8 +1396,10 @@ pub inline fn assertStdioResult(result: StdioResult) void {
     if (comptime Environment.allow_assert) {
         if (Environment.isPosix) {
             if (result) |fd| {
-                std.debug.assert(fd != bun.invalid_fd);
+                assert(fd != bun.invalid_fd);
             }
         }
     }
 }
+
+const assert = bun.assert;

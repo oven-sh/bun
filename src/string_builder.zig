@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const Environment = bun.Environment;
 const string = @import("string_types.zig").string;
 const StringBuilder = @This();
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 const DebugHashTable = if (Environment.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
 

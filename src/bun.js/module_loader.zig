@@ -711,7 +711,7 @@ pub const ModuleLoader = struct {
 
     /// This must be called after calling transpileSourceCode
     pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
-        std.debug.assert(&jsc_vm.module_loader == this);
+        bun.assert(&jsc_vm.module_loader == this);
         if (this.transpile_source_code_arena) |arena| {
             if (jsc_vm.smol) {
                 _ = arena.reset(.free_all);
@@ -991,7 +991,7 @@ pub const ModuleLoader = struct {
                         }
 
                         const package = pm.lockfile.packages.get(package_id);
-                        std.debug.assert(package.resolution.tag != .root);
+                        bun.assert(package.resolution.tag != .root);
 
                         switch (pm.determinePreinstallState(package, pm.lockfile)) {
                             .done => {
@@ -2277,7 +2277,7 @@ pub const ModuleLoader = struct {
                 FetchFlags.transpile,
             ) catch |err| {
                 if (err == error.AsyncModule) {
-                    std.debug.assert(promise != null);
+                    bun.assert(promise != null);
                     return promise;
                 }
 
@@ -2483,7 +2483,7 @@ pub const ModuleLoader = struct {
     ) bool {
         JSC.markBinding(@src());
         const jsc_vm = globalObject.bunVM();
-        std.debug.assert(jsc_vm.plugin_runner != null);
+        bun.assert(jsc_vm.plugin_runner != null);
 
         var specifier_slice = specifier_ptr.toUTF8(jsc_vm.allocator);
         const specifier = specifier_slice.slice();

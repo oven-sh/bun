@@ -6,7 +6,7 @@ const mimalloc = @import("./allocators/mimalloc.zig");
 const Environment = @import("./env.zig");
 const FeatureFlags = @import("./feature_flags.zig");
 const Allocator = mem.Allocator;
-const assert = std.debug.assert;
+const assert = bun.assert;
 const bun = @import("root").bun;
 
 pub const GlobalArena = struct {

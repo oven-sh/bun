@@ -373,7 +373,7 @@ pub const URL = struct {
                 '@' => {
                     // we found a password, everything before this point in the slice is a password
                     url.password = str[0..i];
-                    if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readInt(u16, str[i..][0..2], .little) != std.mem.readInt(u16, "//", .little));
+                    if (Environment.allow_assert) bun.assert(str[i..].len < 2 or std.mem.readInt(u16, str[i..][0..2], .little) != std.mem.readInt(u16, "//", .little));
                     return @intCast(i + 1);
                 },
                 // if we reach a slash or "?", there's no password
@@ -506,7 +506,7 @@ pub const QueryStringMap = struct {
             var slice = this.map.list.slice();
             const hash = slice.items(.name_hash)[this.i];
             const name_slice = slice.items(.name)[this.i];
-            std.debug.assert(name_slice.length > 0);
+            bun.assert(name_slice.length > 0);
             var result = Result{ .name = this.map.str(name_slice), .values = target[0..1] };
             target[0] = this.map.str(slice.items(.value)[this.i]);
 
@@ -522,7 +522,7 @@ pub const QueryStringMap = struct {
             while (std.mem.indexOfScalar(u64, remainder_hashes[current_i..], hash)) |next_index| {
                 const real_i = current_i + next_index + this.i;
                 if (comptime Environment.isDebug) {
-                    std.debug.assert(!this.visited.isSet(real_i));
+                    bun.assert(!this.visited.isSet(real_i));
                 }
 
                 this.visited.set(real_i);
@@ -608,7 +608,7 @@ pub const QueryStringMap = struct {
         }
 
         if (Environment.allow_assert)
-            std.debug.assert(count > 0); // We should not call initWithScanner when there are no path params
+            bun.assert(count > 0); // We should not call initWithScanner when there are no path params
 
         while (scanner.query.next()) |result| {
             if (result.name_needs_decoding or result.value_needs_decoding) {
@@ -723,8 +723,8 @@ pub const QueryStringMap = struct {
         if (nothing_needs_decoding) {
             scanner = Scanner.init(query_string);
             while (scanner.next()) |result| {
-                if (Environment.allow_assert) std.debug.assert(!result.name_needs_decoding);
-                if (Environment.allow_assert) std.debug.assert(!result.value_needs_decoding);
+                if (Environment.allow_assert) bun.assert(!result.name_needs_decoding);
+                if (Environment.allow_assert) bun.assert(!result.value_needs_decoding);
 
                 const name = result.name;
                 const value = result.value;
@@ -1282,7 +1282,7 @@ fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
     } else {
         if (strings.indexOf(parent, in)) |i| {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(strings.eqlLong(parent[i..][0..in.len], in, false));
+                bun.assert(strings.eqlLong(parent[i..][0..in.len], in, false));
             }
 
             return Api.StringPointer{

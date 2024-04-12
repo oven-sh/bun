@@ -2130,7 +2130,7 @@ pub const Expect = struct {
             }
 
             // If it's not an object, we are going to crash here.
-            std.debug.assert(expected_value.isObject());
+            assert(expected_value.isObject());
 
             if (expected_value.get(globalObject, "message")) |expected_message| {
                 if (_received_message) |received_message| {
@@ -4155,7 +4155,7 @@ pub const Expect = struct {
 
         // call the custom matcher implementation
         var result = matcher_fn.callWithThis(globalObject, matcher_context_jsvalue, args);
-        std.debug.assert(!result.isEmpty());
+        assert(!result.isEmpty());
         if (result.toError()) |err| {
             globalObject.throwValue(err);
             return false;
@@ -4177,7 +4177,7 @@ pub const Expect = struct {
             }
             result = promise.result(vm);
             result.ensureStillAlive();
-            std.debug.assert(!result.isEmpty());
+            assert(!result.isEmpty());
             switch (promise.status(vm)) {
                 .Pending => unreachable,
                 .Fulfilled => {},
@@ -4231,10 +4231,10 @@ pub const Expect = struct {
             message_text = message.toBunString(globalObject);
         } else {
             if (comptime Environment.allow_assert)
-                std.debug.assert(message.isCallable(globalObject.vm())); // checked above
+                assert(message.isCallable(globalObject.vm())); // checked above
 
             var message_result = message.callWithGlobalThis(globalObject, &[_]JSValue{});
-            std.debug.assert(!message_result.isEmpty());
+            assert(!message_result.isEmpty());
             if (message_result.toError()) |err| {
                 globalObject.throwValue(err);
                 return false;
@@ -5153,3 +5153,5 @@ comptime {
 fn incrementExpectCallCounter() void {
     active_test_expectation_counter.actual += 1;
 }
+
+const assert = bun.assert;

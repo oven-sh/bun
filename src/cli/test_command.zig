@@ -411,7 +411,7 @@ const Scanner = struct {
             if (@as(FileSystem.RealFS.EntriesOption.Tag, root.*) == .entries) {
                 var iter = root.entries.data.iterator();
                 const fd = root.entries.fd;
-                std.debug.assert(fd != bun.invalid_fd);
+                bun.assert(fd != bun.invalid_fd);
                 while (iter.next()) |entry| {
                     this.next(entry.value_ptr.*, fd);
                 }
@@ -421,7 +421,7 @@ const Scanner = struct {
         while (this.dirs_to_scan.readItem()) |entry| {
             if (!Environment.isWindows) {
                 const dir = entry.relative_dir.asDir();
-                std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
+                bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
@@ -433,7 +433,7 @@ const Scanner = struct {
                 _ = this.readDirWithName(path2, child_dir) catch continue;
             } else {
                 const dir = entry.relative_dir.asDir();
-                std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
+                bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
@@ -532,7 +532,7 @@ const Scanner = struct {
                 }
 
                 if (comptime Environment.allow_assert)
-                    std.debug.assert(!strings.contains(name, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str));
+                    bun.assert(!strings.contains(name, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str));
 
                 for (this.exclusion_names) |exclude_name| {
                     if (strings.eql(exclude_name, name)) return;
@@ -968,7 +968,7 @@ pub const TestCommand = struct {
                 const vm = this.vm;
                 var files = this.files;
                 const allocator = this.allocator;
-                std.debug.assert(files.len > 0);
+                bun.assert(files.len > 0);
 
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {

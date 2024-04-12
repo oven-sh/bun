@@ -414,7 +414,7 @@ pub const ArrayBuffer = extern struct {
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
-        std.debug.assert(value.asArrayBuffer_(ctx.ptr(), &out));
+        bun.assert(value.asArrayBuffer_(ctx.ptr(), &out));
         out.value = value;
         return out;
     }
@@ -743,7 +743,7 @@ pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) v
     // mimalloc knows the size of things
     // but we don't
     // if (comptime Environment.allow_assert) {
-    //     std.debug.assert(mimalloc.mi_check_owned(bytes_) or
+    //     bun.assert(mimalloc.mi_check_owned(bytes_) or
     //         mimalloc.mi_heap_check_owned(JSC.VirtualMachine.get().arena.heap.?, bytes_));
     // }
 
@@ -1690,7 +1690,7 @@ pub const MemoryReportingAllocator = struct {
         _ = prev;
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
-            // std.debug.assert(prev > this.memory_cost.load(.Monotonic));
+            // bun.assert(prev > this.memory_cost.load(.Monotonic));
             log("free({d}) = {d}", .{ buf.len, this.memory_cost.raw });
         }
     }

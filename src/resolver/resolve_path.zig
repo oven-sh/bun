@@ -709,7 +709,7 @@ pub fn normalizeStringGenericTZ(
         //
         // since it is theoretically possible to get here in release
         // we will not do this check in release.
-        std.debug.assert(!strings.hasPrefixComptimeType(T, path_, comptime strings.literal(T, ":\\")));
+        assert(!strings.hasPrefixComptimeType(T, path_, comptime strings.literal(T, ":\\")));
     }
 
     var buf_i: usize = 0;
@@ -875,7 +875,7 @@ pub fn normalizeStringGenericTZ(
     const result = if (options.zero_terminate) buf[0..buf_i :0] else buf[0..buf_i];
 
     if (bun.Environment.allow_assert and isWindows) {
-        std.debug.assert(!strings.hasPrefixComptimeType(T, result, comptime strings.literal(T, "\\:\\")));
+        assert(!strings.hasPrefixComptimeType(T, result, comptime strings.literal(T, "\\:\\")));
     }
 
     return result;
@@ -1202,7 +1202,7 @@ pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
 
 pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
     const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
-    std.debug.assert(bun.isSliceInBuffer(joined, buf));
+    assert(bun.isSliceInBuffer(joined, buf));
     const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
     buf[joined.len + start_offset] = 0;
     return buf[start_offset..][0..joined.len :0];
@@ -1394,7 +1394,7 @@ fn _joinAbsStringBufWindows(
     buf: []u8,
     parts: []const []const u8,
 ) ReturnType {
-    std.debug.assert(std.fs.path.isAbsoluteWindows(cwd));
+    assert(std.fs.path.isAbsoluteWindows(cwd));
 
     if (parts.len == 0) {
         if (comptime is_sentinel) {
@@ -1451,7 +1451,7 @@ fn _joinAbsStringBufWindows(
     };
 
     if (set_cwd.len > 0)
-        std.debug.assert(isSepAny(set_cwd[0]));
+        assert(isSepAny(set_cwd[0]));
 
     var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
@@ -2146,17 +2146,17 @@ pub const PosixToWinNormalizer = struct {
         source_dir: []const u8,
         maybe_posix_path: []const u8,
     ) []const u8 {
-        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
         if (bun.Environment.isWindows) {
             const root = windowsFilesystemRoot(maybe_posix_path);
             if (root.len == 1) {
-                std.debug.assert(isSepAny(root[0]));
+                assert(isSepAny(root[0]));
                 if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
                     const source_root = windowsFilesystemRoot(source_dir);
                     @memcpy(buf[0..source_root.len], source_root);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
-                    std.debug.assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
                     return res;
                 }
             }
@@ -2168,20 +2168,20 @@ pub const PosixToWinNormalizer = struct {
         buf: *Buf,
         maybe_posix_path: []const u8,
     ) ![]const u8 {
-        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
 
         if (bun.Environment.isWindows) {
             const root = windowsFilesystemRoot(maybe_posix_path);
             if (root.len == 1) {
-                std.debug.assert(isSepAny(root[0]));
+                assert(isSepAny(root[0]));
                 if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
                     const cwd = try std.os.getcwd(buf);
-                    std.debug.assert(cwd.ptr == buf.ptr);
+                    assert(cwd.ptr == buf.ptr);
                     const source_root = windowsFilesystemRoot(cwd);
-                    std.debug.assert(source_root.ptr == source_root.ptr);
+                    assert(source_root.ptr == source_root.ptr);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
-                    std.debug.assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
                     return res;
                 }
             }
@@ -2194,21 +2194,21 @@ pub const PosixToWinNormalizer = struct {
         buf: *bun.PathBuffer,
         maybe_posix_path: []const u8,
     ) ![:0]u8 {
-        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
 
         if (bun.Environment.isWindows) {
             const root = windowsFilesystemRoot(maybe_posix_path);
             if (root.len == 1) {
-                std.debug.assert(isSepAny(root[0]));
+                assert(isSepAny(root[0]));
                 if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
                     const cwd = try std.os.getcwd(buf);
-                    std.debug.assert(cwd.ptr == buf.ptr);
+                    assert(cwd.ptr == buf.ptr);
                     const source_root = windowsFilesystemRoot(cwd);
-                    std.debug.assert(source_root.ptr == source_root.ptr);
+                    assert(source_root.ptr == source_root.ptr);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     buf[source_root.len + maybe_posix_path.len - 1] = 0;
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
-                    std.debug.assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
                     return res;
                 }
             }
@@ -2282,3 +2282,5 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
         path_buffer[index] = std.fs.path.sep;
     }
 }
+
+const assert = bun.assert;

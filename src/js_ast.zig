@@ -65,7 +65,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             }
 
             pub fn append(block: *Block, comptime ValueType: type, value: ValueType) *UnionValueType {
-                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
+                if (comptime Environment.allow_assert) bun.assert(block.used < count);
                 const index = block.used;
                 block.items[index][0..value.len].* = value.*;
                 block.used +|= 1;
@@ -604,7 +604,7 @@ pub const CharFreq = struct {
         var deltas: [255]i32 = [_]i32{0} ** 255;
         var remain = text;
 
-        std.debug.assert(remain.len >= scan_big_chunk_size);
+        bun.assert(remain.len >= scan_big_chunk_size);
 
         const unrolled = remain.len - (remain.len % scan_big_chunk_size);
         const remain_end = remain.ptr + unrolled;
@@ -1463,7 +1463,7 @@ pub const E = struct {
         pub fn alphabetizeStrings(this: *Array) void {
             if (comptime Environment.allow_assert) {
                 for (this.items.slice()) |item| {
-                    std.debug.assert(item.data == .e_string);
+                    bun.assert(item.data == .e_string);
                 }
             }
             std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
@@ -1849,7 +1849,7 @@ pub const E = struct {
         //             while (iter.next(&query_string_values_buf)) |entry| {
         //                 str = ZigString.init(entry.name);
 
-        //                 std.debug.assert(entry.values.len > 0);
+        //                 bun.assert(entry.values.len > 0);
         //                 if (entry.values.len > 1) {
         //                     var values = query_string_value_refs_buf[0..entry.values.len];
         //                     for (entry.values) |value, i| {
@@ -2095,7 +2095,7 @@ pub const E = struct {
         pub fn alphabetizeProperties(this: *Object) void {
             if (comptime Environment.allow_assert) {
                 for (this.properties.slice()) |prop| {
-                    std.debug.assert(prop.key.?.data == .e_string);
+                    bun.assert(prop.key.?.data == .e_string);
                 }
             }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
@@ -2191,8 +2191,8 @@ pub const E = struct {
 
         pub var class = E.String{ .data = "class" };
         pub fn push(this: *String, other: *String) void {
-            std.debug.assert(this.isUTF8());
-            std.debug.assert(other.isUTF8());
+            bun.assert(this.isUTF8());
+            bun.assert(other.isUTF8());
 
             if (other.rope_len == 0) {
                 other.rope_len = @as(u32, @truncate(other.data.len));
@@ -2234,7 +2234,7 @@ pub const E = struct {
         }
 
         pub fn slice16(this: *const String) []const u16 {
-            std.debug.assert(this.is_utf16);
+            bun.assert(this.is_utf16);
             return @as([*]const u16, @ptrCast(@alignCast(this.data.ptr)))[0..this.data.len];
         }
 
@@ -2494,7 +2494,7 @@ pub const E = struct {
                 };
             }
 
-            std.debug.assert(this.head == .cooked);
+            bun.assert(this.head == .cooked);
 
             if (this.parts.len == 0) {
                 return Expr.init(E.String, this.head.cooked, loc);
@@ -2504,7 +2504,7 @@ pub const E = struct {
             var head = Expr.init(E.String, this.head.cooked, loc);
             for (this.parts) |part_| {
                 var part = part_;
-                std.debug.assert(part.tail == .cooked);
+                bun.assert(part.tail == .cooked);
 
                 switch (part.value.data) {
                     .e_number => {
@@ -2540,7 +2540,7 @@ pub const E = struct {
                         continue;
                     } else {
                         var prev_part = &parts.items[parts.items.len - 1];
-                        std.debug.assert(prev_part.tail == .cooked);
+                        bun.assert(prev_part.tail == .cooked);
 
                         if (prev_part.tail.cooked.isUTF8()) {
                             if (part.value.data.e_string.len() > 0) {
@@ -3359,7 +3359,7 @@ pub const Expr = struct {
     }
 
     pub fn joinAllWithComma(all: []Expr, allocator: std.mem.Allocator) Expr {
-        std.debug.assert(all.len > 0);
+        bun.assert(all.len > 0);
         switch (all.len) {
             1 => {
                 return all[0];
@@ -3736,7 +3736,7 @@ pub const Expr = struct {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
-                        std.debug.assert(@intFromPtr(st.data.ptr) > 0);
+                        bun.assert(@intFromPtr(st.data.ptr) > 0);
                     }
                 }
                 return Expr{
@@ -4109,7 +4109,7 @@ pub const Expr = struct {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
-                        std.debug.assert(@intFromPtr(st.data.ptr) > 0);
+                        bun.assert(@intFromPtr(st.data.ptr) > 0);
                     }
                 }
                 return Expr{
@@ -6868,7 +6868,7 @@ pub const Macro = struct {
             else
                 import_record_path;
 
-            std.debug.assert(!isMacroPath(import_record_path_without_macro_prefix));
+            bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
             const input_specifier = brk: {
                 if (JSC.HardcodedModule.Aliases.get(import_record_path, .bun)) |replacement| {
@@ -7470,7 +7470,7 @@ pub const ASTMemoryAllocator = struct {
 
     pub fn pop(this: *ASTMemoryAllocator) void {
         const prev = this.previous;
-        std.debug.assert(prev != this);
+        bun.assert(prev != this);
         Stmt.Data.Store.memory_allocator = prev;
         Expr.Data.Store.memory_allocator = prev;
         this.previous = null;

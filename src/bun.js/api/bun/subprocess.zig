@@ -1591,6 +1591,7 @@ pub const Subprocess = struct {
         var argv0: ?[*:0]const u8 = null;
 
         var windows_hide: bool = false;
+        var windows_verbatim_arguments: bool = false;
 
         {
             if (args.isEmptyOrUndefinedOrNull()) {
@@ -1869,6 +1870,12 @@ pub const Subprocess = struct {
                             windows_hide = val.asBoolean();
                         }
                     }
+
+                    if (args.get(globalThis, "windowsVerbatimArguments")) |val| {
+                        if (val.isBoolean()) {
+                            windows_verbatim_arguments = val.asBoolean();
+                        }
+                    }
                 }
             }
         }
@@ -1966,6 +1973,7 @@ pub const Subprocess = struct {
 
             .windows = if (Environment.isWindows) .{
                 .hide_window = windows_hide,
+                .verbatim_arguments = windows_verbatim_arguments,
                 .loop = JSC.EventLoopHandle.init(jsc_vm),
             } else {},
         };

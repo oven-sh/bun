@@ -4146,6 +4146,11 @@ declare module "bun" {
       windowsHide?: boolean;
 
       /**
+       * If true, no quoting or escaping of arguments is done on Windows.
+       */
+      windowsVerbatimArguments?: boolean;
+
+      /**
        * Path to the executable to run in the subprocess. This defaults to `cmds[0]`.
        *
        * One use-case for this is for applications which wrap other applications or to simulate a symlink.

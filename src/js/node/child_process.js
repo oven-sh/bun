@@ -84,10 +84,6 @@ var ReadableFromWeb;
 // Section 1. Exported child_process functions
 //------------------------------------------------------------------------------
 
-// TODO: Implement these props when Windows is supported
-// *   windowsVerbatimArguments?: boolean;
-// *   windowsHide?: boolean;
-
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -134,6 +130,8 @@ function spawnTimeoutFunction(child, timeoutHolder) {
  *   gid?: number;
  *   serialization?: string;
  *   shell?: boolean | string;
+ *   windowsHide?: boolean;
+ *   windowsVerbatimArguments?: boolean;
  *   signal?: AbortSignal;
  *   timeout?: number;
  *   killSignal?: string | number;
@@ -243,10 +241,14 @@ function execFile(file, args, options, callback) {
   const child = spawn(file, args, {
     cwd: options.cwd,
     env: options.env,
-    // gid: options.gid,
+    timeout: options.timeout,
+    killSignal: options.killSignal,
+    uid: options.uid,
+    gid: options.gid,
+    windowsHide: options.windowsHide,
+    windowsVerbatimArguments: options.windowsVerbatimArguments,
     shell: options.shell,
     signal: options.signal,
-    // uid: options.uid,
   });
 
   let encoding;
@@ -437,6 +439,7 @@ function execFile(file, args, options, callback) {
  *   uid?: number;
  *   gid?: number;
  *   windowsHide?: boolean;
+ *   windowsVerbatimArguments?: boolean;
  *   }} [options]
  * @param {(
  *   error?: Error,
@@ -496,6 +499,8 @@ Object.defineProperty(exec, Symbol.for("nodejs.util.promisify.custom"), {
  *   maxBuffer?: number;
  *   encoding?: string;
  *   shell?: boolean | string;
+ *   windowsHide?: boolean;
+ *   windowsVerbatimArguments?: boolean;
  *   }} [options]
  * @returns {{
  *   pid: number;
@@ -551,6 +556,8 @@ function spawnSync(file, args, options) {
     env: options.env || undefined,
     cwd: options.cwd || undefined,
     stdio: bunStdio,
+    windowsVerbatimArguments: options.windowsVerbatimArguments,
+    windowsHide: options.windowsHide,
   });
 
   const result = {
@@ -866,12 +873,19 @@ function normalizeSpawnArguments(file, args, options) {
     cwd = getValidatedPath(cwd, "options.cwd");
   }
 
-  // TODO: Gid check
-  // TODO: Uid check
-  var detached = false;
-  const { detached: detachedOption } = options;
-  if (detachedOption != null) {
-    detached = !!detachedOption;
+  // Validate detached, if present.
+  if (options.detached != null) {
+    validateBoolean(options.detached, "options.detached");
+  }
+
+  // Validate the uid, if present.
+  if (options.uid != null && !isInt32(options.uid)) {
+    throw new ERR_INVALID_ARG_TYPE("options.uid", "int32", options.uid);
+  }
+
+  // Validate the gid, if present.
+  if (options.gid != null && !isInt32(options.gid)) {
+    throw new ERR_INVALID_ARG_TYPE("options.gid", "int32", options.gid);
   }
 
   // Validate the shell, if present.
@@ -883,6 +897,11 @@ function normalizeSpawnArguments(file, args, options) {
   if (options.argv0 != null) {
     validateString(options.argv0, "options.argv0");
     validateArgumentNullCheck(options.argv0, "options.argv0");
+  }
+
+  // Validate windowsHide, if present.
+  if (options.windowsHide != null) {
+    validateBoolean(options.windowsHide, "options.windowsHide");
   }
 
   let { windowsVerbatimArguments } = options;
@@ -900,7 +919,7 @@ function normalizeSpawnArguments(file, args, options) {
       else file = process.env.comspec || "cmd.exe";
       // '/d /s /c' is used only for cmd.exe.
       if (/^(?:.*\\)?cmd(?:\.exe)?$/i.exec(file) !== null) {
-        args = ["/d", "/s", "/c", command];
+        args = ["/d", "/s", "/c", `"${command}"`];
         windowsVerbatimArguments = true;
       } else {
         args = ["-c", command];
@@ -929,7 +948,18 @@ function normalizeSpawnArguments(file, args, options) {
 
   // TODO: Windows env support here...
 
-  return { ...options, detached, file, args, cwd, envPairs };
+  return {
+    // Make a shallow copy so we don't clobber the user's options object.
+    __proto__: null,
+    ...options,
+    args,
+    cwd,
+    detached: !!options.detached,
+    envPairs,
+    file,
+    windowsHide: !!options.windowsHide,
+    windowsVerbatimArguments: !!windowsVerbatimArguments,
+  };
 }
 
 function checkExecSyncError(ret, args, cmd) {
@@ -1205,6 +1235,8 @@ class ChildProcess extends EventEmitter {
       ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
       serialization,
       argv0,
+      windowsHide: !!options.windowsHide,
+      windowsVerbatimArguments: !!options.windowsVerbatimArguments,
     });
     this.pid = this.#handle.pid;
 

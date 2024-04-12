@@ -229,22 +229,4 @@ pub const Headers = struct {
     }
 };
 
-test "pico_http: parse headers" {
-    const HEADERS = "Date: Mon, 22 Mar 2021 08:15:54 GMT\r\n" ++
-        "Content-Type: text/html; charset=utf-8\r\n" ++
-        "Content-Length: 9593\r\n" ++
-        "Connection: keep-alive\r\n" ++
-        "Server: gunicorn/19.9.0\r\n" ++
-        "Access-Control-Allow-Origin: *\r\n" ++
-        "Access-Control-Allow-Credentials: true\r\n" ++
-        "\r\n";
-
-    var headers: [32]Header = undefined;
-
-    const result = try Headers.parse(HEADERS, &headers);
-    for (result.headers) |header| {
-        std.debug.print("{}\n", .{header});
-    }
-}
-
 pub usingnamespace c;

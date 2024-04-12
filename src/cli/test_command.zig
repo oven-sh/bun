@@ -87,6 +87,7 @@ pub const CommandLineReporter = struct {
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
+    current_cleanup_generation_id: u32 = 0,
 
     pub const Summary = struct {
         pass: u32 = 0,
@@ -659,7 +660,9 @@ pub const TestCommand = struct {
         vm.preload = ctx.preloads;
         vm.bundler.options.rewrite_jest_for_tests = true;
         vm.bundler.options.env.behavior = .load_all_without_inlining;
-
+        if (ctx.test_options.isolate == .lite) {
+            vm.is_test_cleaner_enabled = true;
+        }
         const node_env_entry = try env_loader.map.getOrPutWithoutValue("NODE_ENV");
         if (!node_env_entry.found_existing) {
             node_env_entry.key_ptr.* = try env_loader.allocator.dupe(u8, node_env_entry.key_ptr.*);
@@ -934,6 +937,12 @@ pub const TestCommand = struct {
         Output.prettyError("\n", .{});
         Output.flush();
 
+        if (vm.is_test_cleaner_enabled) {
+            if (vm.resourceCleaner()) |cleaner| {
+                cleaner.runAllAfter(0, vm);
+            }
+        }
+
         if (vm.hot_reload == .watch) {
             vm.eventLoop().tickPossiblyForever();
 
@@ -1029,6 +1038,8 @@ pub const TestCommand = struct {
 
         const repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
+        const is_test_cleaner_enabled = vm.is_test_cleaner_enabled;
+
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             if (repeat_count > 1) {
                 Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
@@ -1037,6 +1048,24 @@ pub const TestCommand = struct {
             }
             Output.flush();
 
+            var initial_cleanup_generation_id: u32 = reporter.current_cleanup_generation_id;
+            if (is_test_cleaner_enabled) {
+                vm.ensureTestCleaner();
+                initial_cleanup_generation_id = vm.resourceCleaner().?.beginCycle(vm);
+                reporter.current_cleanup_generation_id = initial_cleanup_generation_id;
+            }
+
+            errdefer {
+                if (is_test_cleaner_enabled) {
+                    const id = reporter.current_cleanup_generation_id;
+                    if (id != std.math.maxInt(u32) and id == initial_cleanup_generation_id) {
+                        reporter.current_cleanup_generation_id = std.math.maxInt(u32);
+                        vm.ensureTestCleaner();
+                        vm.resourceCleaner().?.runAllAfter(id, vm);
+                    }
+                }
+            }
+
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary.files += 1;
 
@@ -1044,6 +1073,15 @@ pub const TestCommand = struct {
                 .Rejected => {
                     vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
                     reporter.summary.fail += 1;
+
+                    if (is_test_cleaner_enabled) {
+                        const id = reporter.current_cleanup_generation_id;
+                        if (id == initial_cleanup_generation_id and id != std.math.maxInt(u32)) {
+                            reporter.current_cleanup_generation_id = std.math.maxInt(u32);
+                            vm.ensureTestCleaner();
+                            vm.resourceCleaner().?.runAllAfter(id, vm);
+                        }
+                    }
 
                     if (reporter.jest.bail == reporter.summary.fail) {
                         reporter.printSummary();
@@ -1116,6 +1154,15 @@ pub const TestCommand = struct {
                 vm.clearEntryPoint();
                 var entry = JSC.ZigString.init(file_path);
                 vm.global.deleteModuleRegistryEntry(&entry);
+            }
+
+            if (is_test_cleaner_enabled) {
+                const id = reporter.current_cleanup_generation_id;
+                if (id == initial_cleanup_generation_id and id != std.math.maxInt(u32)) {
+                    reporter.current_cleanup_generation_id = std.math.maxInt(u32);
+                    vm.ensureTestCleaner();
+                    vm.resourceCleaner().?.runAllAfter(id, vm);
+                }
             }
 
             if (Output.is_github_action) {

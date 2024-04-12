@@ -105,37 +105,6 @@ extern "C" JSC::EncodedJSValue JSMock__jsSetSystemTime(JSC::JSGlobalObject* glob
 
 uint64_t JSMockModule::s_nextInvocationId = 0;
 
-// This is taken from JSWeakSet
-// We only want to hold onto the list of active spies which haven't already been collected
-// So we use a WeakSet
-// Unlike using WeakSet from JS, we are able to iterate through the WeakSet.
-class ActiveSpySet final : public WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>> {
-public:
-    using Base = WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>;
-
-    DECLARE_EXPORT_INFO;
-
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-    {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(JSWeakSetType, StructureFlags), info());
-    }
-
-    static ActiveSpySet* create(VM& vm, Structure* structure)
-    {
-        ActiveSpySet* instance = new (NotNull, allocateCell<ActiveSpySet>(vm)) ActiveSpySet(vm, structure);
-        instance->finishCreation(vm);
-        return instance;
-    }
-
-private:
-    ActiveSpySet(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-};
-
-static_assert(std::is_final<ActiveSpySet>::value, "Required for JSType based casting");
-const ClassInfo ActiveSpySet::s_info = { "ActiveSpySet"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ActiveSpySet) };
 
 class JSMockImplementation final : public JSNonFinalObject {
 public:
@@ -450,6 +419,70 @@ void JSMockFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 DEFINE_VISIT_CHILDREN(JSMockFunction);
 
+
+// This is taken from JSWeakSet
+// We only want to hold onto the list of active spies which haven't already been collected
+// So we use a WeakSet
+// Unlike using WeakSet from JS, we are able to iterate through the WeakSet.
+class ActiveSpySet final : public WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>> {
+public:
+    using Base = WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>;
+
+    DECLARE_EXPORT_INFO;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        return Structure::create(vm, globalObject, prototype, TypeInfo(JSWeakSetType, StructureFlags), info());
+    }
+
+    static ActiveSpySet* create(VM& vm, Structure* structure)
+    {
+        ActiveSpySet* instance = new (NotNull, allocateCell<ActiveSpySet>(vm)) ActiveSpySet(vm, structure);
+        instance->finishCreation(vm);
+        return instance;
+    }
+
+    void clearAll() {
+        MarkedArgumentBuffer active;
+    this->takeSnapshot(active);
+    size_t size = active.size();
+
+    for (size_t i = 0; i < size; ++i) {
+        JSValue spy = active.at(i);
+        if (!spy.isObject())
+            continue;
+
+        auto* spyObject = jsCast<JSMockFunction*>(spy);
+        spyObject->clearSpy();
+    }
+    }
+
+        void restoreAll() {
+        MarkedArgumentBuffer active;
+    this->takeSnapshot(active);
+    size_t size = active.size();
+
+    for (size_t i = 0; i < size; ++i) {
+        JSValue spy = active.at(i);
+        if (!spy.isObject())
+            continue;
+
+        auto* spyObject = jsCast<JSMockFunction*>(spy);
+        spyObject->clear();
+    }
+    }
+
+private:
+    ActiveSpySet(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+};
+
+static_assert(std::is_final<ActiveSpySet>::value, "Required for JSType based casting");
+const ClassInfo ActiveSpySet::s_info = { "ActiveSpySet"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ActiveSpySet) };
+
+
 static void pushImpl(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockImplementation::Kind kind, JSValue value)
 {
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
@@ -567,18 +600,7 @@ extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
     auto spiesValue = globalObject->mockModule.activeSpies.get();
 
     ActiveSpySet* activeSpies = jsCast<ActiveSpySet*>(spiesValue);
-    MarkedArgumentBuffer active;
-    activeSpies->takeSnapshot(active);
-    size_t size = active.size();
-
-    for (size_t i = 0; i < size; ++i) {
-        JSValue spy = active.at(i);
-        if (!spy.isObject())
-            continue;
-
-        auto* spyObject = jsCast<JSMockFunction*>(spy);
-        spyObject->clearSpy();
-    }
+    activeSpies->clearAll();
     globalObject->mockModule.activeSpies.clear();
 }
 
@@ -596,20 +618,7 @@ extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
     auto spiesValue = globalObject->mockModule.activeMocks.get();
 
     ActiveSpySet* activeSpies = jsCast<ActiveSpySet*>(spiesValue);
-    MarkedArgumentBuffer active;
-    activeSpies->takeSnapshot(active);
-    size_t size = active.size();
-
-    for (size_t i = 0; i < size; ++i) {
-        JSValue spy = active.at(i);
-        if (!spy.isObject())
-            continue;
-
-        auto* spyObject = jsCast<JSMockFunction*>(spy);
-        // seems similar to what we do in JSMock__resetSpies,
-        // but we actually only clear calls, context, instances and results
-        spyObject->clear();
-    }
+    activeSpies->restoreAll();
 }
 
 extern "C" JSC::EncodedJSValue JSMock__jsClearAllMocks(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)

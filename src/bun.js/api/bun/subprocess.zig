@@ -651,6 +651,14 @@ pub const Subprocess = struct {
         this.updateHasPendingActivity();
     }
 
+    pub fn onCleanup(this: *Subprocess, _: *JSC.VirtualMachine) void {
+        log("onCleanupInTest({*})", .{this});
+        _ = this.tryKill(1);
+        this.closeIO(.stdin);
+        this.closeIO(.stdout);
+        this.closeIO(.stderr);
+    }
+
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         const ipc_data = &(this.ipc_data orelse {
             if (this.hasExited()) {
@@ -1484,8 +1492,12 @@ pub const Subprocess = struct {
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer
         this.this_jsvalue = .zero;
+        const vm = JSC.VirtualMachine.get();
+        if (vm.resourceCleaner()) |cleaner| {
+            cleaner.remove(this);
+        }
 
-        bun.assert(!this.hasPendingActivity() or JSC.VirtualMachine.get().isShuttingDown());
+        bun.assert(!this.hasPendingActivity() or vm.isShuttingDown());
         this.finalizeStreams();
 
         this.process.detach();
@@ -2148,15 +2160,24 @@ pub const Subprocess = struct {
         should_close_memfd = false;
 
         if (comptime !is_sync) {
+            if (jsc_vm.resourceCleaner()) |cleaner| {
+                if (!subprocess.hasExited()) {
+                    cleaner.add(subprocess);
+                }
+            }
             return out;
         }
 
-        if (comptime is_sync) {
-            switch (subprocess.process.watch(jsc_vm)) {
-                .result => {},
-                .err => {
-                    subprocess.process.wait(true);
-                },
+        switch (subprocess.process.watch(jsc_vm)) {
+            .result => {},
+            .err => {
+                subprocess.process.wait(true);
+            },
+        }
+
+        if (jsc_vm.resourceCleaner()) |cleaner| {
+            if (!subprocess.hasExited()) {
+                cleaner.add(subprocess);
             }
         }
 

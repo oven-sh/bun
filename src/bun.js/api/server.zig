@@ -5577,6 +5577,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn finalize(this: *ThisServer) callconv(.C) void {
             httplog("finalize", .{});
             this.flags.has_js_deinited = true;
+            if (this.vm.resourceCleaner()) |cleaner| {
+                cleaner.remove(this);
+            }
             this.deinitIfWeCan();
         }
 
@@ -5632,6 +5635,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.flags.deinit_scheduled)
                 return;
             this.flags.deinit_scheduled = true;
+            const vm = this.vm;
+            if (vm.resourceCleaner()) |cleaner| {
+                cleaner.remove(this);
+            }
             httplog("scheduleDeinit", .{});
 
             if (!this.flags.terminated) {
@@ -5641,7 +5648,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             const task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
             task.* = JSC.AnyTask.New(ThisServer, deinit).init(this);
-            this.vm.enqueueTask(JSC.Task.init(task));
+            vm.enqueueTask(JSC.Task.init(task));
         }
 
         pub fn deinit(this: *ThisServer) void {
@@ -5799,13 +5806,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return;
         }
 
+        pub fn onCleanup(this: *ThisServer, _: *JSC.VirtualMachine) void {
+            this.stop(false);
+        }
+
         pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket) void {
             if (socket == null) {
                 return this.onListenFailed();
             }
 
             this.listener = socket;
-            this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled_)
                 this.vm.addListeningSocketForWatchMode(socket.?.socket().fd());
         }

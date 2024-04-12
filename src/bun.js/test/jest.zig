@@ -1254,6 +1254,7 @@ pub const TestRunnerTask = struct {
     source_file_path: string = "",
     needs_before_each: bool = true,
     ref: JSC.Ref = JSC.Ref.init(),
+    test_cleanup_generation_number: u32 = 0,
 
     done_callback_state: AsyncState = .none,
     promise_state: AsyncState = .none,
@@ -1309,10 +1310,10 @@ pub const TestRunnerTask = struct {
             const tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
-                    this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
+                    this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe, jsc_vm);
                 },
                 .skip => {
-                    this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
+                    this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe, jsc_vm);
                 },
                 else => {},
             }
@@ -1334,7 +1335,12 @@ pub const TestRunnerTask = struct {
         }
 
         this.sync_state = .pending;
-
+        if (jsc_vm.is_test_cleaner_enabled) {
+            jsc_vm.ensureTestCleaner();
+            if (jsc_vm.resourceCleaner()) |cleaner| {
+                this.test_cleanup_generation_number = cleaner.beginCycle(jsc_vm);
+            }
+        }
         var result = TestScope.run(&test_, this);
 
         // rejected promises should fail the test
@@ -1427,15 +1433,17 @@ pub const TestRunnerTask = struct {
         var describe = this.describe;
         describe.tests.items[test_id] = test_;
 
+        const vm = this.globalThis.bunVM();
+
         if (comptime from == .timeout) {
             const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
-            this.globalThis.bunVM().onUnhandledError(this.globalThis, err);
+            vm.onUnhandledError(this.globalThis, err);
         }
 
-        processTestResult(this, this.globalThis, result, test_, test_id, describe);
+        processTestResult(this, this.globalThis, result, test_, test_id, describe, vm);
     }
 
-    fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
+    fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope, vm: *JSC.VirtualMachine) void {
         switch (result.forceTODO(test_.tag == .todo)) {
             .pass => |count| Jest.runner.?.reportPass(
                 test_id,
@@ -1476,6 +1484,9 @@ pub const TestRunnerTask = struct {
                 );
             },
             .pending => @panic("Unexpected pending test"),
+        }
+        if (vm.resourceCleaner()) |cleaner| {
+            cleaner.endCycle(this.test_cleanup_generation_number, vm);
         }
         describe.onTestComplete(globalThis, test_id, result == .skip);
         Jest.runner.?.runNextTest();

@@ -2971,3 +2971,13 @@ describe.if(isWindows)("windows path handling", () => {
     });
   }
 });
+
+it("using writeFile on an fd does not truncate it", () => {
+  const temp = tmpdir();
+  const fd = fs.openSync(join(temp, "file.txt"), "w+");
+  fs.writeFileSync(fd, "x");
+  fs.writeFileSync(fd, "x");
+  // fs.close(fd);
+  const content = fs.readFileSync(join(temp, "file.txt"), "utf8");
+  expect(content).toBe("xx");
+})

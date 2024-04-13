@@ -1,20 +1,19 @@
 //! This file contains Bun's crash handler. In debug builds, we are able to
-//! print backtraces that are mapped to source code. In a release mode, we do
-//! not have that information in the binary. Bun's solution to this is called
-//! a "trace string", a compressed and url-safe encoding of a captured
-//! backtrace. Version 1 tracestrings contain the following information:
+//! print backtraces that are mapped to source code. In release builds, we do
+//! not have debug symbols in the binary. Bun's solution to this is called
+//! a "trace string", a url with compressed encoding of the captured
+//! backtrace. Version 1 trace strings contain the following information:
 //!
 //! - What version and commit of Bun captured the backtrace.
 //! - The platform the backtrace was captured on.
 //! - The list of addresses with ASLR removed, ready to be remapped.
 //! - If panicking, the message that was panicked with.
-//! - List of feature-flags that were marked.
 //!
 //! These can be demangled using Bun's remapping API, which has cached
 //! versions of all debug symbols for all versions of Bun. Hosting this keeps
 //! users from having to download symbols, which can be very large.
 //!
-//! The remapper is open source: https://github.com/oven-sh/bun-report
+//! The remapper is open source: https://github.com/oven-sh/bun.report
 //!
 //! A lot of this handler is based on the Zig Standard Library implementation
 //! for std.debug.panicImpl and their code for gathering backtraces.
@@ -50,7 +49,7 @@ var panic_mutex = std.Thread.Mutex{};
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
-/// This structure and formatter must be kept in sync with `bun-report`'s decoder.
+/// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
     /// From @panic()
     panic: []const u8,
@@ -193,7 +192,6 @@ pub fn crashHandler(
                 };
 
                 if (debug_trace) {
-                    // TODO: On Windows, there are sometimes issues remapping information here:
                     dumpStackTrace(trace.*);
                 } else {
                     writer.writeAll("Please report this panic as a GitHub issue using this link:\n") catch std.os.abort();
@@ -221,7 +219,7 @@ pub fn crashHandler(
             }
 
             // Be aware that this function only lets one thread return from it.
-            // This is important sot hat we do not try to run the reload logic twice.
+            // This is important so that we do not try to run the following reload logic twice.
             waitForOtherThreadToFinishPanicking();
 
             if (bun.auto_reload_on_crash and
@@ -253,6 +251,8 @@ pub fn crashHandler(
             const stderr = std.io.getStdErr().writer();
             stderr.print("\npanic: {s}\n", .{reason}) catch std.os.abort();
             stderr.print("panicked during a panic. Aborting.\n", .{}) catch std.os.abort();
+
+            std.debug.dumpCurrentStackTrace(@returnAddress());
         },
         3 => {
             // Panicked while printing "Panicked during a panic."
@@ -499,11 +499,11 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
         },
 
         error.MissingPackageJSON => {
-            Output.err(
-                "MissingPackageJSON",
-                "Bun could not find a package.json file.",
+            Output.errGeneric(
+                "Bun could not find a package.json file to install from",
                 .{},
             );
+            Output.note("Run \"bun init\" to initialize a project", .{});
         },
 
         else => {
@@ -744,7 +744,7 @@ const tracestr_header = std.fmt.comptimePrint(
     },
 );
 
-const Address = union(enum) {
+const StackLine = union(enum) {
     unknown,
     known: struct {
         address: i32,
@@ -753,82 +753,35 @@ const Address = union(enum) {
     },
     javascript,
 
-    pub fn writeEncoded(self: Address, writer: anytype) !void {
-        switch (self) {
-            .unknown => try writer.writeAll("_"),
-            .known => |known| {
-                if (known.object) |object| {
-                    try SourceMap.encodeVLQ(1).writeTo(writer);
-                    try SourceMap.encodeVLQ(@intCast(object.len)).writeTo(writer);
-                    try writer.writeAll(object);
-                }
-                try SourceMap.encodeVLQ(known.address).writeTo(writer);
-            },
-            .javascript => {
-                try writer.writeAll("=");
-            },
-        }
-    }
-
-    pub fn format(self: Address, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        switch (self) {
-            .unknown => try writer.print("unknown address", .{}),
-            .known => |known| try writer.print("0x{x} @ {s}", .{ known.address, known.object orelse "bun" }),
-            .javascript => try writer.print("javascript address", .{}),
-        }
-    }
-};
-
-const TraceString = struct {
-    trace: *std.builtin.StackTrace,
-    reason: CrashReason,
-    action: Action,
-
-    const Action = enum {
-        /// Open a pre-filled GitHub issue with the expanded trace
-        open_issue,
-        /// View the trace with nothing else
-        view_trace,
-    };
-
-    pub fn format(self: TraceString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try encodeTraceString(self, writer);
-    }
-};
-
-fn encodeTraceString(opts: TraceString, writer: anytype) !void {
-    try writer.writeAll(report_base_url ++ tracestr_header);
-
-    const image_path = if (bun.Environment.isWindows) bun.windows.exePathW() else null;
-
-    var name_bytes: [512]u16 = undefined;
-    var name_bytes_utf8: [1024]u8 = undefined;
-
-    for (opts.trace.instruction_addresses[0..opts.trace.index]) |addr| {
-        const address: Address = switch (bun.Environment.os) {
-            .windows => addr: {
+    pub fn fromAddress(addr: usize, name_bytes: []const u8) StackLine {
+        return switch (bun.Environment.os) {
+            .windows => {
                 const module = bun.windows.getModuleHandleFromAddress(addr) orelse {
                     // TODO: try to figure out of this is a JS stack frame
-                    break :addr .{ .unknown = {} };
+                    return .{ .unknown = {} };
                 };
 
                 const base_address = @intFromPtr(module);
-                const name = bun.windows.getModuleNameW(module, &name_bytes) orelse
-                    break :addr .{ .unknown = {} };
 
-                break :addr .{
+                var temp: [512]u16 = undefined;
+                const name = bun.windows.getModuleNameW(module, &temp) orelse
+                    return .{ .unknown = {} };
+
+                const image_path = bun.windows.exePathW();
+
+                return .{
                     .mapped = .{
                         // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
                         .address = addr - base_address,
 
                         .object = if (!std.mem.eql(u16, name, image_path)) name: {
                             const basename = name[std.mem.lastIndexOfAny(u16, name, "\\/") orelse 0 ..];
-                            break :name bun.strings.convertUTF8toUTF16InBuffer(&name_bytes_utf8, basename);
+                            break :name bun.strings.convertUTF8toUTF16InBuffer(&name_bytes, basename);
                         } else null,
                     },
                 };
             },
-            .mac => addr: {
+            .mac => {
                 // This code is slightly modified from std.debug.DebugInfo.lookupModuleNameDyld
                 // https://github.com/ziglang/zig/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.zig#L1783
                 const address = if (addr == 0) 0 else addr - 1;
@@ -861,31 +814,37 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
                             const seg_end = seg_start + segment_cmd.vmsize;
                             if (original_address >= seg_start and original_address < seg_end) {
                                 // Subtract ASLR value for stable address
-                                const stable_address: isize = @intCast(address - vmaddr_slide);
-                                // Subtract base address for compactness
-                                // To remap this, `llvm-symbolizer --obj bun-with-symbols --relative-address 0x123456`
-                                const relative_address: i32 = @intCast(stable_address - @as(isize, @intCast(base_address)));
+                                const stable_address: usize = @intCast(address - vmaddr_slide);
 
-                                if (relative_address < 0) break;
+                                if (i == 0) {
+                                    const image_relative_address = stable_address - seg_start;
+                                    if (image_relative_address > std.math.maxInt(i32)) {
+                                        return .{ .unknown = {} };
+                                    }
 
-                                const object = if (i == 0)
-                                    null // zero is the main binary
-                                else
-                                    std.fs.path.basename(bun.sliceTo(std.c._dyld_get_image_name(i), 0));
+                                    // To remap this, you have to add the offset (which is going to be 0x100000000),
+                                    // and then you can run it through `llvm-symbolizer --obj bun-with-symbols 0x123456`
+                                    // The reason we are subtracting this known offset is mostly just so that we can
+                                    // fit it within a signed 32-bit integer. The VLQs will be shorter too.
+                                    return .{ .known = .{
+                                        .object = null,
+                                        .address = @intCast(image_relative_address),
+                                    } };
+                                } else {
+                                    // these libraries are not interesting, mark as unknown
+                                    return .{ .unknown = {} };
+                                }
 
-                                break :addr .{ .known = .{
-                                    .object = object,
-                                    .address = relative_address,
-                                } };
+                                return .{ .unknown = {} };
                             }
                         },
                         else => {},
                     };
                 }
 
-                break :addr .{ .unknown = {} };
+                return .{ .unknown = {} };
             },
-            else => addr: {
+            else => {
                 // This code is slightly modified from std.debug.DebugInfo.lookupModuleDl
                 // https://github.com/ziglang/zig/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.zig#L2024
                 var ctx: struct {
@@ -893,7 +852,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
                     address: usize,
                     i: usize = 0,
                     // Output
-                    result: Address = .{ .unknown = {} },
+                    result: StackLine = .{ .unknown = {} },
                 } = .{ .address = addr -| 1 };
                 const CtxTy = @TypeOf(ctx);
 
@@ -918,11 +877,62 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
                     }
                 }.callback) catch {};
 
-                break :addr ctx.result;
+                return ctx.result;
             },
         };
+    }
 
-        try address.writeEncoded(writer);
+    pub fn writeEncoded(self: StackLine, writer: anytype) !void {
+        switch (self) {
+            .unknown => try writer.writeAll("_"),
+            .known => |known| {
+                if (known.object) |object| {
+                    try SourceMap.encodeVLQ(1).writeTo(writer);
+                    try SourceMap.encodeVLQ(@intCast(object.len)).writeTo(writer);
+                    try writer.writeAll(object);
+                }
+                try SourceMap.encodeVLQ(known.address).writeTo(writer);
+            },
+            .javascript => {
+                try writer.writeAll("=");
+            },
+        }
+    }
+
+    pub fn format(self: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (self) {
+            .unknown => try writer.print("unknown address", .{}),
+            .known => |known| try writer.print("0x{x} @ {s}", .{ known.address, known.object orelse "bun" }),
+            .javascript => try writer.print("javascript address", .{}),
+        }
+    }
+};
+
+const TraceString = struct {
+    trace: *std.builtin.StackTrace,
+    reason: CrashReason,
+    action: Action,
+
+    const Action = enum {
+        /// Open a pre-filled GitHub issue with the expanded trace
+        open_issue,
+        /// View the trace with nothing else
+        view_trace,
+    };
+
+    pub fn format(self: TraceString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try encodeTraceString(self, writer);
+    }
+};
+
+fn encodeTraceString(opts: TraceString, writer: anytype) !void {
+    try writer.writeAll(report_base_url ++ tracestr_header);
+
+    var name_bytes: [1024]u8 = undefined;
+
+    for (opts.trace.instruction_addresses[0..opts.trace.index]) |addr| {
+        const line = StackLine.fromAddress(addr, &name_bytes);
+        try line.writeEncoded(writer);
     }
 
     try writer.writeAll(comptime zero_vlq: {
@@ -930,7 +940,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
         break :zero_vlq vlq.bytes[0..vlq.len];
     });
 
-    // The following switch must be kept in sync with `bun-report`'s decoder.
+    // The following switch must be kept in sync with `bun.report`'s decoder implementation.
     switch (opts.reason) {
         .panic => |message| {
             try writer.writeByte('0');
@@ -995,7 +1005,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
 
 fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
     const first = SourceMap.encodeVLQ(@intCast((addr & 0xFFFFFFFF00000000) >> 32));
-    const second = SourceMap.encodeVLQ(@intCast(addr & 0xFFFFFFFF));
+    const second = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
     try first.writeTo(writer);
     try second.writeTo(writer);
 }
@@ -1008,14 +1018,6 @@ fn crash() noreturn {
             std.os.abort();
         },
         else => {
-            // Parts of this is copied from std.os.abort (linux non libc path) and WTFCrash
-            // Cause a segfault to make sure a core dump is generated if such is enabled
-
-            // Only one thread may proceed to the rest of abort().
-            const global = struct {
-                var abort_entered: bool = false;
-            };
-            while (@cmpxchgWeak(bool, &global.abort_entered, false, true, .SeqCst, .SeqCst)) |_| {}
 
             // Install default handler so that the tkill below will terminate.
             const sigact = std.os.Sigaction{ .handler = .{ .handler = std.os.SIG.DFL }, .mask = std.os.empty_sigset, .flags = 0 };
@@ -1031,10 +1033,7 @@ fn crash() noreturn {
                 std.os.sigaction(sig, &sigact, null) catch {};
             }
 
-            @as(*allowzero volatile u8, @ptrFromInt(0xDEADBEEF)).* = 0;
-            std.os.raise(std.os.SIG.SEGV) catch {};
-            @as(*allowzero volatile u8, @ptrFromInt(0)).* = 0;
-            std.c._exit(127);
+            @trap();
         },
     }
 }
@@ -1127,4 +1126,14 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
         // TODO: Zig's dump trace for windows is not fully reliable.
     }
     stdDumpStackTrace(trace);
+}
+
+pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) bun.JSC.JSValue {
+    if (!bun.Environment.isMac) return .undefined;
+
+    const header = std.c._dyld_get_image_header(0) orelse return .undefined;
+    const base_address = @intFromPtr(header);
+    const vmaddr_slide = std.c._dyld_get_image_vmaddr_slide(0);
+
+    return bun.JSC.JSValue.jsNumber(base_address - vmaddr_slide);
 }

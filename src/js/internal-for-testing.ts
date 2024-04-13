@@ -21,3 +21,9 @@ export const shellInternals = {
   lex: $newZigFunction("shell.zig", "TestingAPIs.shellLex", 1),
   parse: $newZigFunction("shell.zig", "TestingAPIs.shellParse", 1),
 };
+
+export const getMachOImageZeroOffset = $newZigFunction(
+  "crash_handler.zig",
+  "jsGetMachOImageZeroOffset",
+  0,
+) as () => number;

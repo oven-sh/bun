@@ -555,6 +555,7 @@ else()
             add_compile_definitions("BUN_DEBUG=1")
             set(ASSERT_ENABLED "1")
         endif()
+
         message(STATUS "Using WebKit from ${WEBKIT_DIR}")
     else()
         if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
@@ -762,6 +763,7 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/node/*.ts"
         "${BUN_SRC}/js/thirdparty/*.js"
         "${BUN_SRC}/js/thirdparty/*.ts"
+        "${BUN_SRC}/js/internal-for-testing.ts"
     )
 
     file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")

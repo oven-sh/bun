@@ -140,7 +140,7 @@ pub const SmolStr = packed struct {
     };
 
     comptime {
-        std.debug.assert(@sizeOf(SmolStr) == @sizeOf(Inlined));
+        bun.assert(@sizeOf(SmolStr) == @sizeOf(Inlined));
     }
 
     pub fn empty() SmolStr {

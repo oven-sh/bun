@@ -714,7 +714,7 @@ pub const Linker = struct {
 
             .absolute_url => {
                 if (strings.eqlComptime(namespace, "node")) {
-                    if (comptime Environment.isDebug) std.debug.assert(strings.eqlComptime(source_path[0..5], "node:"));
+                    if (comptime Environment.isDebug) bun.assert(strings.eqlComptime(source_path[0..5], "node:"));
 
                     return Fs.Path.init(try std.fmt.allocPrint(
                         linker.allocator,

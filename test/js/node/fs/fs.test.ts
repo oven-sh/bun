@@ -2971,3 +2971,19 @@ describe.if(isWindows)("windows path handling", () => {
     });
   }
 });
+
+it("using writeFile on an fd does not truncate it", () => {
+  const filepath = join(tmpdir(), `file-${Math.random().toString(32).slice(2)}.txt`);
+  const fd = fs.openSync(filepath, "w+");
+  fs.writeFileSync(fd, "x");
+  fs.writeFileSync(fd, "x");
+  fs.closeSync(fd);
+  const content = fs.readFileSync(filepath, "utf8");
+  expect(content).toBe("xx");
+});
+
+it("fs.close with one arg works", () => {
+  const filepath = join(tmpdir(), `file-${Math.random().toString(32).slice(2)}.txt`);
+  const fd = fs.openSync(filepath, "w+");
+  fs.close(fd);
+});

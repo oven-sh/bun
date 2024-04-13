@@ -5474,7 +5474,9 @@ pub const NodeFS = struct {
             }
         } else {
             // https://github.com/oven-sh/bun/issues/2931
-            if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0) {
+            // https://github.com/oven-sh/bun/issues/10222
+            // only truncate if we're not appending and writing to a path
+            if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0 and args.file != .fd) {
                 _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
             }
         }

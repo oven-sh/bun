@@ -3324,10 +3324,7 @@ pub const PackageManager = struct {
     }
 
     pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {
-        // TODO: is this slow?
-        var dir = this.getCacheDirectory().openDirZ(folder_path, .{}) catch return false;
-        dir.close();
-        return true;
+        return bun.sys.directoryExistsAt(this.getCacheDirectory(), folder_path).unwrap() catch false;
     }
 
     pub fn pathForCachedNPMPath(

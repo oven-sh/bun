@@ -248,7 +248,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
 
         pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             if (comptime Environment.isWindows) {
-                if (rc != 0) return null;
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
             }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
@@ -268,7 +270,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                 @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
             }
             if (comptime Environment.isWindows) {
-                if (rc != 0) return null;
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
             }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,

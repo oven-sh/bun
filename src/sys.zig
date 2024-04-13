@@ -2123,7 +2123,7 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     const dir_fd = bun.toFD(dir_);
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
-        const path = bun.strings.toWPathNormalizeAutoExtend(&wbuf, subpath);
+        const path = bun.strings.toNTPath(&wbuf, subpath);
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,

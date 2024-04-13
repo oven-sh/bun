@@ -195,6 +195,12 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 
   if (is_client) {
     SSL_set_connect_state(s->ssl);
+    
+    // allow clients to renegotiate
+    // https://github.com/oven-sh/bun/issues/6197
+    // https://github.com/oven-sh/bun/issues/5363
+    // this can be a DoS vector for servers, so we do not enable it yet there.
+    SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_freely);
   } else {
     SSL_set_accept_state(s->ssl);
   }

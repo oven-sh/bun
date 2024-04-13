@@ -2160,7 +2160,7 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     }
 
     if (comptime !has_sentinel) {
-        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.oom };
+        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
         return directoryExistsAt(dir_fd, path);
     }
 
@@ -2175,7 +2175,7 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
         return JSC.Maybe(bool){ .result = false };
     }
 
-    // on toher platforms use faccessat from libc
+    // on other platforms use faccessat from libc
     const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.O.DIRECTORY | std.os.O.RDONLY, 0);
     syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), rc });
     if (rc == 0) {

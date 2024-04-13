@@ -2173,16 +2173,15 @@ pub const PackageInstall = struct {
             supported_method;
     }
 
-    pub fn packageMissingFromCache(this: *PackageInstall, tag: Resolution.Tag) bool {
-        if (!tag.canEnqueueInstallTask()) return false;
-
-        const method = this.getInstallMethod();
-
-        switch (method) {
-            else => {
-                return !Syscall.existsAt(bun.toFD(this.cache_dir.fd), this.cache_dir_subpath);
+    pub fn packageMissingFromCache(this: *PackageInstall, manager: *PackageManager, package_id: PackageID) bool {
+        return switch (manager.getPreinstallState(package_id)) {
+            .done => false,
+            else => brk: {
+                const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
+                if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
+                break :brk !exists;
             },
-        }
+        };
     }
 
     pub fn install(this: *PackageInstall, skip_delete: bool) Result {
@@ -2834,14 +2833,14 @@ pub const PackageManager = struct {
         this.preinstall_state.items[package_id] = value;
     }
 
-    pub fn getPreinstallState(this: *PackageManager, package_id: PackageID, _: *Lockfile) PreinstallState {
+    pub fn getPreinstallState(this: *PackageManager, package_id: PackageID) PreinstallState {
         if (package_id >= this.preinstall_state.items.len) {
             return PreinstallState.unknown;
         }
         return this.preinstall_state.items[package_id];
     }
     pub fn determinePreinstallState(manager: *PackageManager, this: Package, lockfile: *Lockfile) PreinstallState {
-        switch (manager.getPreinstallState(this.meta.id, lockfile)) {
+        switch (manager.getPreinstallState(this.meta.id)) {
             .unknown => {
 
                 // Do not automatically start downloading packages which are disabled
@@ -4272,7 +4271,7 @@ pub const PackageManager = struct {
                             }
 
                             if (result.network_task) |network_task| {
-                                if (this.getPreinstallState(result.package.meta.id, this.lockfile) == .extract) {
+                                if (this.getPreinstallState(result.package.meta.id) == .extract) {
                                     this.setPreinstallState(result.package.meta.id, this.lockfile, .extracting);
                                     this.enqueueNetworkTask(network_task);
                                 }
@@ -9292,7 +9291,7 @@ pub const PackageManager = struct {
             this.summary.skipped += @intFromBool(!needs_install);
 
             if (needs_install) {
-                if (installer.packageMissingFromCache(resolution.tag)) {
+                if (resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id)) {
                     if (comptime Environment.allow_assert) {
                         bun.assert(resolution.canEnqueueInstallTask());
                     }
@@ -9360,7 +9359,7 @@ pub const PackageManager = struct {
                         },
                         else => {
                             if (comptime Environment.allow_assert) {
-                                @panic("unreachable because `packageMissingFromCache` would return false");
+                                @panic("unreachable, handled above");
                             }
                             this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
                             this.summary.fail += 1;

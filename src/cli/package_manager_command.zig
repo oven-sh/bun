@@ -137,7 +137,7 @@ pub const PackageManagerCommand = struct {
 
         const subcommand = getSubcommand(&pm.options.positionals);
         if (pm.options.global) {
-            try pm.setupGlobalDir(&ctx);
+            try pm.setupGlobalDir(ctx);
         }
 
         if (strings.eqlComptime(subcommand, "bin")) {

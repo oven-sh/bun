@@ -212,8 +212,7 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
-        var ctx = ctx_;
+    pub fn exec(ctx: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
         // Don't log stuff
         ctx.debug.silent = true;
 

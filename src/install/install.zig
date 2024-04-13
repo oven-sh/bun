@@ -8750,7 +8750,7 @@ pub const PackageManager = struct {
         pub fn incrementTreeInstallCount(
             this: *PackageInstaller,
             tree_id: Lockfile.Tree.Id,
-            comptime from_pending_install: bool,
+            comptime should_install_packages: bool,
             comptime log_level: Options.LogLevel,
         ) void {
             if (comptime Environment.allow_assert) {
@@ -8774,7 +8774,7 @@ pub const PackageManager = struct {
 
             if (!is_not_done) {
                 this.completed_trees.set(tree_id);
-                if (comptime !from_pending_install) this.installAvailablePackages(log_level);
+                if (comptime should_install_packages) this.installAvailablePackages(log_level);
                 this.runAvailableScripts(log_level);
             }
         }
@@ -9282,7 +9282,7 @@ pub const PackageManager = struct {
                     if (comptime Environment.allow_assert) {
                         @panic("bad");
                     }
-                    this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
+                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                     return;
                 },
             }
@@ -9361,7 +9361,7 @@ pub const PackageManager = struct {
                             if (comptime Environment.allow_assert) {
                                 @panic("unreachable, handled above");
                             }
-                            this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
+                            this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                             this.summary.fail += 1;
                         },
                     }
@@ -9483,7 +9483,7 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
+                        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                     },
                     .fail => |cause| {
                         if (comptime Environment.allow_assert) {
@@ -9492,7 +9492,7 @@ pub const PackageManager = struct {
 
                         // even if the package failed to install, we still need to increment the install
                         // counter for this tree
-                        this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
+                        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
 
                         if (cause.err == error.DanglingSymlink) {
                             Output.prettyErrorln(
@@ -9584,6 +9584,8 @@ pub const PackageManager = struct {
                         }
                     }
                 }
+
+                this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
             }
         }
 
@@ -9667,7 +9669,7 @@ pub const PackageManager = struct {
                 if (comptime log_level.showProgress()) {
                     this.node.completeOne();
                 }
-                this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
+                this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                 return;
             }
 

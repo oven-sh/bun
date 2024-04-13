@@ -889,10 +889,8 @@ export function onPullDirectStream(controller) {
     return promiseToReturn;
   }
 
-  // not done, but they called flush()
-  if (deferFlush === 1) {
-    $onFlushDirectStream.$call(controller);
-  }
+  // coalesce all enqueued entries during $pull() and flush them
+  $onFlushDirectStream.$call(controller);
 
   return promiseToReturn;
 }

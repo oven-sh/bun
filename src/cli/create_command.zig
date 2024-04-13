@@ -378,7 +378,7 @@ pub const CreateCommand = struct {
                 progress.refresh();
 
                 var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
-                    [1]Archive.Plucker{try Archive.Plucker.init("package.json", 2048, ctx.allocator)}
+                    [1]Archive.Plucker{try Archive.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
                 else
                     [1]Archive.Plucker{undefined};
 

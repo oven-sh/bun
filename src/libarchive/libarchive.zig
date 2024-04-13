@@ -376,10 +376,10 @@ pub const Archive = struct {
         filename_hash: u64 = 0,
         found: bool = false,
         fd: FileDescriptorType = .zero,
-        pub fn init(filepath: string, estimated_size: usize, allocator: std.mem.Allocator) !Plucker {
+        pub fn init(filepath: bun.OSPathSlice, estimated_size: usize, allocator: std.mem.Allocator) !Plucker {
             return Plucker{
                 .contents = try MutableString.init(allocator, estimated_size),
-                .filename_hash = bun.hash(filepath),
+                .filename_hash = bun.hash(std.mem.sliceAsBytes(filepath)),
                 .fd = .zero,
                 .found = false,
             };

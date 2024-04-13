@@ -1964,6 +1964,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn handleWrote(this: *@This(), amount1: usize) void {
+            defer log("handleWrote: {d} offset: {d}, {d}", .{ amount1, this.offset, this.buffer.len });
             const amount = @as(Blob.SizeType, @truncate(amount1));
             this.offset += amount;
             this.wrote += amount;
@@ -1996,8 +1997,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (this.requested_end and !this.res.state().isHttpWriteCalled()) {
                 this.handleFirstWriteIfNecessary();
                 const success = this.res.tryEnd(buf, this.end_len, false);
-                this.has_backpressure = !success;
-                if (this.has_backpressure) {
+                if (success) {
+                    this.has_backpressure = false;
+                    this.handleWrote(this.end_len);
+                } else {
+                    this.has_backpressure = true;
                     this.res.onWritable(*@This(), onWritable, this);
                 }
                 return success;
@@ -2018,7 +2022,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             } else {
                 this.has_backpressure = !this.res.write(buf);
             }
-
+            this.handleWrote(buf.len);
             return true;
         }
 
@@ -2064,7 +2068,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     // if we were unable to send it, retry
                     return false;
                 }
-                this.handleWrote(@as(Blob.SizeType, @truncate(chunk.len)));
                 total_written = chunk.len;
 
                 if (this.requested_end) {
@@ -2150,7 +2153,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             const success = this.send(slice);
             if (success) {
-                this.handleWrote(@as(Blob.SizeType, @truncate(slice.len)));
                 return .{ .result = JSValue.jsNumber(slice.len) };
             }
 
@@ -2178,7 +2180,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 assert(slice.len > 0);
                 const success = this.send(slice);
                 if (success) {
-                    this.handleWrote(@as(Blob.SizeType, @truncate(slice.len)));
                     return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(slice.len)) };
                 }
             }
@@ -2221,7 +2222,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 // - large-ish chunk
                 // - no backpressure
                 if (this.send(bytes)) {
-                    this.handleWrote(len);
                     return .{ .owned = len };
                 }
 
@@ -2236,7 +2236,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 };
                 const slice = this.readableSlice();
                 if (this.send(slice)) {
-                    this.handleWrote(slice.len);
                     return .{ .owned = len };
                 }
             } else {
@@ -2274,7 +2273,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     // - large-ish chunk
                     // - no backpressure
                     if (this.send(bytes)) {
-                        this.handleWrote(bytes.len);
                         return .{ .owned = len };
                     }
                     do_send = false;
@@ -2286,7 +2284,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
                 if (do_send) {
                     if (this.send(this.readableSlice())) {
-                        this.handleWrote(bytes.len);
                         return .{ .owned = len };
                     }
                 }
@@ -2299,7 +2296,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 };
                 const readable = this.readableSlice();
                 if (this.send(readable)) {
-                    this.handleWrote(readable.len);
                     return .{ .owned = len };
                 }
             } else {
@@ -2336,7 +2332,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             const readable = this.readableSlice();
             if (readable.len >= this.highWaterMark or this.hasBackpressure()) {
                 if (this.send(readable)) {
-                    this.handleWrote(readable.len);
                     return .{ .owned = @as(Blob.SizeType, @intCast(written)) };
                 }
             }
@@ -2464,8 +2459,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.auto_flusher.registered = true;
                 return true;
             }
-
-            this.handleWrote(readable.len);
             this.auto_flusher.registered = false;
             return false;
         }

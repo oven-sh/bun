@@ -2166,7 +2166,7 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
 
     if (comptime Environment.isLinux) {
         // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
-        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.O.DIRECTORY | linux.O.RDONLY, 0);
+        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.O.DIRECTORY | linux.O.RDONLY, linux.F_OK);
         syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), rc });
         if (rc == 0) {
             return JSC.Maybe(bool){ .result = true };
@@ -2176,7 +2176,7 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     }
 
     // on other platforms use faccessat from libc
-    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.O.DIRECTORY | std.os.O.RDONLY, 0);
+    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.O.DIRECTORY | std.os.O.RDONLY, std.os.F_OK);
     syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), rc });
     if (rc == 0) {
         return JSC.Maybe(bool){ .result = true };

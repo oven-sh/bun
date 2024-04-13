@@ -2118,6 +2118,73 @@ pub fn exists(path: []const u8) bool {
     @compileError("TODO: existsOSPath");
 }
 
+pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
+    const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
+    const dir_fd = bun.toFD(dir_);
+    if (comptime Environment.isWindows) {
+        var wbuf: bun.WPathBuffer = undefined;
+        const path = bun.strings.toWPathNormalizeAutoExtend(&wbuf, subpath);
+        const path_len_bytes: u16 = @truncate(path.len * 2);
+        var nt_name = w.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(path.ptr),
+        };
+        var attr = w.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
+                null
+            else if (dir_fd == bun.invalid_fd)
+                std.fs.cwd().fd
+            else
+                dir_fd.cast(),
+            .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        };
+        var basic_info: w.FILE_BASIC_INFORMATION = undefined;
+        const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
+        if (JSC.Maybe(bool).errnoSysP(rc, .access, subpath)) |err| {
+            syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err });
+            return .{ .err = err };
+        }
+
+        const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0;
+        syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_dir) });
+
+        return .{
+            .result = is_dir,
+        };
+    }
+
+    if (comptime !has_sentinel) {
+        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.oom };
+        return directoryExistsAt(dir_fd, path);
+    }
+
+    if (comptime Environment.isLinux) {
+        // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
+        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.O.DIRECTORY | linux.O.RDONLY, 0);
+        syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), rc });
+        if (rc == 0) {
+            return JSC.Maybe(bool){ .result = true };
+        }
+
+        return JSC.Maybe(bool){ .result = false };
+    }
+
+    // on toher platforms use faccessat from libc
+    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.O.DIRECTORY | std.os.O.RDONLY, 0);
+    syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), rc });
+    if (rc == 0) {
+        return JSC.Maybe(bool){ .result = true };
+    }
+
+    return JSC.Maybe(bool){ .result = false };
+}
+
 pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
     if (comptime Environment.isPosix) {
         return system.faccessat(fd.cast(), &(std.os.toPosixPath(subpath) catch return false), 0, 0) == 0;

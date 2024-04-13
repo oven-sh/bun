@@ -53,7 +53,7 @@ const Cleanable = packed struct {
     const Tag = Type.Tag;
     const name = bun.meta.typeName;
 
-    pub fn run(this: Cleanable, vm: *JSC.VirtualMachine) void {
+    pub fn run(this: *Cleanable, vm: *JSC.VirtualMachine) void {
         switch (this.ptr.tag()) {
             inline @field(Tag, name(Subprocess)),
             @field(Tag, name(TLSSocket)),
@@ -65,7 +65,7 @@ const Cleanable = packed struct {
             @field(Tag, name(DebugHTTPSServer)),
             @field(Tag, name(ShellSubprocess)),
             => |tag| {
-                this.ptr.as(
+                const resource = this.ptr.as(
                     Type.typeFromTag(
                         @intFromEnum(
                             @field(
@@ -74,7 +74,9 @@ const Cleanable = packed struct {
                             ),
                         ),
                     ),
-                ).onCleanup(vm);
+                );
+                this.ptr = Type.Null;
+                resource.onCleanup(vm);
             },
             else => {
                 bun.assert(false);
@@ -110,9 +112,10 @@ pub const TestCleanupHandler = struct {
         const cleanables = this.cleanables.keys();
         const generations = this.cleanables.values();
         var i: usize = 0;
-        for (generations, cleanables, 0..) |gen, cleanable, idx| {
+        for (generations, cleanables, 0..) |gen, *cleanable, idx| {
             if (target <= gen) {
-                cleanable.run(vm);
+                if (!cleanable.ptr.isNull())
+                    cleanable.run(vm);
             } else {
                 i = idx;
             }
@@ -125,8 +128,9 @@ pub const TestCleanupHandler = struct {
         const cleanables = this.cleanables;
         this.cleanables = .{};
         const ptrs = cleanables.keys();
-        for (ptrs) |cleanable| {
-            cleanable.run(vm);
+        for (ptrs) |*cleanable| {
+            if (!cleanable.ptr.isNull())
+                cleanable.run(vm);
         }
     }
 
@@ -135,20 +139,21 @@ pub const TestCleanupHandler = struct {
         this.state = .running;
         const cleanables = this.cleanables.keys();
         const generations = this.cleanables.values();
+        vm.test_cleaner = null;
 
-        var has_any_from_other_generations = false;
         var i: usize = 0;
         var last_i: usize = 0;
         while (i < this.cleanables.count()) {
             const generation = generations[i];
             if (generation != expected_generation) {
-                has_any_from_other_generations = true;
                 i += 1;
                 last_i = i;
                 continue;
             }
 
-            cleanables[i].run(vm);
+            if (!cleanables[i].ptr.isNull()) {
+                cleanables[i].run(vm);
+            }
 
             i += 1;
         }
@@ -164,7 +169,6 @@ pub const TestCleanupHandler = struct {
     }
 
     pub fn endCycle(this: *TestCleanupHandler, generation: u32, vm: *JSC.VirtualMachine) void {
-        vm.test_cleaner = null;
         this.run(generation, vm);
         this.state = .none;
         if (generation == this.generation)

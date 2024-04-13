@@ -2120,7 +2120,7 @@ pub fn exists(path: []const u8) bool {
 
 pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
     if (comptime Environment.isPosix) {
-        return system.faccessat(bun.toFD(fd), &(std.os.toPosixPath(subpath) catch return false), 0, 0) == 0;
+        return system.faccessat(fd.cast(), &(std.os.toPosixPath(subpath) catch return false), 0, 0) == 0;
     }
 
     if (comptime Environment.isWindows) {

@@ -1611,7 +1611,9 @@ pub const CreateCommand = struct {
                         const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                        if (!bun.sys.existsAt(bun.invalid_fd, outdir_path_)) {
+                            break :outer;
+                        }
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
                     }
@@ -1622,7 +1624,9 @@ pub const CreateCommand = struct {
                     const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                     home_dir_buf[outdir_path.len] = 0;
                     const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                    std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                    if (!bun.sys.existsAt(bun.invalid_fd, outdir_path_)) {
+                        break :outer;
+                    }
                     example_tag = Example.Tag.local_folder;
                     break :brk outdir_path;
                 }
@@ -1633,7 +1637,9 @@ pub const CreateCommand = struct {
                         const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                        if (!bun.sys.existsAt(bun.invalid_fd, outdir_path_)) {
+                            break :outer;
+                        }
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
                     }

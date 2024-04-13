@@ -266,7 +266,7 @@ pub const RunCommand = struct {
     const log = Output.scoped(.RUN, false);
 
     fn runPackageScriptForeground(
-        ctx: *Command.Context,
+        ctx: Command.Context,
         allocator: std.mem.Allocator,
         original_script: string,
         name: string,
@@ -1294,12 +1294,11 @@ pub const RunCommand = struct {
     }
 
     pub fn exec(
-        ctx_: Command.Context,
+        ctx: Command.Context,
         comptime bin_dirs_only: bool,
         comptime log_errors: bool,
         comptime did_try_open_with_bun_js: bool,
     ) !bool {
-        var ctx = ctx_;
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
         if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {
@@ -1384,7 +1383,7 @@ pub const RunCommand = struct {
                         // once we know it's a file, check if they have any preloads
                         if (ext.len > 0 and !has_loader) {
                             if (!ctx.debug.loaded_bunfig) {
-                                try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                                try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
                             }
 
                             if (ctx.preloads.len == 0)
@@ -1464,7 +1463,7 @@ pub const RunCommand = struct {
 
                     if (scripts.get(temp_script_buffer[1..])) |prescript| {
                         if (!try runPackageScriptForeground(
-                            &ctx,
+                            ctx,
                             ctx.allocator,
                             prescript,
                             temp_script_buffer[1..],
@@ -1479,7 +1478,7 @@ pub const RunCommand = struct {
                     }
 
                     if (!try runPackageScriptForeground(
-                        &ctx,
+                        ctx,
                         ctx.allocator,
                         script_content,
                         script_name_to_search,
@@ -1494,7 +1493,7 @@ pub const RunCommand = struct {
 
                     if (scripts.get(temp_script_buffer)) |postscript| {
                         if (!try runPackageScriptForeground(
-                            &ctx,
+                            ctx,
                             ctx.allocator,
                             postscript,
                             temp_script_buffer,
@@ -1682,10 +1681,9 @@ pub const BunXFastPath = struct {
     var environment_buffer: bun.WPathBuffer = undefined;
 
     /// If this returns, it implies the fast path cannot be taken
-    fn tryLaunch(ctx_const: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+    fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
         if (!bun.FeatureFlags.windows_bunx_fast_path) return;
 
-        var ctx = ctx_const;
         bun.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
@@ -1718,7 +1716,7 @@ pub const BunXFastPath = struct {
             .arguments = command_line[0..i],
             .force_use_bun = ctx.debug.run_in_bun,
             .direct_launch_with_bun_js = &directLaunchCallback,
-            .cli_context = &ctx,
+            .cli_context = ctx,
             .environment = env.map.writeWindowsEnvBlock(&environment_buffer) catch return,
         };
 
@@ -1734,12 +1732,12 @@ pub const BunXFastPath = struct {
         debug("did not start via shim", .{});
     }
 
-    fn directLaunchCallback(wpath: []u16, ctx: *const Command.Context) void {
+    fn directLaunchCallback(wpath: []u16, ctx: Command.Context) void {
         const utf8 = bun.strings.convertUTF16toUTF8InBuffer(
             bun.reinterpretSlice(u8, &direct_launch_buffer),
             wpath,
         ) catch return;
-        Run.boot(ctx.*, utf8) catch |err| {
+        Run.boot(ctx, utf8) catch |err| {
             ctx.log.printForLogLevel(Output.errorWriter()) catch {};
             Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
             Global.exit(1);

@@ -8774,7 +8774,10 @@ pub const PackageManager = struct {
 
             if (!is_not_done) {
                 this.completed_trees.set(tree_id);
-                if (comptime should_install_packages) this.installAvailablePackages(log_level);
+                if (comptime should_install_packages) {
+                    const force = false;
+                    this.installAvailablePackages(log_level, force);
+                }
                 this.runAvailableScripts(log_level);
             }
         }
@@ -8816,7 +8819,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub fn installAvailablePackages(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+        pub fn installAvailablePackages(this: *PackageInstaller, comptime log_level: Options.LogLevel, force: bool) void {
             const prev_node_modules = this.node_modules;
             defer this.node_modules = prev_node_modules;
             const prev_tree_id = this.current_tree_id;
@@ -8826,7 +8829,7 @@ pub const PackageManager = struct {
             const resolutions = lockfile.buffers.resolutions.items;
 
             for (this.pending_installs_to_tree_id, 0..) |*pending_installs, i| {
-                if (this.canInstallPackageForTree(this.lockfile.buffers.trees.items, @intCast(i))) {
+                if (force or this.canInstallPackageForTree(this.lockfile.buffers.trees.items, @intCast(i))) {
                     defer pending_installs.clearRetainingCapacity();
 
                     // If installing these packages completes the tree, we don't allow it
@@ -10216,10 +10219,12 @@ pub const PackageManager = struct {
                 this.tickLifecycleScripts();
             }
 
-            if (comptime Environment.allow_assert) {
-                for (installer.pending_installs_to_tree_id) |pending_installs| {
+            for (installer.pending_installs_to_tree_id) |pending_installs| {
+                if (comptime Environment.allow_assert) {
                     bun.assert(pending_installs.items.len == 0);
                 }
+                const force = true;
+                installer.installAvailablePackages(log_level, force);
             }
 
             this.finished_installing.store(true, .Monotonic);

@@ -22,8 +22,10 @@ export const shellInternals = {
   parse: $newZigFunction("shell.zig", "TestingAPIs.shellParse", 1),
 };
 
-export const getMachOImageZeroOffset = $newZigFunction(
-  "crash_handler.zig",
-  "jsGetMachOImageZeroOffset",
-  0,
-) as () => number;
+export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
+  getMachOImageZeroOffset: () => number;
+  segfault: () => void;
+  panic: () => void;
+  rootError: () => void;
+  outOfMemory: () => void;
+};

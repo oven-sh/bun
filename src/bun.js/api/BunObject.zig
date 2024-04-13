@@ -3325,11 +3325,6 @@ const UnsafeObject = struct {
         const object = JSValue.createEmptyObject(globalThis, 3);
         const fields = comptime .{
             .gcAggressionLevel = &gcAggressionLevel,
-            .crashBySegfault = &crashBySegfault,
-            .crashByPanic = &crashByPanic,
-            .crashByUnreachable = &crashByUnreachable,
-            .crashBySafetyCheck = &crashBySafetyCheck,
-            .crashByCallGlobalError = &crashByCallGlobalError,
             .arrayBufferToString = &arrayBufferToString,
             .mimallocDump = &dump_mimalloc,
         };
@@ -3359,41 +3354,6 @@ const UnsafeObject = struct {
             }
         }
         return ret;
-    }
-
-    pub fn crashBySegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        @setRuntimeSafety(false);
-        const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
-        ptr[0] = 0xDEADBEEF;
-        std.mem.doNotOptimizeAway(&ptr);
-        return .undefined;
-    }
-
-    pub fn crashByPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        // std.debug.panic("invoked crashByPanic() handler", .{});
-        bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
-    }
-
-    pub fn crashByUnreachable(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        @setRuntimeSafety(true);
-        unreachable;
-    }
-
-    pub fn crashBySafetyCheck(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        @setRuntimeSafety(true);
-        const Y = enum(u8) { a };
-        var a: u8 = 2;
-        const x: Y = @enumFromInt((&a).*);
-        _ = x;
-        return .undefined;
-    }
-
-    pub fn crashByCallGlobalError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        bun.crash_handler.handleRootError(error.Test, null);
-    }
-
-    pub fn crashOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        bun.outOfMemory();
     }
 
     pub fn arrayBufferToString(

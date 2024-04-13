@@ -30,7 +30,7 @@ const debug = std.debug;
 
 /// Set this to false if you want to disable all uses of this panic handler.
 /// This is useful for testing as a crash in here will not 'panicked during a panic'.
-pub const enabled = true;
+pub const enable = true;
 
 const report_base_url = "https://bun.report/";
 
@@ -194,26 +194,28 @@ pub fn crashHandler(
                 if (debug_trace) {
                     dumpStackTrace(trace.*);
                 } else {
-                    writer.writeAll("Please report this panic as a GitHub issue using this link:\n") catch std.os.abort();
+                    writer.writeAll("tracestr:\n") catch std.os.abort();
+
                     if (Output.enable_ansi_colors) {
                         writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.os.abort();
                     }
+                    encodeTraceString(
+                        .{
+                            .trace = trace,
+                            .reason = reason,
+                            .action = .open_issue,
+                        },
+                        writer,
+                    ) catch std.os.abort();
                 }
-
-                encodeTraceString(
-                    .{
-                        .trace = trace,
-                        .reason = reason,
-                        .action = .open_issue,
-                    },
-                    writer,
-                ) catch std.os.abort();
 
                 if (Output.enable_ansi_colors) {
                     writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.os.abort();
                 } else {
                     writer.writeAll("\n") catch std.os.abort();
                 }
+
+                writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{}) catch std.os.abort();
 
                 Output.flush();
             }
@@ -234,7 +236,7 @@ pub fn crashHandler(
                 });
                 Output.flush();
 
-                // It is important to be aware that this function *can* panic.
+                comptime std.debug.assert(void == @TypeOf(bun.reloadProcess(bun.default_allocator, false, true)));
                 bun.reloadProcess(bun.default_allocator, false, true);
             }
         },
@@ -251,8 +253,6 @@ pub fn crashHandler(
             const stderr = std.io.getStdErr().writer();
             stderr.print("\npanic: {s}\n", .{reason}) catch std.os.abort();
             stderr.print("panicked during a panic. Aborting.\n", .{}) catch std.os.abort();
-
-            std.debug.dumpCurrentStackTrace(@returnAddress());
         },
         3 => {
             // Panicked while printing "Panicked during a panic."
@@ -541,7 +541,7 @@ fn panicBuiltin(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, b
     std.debug.panicImpl(error_return_trace, begin_addr, msg);
 }
 
-pub const panic = if (enabled) panicImpl else panicBuiltin;
+pub const panic = if (enable) panicImpl else panicBuiltin;
 
 const arch_display_string = if (bun.Environment.isAarch64)
     if (bun.Environment.isMac) "Silicon" else "arm64"
@@ -592,7 +592,7 @@ pub fn updatePosixSegfaultHandler(act: ?*const std.os.Sigaction) !void {
 var windows_segfault_handle: ?windows.HANDLE = null;
 
 pub fn init() void {
-    if (!enabled) return;
+    if (!enable) return;
     switch (bun.Environment.os) {
         .windows => {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
@@ -869,8 +869,10 @@ const StackLine = union(enum) {
                             const seg_start = info.dlpi_addr +% phdr.p_vaddr;
                             const seg_end = seg_start + phdr.p_memsz;
                             if (context.address >= seg_start and context.address < seg_end) {
-                                const name = bun.sliceTo(info.dlpi_name, 0) orelse "";
-                                std.debug.print("\nhi {d}, {s}, base = 0x{x}, ptr = 0x{x}", .{ context.i, name, info.dlpi_addr, context.address });
+                                // const name = bun.sliceTo(info.dlpi_name, 0) orelse "";
+                                {
+                                    @compileError("TODO");
+                                }
                                 return error.Found;
                             }
                         }
@@ -901,8 +903,12 @@ const StackLine = union(enum) {
 
     pub fn format(self: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self) {
-            .unknown => try writer.print("unknown address", .{}),
-            .known => |known| try writer.print("0x{x} @ {s}", .{ known.address, known.object orelse "bun" }),
+            .unknown => try writer.print("???", .{}),
+            .known => |known| try writer.print("0x{x}{s}{s}", .{
+                if (bun.Environment.isMac) @as(u64, known.address) + 0x100000000 else known.address,
+                if (known.object != null) " @ " else "",
+                known.object orelse "bun",
+            }),
             .javascript => try writer.print("javascript address", .{}),
         }
     }
@@ -1128,12 +1134,52 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     stdDumpStackTrace(trace);
 }
 
-pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) bun.JSC.JSValue {
-    if (!bun.Environment.isMac) return .undefined;
+pub const js_bindings = struct {
+    const JSC = bun.JSC;
+    const JSValue = JSC.JSValue;
 
-    const header = std.c._dyld_get_image_header(0) orelse return .undefined;
-    const base_address = @intFromPtr(header);
-    const vmaddr_slide = std.c._dyld_get_image_vmaddr_slide(0);
+    pub fn generate(global: *JSC.JSGlobalObject) JSC.JSValue {
+        const obj = JSC.JSValue.createEmptyObject(global, 3);
+        inline for (.{
+            .{ "getMachOImageZeroOffset", jsGetMachOImageZeroOffset },
+            .{ "segfault", jsSegfault },
+            .{ "panic", jsPanic },
+            .{ "rootError", jsRootError },
+            .{ "outOfMemory", jsOutOfMemory },
+        }) |tuple| {
+            const name = JSC.ZigString.static(tuple[0]);
+            obj.put(global, name, JSC.createCallback(global, name, 1, tuple[1]));
+        }
+        return obj;
+    }
 
-    return bun.JSC.JSValue.jsNumber(base_address - vmaddr_slide);
-}
+    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+        if (!bun.Environment.isMac) return .undefined;
+
+        const header = std.c._dyld_get_image_header(0) orelse return .undefined;
+        const base_address = @intFromPtr(header);
+        const vmaddr_slide = std.c._dyld_get_image_vmaddr_slide(0);
+
+        return bun.JSC.JSValue.jsNumber(base_address - vmaddr_slide);
+    }
+
+    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        @setRuntimeSafety(false);
+        const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
+        ptr[0] = 0xDEADBEEF;
+        std.mem.doNotOptimizeAway(&ptr);
+        return .undefined;
+    }
+
+    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
+    }
+
+    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        bun.crash_handler.handleRootError(error.Test, null);
+    }
+
+    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        bun.outOfMemory();
+    }
+};

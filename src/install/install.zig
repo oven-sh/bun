@@ -8861,15 +8861,15 @@ pub const PackageManager = struct {
                 LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
         }
 
-        // pub fn printTreeDeps(this: *PackageInstaller) void {
-        //     for (this.tree_ids_to_trees_the_id_depends_on, 0..) |deps, j| {
-        //         std.debug.print("tree #{d:3}: ", .{j});
-        //         for (0..this.lockfile.buffers.trees.items.len) |tree_id| {
-        //             std.debug.print("{d} ", .{@intFromBool(deps.isSet(tree_id))});
-        //         }
-        //         std.debug.print("\n", .{});
-        //     }
-        // }
+        pub fn printTreeDeps(this: *PackageInstaller) void {
+            for (this.tree_ids_to_trees_the_id_depends_on, 0..) |deps, j| {
+                std.debug.print("tree #{d:3}: ", .{j});
+                for (0..this.lockfile.buffers.trees.items.len) |tree_id| {
+                    std.debug.print("{d} ", .{@intFromBool(deps.isSet(tree_id))});
+                }
+                std.debug.print("\n", .{});
+            }
+        }
 
         pub fn deinit(this: *PackageInstaller) void {
             const allocator = this.manager.allocator;
@@ -9932,6 +9932,60 @@ pub const PackageManager = struct {
 
             defer installer.deinit();
 
+            const Closure = struct {
+                installer: *PackageInstaller,
+                err: ?anyerror = null,
+                manager: *PackageManager,
+                ran: bool = false,
+                pub fn once(closure: *@This()) bool {
+                    const has_run = closure.ran;
+                    closure.ran = true;
+                    return closure.isDone() or !has_run;
+                }
+
+                pub fn runOnce(closure: *@This()) !void {
+                    closure.ran = false;
+                    closure.manager.sleepUntil(closure, &@This().once);
+                    if (closure.err) |err| {
+                        return err;
+                    }
+                }
+
+                pub fn run(closure: *@This()) !void {
+                    closure.manager.sleepUntil(closure, &isDone);
+                    if (closure.err) |err| {
+                        return err;
+                    }
+                }
+
+                pub fn isDone(closure: *@This()) bool {
+                    closure.manager.runTasks(
+                        *PackageInstaller,
+                        closure.installer,
+                        .{
+                            .onExtract = PackageInstaller.installEnqueuedPackages,
+                            .onResolve = {},
+                            .onPackageManifestError = {},
+                            .onPackageDownloadError = {},
+                        },
+                        true,
+                        log_level,
+                    ) catch |err| {
+                        closure.err = err;
+                    };
+
+                    if (closure.err != null) {
+                        return true;
+                    }
+
+                    if (PackageManager.verbose_install and PackageManager.instance.pendingTaskCount() > 0) {
+                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pendingTaskCount()});
+                    }
+
+                    return closure.manager.pendingTaskCount() == 0 and closure.manager.hasNoMorePendingLifecycleScripts();
+                }
+            };
+
             while (iterator.nextNodeModulesFolder(&installer.completed_trees)) |node_modules| {
                 installer.node_modules.path.items.len = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir).len + 1;
                 try installer.node_modules.path.appendSlice(node_modules.relative_path);
@@ -9961,95 +10015,33 @@ pub const PackageManager = struct {
                     }
                     remaining = remaining[unroll_count..];
 
-                    // We want to minimize how often we call this function
-                    // That's part of why we unroll this loop
-                    if (this.pendingTaskCount() > 0) {
-                        try this.runTasks(
-                            *PackageInstaller,
-                            &installer,
-                            .{
-                                .onExtract = PackageInstaller.installEnqueuedPackages,
-                                .onResolve = {},
-                                .onPackageManifestError = {},
-                                .onPackageDownloadError = {},
-                            },
-                            true,
-                            log_level,
-                        );
-                        if (!installer.options.do.install_packages) return error.InstallFailed;
-                    }
+                    var closure = Closure{
+                        .installer = &installer,
+                        .manager = this,
+                    };
 
-                    this.tickLifecycleScripts();
+                    try closure.runOnce();
                 }
 
                 for (remaining) |dependency_id| {
                     installer.installPackage(dependency_id, destination_dir, log_level);
                 }
 
-                try this.runTasks(
-                    *PackageInstaller,
-                    &installer,
-                    .{
-                        .onExtract = PackageInstaller.installEnqueuedPackages,
-                        .onResolve = {},
-                        .onPackageManifestError = {},
-                        .onPackageDownloadError = {},
-                    },
-                    true,
-                    log_level,
-                );
-                if (!installer.options.do.install_packages) return error.InstallFailed;
-
-                this.tickLifecycleScripts();
-            }
-
-            while (this.pendingTaskCount() > 0 and installer.options.do.install_packages) {
-                const Closure = struct {
-                    installer: *PackageInstaller,
-                    err: ?anyerror = null,
-                    manager: *PackageManager,
-
-                    pub fn isDone(closure: *@This()) bool {
-                        closure.manager.runTasks(
-                            *PackageInstaller,
-                            closure.installer,
-                            .{
-                                .onExtract = PackageInstaller.installEnqueuedPackages,
-                                .onResolve = {},
-                                .onPackageManifestError = {},
-                                .onPackageDownloadError = {},
-                            },
-                            true,
-                            log_level,
-                        ) catch |err| {
-                            closure.err = err;
-                        };
-
-                        if (closure.err != null) {
-                            return true;
-                        }
-
-                        if (PackageManager.verbose_install and PackageManager.instance.pendingTaskCount() > 0) {
-                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pendingTaskCount()});
-                        }
-
-                        return closure.manager.pendingTaskCount() == 0 and closure.manager.hasNoMorePendingLifecycleScripts();
-                    }
-                };
-
                 var closure = Closure{
                     .installer = &installer,
                     .manager = this,
                 };
 
-                // Whenever the event loop wakes up, we need to call `runTasks`
-                // If we call sleep() instead of sleepUntil(), it will wait forever until there are no more lifecycle scripts
-                // which means it will not call runTasks until _all_ current lifecycle scripts have finished running
-                this.sleepUntil(&closure, &Closure.isDone);
+                try closure.run();
+            }
 
-                if (closure.err) |err| {
-                    return err;
-                }
+            while (this.pendingTaskCount() > 0 and installer.options.do.install_packages) {
+                var closure = Closure{
+                    .installer = &installer,
+                    .manager = this,
+                };
+
+                try closure.run();
             } else {
                 this.tickLifecycleScripts();
             }

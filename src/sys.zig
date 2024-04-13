@@ -2147,7 +2147,7 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
         const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
         if (JSC.Maybe(bool).errnoSysP(rc, .access, subpath)) |err| {
             syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err });
-            return .{ .err = err };
+            return err;
         }
 
         const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and

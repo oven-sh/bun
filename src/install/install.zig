@@ -886,7 +886,7 @@ pub const PackageInstall = struct {
     package_name: string,
     package_version: string,
     file_count: u32 = 0,
-    node_modules: *const NodeModulesFolder,
+    node_modules: *const PackageManager.NodeModulesFolder,
 
     const debug = Output.scoped(.install, true);
 
@@ -1298,10 +1298,7 @@ pub const PackageInstall = struct {
             this.allocator,
             &[_]bun.OSPathSlice{},
             &[_]bun.OSPathSlice{},
-        ) catch |err| {
-            state.cached_package_dir.close();
-            return Result.fail(err, .opening_cache_dir);
-        };
+        ) catch bun.outOfMemory();
 
         if (!Environment.isWindows) {
             state.subdir = destbase.makeOpenPath(bun.span(destpath), .{
@@ -2169,16 +2166,31 @@ pub const PackageInstall = struct {
         };
     }
 
-    pub fn install(this: *PackageInstall, skip_delete: bool) Result {
+    pub fn getInstallMethod(this: *const PackageInstall) Method {
+        return if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
+            Method.symlink
+        else
+            supported_method;
+    }
 
+    pub fn packageMissingFromCache(this: *PackageInstall, tag: Resolution.Tag) bool {
+        if (!tag.canEnqueueInstallTask()) return false;
+
+        const method = this.getInstallMethod();
+
+        switch (method) {
+            else => {
+                return !Syscall.existsAt(bun.toFD(this.cache_dir.fd), this.cache_dir_subpath);
+            },
+        }
+    }
+
+    pub fn install(this: *PackageInstall, skip_delete: bool) Result {
         // If this fails, we don't care.
         // we'll catch it the next error
         if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall();
 
-        var supported_method_to_use = if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
-            Method.symlink
-        else
-            supported_method;
+        var supported_method_to_use = this.getInstallMethod();
 
         switch (supported_method_to_use) {
             .clonefile => {
@@ -2276,65 +2288,22 @@ pub const PackageInstall = struct {
     }
 };
 
-const NodeModulesFolder = struct {
-    fd: ?bun.FileDescriptor = null,
-    tree_id: Lockfile.Tree.Id = 0,
-    path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
-
-    pub fn deinit(this: *NodeModulesFolder) void {
-        if (this.fd) |fd| {
-            this.fd = null;
-            if (std.fs.cwd().fd == fd.cast()) {
-                return;
-            }
-
-            _ = bun.sys.close(fd);
-        }
-
-        this.path.clearAndFree();
-    }
-
-    pub fn dir(this: *NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
-        if (this.fd) |fd| {
-            return fd.asDir();
-        }
-
-        if (root.fd == std.fs.cwd().fd) {
-            this.fd = bun.toFD(std.fs.cwd());
-            return root;
-        }
-
-        const out = brk: {
-            if (comptime Environment.isPosix) {
-                break :brk try root.makeOpenPath(this.path.items, .{ .iterate = true, .access_sub_paths = true });
-            }
-
-            try bun.MakePath.makePath(u8, root, this.path.items);
-            break :brk (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
-                .can_rename_or_delete = false,
-                .create = true,
-                .read_only = false,
-            }).unwrap()).asDir();
-        };
-        this.fd = bun.toFD(out.fd);
-        return out;
-    }
-};
-
 pub const Resolution = @import("./resolution.zig").Resolution;
 const Progress = std.Progress;
 const TaggedPointer = @import("../tagged_pointer.zig");
-const TaskCallbackContext = union(Tag) {
+
+const DependencyInstallContext = struct {
+    fd: ?bun.FileDescriptor = null,
+    tree_id: Lockfile.Tree.Id = 0,
+    path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    dependency_id: DependencyID,
+};
+
+const TaskCallbackContext = union(enum) {
     dependency: DependencyID,
-    node_modules_folder: NodeModulesFolder,
+    dependency_install_context: DependencyInstallContext,
     root_dependency: DependencyID,
     root_request_id: PackageID,
-    pub const Tag = enum {
-        dependency,
-        node_modules_folder,
-        root_dependency,
-        root_request_id,
-    };
 };
 
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
@@ -8693,6 +8662,51 @@ pub const PackageManager = struct {
         }
     }
 
+    pub const NodeModulesFolder = struct {
+        fd: ?bun.FileDescriptor = null,
+        tree_id: Lockfile.Tree.Id = 0,
+        path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+
+        pub fn deinit(this: *NodeModulesFolder) void {
+            if (this.fd) |fd| {
+                this.fd = null;
+                if (std.fs.cwd().fd == fd.cast()) {
+                    return;
+                }
+
+                _ = bun.sys.close(fd);
+            }
+
+            this.path.clearAndFree();
+        }
+
+        pub fn dir(this: *NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
+            if (this.fd) |fd| {
+                return fd.asDir();
+            }
+
+            if (root.fd == std.fs.cwd().fd) {
+                this.fd = bun.toFD(std.fs.cwd());
+                return root;
+            }
+
+            const out = brk: {
+                if (comptime Environment.isPosix) {
+                    break :brk try root.makeOpenPath(this.path.items, .{ .iterate = true, .access_sub_paths = true });
+                }
+
+                try bun.MakePath.makePath(u8, root, this.path.items);
+                break :brk (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
+                    .can_rename_or_delete = false,
+                    .create = true,
+                    .read_only = false,
+                }).unwrap()).asDir();
+            };
+            this.fd = bun.toFD(out.fd);
+            return out;
+        }
+    };
+
     pub const PackageInstaller = struct {
         manager: *PackageManager,
         lockfile: *Lockfile,
@@ -8733,11 +8747,18 @@ pub const PackageManager = struct {
             tree_id: Lockfile.Tree.Id,
         }) = .{},
 
+        pending_installs_to_tree_id: []std.ArrayListUnmanaged(DependencyInstallContext),
+
         trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
 
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
-        pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: Options.LogLevel) void {
+        pub fn incrementTreeInstallCount(
+            this: *PackageInstaller,
+            tree_id: Lockfile.Tree.Id,
+            comptime from_pending_install: bool,
+            comptime log_level: Options.LogLevel,
+        ) void {
             if (comptime Environment.allow_assert) {
                 bun.assert(tree_id != Lockfile.Tree.invalid_id);
             }
@@ -8759,6 +8780,7 @@ pub const PackageManager = struct {
 
             if (!is_not_done) {
                 this.completed_trees.set(tree_id);
+                if (comptime !from_pending_install) this.installAvailablePackages(log_level);
                 this.runAvailableScripts(log_level);
             }
         }
@@ -8796,6 +8818,64 @@ pub const PackageManager = struct {
                         Output.flush();
                         this.summary.fail += 1;
                     };
+                }
+            }
+        }
+
+        pub fn installAvailablePackages(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+            const prev_node_modules = this.node_modules;
+            defer this.node_modules = prev_node_modules;
+            const prev_tree_id = this.current_tree_id;
+            defer this.current_tree_id = prev_tree_id;
+
+            const lockfile = this.lockfile;
+            const resolutions = lockfile.buffers.resolutions.items;
+
+            for (this.pending_installs_to_tree_id, 0..) |*pending_installs, i| {
+                if (this.canInstallPackageForTree(this.lockfile.buffers.trees.items, @intCast(i))) {
+                    defer pending_installs.clearRetainingCapacity();
+
+                    // If installing these packages completes the tree, we don't allow it
+                    // to call `installAvailablePackages` recursively. Starting at id 0 and
+                    // going up ensures we will reach any trees that will be able to install
+                    // packages upon completing the current tree
+                    for (pending_installs.items) |context| {
+                        const package_id = resolutions[context.dependency_id];
+                        const name = lockfile.str(&this.names[package_id]);
+                        const resolution = &this.resolutions[package_id];
+                        this.node_modules.fd = context.fd;
+                        this.node_modules.tree_id = context.tree_id;
+                        this.node_modules.path = context.path;
+                        var dir = this.node_modules.dir(this.root_node_modules_folder) catch |err| {
+                            if (log_level != .silent) {
+                                Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
+                                    name,
+                                    bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
+                                });
+                            }
+                            this.summary.fail += 1;
+                            continue;
+                        };
+                        defer dir.close();
+                        this.node_modules.fd = null;
+                        this.current_tree_id = context.tree_id;
+                        const needs_verify = false;
+                        const is_pending_package_install = true;
+                        this.installPackageWithNameAndResolution(
+                            // This id might be different from the id used to enqueue the task. Important
+                            // to use the correct one because the package might be aliased with a different
+                            // name
+                            context.dependency_id,
+                            package_id,
+                            log_level,
+                            name,
+                            resolution,
+                            dir,
+                            needs_verify,
+                            is_pending_package_install,
+                        );
+                        this.node_modules.deinit();
+                    }
                 }
             }
         }
@@ -8861,6 +8941,17 @@ pub const PackageManager = struct {
                 LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
         }
 
+        /// If all parents of the tree have finished installing their packages, the package can be installed
+        pub fn canInstallPackageForTree(this: *const PackageInstaller, trees: []Lockfile.Tree, package_tree_id: Lockfile.Tree.Id) bool {
+            var curr_tree_id = trees[package_tree_id].parent;
+            while (curr_tree_id != Lockfile.Tree.invalid_id) {
+                if (!this.completed_trees.isSet(curr_tree_id)) return false;
+                curr_tree_id = trees[curr_tree_id].parent;
+            }
+
+            return true;
+        }
+
         // pub fn printTreeDeps(this: *PackageInstaller) void {
         //     for (this.tree_ids_to_trees_the_id_depends_on, 0..) |deps, j| {
         //         std.debug.print("tree #{d:3}: ", .{j});
@@ -8874,6 +8965,10 @@ pub const PackageManager = struct {
         pub fn deinit(this: *PackageInstaller) void {
             const allocator = this.manager.allocator;
             this.pending_lifecycle_scripts.deinit(this.manager.allocator);
+            for (this.pending_installs_to_tree_id) |*pending_installs| {
+                pending_installs.deinit(this.manager.allocator);
+            }
+            this.manager.allocator.free(this.pending_installs_to_tree_id);
             this.completed_trees.deinit(allocator);
             allocator.free(this.tree_install_counts);
             this.tree_ids_to_trees_the_id_depends_on.deinit(allocator);
@@ -8924,27 +9019,44 @@ pub const PackageManager = struct {
                 }
 
                 for (callbacks.items) |*cb| {
-                    this.node_modules = cb.node_modules_folder;
-                    var dir = this.node_modules.dir(this.root_node_modules_folder) catch |err| {
-                        if (log_level != .silent) {
-                            Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{ name, bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}) });
-                        }
-                        this.summary.fail += 1;
-                        continue;
-                    };
-                    defer dir.close();
-                    this.node_modules.fd = null;
-                    this.current_tree_id = cb.node_modules_folder.tree_id;
-                    cb.node_modules_folder = .{};
-                    this.installPackageWithNameAndResolution(
-                        dependency_id,
-                        package_id,
-                        log_level,
-                        name,
-                        resolution,
-                        dir,
-                    );
-                    this.node_modules.deinit();
+                    const context = cb.dependency_install_context;
+                    if (this.canInstallPackageForTree(this.lockfile.buffers.trees.items, context.tree_id)) {
+                        this.node_modules.fd = context.fd;
+                        this.node_modules.tree_id = context.tree_id;
+                        this.node_modules.path = context.path;
+                        var dir = this.node_modules.dir(this.root_node_modules_folder) catch |err| {
+                            if (log_level != .silent) {
+                                Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
+                                    name,
+                                    bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
+                                });
+                            }
+                            this.summary.fail += 1;
+                            continue;
+                        };
+                        defer dir.close();
+                        this.node_modules.fd = null;
+                        this.current_tree_id = context.tree_id;
+                        const needs_verify = false;
+                        const is_pending_package_install = false;
+                        this.installPackageWithNameAndResolution(
+                            // This id might be different from the id used to enqueue the task. Important
+                            // to use the correct one because the package might be aliased with a different
+                            // name
+                            context.dependency_id,
+                            package_id,
+                            log_level,
+                            name,
+                            resolution,
+                            dir,
+                            needs_verify,
+                            is_pending_package_install,
+                        );
+                        this.node_modules.deinit();
+                    } else {
+                        // install once all parent trees have installed
+                        this.pending_installs_to_tree_id[context.tree_id].append(this.manager.allocator, context) catch bun.outOfMemory();
+                    }
                 }
             }
         }
@@ -9039,6 +9151,14 @@ pub const PackageManager = struct {
             name: string,
             resolution: *const Resolution,
             destination_dir: std.fs.Dir,
+
+            // false when coming from download. if the package was downloaded
+            // it was already determined to need an install
+            comptime needs_verify: bool,
+
+            // we don't want to allow more package installs through
+            // pending packages if we're already draining them.
+            comptime is_pending_package_install: bool,
         ) void {
             const buf = this.lockfile.buffers.string_bytes.items;
 
@@ -9168,21 +9288,109 @@ pub const PackageManager = struct {
                     if (comptime Environment.allow_assert) {
                         @panic("bad");
                     }
-                    this.incrementTreeInstallCount(this.current_tree_id, log_level);
+                    this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
                     return;
                 },
             }
 
-            const needs_install = this.force_install or this.skip_verify_installed_version_number or !installer.verify(resolution, buf);
+            const needs_install = this.force_install or this.skip_verify_installed_version_number or !needs_verify or !installer.verify(resolution, buf);
             this.summary.skipped += @intFromBool(!needs_install);
 
             if (needs_install) {
-                const result: PackageInstall.Result = switch (resolution.tag) {
+                if (installer.packageMissingFromCache(resolution.tag)) {
+                    if (comptime Environment.allow_assert) {
+                        bun.assert(resolution.canEnqueueInstallTask());
+                    }
+
+                    const context: TaskCallbackContext = .{
+                        .dependency_install_context = .{
+                            .fd = null,
+                            .tree_id = this.current_tree_id,
+                            .path = this.node_modules.path.clone() catch bun.outOfMemory(),
+                            .dependency_id = dependency_id,
+                        },
+                    };
+                    switch (resolution.tag) {
+                        .git => {
+                            this.manager.enqueueGitForCheckout(
+                                dependency_id,
+                                alias,
+                                resolution,
+                                context,
+                            );
+                        },
+                        .github => {
+                            const url = this.manager.allocGitHubURL(&resolution.value.github);
+                            defer this.manager.allocator.free(url);
+                            this.manager.enqueueTarballForDownload(
+                                dependency_id,
+                                package_id,
+                                url,
+                                context,
+                            );
+                        },
+                        .local_tarball => {
+                            this.manager.enqueueTarballForReading(
+                                dependency_id,
+                                alias,
+                                resolution,
+                                context,
+                            );
+                        },
+                        .remote_tarball => {
+                            this.manager.enqueueTarballForDownload(
+                                dependency_id,
+                                package_id,
+                                resolution.value.remote_tarball.slice(buf),
+                                context,
+                            );
+                        },
+                        .npm => {
+                            if (comptime Environment.isDebug) {
+                                // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
+                                // This caused bugs. We can't assert on it because they could come from old lockfiles
+                                if (resolution.value.npm.url.isEmpty()) {
+                                    Output.debugWarn("package {s}@{} missing tarball_url", .{ name, resolution.fmt(buf, .posix) });
+                                }
+                            }
+
+                            this.manager.enqueuePackageForDownload(
+                                name,
+                                dependency_id,
+                                package_id,
+                                resolution.value.npm.version,
+                                resolution.value.npm.url.slice(buf),
+                                context,
+                            );
+                        },
+                        else => {
+                            if (comptime Environment.allow_assert) {
+                                @panic("unreachable because `packageMissingFromCache` would return false");
+                            }
+                            this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
+                            this.summary.fail += 1;
+                        },
+                    }
+
+                    return;
+                }
+
+                if (!this.canInstallPackageForTree(this.lockfile.buffers.trees.items, this.current_tree_id)) {
+                    this.pending_installs_to_tree_id[this.current_tree_id].append(this.manager.allocator, .{
+                        .dependency_id = dependency_id,
+                        .fd = null,
+                        .tree_id = this.current_tree_id,
+                        .path = this.node_modules.path.clone() catch bun.outOfMemory(),
+                    }) catch bun.outOfMemory();
+                    return;
+                }
+
+                const install_result = switch (resolution.tag) {
                     .symlink, .workspace => installer.installFromLink(this.skip_delete),
                     else => installer.install(this.skip_delete),
                 };
 
-                switch (result) {
+                switch (install_result) {
                     .success => {
                         const is_duplicate = this.successfully_installed.isSet(package_id);
                         this.summary.success += @as(u32, @intFromBool(!is_duplicate));
@@ -9281,136 +9489,70 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        this.incrementTreeInstallCount(this.current_tree_id, log_level);
+                        this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
                     },
                     .fail => |cause| {
-                        if (cause.isPackageMissingFromCache()) {
-                            const context: TaskCallbackContext = .{
-                                .node_modules_folder = .{
-                                    .fd = null,
-                                    .tree_id = this.current_tree_id,
-                                    .path = this.node_modules.path.clone() catch bun.outOfMemory(),
-                                },
+                        if (comptime Environment.allow_assert) {
+                            bun.assert(!cause.isPackageMissingFromCache() or (resolution.tag != .symlink and resolution.tag != .workspace));
+                        }
+
+                        // even if the package failed to install, we still need to increment the install
+                        // counter for this tree
+                        this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
+
+                        if (cause.err == error.DanglingSymlink) {
+                            Output.prettyErrorln(
+                                "<r><red>error<r>: <b>{s}<r> \"link:{s}\" not found (try running 'bun link' in the intended package's folder)<r>",
+                                .{ @errorName(cause.err), this.names[package_id].slice(buf) },
+                            );
+                            this.summary.fail += 1;
+                        } else if (cause.err == error.AccessDenied) {
+                            // there are two states this can happen
+                            // - Access Denied because node_modules/ is unwritable
+                            // - Access Denied because this specific package is unwritable
+                            // in the case of the former, the logs are extremely noisy, so we
+                            // will exit early, otherwise set a flag to not re-stat
+                            const Singleton = struct {
+                                var node_modules_is_ok = false;
                             };
-                            switch (resolution.tag) {
-                                .git => {
-                                    this.manager.enqueueGitForCheckout(
-                                        dependency_id,
-                                        alias,
-                                        resolution,
-                                        context,
-                                    );
-                                },
-                                .github => {
-                                    const url = this.manager.allocGitHubURL(&resolution.value.github);
-                                    defer this.manager.allocator.free(url);
-                                    this.manager.enqueueTarballForDownload(
-                                        dependency_id,
-                                        package_id,
-                                        url,
-                                        context,
-                                    );
-                                },
-                                .local_tarball => {
-                                    this.manager.enqueueTarballForReading(
-                                        dependency_id,
-                                        alias,
-                                        resolution,
-                                        context,
-                                    );
-                                },
-                                .remote_tarball => {
-                                    this.manager.enqueueTarballForDownload(
-                                        dependency_id,
-                                        package_id,
-                                        resolution.value.remote_tarball.slice(buf),
-                                        context,
-                                    );
-                                },
-                                .npm => {
-                                    if (comptime Environment.isDebug) {
-                                        // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
-                                        // This caused bugs. We can't assert on it because they could come from old lockfiles
-                                        if (resolution.value.npm.url.isEmpty()) {
-                                            Output.debugWarn("package {s}@{} missing tarball_url", .{ name, resolution.fmt(buf, .posix) });
+                            if (!Singleton.node_modules_is_ok) {
+                                if (!Environment.isWindows) {
+                                    const stat = bun.sys.fstat(bun.toFD(destination_dir)).unwrap() catch |err| {
+                                        Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                                            this.names[package_id].slice(buf),
+                                        });
+                                        if (Environment.isDebug) {
+                                            Output.err(err, "Failed to stat node_modules", .{});
                                         }
+                                        Global.exit(1);
+                                    };
+
+                                    const is_writable = if (stat.uid == bun.C.getuid())
+                                        stat.mode & bun.S.IWUSR > 0
+                                    else if (stat.gid == bun.C.getgid())
+                                        stat.mode & bun.S.IWGRP > 0
+                                    else
+                                        stat.mode & bun.S.IWOTH > 0;
+
+                                    if (!is_writable) {
+                                        Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});
+                                        Global.exit(1);
                                     }
-
-                                    this.manager.enqueuePackageForDownload(
-                                        name,
-                                        dependency_id,
-                                        package_id,
-                                        resolution.value.npm.version,
-                                        resolution.value.npm.url.slice(buf),
-                                        context,
-                                    );
-                                },
-                                else => {
-                                    Output.prettyErrorln(
-                                        "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r> ({s})",
-                                        .{ @errorName(cause.err), this.names[package_id].slice(buf), result.fail.step.name() },
-                                    );
-                                    this.summary.fail += 1;
-                                },
-                            }
-                        } else {
-                            // even if the package failed to install, we still need to increment the install
-                            // counter for this tree
-                            this.incrementTreeInstallCount(this.current_tree_id, log_level);
-                            if (cause.err == error.DanglingSymlink) {
-                                Output.prettyErrorln(
-                                    "<r><red>error<r>: <b>{s}<r> \"link:{s}\" not found (try running 'bun link' in the intended package's folder)<r>",
-                                    .{ @errorName(cause.err), this.names[package_id].slice(buf) },
-                                );
-                                this.summary.fail += 1;
-                            } else if (cause.err == error.AccessDenied) {
-                                // there are two states this can happen
-                                // - Access Denied because node_modules/ is unwritable
-                                // - Access Denied because this specific package is unwritable
-                                // in the case of the former, the logs are extremely noisy, so we
-                                // will exit early, otherwise set a flag to not re-stat
-                                const Singleton = struct {
-                                    var node_modules_is_ok = false;
-                                };
-                                if (!Singleton.node_modules_is_ok) {
-                                    if (!Environment.isWindows) {
-                                        const stat = bun.sys.fstat(bun.toFD(destination_dir)).unwrap() catch |err| {
-                                            Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
-                                                this.names[package_id].slice(buf),
-                                            });
-                                            if (Environment.isDebug) {
-                                                Output.err(err, "Failed to stat node_modules", .{});
-                                            }
-                                            Global.exit(1);
-                                        };
-
-                                        const is_writable = if (stat.uid == bun.C.getuid())
-                                            stat.mode & bun.S.IWUSR > 0
-                                        else if (stat.gid == bun.C.getgid())
-                                            stat.mode & bun.S.IWGRP > 0
-                                        else
-                                            stat.mode & bun.S.IWOTH > 0;
-
-                                        if (!is_writable) {
-                                            Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});
-                                            Global.exit(1);
-                                        }
-                                    }
-                                    Singleton.node_modules_is_ok = true;
                                 }
-
-                                Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
-                                    this.names[package_id].slice(buf),
-                                });
-
-                                this.summary.fail += 1;
-                            } else {
-                                Output.prettyErrorln(
-                                    "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r> ({s})",
-                                    .{ @errorName(cause.err), this.names[package_id].slice(buf), result.fail.step.name() },
-                                );
-                                this.summary.fail += 1;
+                                Singleton.node_modules_is_ok = true;
                             }
+
+                            Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                                this.names[package_id].slice(buf),
+                            });
+
+                            this.summary.fail += 1;
+                        } else {
+                            Output.prettyErrorln(
+                                "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r> ({s})",
+                                .{ @errorName(cause.err), this.names[package_id].slice(buf), install_result.fail.step.name() },
+                            );
+                            this.summary.fail += 1;
                         }
                     },
                 }
@@ -9525,19 +9667,30 @@ pub const PackageManager = struct {
         ) void {
             const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
             const meta = &this.metas[package_id];
+            const is_pending_package_install = false;
 
             if (meta.isDisabled()) {
                 if (comptime log_level.showProgress()) {
                     this.node.completeOne();
                 }
-                this.incrementTreeInstallCount(this.current_tree_id, log_level);
+                this.incrementTreeInstallCount(this.current_tree_id, is_pending_package_install, log_level);
                 return;
             }
 
             const name = this.lockfile.str(&this.names[package_id]);
             const resolution = &this.resolutions[package_id];
 
-            this.installPackageWithNameAndResolution(dependency_id, package_id, log_level, name, resolution, destination_dir);
+            const needs_verify = true;
+            this.installPackageWithNameAndResolution(
+                dependency_id,
+                package_id,
+                log_level,
+                name,
+                resolution,
+                destination_dir,
+                needs_verify,
+                is_pending_package_install,
+            );
         }
     };
 
@@ -9809,8 +9962,9 @@ pub const PackageManager = struct {
                 // to make mistakes harder
                 var parts = this.lockfile.packages.slice();
 
+                const trees = this.lockfile.buffers.trees.items;
+
                 const completed_trees, const tree_ids_to_trees_the_id_depends_on, const tree_install_counts = trees: {
-                    const trees = this.lockfile.buffers.trees.items;
                     const completed_trees = try Bitset.initEmpty(this.allocator, trees.len);
                     var tree_ids_to_trees_the_id_depends_on = try Bitset.List.initEmpty(this.allocator, trees.len, trees.len);
 
@@ -9856,6 +10010,17 @@ pub const PackageManager = struct {
                         tree_install_counts,
                     };
                 };
+
+                // Each tree (other than the root tree) can accumulate packages it cannot install until
+                // each of it's parent trees have installed their packages. We keep arrays of these pending
+                // packages for each tree, and drain them when a tree is completed (each of it's immediate
+                // dependencies are installed).
+                //
+                // Trees are drained breadth first because if the current tree is completed from
+                // the remaining pending installs, then any child tree has a higher chance of
+                // being able to install it's dependencies
+                const pending_installs_to_tree_id = this.allocator.alloc(std.ArrayListUnmanaged(DependencyInstallContext), trees.len) catch bun.outOfMemory();
+                @memset(pending_installs_to_tree_id, .{});
 
                 const trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) = trusted_deps: {
 
@@ -9923,6 +10088,7 @@ pub const PackageManager = struct {
                     .completed_trees = completed_trees,
                     .tree_install_counts = tree_install_counts,
                     .trusted_dependencies_from_update_requests = trusted_dependencies_from_update_requests,
+                    .pending_installs_to_tree_id = pending_installs_to_tree_id,
                 };
             };
 
@@ -10052,6 +10218,12 @@ pub const PackageManager = struct {
                 }
             } else {
                 this.tickLifecycleScripts();
+            }
+
+            if (comptime Environment.allow_assert) {
+                for (installer.pending_installs_to_tree_id) |pending_installs| {
+                    bun.assert(pending_installs.items.len == 0);
+                }
             }
 
             this.finished_installing.store(true, .Monotonic);

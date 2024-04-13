@@ -559,6 +559,11 @@ pub const VirtualMachine = struct {
     after_event_loop_callback_ctx: ?*anyopaque = null,
     after_event_loop_callback: ?OpaqueCallback = null,
 
+    __test_cleaner: JSC.TestCleanupHandler = .{},
+    // This pointer is only set when the handler is not null
+    test_cleaner: ?*JSC.TestCleanupHandler = null,
+    is_test_cleaner_enabled: bool = false,
+
     /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
     ///     "bun run foo --bar"
     ///          ["--bar"]
@@ -881,6 +886,16 @@ pub const VirtualMachine = struct {
             };
             break :brk this.node_fs.?;
         };
+    }
+
+    pub fn ensureTestCleaner(this: *VirtualMachine) void {
+        if (this.test_cleaner == null) {
+            this.test_cleaner = &this.__test_cleaner;
+        }
+    }
+
+    pub inline fn resourceCleaner(this: *VirtualMachine) ?*JSC.TestCleanupHandler {
+        return this.test_cleaner;
     }
 
     pub inline fn rareData(this: *VirtualMachine) *JSC.RareData {
@@ -2261,6 +2276,10 @@ pub const VirtualMachine = struct {
         }
 
         if (!this.bundler.options.disable_transpilation) {
+            const cleaner = this.test_cleaner;
+            this.test_cleaner = null;
+            defer this.test_cleaner = cleaner;
+
             if (try this.loadPreloads()) |promise| {
                 JSC.JSValue.fromCell(promise).ensureStillAlive();
                 JSC.JSValue.fromCell(promise).protect();
@@ -2293,6 +2312,9 @@ pub const VirtualMachine = struct {
         }
 
         if (!this.bundler.options.disable_transpilation) {
+            const cleaner = this.test_cleaner;
+            this.test_cleaner = null;
+            defer this.test_cleaner = cleaner;
             if (try this.loadPreloads()) |promise| {
                 JSC.JSValue.fromCell(promise).ensureStillAlive();
                 this.pending_internal_promise = promise;
@@ -3776,3 +3798,5 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 }
 
 pub export var isBunTest: bool = false;
+
+pub const TestCleanupHandler = @import("./test/TestCleanupHandler.zig").TestCleanupHandler;

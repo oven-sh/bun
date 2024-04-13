@@ -507,6 +507,15 @@ pub const ShellSubprocess = struct {
         // }
     }
 
+    pub fn onCleanup(this: *@This(), _: *JSC.VirtualMachine) void {
+        if (this.hasExited()) {
+            return;
+        }
+
+        _ = this.tryKill(0);
+        this.unref(true);
+    }
+
     pub fn hasKilled(this: *const @This()) bool {
         return this.process.hasKilled();
     }
@@ -556,6 +565,11 @@ pub const ShellSubprocess = struct {
 
     // This must only be run once per Subprocess
     pub fn finalizeSync(this: *@This()) void {
+        if (this.event_loop == .js) {
+            if (this.event_loop.js.virtual_machine.resourceCleaner()) |cleaner| {
+                cleaner.remove(this);
+            }
+        }
         this.closeProcess();
 
         // this.closeIO(.stdin);
@@ -901,6 +915,14 @@ pub const ShellSubprocess = struct {
                 // process has already exited
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
                 subprocess.wait(subprocess.flags.is_sync);
+            } else {
+                if (!subprocess.hasExited()) {
+                    if (event_loop == .js) {
+                        if (event_loop.js.virtual_machine.resourceCleaner()) |cleaner| {
+                            cleaner.add(subprocess);
+                        }
+                    }
+                }
             }
         }
 

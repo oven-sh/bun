@@ -100,7 +100,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
     const TagType: type = result.tag_type;
 
-    return struct {
+    return packed struct {
         pub const Tag = TagType;
         pub const TagInt = TagSize;
         pub const type_map: TypeMap(Types) = result.ty_map;

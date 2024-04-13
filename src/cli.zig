@@ -240,6 +240,7 @@ pub const Arguments = struct {
     const test_only_params = [_]ParamType{
         clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
         clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
+        clap.parseParam("--isolate <STR>                  'light' or 'none' (default). Experimental. Automatically cleanup pending I/O after each test.") catch unreachable,
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
@@ -435,6 +436,17 @@ pub const Arguments = struct {
                         Output.prettyErrorln("<r><red>error<r>: Invalid timeout: \"{s}\"", .{timeout_ms});
                         Global.exit(1);
                     };
+                }
+            }
+
+            if (args.option("--isolate")) |isolate| {
+                if (strings.eqlComptime(isolate, "lite")) {
+                    ctx.test_options.isolate = .lite;
+                } else if (strings.eqlComptime(isolate, "none")) {
+                    ctx.test_options.isolate = .none;
+                } else {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid isolate mode: \"{s}\", must be \"lite\" or \"none\"", .{isolate});
+                    Global.exit(1);
                 }
             }
 
@@ -1113,8 +1125,11 @@ pub const Command = struct {
         run_todo: bool = false,
         only: bool = false,
         bail: u32 = 0,
+        isolate: Isolate = .none,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_regex: ?*RegularExpression = null,
+
+        pub const Isolate = enum { none, lite };
     };
 
     pub const Debugger = union(enum) {

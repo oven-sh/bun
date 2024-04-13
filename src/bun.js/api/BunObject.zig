@@ -2814,12 +2814,13 @@ pub fn serve(
     globalObject: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
+    const vm = globalObject.bunVM();
     const arguments = callframe.arguments(2).slice();
     var config: JSC.API.ServerConfig = brk: {
         var exception_ = [1]JSC.JSValueRef{null};
         const exception = &exception_;
 
-        var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
+        var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
         const config_ = JSC.API.ServerConfig.fromJS(globalObject.ptr(), &args, exception);
         if (exception[0] != null) {
             globalObject.throwValue(exception_[0].?.value());
@@ -2836,7 +2837,7 @@ pub fn serve(
     var exception_value: *JSC.JSValue = undefined;
 
     if (config.allow_hot) {
-        if (globalObject.bunVM().hotMap()) |hot| {
+        if (vm.hotMap()) |hot| {
             if (config.id.len == 0) {
                 config.id = config.computeID(globalObject.allocator());
             }
@@ -2889,9 +2890,12 @@ pub fn serve(
             server.thisObject = obj;
 
             if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
+                if (vm.hotMap()) |hot| {
                     hot.insert(config.id, server);
                 }
+            }
+            if (vm.resourceCleaner()) |cleaner| {
+                cleaner.add(server);
             }
             return obj;
         } else {
@@ -2910,10 +2914,14 @@ pub fn serve(
             server.thisObject = obj;
 
             if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
+                if (vm.hotMap()) |hot| {
                     hot.insert(config.id, server);
                 }
             }
+            if (vm.resourceCleaner()) |cleaner| {
+                cleaner.add(server);
+            }
+
             return obj;
         }
     } else {
@@ -2933,9 +2941,12 @@ pub fn serve(
             server.thisObject = obj;
 
             if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
+                if (vm.hotMap()) |hot| {
                     hot.insert(config.id, server);
                 }
+            }
+            if (vm.resourceCleaner()) |cleaner| {
+                cleaner.add(server);
             }
             return obj;
         } else {
@@ -2955,9 +2966,12 @@ pub fn serve(
             server.thisObject = obj;
 
             if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
+                if (vm.hotMap()) |hot| {
                     hot.insert(config.id, server);
                 }
+            }
+            if (vm.resourceCleaner()) |cleaner| {
+                cleaner.add(server);
             }
             return obj;
         }

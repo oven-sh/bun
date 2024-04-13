@@ -1,5 +1,5 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterEach, describe, it, expect, afterAll } from "bun:test";
+import { afterEach, describe, it, expect, afterAll, beforeAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 import { bunExe, bunEnv, dumpStats } from "harness";
@@ -19,6 +19,21 @@ afterEach(() => {
 
 const count = 200;
 let server: Server | undefined;
+beforeAll(() => {
+  try {
+    server = serve({
+      fetch() {
+        return new Response();
+      },
+      port: 0,
+    });
+  } catch (e: any) {
+    console.log("catch:", e);
+    if (e?.message !== `Failed to start server `) {
+      throw e;
+    }
+  }
+});
 
 async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Server) => Promise<void> | void) {
   if (server) {

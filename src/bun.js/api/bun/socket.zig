@@ -792,7 +792,8 @@ pub const Listener = struct {
         const Socket = NewSocket(ssl);
         bun.assert(ssl == listener.ssl);
 
-        var this_socket = listener.handlers.vm.allocator.create(Socket) catch @panic("Out of memory");
+        const vm = listener.handlers.vm;
+        var this_socket = vm.allocator.create(Socket) catch bun.outOfMemory();
         this_socket.* = Socket{
             .handlers = &listener.handlers,
             .this_value = .zero,
@@ -800,6 +801,9 @@ pub const Listener = struct {
             .protos = listener.protos,
             .owned_protos = false,
         };
+        if (vm.resourceCleaner()) |cleaner| {
+            cleaner.add(this_socket);
+        }
         if (listener.strong_data.get()) |default_data| {
             const globalObject = listener.handlers.globalObject;
             Socket.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
@@ -821,15 +825,14 @@ pub const Listener = struct {
     //     uws.us_socket_context_add_server_name
     // }
 
-    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-        const arguments = callframe.arguments(1);
+    pub fn doStop(this: *Listener, all: bool) void {
         log("close", .{});
 
-        if (arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null) {
+        if (all and this.socket_context != null) {
             this.socket_context.?.close(this.ssl);
             this.listener = null;
         } else {
-            var listener = this.listener orelse return JSValue.jsUndefined();
+            var listener = this.listener orelse return;
             this.listener = null;
             listener.close(this.ssl);
         }
@@ -843,8 +846,13 @@ pub const Listener = struct {
             this.strong_self.clear();
             this.strong_data.clear();
         }
+    }
 
-        return JSValue.jsUndefined();
+    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(1);
+
+        this.doStop(arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean());
+        return .undefined;
     }
 
     pub fn finalize(this: *Listener) callconv(.C) void {
@@ -852,10 +860,18 @@ pub const Listener = struct {
         this.deinit();
     }
 
+    pub fn onCleanup(this: *Listener, _: *JSC.VirtualMachine) void {
+        this.doStop(true);
+    }
+
     pub fn deinit(this: *Listener) void {
+        const vm = this.handlers.vm;
+        if (vm.resourceCleaner()) |cleaner| {
+            cleaner.remove(this);
+        }
         this.strong_self.deinit();
         this.strong_data.deinit();
-        this.poll_ref.unref(this.handlers.vm);
+        this.poll_ref.unref(vm);
         bun.assert(this.listener == null);
         bun.assert(this.handlers.active_connections == 0);
         this.handlers.unprotect();
@@ -1294,9 +1310,19 @@ fn NewSocket(comptime ssl: bool) type {
             this.handleConnectError(errno);
         }
 
+        pub fn onCleanup(this: *This, _: *JSC.VirtualMachine) void {
+            if (this.is_active) {
+                // markInactive does .detached = true
+                this.markInactive();
+            }
+        }
+
         pub fn markActive(this: *This) void {
             if (!this.is_active) {
                 this.handlers.markActive();
+                if (this.handlers.vm.resourceCleaner()) |cleaner| {
+                    cleaner.add(this);
+                }
                 this.is_active = true;
                 this.has_pending_activity.store(true, .Release);
             }
@@ -1317,6 +1343,10 @@ fn NewSocket(comptime ssl: bool) type {
                 }
                 this.is_active = false;
                 const vm = this.handlers.vm;
+
+                if (vm.resourceCleaner()) |cleaner| {
+                    cleaner.remove(this);
+                }
 
                 this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
                 this.poll_ref.unref(vm);
@@ -1977,6 +2007,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn finalize(this: *This) callconv(.C) void {
             log("finalize() {d}", .{@intFromPtr(this)});
+
             if (!this.detached) {
                 this.detached = true;
                 if (!this.socket.isClosed()) {

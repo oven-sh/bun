@@ -378,7 +378,7 @@ pub const CreateCommand = struct {
                 progress.refresh();
 
                 var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
-                    [1]Archive.Plucker{try Archive.Plucker.init("package.json", 2048, ctx.allocator)}
+                    [1]Archive.Plucker{try Archive.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
                 else
                     [1]Archive.Plucker{undefined};
 
@@ -1611,9 +1611,7 @@ pub const CreateCommand = struct {
                         const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                        if (!bun.sys.existsAt(bun.invalid_fd, outdir_path_)) {
-                            break :outer;
-                        }
+                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
                     }
@@ -1624,9 +1622,7 @@ pub const CreateCommand = struct {
                     const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                     home_dir_buf[outdir_path.len] = 0;
                     const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                    if (!bun.sys.existsAt(bun.invalid_fd, outdir_path_)) {
-                        break :outer;
-                    }
+                    std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                     example_tag = Example.Tag.local_folder;
                     break :brk outdir_path;
                 }
@@ -1637,9 +1633,7 @@ pub const CreateCommand = struct {
                         const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                        if (!bun.sys.existsAt(bun.invalid_fd, outdir_path_)) {
-                            break :outer;
-                        }
+                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
                     }

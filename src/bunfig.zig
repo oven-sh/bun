@@ -49,7 +49,7 @@ pub const Bunfig = struct {
         log: *logger.Log,
         allocator: std.mem.Allocator,
         bunfig: *Api.TransformOptions,
-        ctx: *Command.Context,
+        ctx: Command.Context,
 
         fn addError(this: *Parser, loc: logger.Loc, comptime text: string) !void {
             this.log.addError(this.source, loc, text) catch unreachable;
@@ -777,7 +777,7 @@ pub const Bunfig = struct {
         }
     };
 
-    pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
         const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {

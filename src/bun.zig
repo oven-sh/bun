@@ -446,6 +446,51 @@ pub const StringHashMapUnowned = struct {
 };
 pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
+pub const OffsetByteList = struct {
+    head: u32 = 0,
+    byte_list: ByteList = .{},
+
+    pub fn init(head: u32, byte_list: ByteList) OffsetByteList {
+        return OffsetByteList{
+            .head = head,
+            .byte_list = byte_list,
+        };
+    }
+
+    pub fn write(self: *OffsetByteList, allocator: std.mem.Allocator, bytes: []const u8) !void {
+        _ = try self.byte_list.write(allocator, bytes);
+    }
+
+    pub fn slice(this: *OffsetByteList) []u8 {
+        return this.byte_list.slice()[0..this.head];
+    }
+
+    pub fn remaining(this: *OffsetByteList) []u8 {
+        return this.byte_list.slice()[this.head..];
+    }
+
+    pub fn consume(self: *OffsetByteList, bytes: u32) void {
+        self.head +|= bytes;
+        if (self.head >= self.byte_list.len) {
+            self.head = 0;
+            self.byte_list.len = 0;
+        }
+    }
+
+    pub fn len(self: *const OffsetByteList) u32 {
+        return self.byte_list.len - self.head;
+    }
+
+    pub fn clear(self: *OffsetByteList) void {
+        self.head = 0;
+        self.byte_list.len = 0;
+    }
+
+    pub fn deinit(self: *OffsetByteList, allocator: std.mem.Allocator) void {
+        self.byte_list.deinitWithAllocator(allocator);
+        self.* = .{};
+    }
+};
 
 pub fn DebugOnly(comptime Type: type) type {
     if (comptime Environment.isDebug) {

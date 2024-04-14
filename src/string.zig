@@ -460,6 +460,7 @@ pub const String = extern struct {
 
     pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void) String {
         JSC.markBinding(@src());
+        std.debug.assert(bytes.len > 0);
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
     }
 
@@ -480,6 +481,17 @@ pub const String = extern struct {
 
         var out: String = String.dead;
         if (BunString__fromJS(globalObject, value, &out)) {
+            return out;
+        } else {
+            return String.dead;
+        }
+    }
+
+    pub fn fromJSRef(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) String {
+        JSC.markBinding(@src());
+
+        var out: String = String.dead;
+        if (BunString__fromJSRef(globalObject, value, &out)) {
             return out;
         } else {
             return String.dead;
@@ -689,10 +701,17 @@ pub const String = extern struct {
         };
     }
 
+    extern fn Bun__parseDate(*JSC.JSGlobalObject, *String) f64;
     extern fn BunString__fromJS(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
+    extern fn BunString__fromJSRef(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
     extern fn BunString__toJS(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
     extern fn BunString__toJSWithLength(globalObject: *JSC.JSGlobalObject, in: *String, usize) JSC.JSValue;
     extern fn BunString__toWTFString(this: *String) void;
+
+    pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
+        JSC.markBinding(@src());
+        return Bun__parseDate(globalObject, this);
+    }
 
     pub fn ref(this: String) void {
         switch (this.tag) {

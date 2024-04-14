@@ -417,12 +417,12 @@ db.loadExtension("myext");
 To use the advanced `sqlite3_file_control` API, call `.fileControl(cmd, value)` on your `Database` instance.
 
 ```ts
-import { Database } from "bun:sqlite";
+import { Database, constants } from "bun:sqlite";
 
 const db = new Database();
 // Ensure WAL mode is NOT persistent
 // this prevents wal files from lingering after the database is closed
-db.fileControl(SQL.constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
 ```
 
 `value` can be:

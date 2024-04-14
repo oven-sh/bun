@@ -62,7 +62,7 @@ const db = new Database("mydb.sqlite", { create: true });
 You can also use an import attribute to load a database.
 
 ```ts
-import db from "./mydb.sqlite" with {"type": "sqlite"};
+import db from "./mydb.sqlite" with { "type": "sqlite" };
 
 console.log(db.query("select * from users LIMIT 1").get());
 ```
@@ -74,16 +74,39 @@ import { Database } from "bun:sqlite";
 const db = new Database("./mydb.sqlite");
 ```
 
-### `.close()`
+### `.close(throwOnError: boolean = false)`
 
-To close a database:
+To close a database connection, but allow existing queries to finish, call `.close(false)`:
 
 ```ts
 const db = new Database();
-db.close();
+// ... do stuff
+db.close(false);
 ```
 
-Note: `close()` is called automatically when the database is garbage collected. It is safe to call multiple times but has no effect after the first.
+To close the database and throw an error if there are any pending queries, call `.close(true)`:
+
+```ts
+const db = new Database();
+// ... do stuff
+db.close(true);
+```
+
+Note: `close(false)` is called automatically when the database is garbage collected. It is safe to call multiple times but has no effect after the first.
+
+### `using` statement
+
+You can use the `using` statement to ensure that a database connection is closed when the `using` block is exited.
+
+```ts
+import { Database } from "bun:sqlite";
+
+{
+  using db = new Database("mydb.sqlite");
+  using query = db.query("select 'Hello world' as message;");
+  console.log(query.get()); // => { message: "Hello world" }
+}
+```
 
 ### `.serialize()`
 
@@ -128,6 +151,8 @@ db.exec("PRAGMA journal_mode = WAL;");
 
 {% details summary="What is WAL mode" %}
 In WAL mode, writes to the database are written directly to a separate file called the "WAL file" (write-ahead log). This file will be later integrated into the main database file. Think of it as a buffer for pending writes. Refer to the [SQLite docs](https://www.sqlite.org/wal.html) for a more detailed overview.
+
+On macOS, WAL files may be persistent by default. This is not a bug, it is how macOS configured the system version of SQLite.
 {% /details %}
 
 ## Statements
@@ -386,6 +411,25 @@ db.loadExtension("myext");
 ```
 
 {% /details %}
+
+### .fileControl(cmd: number, value: any)
+
+To use the advanced `sqlite3_file_control` API, call `.fileControl(cmd, value)` on your `Database` instance.
+
+```ts
+import { Database } from "bun:sqlite";
+
+const db = new Database();
+// Ensure WAL mode is NOT persistent
+// this prevents wal files from lingering after the database is closed
+db.fileControl(SQL.constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+```
+
+`value` can be:
+
+- `number`
+- `TypedArray`
+- `undefined` or `null`
 
 ## Reference
 

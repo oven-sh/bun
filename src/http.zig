@@ -1070,9 +1070,8 @@ pub fn onConnectError(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    _ = socket;
     log("onConnectError  {s}\n", .{client.url.href});
-
+    socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
     if (client.state.stage != .done and client.state.stage != .fail)
         client.fail(error.ConnectionRefused);
 }

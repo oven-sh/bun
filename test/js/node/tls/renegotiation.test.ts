@@ -7,7 +7,7 @@ let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;
 beforeAll(async () => {
   process = Bun.spawn(["node", join(import.meta.dir, "renegotiation-feature.js")], {
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "inherit",
     stdin: "ignore",
   });
   const { value } = await process.stdout.getReader().read();

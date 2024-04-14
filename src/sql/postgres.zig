@@ -37,6 +37,14 @@ const Data = union(enum) {
         };
     }
 
+    pub fn substring(this: @This(), start_index: usize, end_index: usize) Data {
+        return switch (this) {
+            .owned => .{ .temporary = this.owned.slice()[start_index..end_index] },
+            .temporary => .{ .temporary = this.temporary[start_index..end_index] },
+            .empty => .{ .empty = {} },
+        };
+    }
+
     pub fn sliceZ(this: @This()) [:0]const u8 {
         return switch (this) {
             .owned => this.owned.slice()[0..this.owned.len :0],
@@ -180,6 +188,10 @@ pub const protocol = struct {
                 try this.write(std.mem.asBytes(&@byteSwap(value)));
             }
 
+            pub fn sint32(this: @This(), value: i32) !void {
+                try this.write(std.mem.asBytes(&@byteSwap(value)));
+            }
+
             pub fn @"f64"(this: @This(), value: f64) !void {
                 try this.write(std.mem.asBytes(&@byteSwap(@as(u64, @bitCast(value)))));
             }
@@ -188,8 +200,8 @@ pub const protocol = struct {
                 try this.write(std.mem.asBytes(&@byteSwap(@as(u32, @bitCast(value)))));
             }
 
-            pub fn short(this: @This(), value: PostgresShort) !void {
-                try this.write(std.mem.asBytes(&@byteSwap(value)));
+            pub fn short(this: @This(), value: anytype) !void {
+                try this.write(std.mem.asBytes(&@byteSwap(@as(u16, @intCast(value)))));
             }
 
             pub fn string(this: @This(), value: []const u8) !void {
@@ -834,7 +846,11 @@ pub const protocol = struct {
         name: Data = .{ .empty = {} },
         table_oid: int32 = 0,
         column_index: short = 0,
-        type_oid: short = 0,
+        type_oid: int32 = 0,
+
+        pub fn typeTag(this: @This()) types.Tag {
+            return @enumFromInt(@as(short, @truncate(this.type_oid)));
+        }
 
         pub fn deinit(this: *@This()) void {
             this.name.deinit();
@@ -845,10 +861,21 @@ pub const protocol = struct {
             errdefer {
                 name.deinit();
             }
+            // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
+            // Int16
+            // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
+            // Int32
+            // The object ID of the field's data type.
+            // Int16
+            // The data type size (see pg_type.typlen). Note that negative values denote variable-width types.
+            // Int32
+            // The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
+            // Int16
+            // The format code being used for the field. Currently will be zero (text) or one (binary). In a RowDescription returned from the statement variant of Describe, the format code is not yet known and will always be zero.
             this.* = .{
                 .table_oid = try reader.int32(),
                 .column_index = try reader.short(),
-                .type_oid = @truncate(try reader.int32()),
+                .type_oid = try reader.int32(),
                 .name = .{ .owned = try name.toOwned() },
             };
 
@@ -993,7 +1020,7 @@ pub const protocol = struct {
             try writer.write(&header);
             try writer.string(this.name);
             try writer.string(this.query);
-            try writer.short(@intCast(parameters.len));
+            try writer.short(parameters.len);
             for (parameters) |parameter| {
                 try writer.int32(parameter);
             }
@@ -1358,23 +1385,138 @@ pub const protocol = struct {
 
 pub const types = struct {
     pub const Tag = enum(short) {
-        string = 25,
-        number = 0,
-        json = 114,
         boolean = 16,
-        timestamptz = 1184,
-        timestamp = 1114,
-        time = 1082,
+        boolean_array = 1000,
         bytea = 17,
-        int64 = 20,
-        timetz = 1266,
+        bytea_array = 1001,
         double = 701,
+        double_array = 1022,
         float = 700,
+        float_array = 1021,
+        int16 = 21,
+        int16_array = 1005,
         int32 = 23,
+        int32_array = 1007,
+        int64 = 20,
+        json = 114,
+        name_array = 1003,
+        number = 0,
+        string = 25,
+        string_array = 1009,
+        time = 1082,
+        timestamp = 1114,
+        timestamptz = 1184,
+        timetz = 1266,
 
         /// numeric(precision, decimal), arbitrary precision number
         numeric = 1700,
         _,
+
+        pub fn isBinaryFormatSupported(this: Tag) bool {
+            return switch (this) {
+                // TODO: .int16_array, .double_array,
+                .int32_array, .float_array, .int32, .double, .float, .bytea, .number => true,
+
+                else => false,
+            };
+        }
+
+        pub fn formatCode(this: Tag) short {
+            if (this.isBinaryFormatSupported()) {
+                return 1;
+            }
+
+            return 0;
+        }
+
+        fn PostgresBinarySingleDimensionArray(comptime T: type) type {
+            return extern struct {
+                // struct array_int4 {
+                //   int32_t ndim; /* Number of dimensions */
+                //   int32_t _ign; /* offset for data, removed by libpq */
+                //   Oid elemtype; /* type of element in the array */
+
+                //   /* First dimension */
+                //   int32_t size; /* Number of elements */
+                //   int32_t index; /* Index of first element */
+                //   int32_t first_value; /* Beginning of integer data */
+                // };
+
+                ndim: i32,
+                offset_for_data: i32,
+                element_type: i32,
+
+                len: i32,
+                index: i32,
+                first_value: T,
+
+                pub fn slice(this: *@This()) []T {
+                    if (this.len == 0) return &.{};
+
+                    var head = @as([*]T, @ptrCast(&this.first_value));
+                    var current = head;
+                    const len: usize = @intCast(this.len);
+                    for (0..len) |i| {
+                        // Skip every other value as it contains the size of the element
+                        current = current[1..];
+
+                        const val = current[0];
+                        const Int = std.meta.Int(.unsigned, @bitSizeOf(T));
+                        const swapped = @byteSwap(@as(Int, @bitCast(val)));
+
+                        head[i] = @bitCast(swapped);
+
+                        current = current[1..];
+                    }
+
+                    return head[0..len];
+                }
+
+                pub fn init(bytes: []const u8) *@This() {
+                    const this: *@This() = @alignCast(@ptrCast(@constCast(bytes.ptr)));
+                    this.ndim = @byteSwap(this.ndim);
+                    this.offset_for_data = @byteSwap(this.offset_for_data);
+                    this.element_type = @byteSwap(this.element_type);
+                    this.len = @byteSwap(this.len);
+                    this.index = @byteSwap(this.index);
+                    return this;
+                }
+            };
+        }
+
+        pub fn toJSTypedArrayType(comptime T: Tag) JSC.JSValue.JSType {
+            return comptime switch (T) {
+                .int32_array => .Int32Array,
+                // .int16_array => .Uint16Array,
+                .float_array => .Float32Array,
+                // .double_array => .Float64Array,
+                else => @compileError("TODO: not implemented"),
+            };
+        }
+
+        pub fn byteArrayType(comptime T: Tag) type {
+            return comptime switch (T) {
+                .int32_array => i32,
+                // .int16_array => i16,
+                .float_array => f32,
+                // .double_array => f64,
+                else => @compileError("TODO: not implemented"),
+            };
+        }
+
+        pub fn unsignedByteArrayType(comptime T: Tag) type {
+            return comptime switch (T) {
+                .int32_array => u32,
+                // .int16_array => u16,
+                .float_array => f32,
+                // .double_array => f64,
+                else => @compileError("TODO: not implemented"),
+            };
+        }
+
+        pub fn pgArrayType(comptime T: Tag) type {
+            return PostgresBinarySingleDimensionArray(byteArrayType(T));
+        }
 
         fn toJSWithType(
             tag: Tag,
@@ -1384,6 +1526,10 @@ pub const types = struct {
         ) anyerror!JSC.JSValue {
             switch (tag) {
                 .numeric => {
+                    return number.toJS(globalObject, value);
+                },
+
+                .float, .double => {
                     return number.toJS(globalObject, value);
                 },
 
@@ -1452,8 +1598,23 @@ pub const types = struct {
                     return Tag.fromJS(globalObject, value.getIndex(globalObject, 0));
                 }
 
+                // Ban these types:
+                if (tag == .NumberObject) {
+                    return error.JSError;
+                }
+
+                if (tag == .BooleanObject) {
+                    return error.JSError;
+                }
+
+                // It's something internal
                 if (!tag.isIndexable()) {
                     return error.JSError;
+                }
+
+                // We will JSON.stringify anything else.
+                if (tag.isObject()) {
+                    return .json;
                 }
             }
 
@@ -1475,7 +1636,7 @@ pub const types = struct {
 
     pub const string = struct {
         pub const to = 25;
-        pub const from = [_]short{};
+        pub const from = [_]short{1002};
 
         pub fn toJSWithType(
             globalThis: *JSC.JSGlobalObject,
@@ -1634,12 +1795,17 @@ pub const PostgresSQLQuery = struct {
         pending,
         written,
         running,
+        binding,
         success,
         fail,
+
+        pub fn isRunning(this: Status) bool {
+            return this == .running or this == .binding;
+        }
     };
 
     pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {
-        return !this.is_done or this.status == .running;
+        return !this.is_done or this.status.isRunning();
     }
 
     pub fn deinit(this: *@This()) void {
@@ -1732,7 +1898,6 @@ pub const PostgresSQLQuery = struct {
 
         const pending_value = PostgresSQLQuery.pendingValueGetCached(thisValue) orelse JSC.JSValue.undefined;
         pending_value.ensureStillAlive();
-
         var vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
         globalObject.queueMicrotask(function, &[_]JSC.JSValue{ targetValue, pending_value });
@@ -1891,7 +2056,7 @@ pub const PostgresSQLQuery = struct {
 
         connection.requests.writeItem(this) catch {};
         this.ref();
-        this.status = if (did_write) .running else .pending;
+        this.status = if (did_write) .binding else .pending;
 
         if (connection.is_ready_for_query)
             connection.flushData();
@@ -1932,48 +2097,25 @@ pub const PostgresRequest = struct {
 
         var iter = JSC.JSArrayIterator.init(values_array, globalObject);
 
-        if (iter.len > 0) {
-            var needs_to_write_format_codes: bool = true;
-            var consecutive_zero_count: u32 = 0;
+        // The number of parameter format codes that follow (denoted C
+        // below). This can be zero to indicate that there are no
+        // parameters or that the parameters all use the default format
+        // (text); or one, in which case the specified format code is
+        // applied to all parameters; or it can equal the actual number
+        // of parameters.
+        try writer.short(iter.len);
 
-            while (iter.next()) |value| {
-                const tag = try types.Tag.fromJS(globalObject, value);
+        while (iter.next()) |value| {
+            const tag = try types.Tag.fromJS(globalObject, value);
 
-                switch (tag) {
-                    // For now, we only support binary parameters when they're bytea
-                    // This is because postgres needs the exact types in the database
-                    // It's relatively safe to assume that Buffer/TypedArray input is bytea
-                    .bytea => {
-                        if (needs_to_write_format_codes) {
-                            needs_to_write_format_codes = false;
-                            try writer.short(@truncate(iter.len));
-                        }
-
-                        for (0..consecutive_zero_count) |_| {
-                            try writer.short(0);
-                        }
-                        consecutive_zero_count = 0;
-                        try writer.short(1);
-                    },
-                    else => {
-                        consecutive_zero_count += 1;
-                    },
-                }
-            }
-
-            if (needs_to_write_format_codes) {
-                try writer.short(0);
-            } else {
-                for (0..consecutive_zero_count) |_| {
-                    try writer.short(0);
-                }
-            }
-
-            try writer.short(@truncate(iter.len));
-        } else {
-            try writer.short(0);
-            try writer.short(0);
+            try writer.short(
+                tag.formatCode(),
+            );
         }
+
+        // The number of parameter values that follow (possibly zero). This
+        // must match the number of parameters needed by the query.
+        try writer.short(iter.len);
 
         iter = JSC.JSArrayIterator.init(values_array, globalObject);
 
@@ -1982,14 +2124,17 @@ pub const PostgresRequest = struct {
         while (iter.next()) |value| {
             if (value.isUndefinedOrNull()) {
                 debug("  -> NULL", .{});
+                //  As a special case, -1 indicates a
+                // NULL parameter value. No value bytes follow in the NULL case.
                 try writer.int32(@bitCast(@as(i32, -1)));
                 continue;
             }
 
             const tag = try types.Tag.fromJS(globalObject, value);
+
+            debug("  -> {s}", .{@tagName(tag)});
             switch (tag) {
                 .json => {
-                    debug("  -> {s}", .{@tagName(tag)});
                     var str = bun.String.empty;
                     defer str.deref();
                     value.jsonStringify(globalObject, 0, &str);
@@ -2000,14 +2145,11 @@ pub const PostgresRequest = struct {
                     try l.writeExcludingSelf();
                 },
                 .boolean => {
-                    debug("  -> {s}", .{@tagName(tag)});
-
                     const l = try writer.length();
                     try writer.boolean(value.toBoolean());
                     try l.writeExcludingSelf();
                 },
                 .time, .timestamp, .timestamptz => {
-                    debug("  -> {s}", .{@tagName(tag)});
                     var buf = std.mem.zeroes([28]u8);
                     const str = value.toISOString(globalObject, &buf);
                     const l = try writer.length();
@@ -2020,13 +2162,22 @@ pub const PostgresRequest = struct {
                         bytes = buf.byteSlice();
                     }
                     const l = try writer.length();
-                    debug("  -> {s}: {d}", .{ @tagName(tag), bytes.len });
+                    debug("    {d} bytes", .{bytes.len});
 
                     try writer.write(bytes);
                     try l.writeExcludingSelf();
                 },
+                .int32 => {
+                    const l = try writer.length();
+                    try writer.int32(@bitCast(value.coerceToInt32(globalObject)));
+                    try l.writeExcludingSelf();
+                },
+                .double => {
+                    const l = try writer.length();
+                    try writer.f64(@bitCast(value.coerceToDouble(globalObject)));
+                    try l.writeExcludingSelf();
+                },
                 else => {
-                    debug("  -> {s}", .{@tagName(tag)});
                     const str = String.fromJSRef(value, globalObject);
                     defer str.deref();
                     const slice = str.toUTF8WithoutRef(bun.default_allocator);
@@ -2040,23 +2191,17 @@ pub const PostgresRequest = struct {
 
         var any_non_text_fields: bool = false;
         for (result_fields) |field| {
-            if (switch (@as(types.Tag, @enumFromInt(field.type_oid))) {
-                .int32, .double, .float, .bytea, .number => true,
-                else => false,
-            }) {
+            if (field.typeTag().isBinaryFormatSupported()) {
                 any_non_text_fields = true;
                 break;
             }
         }
 
         if (any_non_text_fields) {
-            try writer.short(@truncate(result_fields.len));
+            try writer.short(result_fields.len);
             for (result_fields) |field| {
                 try writer.short(
-                    switch (@as(types.Tag, @enumFromInt(field.type_oid))) {
-                        .int32, .double, .float, .bytea, .number => 1,
-                        else => 0,
-                    },
+                    field.typeTag().formatCode(),
                 );
             }
         } else {
@@ -2730,18 +2875,49 @@ pub const PostgresSQLConnection = struct {
             date = 6,
             bytea = 7,
             json = 8,
+            array = 9,
+            typed_array = 10,
         };
 
         pub const Value = extern union {
             null: u8,
             string: bun.WTF.StringImpl,
             double: f64,
-            int32: u32,
+            int32: i32,
             int64: i64,
             boolean: bool,
             date: f64,
             bytea: [2]usize,
             json: bun.WTF.StringImpl,
+            array: Array,
+            typed_array: TypedArray,
+        };
+
+        pub const Array = extern struct {
+            ptr: ?[*]DataCell = null,
+            len: u32,
+
+            pub fn slice(this: *Array) []DataCell {
+                const ptr = this.ptr orelse return &.{};
+                return ptr[0..this.len];
+            }
+        };
+        pub const TypedArray = extern struct {
+            head_ptr: ?[*]u8 = null,
+            ptr: ?[*]u8 = null,
+            len: u32,
+            byte_len: u32,
+            type: JSC.JSValue.JSType,
+
+            pub fn slice(this: *TypedArray) []u8 {
+                const ptr = this.ptr orelse return &.{};
+                return ptr[0..this.len];
+            }
+
+            pub fn byteSlice(this: *TypedArray) []u8 {
+                const ptr = this.head_ptr orelse return &.{};
+                return ptr[0..this.len];
+            }
         };
 
         pub fn deinit(this: *DataCell) void {
@@ -2759,8 +2935,211 @@ pub const PostgresSQLConnection = struct {
                     const slice = @as([*]u8, @ptrFromInt(this.value.bytea[0]))[0..this.value.bytea[1]];
                     bun.default_allocator.free(slice);
                 },
+                .array => {
+                    for (this.value.array.slice()) |*cell| {
+                        cell.deinit();
+                    }
+                    bun.default_allocator.free(this.value.array.slice());
+                },
+                .typed_array => {
+                    bun.default_allocator.free(this.value.typed_array.byteSlice());
+                },
 
                 else => {},
+            }
+        }
+
+        pub fn fromBytes(binary: bool, oid: int32, bytes: []const u8, globalObject: *JSC.JSGlobalObject) anyerror!DataCell {
+            switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
+                // TODO: .int16_array, .double_array
+                inline .int32_array, .float_array => |tag| {
+                    if (binary) {
+                        if (bytes.len < 16) {
+                            return error.InvalidBinaryData;
+                        }
+                        // https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
+                        const dimensions_raw: int32 = @bitCast(bytes[0..4].*);
+                        const contains_nulls: int32 = @bitCast(bytes[4..8].*);
+
+                        const dimensions = @byteSwap(dimensions_raw);
+                        if (dimensions > 1) {
+                            return error.MultidimensionalArrayNotSupportedYet;
+                        }
+
+                        if (contains_nulls != 0) {
+                            return error.NullsInArrayNotSupportedYet;
+                        }
+
+                        if (dimensions == 0) {
+                            return DataCell{
+                                .tag = .typed_array,
+                                .value = .{
+                                    .typed_array = .{
+                                        .ptr = null,
+                                        .len = 0,
+                                        .byte_len = 0,
+                                        .type = tag.toJSTypedArrayType(),
+                                    },
+                                },
+                            };
+                        }
+
+                        const elements = tag.pgArrayType().init(bytes).slice();
+
+                        return DataCell{
+                            .tag = .typed_array,
+                            .value = .{
+                                .typed_array = .{
+                                    .head_ptr = if (bytes.len > 0) @constCast(bytes.ptr) else null,
+                                    .ptr = if (elements.len > 0) @ptrCast(elements.ptr) else null,
+                                    .len = @truncate(elements.len),
+                                    .byte_len = @truncate(bytes.len),
+                                    .type = tag.toJSTypedArrayType(),
+                                },
+                            },
+                        };
+                    } else {
+                        // TODO:
+                        return fromBytes(false, @intFromEnum(types.Tag.bytea), bytes, globalObject);
+                    }
+                },
+                .int32 => {
+                    if (binary) {
+                        return DataCell{ .tag = .int32, .value = .{ .int32 = try parseBinary(.int32, i32, bytes) } };
+                    } else {
+                        return DataCell{ .tag = .int32, .value = .{ .int32 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
+                    }
+                },
+                .double => {
+                    if (binary and bytes.len == 8) {
+                        return DataCell{ .tag = .double, .value = .{ .double = try parseBinary(.double, f64, bytes) } };
+                    } else {
+                        const double: f64 = bun.parseDouble(bytes) catch std.math.nan(f64);
+                        return DataCell{ .tag = .double, .value = .{ .double = double } };
+                    }
+                },
+                .float => {
+                    if (binary and bytes.len == 4) {
+                        return DataCell{ .tag = .double, .value = .{ .double = try parseBinary(.float, f32, bytes) } };
+                    } else {
+                        const float: f64 = bun.parseDouble(bytes) catch std.math.nan(f64);
+                        return DataCell{ .tag = .double, .value = .{ .double = float } };
+                    }
+                },
+                .json => {
+                    return DataCell{ .tag = .json, .value = .{ .json = String.createUTF8(bytes).value.WTFStringImpl }, .free_value = true };
+                },
+                .boolean => {
+                    return DataCell{ .tag = .boolean, .value = .{ .boolean = bytes.len > 0 and bytes[0] == 't' } };
+                },
+                .time, .timestamp, .timestamptz => {
+                    var str = bun.String.init(bytes);
+                    defer str.deref();
+                    return DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } };
+                },
+                .bytea => {
+                    if (binary) {
+                        return DataCell{ .tag = .bytea, .value = .{ .bytea = .{ @intFromPtr(bytes.ptr), bytes.len } } };
+                    } else {
+                        if (bun.strings.hasPrefixComptime(bytes, "\\x")) {
+                            const hex = bytes[2..];
+                            const len = hex.len / 2;
+                            const buf = try bun.default_allocator.alloc(u8, len);
+                            errdefer bun.default_allocator.free(buf);
+
+                            return DataCell{
+                                .tag = .bytea,
+                                .value = .{
+                                    .bytea = .{
+                                        @intFromPtr(buf.ptr),
+                                        try bun.strings.decodeHexToBytes(buf, u8, hex),
+                                    },
+                                },
+                                .free_value = true,
+                            };
+                        } else {
+                            return error.UnsupportedByteaFormat;
+                        }
+                    }
+                },
+                else => {
+                    return DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8(bytes).value.WTFStringImpl }, .free_value = true };
+                },
+            }
+        }
+
+        // #define pg_hton16(x)		(x)
+        // #define pg_hton32(x)		(x)
+        // #define pg_hton64(x)		(x)
+
+        // #define pg_ntoh16(x)		(x)
+        // #define pg_ntoh32(x)		(x)
+        // #define pg_ntoh64(x)		(x)
+
+        fn pg_ntoT(comptime IntSize: usize, i: anytype) std.meta.Int(.unsigned, IntSize) {
+            @setRuntimeSafety(false);
+            const T = @TypeOf(i);
+            if (@typeInfo(T) == .Array) {
+                return pg_ntoT(IntSize, @as(std.meta.Int(.unsigned, IntSize), @bitCast(i)));
+            }
+
+            const casted: std.meta.Int(.unsigned, IntSize) = @intCast(i);
+            return @byteSwap(casted);
+        }
+        fn pg_ntoh16(x: anytype) u16 {
+            return pg_ntoT(16, x);
+        }
+
+        fn pg_ntoh32(x: anytype) u32 {
+            return pg_ntoT(32, x);
+        }
+
+        pub fn parseBinary(comptime tag: types.Tag, comptime ReturnType: type, bytes: []const u8) anyerror!ReturnType {
+            switch (comptime tag) {
+                .double => {
+                    return @as(f64, @bitCast(try parseBinary(.int64, i64, bytes)));
+                },
+                .int64 => {
+                    // pq_getmsgfloat8
+                    if (bytes.len != 8) return error.InvalidBinaryData;
+                    return @byteSwap(@as(i64, @bitCast(bytes[0..8].*)));
+                },
+                .int32 => {
+                    // pq_getmsgint
+                    switch (bytes.len) {
+                        1 => {
+                            return bytes[0];
+                        },
+                        2 => {
+                            return pg_ntoh16(@as(u16, @bitCast(bytes[0..2].*)));
+                        },
+                        4 => {
+                            return @bitCast(pg_ntoh32(@as(u32, @bitCast(bytes[0..4].*))));
+                        },
+                        else => {
+                            return error.UnsupportedIntegerSize;
+                        },
+                    }
+                },
+                .int16 => {
+                    // pq_getmsgint
+                    switch (bytes.len) {
+                        1 => {
+                            return bytes[0];
+                        },
+                        2 => {
+                            return pg_ntoh16(@as(u16, @bitCast(bytes[0..2].*)));
+                        },
+                        else => {
+                            return error.UnsupportedIntegerSize;
+                        },
+                    }
+                },
+                .float => {
+                    // pq_getmsgfloat4
+                    return @as(f32, @bitCast(try parseBinary(.int32, i32, bytes)));
+                },
+                else => @compileError("TODO"),
             }
         }
 
@@ -2776,115 +3155,19 @@ pub const PostgresSQLConnection = struct {
                 return JSC__constructObjectFromDataCell(globalObject, array, structure, this.list.ptr, @truncate(this.fields.len));
             }
 
-            pub fn parseBinary(comptime tag: types.Tag, comptime ReturnType: type, bytes: []const u8) !ReturnType {
-                switch (comptime tag) {
-                    .double => {
-                        return @as(f64, @bitCast(try parseBinary(.int64, i64, bytes)));
-                    },
-                    .int64 => {
-                        // pq_getmsgfloat8
-                        if (bytes.len != 8) return error.InvalidBinaryData;
-                        return @byteSwap(@as(i64, @bitCast(bytes[0..8].*)));
-                    },
-                    .int32 => {
-                        // pq_getmsgint
-                        switch (bytes.len) {
-                            1 => {
-                                return @as(u32, @as(u8, @bitCast(bytes[0..1].*)));
-                            },
-                            2 => {
-                                return @as(u32, @byteSwap(@as(u16, @bitCast(bytes[0..2].*))));
-                            },
-                            4 => {
-                                return @byteSwap(@as(u32, @bitCast(bytes[0..4].*)));
-                            },
-                            else => {
-                                return error.UnsupportedIntegerSize;
-                            },
-                        }
-                    },
-                    .float => {
-                        // pq_getmsgfloat4
-                        return @as(f32, @bitCast(try parseBinary(.int32, u32, bytes)));
-                    },
-                    else => @compileError("TODO"),
-                }
-            }
-
             pub fn put(this: *Putter, index: u32, optional_bytes: ?*Data) anyerror!bool {
-                var bytes_ = optional_bytes orelse {
-                    this.list[index] = DataCell{ .tag = .null, .value = .{ .null = 0 } };
-                    this.count += 1;
-                    return true;
-                };
-                const bytes = bytes_.slice();
-
                 const oid = this.fields[index].type_oid;
+                debug("index: {d}, oid: {d}", .{ index, oid });
 
-                switch (@as(types.Tag, @enumFromInt(oid))) {
-                    .int32 => {
-                        if (this.binary) {
-                            this.list[index] = DataCell{ .tag = .int32, .value = .{ .int32 = try parseBinary(.int32, u32, bytes) } };
-                        } else {
-                            this.list[index] = DataCell{ .tag = .int32, .value = .{ .int32 = bun.fmt.parseInt(u32, bytes, 0) catch 0 } };
-                        }
-                    },
-                    .double => {
-                        if (this.binary and bytes.len == 8) {
-                            this.list[index] = DataCell{ .tag = .double, .value = .{ .double = try parseBinary(.double, f64, bytes) } };
-                        } else {
-                            const double: f64 = bun.parseDouble(bytes) catch std.math.nan(f64);
-                            this.list[index] = DataCell{ .tag = .double, .value = .{ .double = double } };
-                        }
-                    },
-                    .float => {
-                        if (this.binary and bytes.len == 4) {
-                            this.list[index] = DataCell{ .tag = .double, .value = .{ .double = try parseBinary(.float, f32, bytes) } };
-                        } else {
-                            const float: f64 = bun.parseDouble(bytes) catch std.math.nan(f64);
-                            this.list[index] = DataCell{ .tag = .double, .value = .{ .double = float } };
-                        }
-                    },
-                    .json => {
-                        this.list[index] = DataCell{ .tag = .json, .value = .{ .json = String.createUTF8(bytes).value.WTFStringImpl }, .free_value = true };
-                    },
-                    .boolean => {
-                        this.list[index] = DataCell{ .tag = .boolean, .value = .{ .boolean = bytes.len > 0 and bytes[0] == 't' } };
-                    },
-                    .time, .timestamp, .timestamptz => {
-                        var str = bun.String.init(bytes);
-                        defer str.deref();
-                        this.list[index] = DataCell{ .tag = .date, .value = .{ .date = str.parseDate(this.globalObject) } };
-                    },
-                    .bytea => {
-                        if (this.binary) {
-                            this.list[index] = DataCell{ .tag = .bytea, .value = .{ .bytea = .{ @intFromPtr(bytes_.slice().ptr), bytes.len } } };
-                        } else {
-                            if (bun.strings.hasPrefixComptime(bytes, "\\x")) {
-                                const hex = bytes[2..];
-                                const len = hex.len / 2;
-                                const buf = try bun.default_allocator.alloc(u8, len);
-                                errdefer bun.default_allocator.free(buf);
-
-                                this.list[index] = DataCell{
-                                    .tag = .bytea,
-                                    .value = .{
-                                        .bytea = .{
-                                            @intFromPtr(buf.ptr),
-                                            try bun.strings.decodeHexToBytes(buf, u8, hex),
-                                        },
-                                    },
-                                    .free_value = true,
-                                };
-                            } else {
-                                return error.UnsupportedByteaFormat;
-                            }
-                        }
-                    },
-                    else => {
-                        this.list[index] = DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8(bytes).value.WTFStringImpl }, .free_value = true };
-                    },
-                }
+                this.list[index] = if (optional_bytes) |data|
+                    try DataCell.fromBytes(this.binary, oid, data.slice(), this.globalObject)
+                else
+                    DataCell{
+                        .tag = .null,
+                        .value = .{
+                            .null = 0,
+                        },
+                    };
                 this.count += 1;
                 return true;
             }
@@ -2928,7 +3211,7 @@ pub const PostgresSQLConnection = struct {
                             this.requests.discard(1);
                             continue;
                         };
-                        req.status = .running;
+                        req.status = .binding;
                         req.binary = stmt.fields.len > 0;
                     } else {
                         break;
@@ -3034,7 +3317,10 @@ pub const PostgresSQLConnection = struct {
             },
             .BindComplete => {
                 try reader.eatMessage(protocol.BindComplete);
-                _ = this.current() orelse return error.ExpectedRequest;
+                var request = this.current() orelse return error.ExpectedRequest;
+                if (request.status == .binding) {
+                    request.status = .running;
+                }
             },
             .ParseComplete => {
                 try reader.eatMessage(protocol.ParseComplete);
@@ -3068,10 +3354,14 @@ pub const PostgresSQLConnection = struct {
             .NoData => {
                 try reader.eatMessage(protocol.NoData);
                 var request = this.current() orelse return error.ExpectedRequest;
-                _ = this.requests.discard(1);
-                this.updateRef();
+                if (request.status == .binding) {
+                    request.status = .running;
+                } else {
+                    _ = this.requests.discard(1);
+                    this.updateRef();
 
-                request.onNoData(this.globalObject);
+                    request.onNoData(this.globalObject);
+                }
             },
             .BackendKeyData => {
                 try this.backend_key_data.decodeInternal(Context, reader);
@@ -3295,14 +3585,18 @@ const Signature = struct {
 
         while (iter.next()) |value| {
             if (value.isUndefinedOrNull()) {
-                try fields.append(@byteSwap(@as(int32, std.math.maxInt(int32))));
+                try fields.append(0);
                 try name.appendSlice(".null");
                 continue;
             }
 
             const tag = try types.Tag.fromJS(globalObject, value);
-            try fields.append(0);
+            try fields.append(@intFromEnum(tag));
+
             switch (tag) {
+                .int32 => try name.appendSlice(".int32"),
+                .double => try name.appendSlice(".double"),
+                .float => try name.appendSlice(".float"),
                 .number => try name.appendSlice(".number"),
                 .json => try name.appendSlice(".json"),
                 .boolean => try name.appendSlice(".boolean"),

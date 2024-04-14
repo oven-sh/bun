@@ -59,25 +59,33 @@ t("Result is array", async () => {
 
 // t("Result has command", async () => expect((await sql`select 1`).command).toBe("SELECT"));
 
-// t.only("Create table", async () => {
-//   await sql`create table test(int int)`;
-//   await sql`drop table test`;
-// });
+t("Create table", async () => {
+  await sql`create table test(int int)`;
+  await sql`drop table test`;
+});
 
-// t.only("Drop table", async () => {
-//   await sql`create table test(int int)`;
-//   await sql`drop table test`;
-//   // Verify that table is dropped
-//   const result = await sql`select * from pg_catalog.pg_tables where tablename = 'test'`;
-//   expect(result).toBeArrayOfSize(0);
-// });
+t("Drop table", async () => {
+  await sql`create table test(int int)`;
+  await sql`drop table test`;
+  // Verify that table is dropped
+  const result = await sql`select * from pg_catalog.pg_tables where tablename = 'test'`;
+  expect(result).toBeArrayOfSize(0);
+});
 
 t("null", async () => {
   expect((await sql`select ${null} as x`)[0].x).toBeNull();
 });
 
-t("Integer", async () => {
-  expect((await sql`select ${1} as x`)[0].x).toBe(1);
+t("Unsigned Integer", async () => {
+  expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe(0x7fffffff + 2);
+});
+
+t("Signed Integer", async () => {
+  expect((await sql`select ${-1} as x`)[0].x).toBe(-1);
+});
+
+t("Double", async () => {
+  expect((await sql`select ${1.123456789} as x`)[0].x).toBe(1.123456789);
 });
 
 t("String", async () => {
@@ -99,23 +107,22 @@ t("Date", async () => {
 //   return ["hello,42", [x.a, x.b].join()];
 // });
 
-// t('implicit json', async() => {
-//   const x = (await sql`select ${ { a: 'hello', b: 42 } }::json as x`)[0].x
-//   return ['hello,42', [x.a, x.b].join()]
-// })
+t("implicit json", async () => {
+  const x = (await sql`select ${{ a: "hello", b: 42 }}::json as x`)[0].x;
+  expect(x).toEqual({ a: "hello", b: 42 });
+});
 
 // t('implicit jsonb', async() => {
 //   const x = (await sql`select ${ { a: 'hello', b: 42 } }::jsonb as x`)[0].x
 //   return ['hello,42', [x.a, x.b].join()]
 // })
 
-// t('Empty array', async() =>
-//   [true, Array.isArray((await sql`select ${ sql.array([], 1009) } as x`)[0].x)]
-// )
+// t("Empty array", async () => [true, Array.isArray((await sql`select ${sql.array([], 1009)} as x`)[0].x)]);
 
-// t('String array', async() =>
-//   ['123', (await sql`select ${ '{1,2,3}' }::int[] as x`)[0].x.join('')]
-// )
+t("array from string", async () => expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x.join("")).toEqual("123"));
+t("Array<Int>", async () =>
+  expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x).toEqual(new Int32Array([1, 2, 3])),
+);
 
 // t('Array of Integer', async() =>
 //   ['3', (await sql`select ${ sql.array([1, 2, 3]) } as x`)[0].x[2]]
@@ -130,10 +137,10 @@ t("Date", async () => {
 //   return [now.getTime(), (await sql`select ${ sql.array([now, now, now]) } as x`)[0].x[2].getTime()]
 // })
 
-// t('Array of Box', async() => [
-//   '(3,4),(1,2);(6,7),(4,5)',
-//   (await sql`select ${ '{(1,2),(3,4);(4,5),(6,7)}' }::box[] as x`)[0].x.join(';')
-// ])
+// t.only("Array of Box", async () => [
+//   "(3,4),(1,2);(6,7),(4,5)",
+//   (await sql`select ${"{(1,2),(3,4);(4,5),(6,7)}"}::box[] as x`)[0].x.join(";"),
+// ]);
 
 // t('Nested array n2', async() =>
 //   ['4', (await sql`select ${ sql.array([[1, 2], [3, 4]]) } as x`)[0].x[1][1]]

@@ -137,7 +137,7 @@ Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
   function (query, result) {
     try {
-      query.resolve(result);
+      query.resolve($isUndefinedOrNull(result) ? [] : result);
     } catch (e) {
       console.log(e);
     }

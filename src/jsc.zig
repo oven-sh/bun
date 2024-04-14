@@ -49,6 +49,7 @@ pub const API = struct {
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
 };
+pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;
 pub const Node = struct {
@@ -111,3 +112,6 @@ pub const Codegen = struct {
 pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_list.zig").Classes;
 
 pub const RuntimeTranspilerCache = @import("./bun.js/RuntimeTranspilerCache.zig").RuntimeTranspilerCache;
+
+pub const Weak = @import("./bun.js/Weak.zig").Weak;
+pub const NewWeakFinalizer = @import("./bun.js/Weak.zig").NewWeakFinalizer;

@@ -625,7 +625,7 @@ pub const protocol = struct {
 
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
             const length = try reader.length();
-            std.debug.assert(length >= 4);
+            bun.assert(length >= 4);
 
             this.* = .{
                 .name = try reader.readZ(),
@@ -779,7 +779,7 @@ pub const protocol = struct {
         status: TransactionStatusIndicator = .I,
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
             const length = try reader.length();
-            std.debug.assert(length >= 4);
+            bun.assert(length >= 4);
 
             const status = try reader.int(u8);
             this.* = .{
@@ -939,7 +939,7 @@ pub const protocol = struct {
 
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
             const length = try reader.length();
-            std.debug.assert(length >= 4);
+            bun.assert(length >= 4);
 
             this.* = .{
                 .pid = try reader.int32(),
@@ -960,7 +960,7 @@ pub const protocol = struct {
 
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
             const length = try reader.length();
-            std.debug.assert(length >= 4);
+            bun.assert(length >= 4);
 
             const tag = try reader.readZ();
             this.* = .{
@@ -1253,7 +1253,7 @@ pub const protocol = struct {
             reader: NewReader(Container),
         ) !void {
             const length = try reader.length();
-            std.debug.assert(length >= 4);
+            bun.assert(length >= 4);
 
             const version = try reader.int32();
             this.* = .{
@@ -1669,7 +1669,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn ref(this: *@This()) void {
-        std.debug.assert(this.ref_count > 0);
+        bun.assert(this.ref_count > 0);
         this.ref_count += 1;
     }
 
@@ -2574,7 +2574,7 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn ref(this: *@This()) void {
-        std.debug.assert(this.ref_count > 0);
+        bun.assert(this.ref_count > 0);
         this.ref_count += 1;
     }
 
@@ -2951,7 +2951,7 @@ pub const PostgresSQLConnection = struct {
                 var statement = request.statement orelse return error.ExpectedStatement;
 
                 var structure = statement.structure(this.js_value, this.globalObject);
-                std.debug.assert(!structure.isEmptyOrUndefinedOrNull());
+                bun.assert(!structure.isEmptyOrUndefinedOrNull());
                 var putter = DataCell.Putter{
                     .list = &.{},
                     .fields = statement.fields,
@@ -3095,7 +3095,7 @@ pub const PostgresSQLConnection = struct {
                     this.globalObject.queueMicrotask(on_connect, &[_]JSC.JSValue{ err.toJS(this.globalObject), js_value });
 
                     // it shouldn't enqueue any requests while connecting
-                    std.debug.assert(this.requests.count == 0);
+                    bun.assert(this.requests.count == 0);
                     return;
                 }
 
@@ -3209,7 +3209,7 @@ pub const PostgresSQLStatement = struct {
         failed,
     };
     pub fn ref(this: *@This()) void {
-        std.debug.assert(this.ref_count > 0);
+        bun.assert(this.ref_count > 0);
         this.ref_count += 1;
     }
 
@@ -3225,7 +3225,7 @@ pub const PostgresSQLStatement = struct {
     pub fn deinit(this: *PostgresSQLStatement) void {
         debug("PostgresSQLStatement deinit", .{});
 
-        std.debug.assert(this.ref_count == 0);
+        bun.assert(this.ref_count == 0);
 
         for (this.fields) |*field| {
             @constCast(field).deinit();

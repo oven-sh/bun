@@ -17,29 +17,29 @@ export function createTestBuilder(path: string) {
   });
 
   class TestBuilder {
-    private promise: { type: "ok"; val: ShellPromise } | { type: "err"; val: Error };
-    private _testName: string | undefined = undefined;
+    promise: { type: "ok"; val: ShellPromise } | { type: "err"; val: Error };
+    _testName: string | undefined = undefined;
 
-    private expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
-    private expected_stderr: string | ((stderr: string, tempdir: string) => void) = "";
-    private expected_exit_code: number = 0;
-    private expected_error: ShellError | string | boolean | undefined = undefined;
-    private file_equals: { [filename: string]: string } = {};
-    private _doesNotExist: string[] = [];
-    private _timeout: number | undefined = undefined;
+    expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
+    expected_stderr: string | ((stderr: string, tempdir: string) => void) = "";
+    expected_exit_code: number = 0;
+    expected_error: ShellError | string | boolean | undefined = undefined;
+    file_equals: { [filename: string]: string } = {};
+    _doesNotExist: string[] = [];
+    _timeout: number | undefined = undefined;
 
-    private tempdir: string | undefined = undefined;
-    private _env: { [key: string]: string } | undefined = undefined;
+    tempdir: string | undefined = undefined;
+    _env: { [key: string]: string } | undefined = undefined;
 
-    private __todo: boolean | string = false;
+    __todo: boolean | string = false;
 
-    static UNEXPECTED_SUBSHELL_ERROR_OPEN =
+    UNEXPECTED_SUBSHELL_ERROR_OPEN =
       "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
 
-    static UNEXPECTED_SUBSHELL_ERROR_CLOSE =
+    UNEXPECTED_SUBSHELL_ERROR_CLOSE =
       "Unexpected `)`, subshells are currently not supported right now. Escape the `)` or open a GitHub issue.";
 
-    constructor(promise: TestBuilder["promise"]) {
+    public constructor(promise: TestBuilder["promise"]) {
       this.promise = promise;
     }
 
@@ -53,7 +53,7 @@ export function createTestBuilder(path: string) {
    * TestBuilder.command`echo hi!`.stdout('hi!\n').runAsTest('echo works')
    * ```
    */
-    static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
+    public static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
       try {
         if (process.env.BUN_DEBUG_SHELL_LOG_CMD === "1") console.info("[ShellTestBuilder] Cmd", strings.join(""));
         const promise = Bun.$(strings, ...expressions).nothrow();
@@ -65,7 +65,7 @@ export function createTestBuilder(path: string) {
       }
     }
 
-    directory(path: string): this {
+    public directory(path: string): this {
       const tempdir = this.getTempDir();
       fs.mkdirSync(join(tempdir, path), { recursive: true });
       return this;

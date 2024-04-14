@@ -2123,7 +2123,7 @@ pub const Interpreter = struct {
                 return;
             }
 
-            unreachable;
+            @panic("Invalid child to Expansion, this indicates a bug in Bun. Please file a report on Github.");
         }
 
         fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) void {
@@ -2742,7 +2742,7 @@ pub const Interpreter = struct {
                 return;
             }
 
-            unreachable;
+            @panic("Invalid child to Assigns expression, this indicates a bug in Bun. Please file a report on Github.");
         }
     };
 
@@ -3237,7 +3237,7 @@ pub const Interpreter = struct {
                         if (ptr == @as(usize, @intCast(child.ptr.repr._ptr))) break :brk i;
                     }
                 }
-                unreachable;
+                @panic("Invalid pipeline state");
             };
 
             log("pipeline child done {x} ({d}) i={d}", .{ @intFromPtr(this), exit_code, idx });
@@ -4263,6 +4263,7 @@ pub const Interpreter = struct {
                     (if (this.stdout) |*stdout| stdout.closed() else true) and
                     (if (this.stderr) |*stderr| stderr.closed() else true);
                 log("BufferedIOClosed(0x{x}) all_closed={any} stdin={any} stdout={any} stderr={any}", .{ @intFromPtr(this), ret, if (this.stdin) |stdin| stdin else true, if (this.stdout) |*stdout| stdout.closed() else true, if (this.stderr) |*stderr| stderr.closed() else true });
+                std.debug.print("all_closed={any} stdin={any} stdout={any} stderr={any}\n", .{ ret, if (this.stdin) |stdin| stdin else true, if (this.stdout) |*stdout| stdout.closed() else true, if (this.stderr) |*stderr| stderr.closed() else true });
                 return ret;
             }
 
@@ -4528,7 +4529,8 @@ pub const Interpreter = struct {
                 this.next();
                 return;
             }
-            unreachable;
+
+            @panic("Expected Cmd child to be Assigns or Expansion. This indicates a bug in Bun. Please file a GitHub issue. ");
         }
 
         fn initSubproc(this: *Cmd) void {
@@ -7121,7 +7123,8 @@ pub const Interpreter = struct {
                 while (!(this.state == .err or this.state == .done)) {
                     switch (this.state) {
                         .waiting_io => return,
-                        .idle, .done, .err => unreachable,
+                        .idle => @panic("Unexpected \"idle\" state in Pwd. This indicates a bug in Bun. Please file a GitHub issue."),
+                        .done, .err => unreachable,
                     }
                 }
 
@@ -9686,7 +9689,7 @@ pub const Interpreter = struct {
 
             pub fn next(this: *Exit) void {
                 switch (this.state) {
-                    .idle => unreachable,
+                    .idle => @panic("Unexpected \"idle\" state in Exit. This indicates a bug in Bun. Please file a GitHub issue."),
                     .waiting_io => {
                         return;
                     },

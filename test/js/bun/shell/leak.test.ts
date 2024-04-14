@@ -6,6 +6,7 @@ import { tmpdir, devNull } from "os";
 import { join } from "path";
 import { createTestBuilder } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
+type TestBuilder = InstanceType<typeof TestBuilder>;
 
 $.env(bunEnv);
 $.cwd(process.cwd());
@@ -51,7 +52,7 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
 ];
 
 describe("fd leak", () => {
-  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 500, threshold: number = 5) {
+  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 1000, threshold: number = 5) {
     test(`fdleak_${name}`, async () => {
       Bun.gc(true);
       const baseline = openSync(devNull, "r");

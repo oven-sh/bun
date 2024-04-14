@@ -16,7 +16,6 @@
  */
 
 #if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
-
 /* These are in sni_tree.cpp */
 void *sni_new();
 void sni_free(void *sni, void (*cb)(void *));
@@ -72,8 +71,10 @@ struct us_internal_ssl_socket_context_t {
   // socket context
   SSL_CTX *ssl_context;
   int is_parent;
+#if ALLOW_SERVER_RENEGOTIATION
   unsigned int client_renegotiation_limit;
   unsigned int client_renegotiation_window;
+#endif
   /* These decorate the base implementation */
   struct us_internal_ssl_socket_t *(*on_open)(struct us_internal_ssl_socket_t *,
                                               int is_client, char *ip,
@@ -107,13 +108,15 @@ enum {
 struct us_internal_ssl_socket_t {
   struct us_socket_t s;
   SSL *ssl;
+#if ALLOW_SERVER_RENEGOTIATION
   unsigned int client_pending_renegotiations;
   uint64_t last_ssl_renegotiation;
+  unsigned int is_client : 1;
+#endif
   unsigned int ssl_write_wants_read : 1; // we use this for now
   unsigned int ssl_read_wants_write : 1;
   unsigned int handshake_state : 2;
   unsigned int received_ssl_shutdown : 1;
-  unsigned int is_client : 1;
 };
 
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
@@ -189,35 +192,42 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
       (struct loop_ssl_data *)loop->data.ssl_data;
 
   s->ssl = SSL_new(context->ssl_context);
+#if ALLOW_SERVER_RENEGOTIATION
   s->client_pending_renegotiations = context->client_renegotiation_limit;
   s->last_ssl_renegotiation = 0;
   s->is_client = is_client ? 1 : 0;
+
+#endif
   s->ssl_write_wants_read = 0;
   s->ssl_read_wants_write = 0;
   s->handshake_state = HANDSHAKE_PENDING;
   s->received_ssl_shutdown = 0;
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
-  // if we allow renegotiation, we need to set the mode here
-  // https://github.com/oven-sh/bun/issues/6197
-  // https://github.com/oven-sh/bun/issues/5363
-  // renegotiation is only valid for <= TLS1_2_VERSION
-  // this can be a DoS vector for servers, so we enable it using a limit
-  // we do not use ssl_renegotiate_freely, since ssl_renegotiate_explicit is
-  // more performant when using BoringSSL
+// if we allow renegotiation, we need to set the mode here
+// https://github.com/oven-sh/bun/issues/6197
+// https://github.com/oven-sh/bun/issues/5363
+// renegotiation is only valid for <= TLS1_2_VERSION
+// this can be a DoS vector for servers, so we enable it using a limit
+// we do not use ssl_renegotiate_freely, since ssl_renegotiate_explicit is
+// more performant when using BoringSSL
+#if ALLOW_SERVER_RENEGOTIATION
   if (context->client_renegotiation_limit) {
     SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_explicit);
   } else {
     SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_never);
   }
+#endif
 
   BIO_up_ref(loop_ssl_data->shared_rbio);
   BIO_up_ref(loop_ssl_data->shared_wbio);
 
   if (is_client) {
+#if ALLOW_SERVER_RENEGOTIATION == 0
+    SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_explicit);
+#endif
     SSL_set_connect_state(s->ssl);
   } else {
-
     SSL_set_accept_state(s->ssl);
   }
 
@@ -283,6 +293,7 @@ int us_internal_ssl_renegotiate(struct us_internal_ssl_socket_t *s) {
   // if is a server and we have no pending renegotiation we can check
   // the limits
   s->handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
+#if ALLOW_SERVER_RENEGOTIATION
   if (!s->is_client && !SSL_renegotiate_pending(s->ssl)) {
     uint64_t now = time(NULL);
     struct us_internal_ssl_socket_context_t *context =
@@ -301,6 +312,7 @@ int us_internal_ssl_renegotiate(struct us_internal_ssl_socket_t *s) {
     s->last_ssl_renegotiation = now;
     s->client_pending_renegotiations--;
   }
+#endif
   if (!SSL_renegotiate(s->ssl)) {
     // we failed to renegotiate
     us_internal_trigger_handshake_callback(s, 0);
@@ -1300,8 +1312,10 @@ void us_bun_internal_ssl_socket_context_add_server_name(
 
   /* We do not want to hold any nullptr's in our SNI tree */
   if (ssl_context) {
+#if ALLOW_SERVER_RENEGOTIATION
     context->client_renegotiation_limit = options.client_renegotiation_limit;
     context->client_renegotiation_window = options.client_renegotiation_window;
+#endif
     if (sni_add(context->sni, hostname_pattern, ssl_context)) {
       /* If we already had that name, ignore */
       free_ssl_context(ssl_context);
@@ -1450,8 +1464,10 @@ us_internal_bun_create_ssl_socket_context(
 
   context->on_handshake = NULL;
   context->handshake_data = NULL;
+#if ALLOW_SERVER_RENEGOTIATION
   context->client_renegotiation_limit = options.client_renegotiation_limit;
   context->client_renegotiation_window = options.client_renegotiation_window;
+#endif
   /* We, as parent context, may ignore data */
   context->sc.is_low_prio = (int (*)(struct us_socket_t *))ssl_is_low_prio;
 

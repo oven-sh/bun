@@ -44,6 +44,7 @@
 #define LIBUS_RECV_BUFFER_PADDING 32
 /* Guaranteed alignment of extension memory */
 #define LIBUS_EXT_ALIGNMENT 16
+#define ALLOW_SERVER_RENEGOTIATION 0
 
 /* Define what a socket descriptor is based on platform */
 #ifdef _WIN32

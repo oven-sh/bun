@@ -334,24 +334,24 @@ pub const protocol = struct {
 
         pub fn init(tag: FieldType, message: []const u8) !FieldMessage {
             return switch (tag) {
-                .S => FieldMessage{ .S = String.create(message) },
-                .V => FieldMessage{ .V = String.create(message) },
-                .C => FieldMessage{ .C = String.create(message) },
-                .M => FieldMessage{ .M = String.create(message) },
-                .D => FieldMessage{ .D = String.create(message) },
-                .H => FieldMessage{ .H = String.create(message) },
-                .P => FieldMessage{ .P = String.create(message) },
-                .p => FieldMessage{ .p = String.create(message) },
-                .q => FieldMessage{ .q = String.create(message) },
-                .W => FieldMessage{ .W = String.create(message) },
-                .s => FieldMessage{ .s = String.create(message) },
-                .t => FieldMessage{ .t = String.create(message) },
-                .c => FieldMessage{ .c = String.create(message) },
-                .d => FieldMessage{ .d = String.create(message) },
-                .n => FieldMessage{ .n = String.create(message) },
-                .F => FieldMessage{ .F = String.create(message) },
-                .L => FieldMessage{ .L = String.create(message) },
-                .R => FieldMessage{ .R = String.create(message) },
+                .S => FieldMessage{ .S = String.createUTF8(message) },
+                .V => FieldMessage{ .V = String.createUTF8(message) },
+                .C => FieldMessage{ .C = String.createUTF8(message) },
+                .M => FieldMessage{ .M = String.createUTF8(message) },
+                .D => FieldMessage{ .D = String.createUTF8(message) },
+                .H => FieldMessage{ .H = String.createUTF8(message) },
+                .P => FieldMessage{ .P = String.createUTF8(message) },
+                .p => FieldMessage{ .p = String.createUTF8(message) },
+                .q => FieldMessage{ .q = String.createUTF8(message) },
+                .W => FieldMessage{ .W = String.createUTF8(message) },
+                .s => FieldMessage{ .s = String.createUTF8(message) },
+                .t => FieldMessage{ .t = String.createUTF8(message) },
+                .c => FieldMessage{ .c = String.createUTF8(message) },
+                .d => FieldMessage{ .d = String.createUTF8(message) },
+                .n => FieldMessage{ .n = String.createUTF8(message) },
+                .F => FieldMessage{ .F = String.createUTF8(message) },
+                .L => FieldMessage{ .L = String.createUTF8(message) },
+                .R => FieldMessage{ .R = String.createUTF8(message) },
                 else => error.UnknownFieldType,
             };
         }
@@ -468,12 +468,6 @@ pub const protocol = struct {
 
     pub fn NewWriter(comptime Context: type) type {
         return NewWriterWrap(Context, Context.offset, Context.write, Context.pwrite);
-    }
-
-    comptime {
-        if (@import("builtin").cpu.arch.endian() != .Little) {
-            @compileError("Postgres protocol implementation assumes little endian");
-        }
     }
 
     fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
@@ -816,7 +810,7 @@ pub const protocol = struct {
             var remaining_bytes = try reader.length();
             remaining_bytes -|= 4;
 
-            var remaining_fields: usize = @intCast(@max(try reader.short(), 0));
+            const remaining_fields: usize = @intCast(@max(try reader.short(), 0));
 
             for (0..remaining_fields) |index| {
                 const byte_length = try reader.int32();
@@ -911,7 +905,7 @@ pub const protocol = struct {
             remaining_bytes -|= 4;
 
             const count = try reader.short();
-            var parameters = try bun.default_allocator.alloc(int32, @intCast(@max(count, 0)));
+            const parameters = try bun.default_allocator.alloc(int32, @intCast(@max(count, 0)));
 
             var data = try reader.read(@as(usize, @intCast(@max(count, 0))) * @sizeOf((int32)));
             defer data.deinit();
@@ -1831,7 +1825,7 @@ pub const PostgresSQLQuery = struct {
 
         var writer = connection.writer();
 
-        var entry = connection.statements.getOrPut(bun.default_allocator, bun.hash(signature.name)) catch |err| {
+        const entry = connection.statements.getOrPut(bun.default_allocator, bun.hash(signature.name)) catch |err| {
             globalObject.throwError(err, "failed to allocate statement");
             signature.deinit();
             return .zero;
@@ -1884,7 +1878,7 @@ pub const PostgresSQLQuery = struct {
             }
 
             {
-                var stmt = bun.default_allocator.create(PostgresSQLStatement) catch |err| {
+                const stmt = bun.default_allocator.create(PostgresSQLStatement) catch |err| {
                     globalObject.throwError(err, "failed to allocate statement");
                     return .zero;
                 };
@@ -1983,7 +1977,7 @@ pub const PostgresRequest = struct {
 
         iter = JSC.JSArrayIterator.init(values_array, globalObject);
 
-        debug("Bind: {} ({d} args)", .{ bun.strings.QuotedFormatter{ .text = name }, iter.len });
+        debug("Bind: {} ({d} args)", .{ bun.fmt.quote(name), iter.len });
 
         while (iter.next()) |value| {
             if (value.isUndefinedOrNull()) {
@@ -2086,7 +2080,7 @@ pub const PostgresRequest = struct {
                 .query = query,
             };
             try q.writeInternal(Context, writer);
-            debug("Parse: {}", .{bun.strings.QuotedFormatter{ .text = query }});
+            debug("Parse: {}", .{bun.fmt.quote(query)});
         }
 
         {
@@ -2096,7 +2090,7 @@ pub const PostgresRequest = struct {
                 },
             };
             try d.writeInternal(Context, writer);
-            debug("Describe: {}", .{bun.strings.QuotedFormatter{ .text = name }});
+            debug("Describe: {}", .{bun.fmt.quote(name)});
         }
     }
 
@@ -2212,11 +2206,11 @@ pub const PostgresSQLConnection = struct {
     last_message_start: u32 = 0,
     requests: PostgresRequest.Queue,
 
-    poll_ref: bun.JSC.PollRef = .{},
+    poll_ref: bun.Async.KeepAlive = .{},
     globalObject: *JSC.JSGlobalObject,
 
     statements: PreparedStatementsMap,
-    has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+    pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     js_value: JSC.JSValue = JSC.JSValue.undefined,
 
     is_ready_for_query: bool = false,
@@ -2246,12 +2240,14 @@ pub const PostgresSQLConnection = struct {
 
     pub fn hasPendingActivity(this: *PostgresSQLConnection) callconv(.C) bool {
         @fence(.Acquire);
-        return this.has_pending_activity.load(.Acquire);
+        return this.pending_activity_count.load(.Acquire) > 0;
     }
 
     fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
         @fence(.Release);
-        this.has_pending_activity.store(this.requests.readableLength() > 0 or this.status == .connecting, .Release);
+        const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
+        const b: u32 = if (this.status == .connecting) 1 else 0;
+        this.pending_activity_count.store(a + b, .Release);
     }
 
     pub fn setStatus(this: *PostgresSQLConnection, status: Status) void {
@@ -2299,7 +2295,7 @@ pub const PostgresSQLConnection = struct {
         const on_close = this.on_close.swap();
         if (on_close == .zero) return;
         const instance = this.globalObject.createErrorInstance("{s}", .{message});
-        instance.put(this.globalObject, &JSC.ZigString.init("code"), bun.String.init(@errorName(err)).toJSConst(this.globalObject));
+        instance.put(this.globalObject, JSC.ZigString.static("code"), String.init(@errorName(err)).toJS(this.globalObject));
         _ = on_close.callWithThis(
             this.globalObject,
             this.js_value,
@@ -2507,15 +2503,15 @@ pub const PostgresSQLConnection = struct {
             const hostname = hostname_str.toUTF8(bun.default_allocator);
             defer hostname.deinit();
             if (tls_object.isEmptyOrUndefinedOrNull()) {
-                var ctx = vm.rareData().postgresql_context.tcp orelse brk: {
-                    var ctx_ = uws.us_create_bun_socket_context(0, vm.event_loop_handle, @sizeOf(*PostgresSQLConnection), uws.us_bun_socket_context_options_t{}).?;
+                const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
+                    const ctx_ = uws.us_create_bun_socket_context(0, vm.event_loop_handle, @sizeOf(*PostgresSQLConnection), uws.us_bun_socket_context_options_t{}).?;
                     uws.NewSocketHandler(false).configure(ctx_, true, *PostgresSQLConnection, SocketHandler(false));
                     vm.rareData().postgresql_context.tcp = ctx_;
                     break :brk ctx_;
                 };
                 ptr.socket = .{
-                    .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr) orelse {
-                        globalObject.throwError(error.ConnectionFailed, "failed to connect to postgresql");
+                    .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr) catch |err| {
+                        globalObject.throwError(err, "failed to connect to postgresql");
                         ptr.deinit();
                         return .zero;
                     },
@@ -2850,7 +2846,7 @@ pub const PostgresSQLConnection = struct {
                         }
                     },
                     .json => {
-                        this.list[index] = DataCell{ .tag = .json, .value = .{ .json = bun.String.create(bytes).value.WTFStringImpl }, .free_value = true };
+                        this.list[index] = DataCell{ .tag = .json, .value = .{ .json = String.createUTF8(bytes).value.WTFStringImpl }, .free_value = true };
                     },
                     .boolean => {
                         this.list[index] = DataCell{ .tag = .boolean, .value = .{ .boolean = bytes.len > 0 and bytes[0] == 't' } };
@@ -2867,7 +2863,7 @@ pub const PostgresSQLConnection = struct {
                             if (bun.strings.hasPrefixComptime(bytes, "\\x")) {
                                 const hex = bytes[2..];
                                 const len = hex.len / 2;
-                                var buf = try bun.default_allocator.alloc(u8, len);
+                                const buf = try bun.default_allocator.alloc(u8, len);
                                 errdefer bun.default_allocator.free(buf);
 
                                 this.list[index] = DataCell{
@@ -2886,7 +2882,7 @@ pub const PostgresSQLConnection = struct {
                         }
                     },
                     else => {
-                        this.list[index] = DataCell{ .tag = .string, .value = .{ .string = bun.String.create(bytes).value.WTFStringImpl }, .free_value = true };
+                        this.list[index] = DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8(bytes).value.WTFStringImpl }, .free_value = true };
                     },
                 }
                 this.count += 1;
@@ -2902,7 +2898,7 @@ pub const PostgresSQLConnection = struct {
             var req: *PostgresSQLQuery = this.requests.peekItem(0);
             switch (req.status) {
                 .pending => {
-                    var stmt = req.statement orelse return error.ExpectedStatement;
+                    const stmt = req.statement orelse return error.ExpectedStatement;
                     if (stmt.status == .failed) {
                         req.onError(stmt.error_response, this.globalObject);
                         this.requests.discard(1);
@@ -2920,7 +2916,7 @@ pub const PostgresSQLConnection = struct {
 
         while (this.requests.readableLength() > 0) {
             var req: *PostgresSQLQuery = this.requests.peekItem(0);
-            var stmt = req.statement orelse return error.ExpectedStatement;
+            const stmt = req.statement orelse return error.ExpectedStatement;
 
             switch (stmt.status) {
                 .prepared => {
@@ -2951,7 +2947,7 @@ pub const PostgresSQLConnection = struct {
 
         switch (comptime MessageType) {
             .DataRow => {
-                var request = this.current() orelse return error.ExpectedRequest;
+                const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
 
                 var structure = statement.structure(this.js_value, this.globalObject);
@@ -3042,13 +3038,13 @@ pub const PostgresSQLConnection = struct {
             },
             .ParseComplete => {
                 try reader.eatMessage(protocol.ParseComplete);
-                var request = this.current() orelse return error.ExpectedRequest;
+                const request = this.current() orelse return error.ExpectedRequest;
                 _ = request;
             },
             .ParameterDescription => {
                 var description: protocol.ParameterDescription = undefined;
                 try description.decodeInternal(Context, reader);
-                var request = this.current() orelse return error.ExpectedRequest;
+                const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
                 statement.parameters = description.parameters;
                 if (statement.status == .parsing) {
@@ -3059,7 +3055,7 @@ pub const PostgresSQLConnection = struct {
                 var description: protocol.RowDescription = undefined;
                 try description.decodeInternal(Context, reader);
                 errdefer description.deinit();
-                var request = this.current() orelse return error.ExpectedRequest;
+                const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
                 statement.fields = description.fields;
             },
@@ -3170,7 +3166,7 @@ pub const PostgresSQLConnection = struct {
 
     pub fn updateRef(this: *PostgresSQLConnection) void {
         this.updateHasPendingActivity();
-        if (this.has_pending_activity.loadUnchecked()) {
+        if (this.pending_activity_count.raw > 0) {
             this.poll_ref.ref(this.globalObject.bunVM());
         } else {
             this.poll_ref.unref(this.globalObject.bunVM());
@@ -3244,7 +3240,7 @@ pub const PostgresSQLStatement = struct {
 
     pub fn structure(this: *PostgresSQLStatement, owner: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return this.cached_structure.get() orelse {
-            var names = bun.default_allocator.alloc(bun.String, this.fields.len) catch return .undefined;
+            const names = bun.default_allocator.alloc(bun.String, this.fields.len) catch return .undefined;
             defer {
                 for (names) |*name| {
                     name.deref();
@@ -3254,7 +3250,7 @@ pub const PostgresSQLStatement = struct {
             for (this.fields, names) |*field, *name| {
                 name.* = String.fromUTF8(field.name.slice());
             }
-            var structure_ = JSC.JSObject.createStructure(
+            const structure_ = JSC.JSObject.createStructure(
                 globalObject,
                 owner,
                 @truncate(this.fields.len),

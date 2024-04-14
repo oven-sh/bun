@@ -4263,7 +4263,6 @@ pub const Interpreter = struct {
                     (if (this.stdout) |*stdout| stdout.closed() else true) and
                     (if (this.stderr) |*stderr| stderr.closed() else true);
                 log("BufferedIOClosed(0x{x}) all_closed={any} stdin={any} stdout={any} stderr={any}", .{ @intFromPtr(this), ret, if (this.stdin) |stdin| stdin else true, if (this.stdout) |*stdout| stdout.closed() else true, if (this.stderr) |*stderr| stderr.closed() else true });
-                std.debug.print("all_closed={any} stdin={any} stdout={any} stderr={any}\n", .{ ret, if (this.stdin) |stdin| stdin else true, if (this.stdout) |*stdout| stdout.closed() else true, if (this.stderr) |*stderr| stderr.closed() else true });
                 return ret;
             }
 
@@ -4352,7 +4351,8 @@ pub const Interpreter = struct {
             io: IO,
         ) *Cmd {
             var cmd = interpreter.allocator.create(Cmd) catch |err| {
-                std.debug.print("Ruh roh: {any}\n", .{err});
+                _ = err; // autofix
+
                 @panic("Ruh roh");
             };
             cmd.* = .{

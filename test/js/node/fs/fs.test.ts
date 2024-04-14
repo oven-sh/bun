@@ -251,7 +251,7 @@ it("Dirent.name setter", () => {
 });
 
 it("writeFileSync should correctly resolve ../..", () => {
-  const base = tmpdir();
+  const base = join(tmpdir(), `fs-test-${Math.random().toString(36).slice(2)}`);
   const path = join(base, "foo", "bar");
   mkdirSync(path, { recursive: true });
   const cwd = process.cwd();

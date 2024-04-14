@@ -472,10 +472,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         return client.firstCall(comptime ssl, socket);
                     } else {
                         // if authorized it self is false, this means that the connection was rejected
-                        return client.onConnectError(
-                            comptime ssl,
-                            socket,
-                        );
+                        socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                        if (client.state.stage != .done and client.state.stage != .fail)
+                            client.fail(error.ConnectionRefused);
+                        return;
                     }
                 }
 

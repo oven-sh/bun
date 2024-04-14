@@ -259,6 +259,12 @@ const ProxyTunnel = struct {
             ssl.configureHTTPClient(hostname);
             BoringSSL.SSL_CTX_set_verify(ssl_ctx, BoringSSL.SSL_VERIFY_NONE, null);
             BoringSSL.SSL_set_verify(ssl, BoringSSL.SSL_VERIFY_NONE, null);
+            // TODO: change this to ssl_renegotiate_explicit for optimization
+            // if we allow renegotiation, we need to set the mode here
+            // https://github.com/oven-sh/bun/issues/6197
+            // https://github.com/oven-sh/bun/issues/5363
+            // renegotiation is only valid for <= TLS1_2_VERSION
+            BoringSSL.SSL_set_renegotiate_mode(ssl, BoringSSL.ssl_renegotiate_freely);
             return ProxyTunnel{ .ssl = ssl, .ssl_ctx = ssl_ctx, .in_bio = in_bio, .out_bio = out_bio, .read_buffer = bun.default_allocator.alloc(u8, 16 * 1024) catch unreachable, .partial_data = null };
         }
         unreachable;

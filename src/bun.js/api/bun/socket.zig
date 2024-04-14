@@ -2125,6 +2125,8 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             const ssl_ptr = this.socket.ssl();
+            BoringSSL.ERR_clear_error();
+
             if (BoringSSL.SSL_renegotiate(ssl_ptr) != 1) {
                 globalObject.throwValue(getSSLException(globalObject, "SSL_renegotiate error"));
                 return .zero;

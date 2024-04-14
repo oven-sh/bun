@@ -3322,3 +3322,24 @@ const Signature = struct {
         };
     }
 };
+
+pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    const binding = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+    binding.put(globalObject, ZigString.static("PostgresSQLConnection"), PostgresSQLConnection.getConstructor(globalObject));
+    binding.put(globalObject, ZigString.static("init"), JSC.JSFunction.create(globalObject, "init", PostgresSQLContext.init, 0, .{}));
+    binding.put(
+        globalObject,
+        ZigString.static("createQuery"),
+        JSC.JSFunction.create(globalObject, "createConnection", PostgresSQLQuery.call, 2, .{}),
+    );
+
+    binding.put(
+        globalObject,
+        ZigString.static("createConnection"),
+        JSC.JSFunction.create(globalObject, "createQuery", PostgresSQLConnection.call, 2, .{}),
+    );
+
+    return binding;
+}
+
+const ZigString = JSC.ZigString;

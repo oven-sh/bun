@@ -14,7 +14,12 @@ const _queryStatus = Symbol("status");
 const _handler = Symbol("handler");
 const PublicPromise = Promise;
 
-const { createConnection: _createConnection, createQuery, PostgresSQLConnection, init } = $lazy("bun:sql");
+const {
+  createConnection: _createConnection,
+  createQuery,
+  PostgresSQLConnection,
+  init,
+} = $zig("postgres.zig", "createBinding");
 
 class Query extends PublicPromise {
   [_resolve];

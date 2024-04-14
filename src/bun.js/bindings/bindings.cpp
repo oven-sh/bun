@@ -5364,7 +5364,7 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue timeValue)
 extern "C" double Bun__parseDate(JSC::JSGlobalObject* globalObject, BunString* str)
 {
     auto& vm = globalObject->vm();
-    return vm.dateCache.parseDate(globalObject, vm, Bun::toWTFString(*str));
+    return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const char* nullTerminatedChars)

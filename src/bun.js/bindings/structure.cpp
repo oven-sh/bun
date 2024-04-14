@@ -100,8 +100,6 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned co
 
 static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
-
     if (array) {
         array->push(globalObject, toJS(structure, cells, count, globalObject));
         return array;
@@ -137,7 +135,7 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
 
     PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     for (unsigned i = 0; i < inlineCapacity; i++) {
-        propertyNames.add(Identifier::fromString(vm, Bun::toWTFString(names[i])));
+        propertyNames.add(Identifier::fromString(vm, names[i].toWTFString()));
     }
 
     PropertyOffset offset = 0;

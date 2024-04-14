@@ -1,4 +1,4 @@
-import { it, expect } from "bun:test";
+import { it, expect, describe } from "bun:test";
 import * as os from "node:os";
 import { realpathSync } from "fs";
 import { isWindows } from "harness";
@@ -182,4 +182,34 @@ it("loadavg", () => {
   const loadavg = os.loadavg();
   expect(loadavg.length).toBe(3);
   expect(loadavg.every(avg => typeof avg === "number")).toBeTrue();
+});
+
+// https://github.com/oven-sh/bun/issues/10259
+describe("toString works like node", () => {
+  const exportsWithStrings = [
+    "arch",
+    "availableParallelism",
+    "endianness",
+    "freemem",
+    "homedir",
+    "hostname",
+    "platform",
+    "release",
+    "tmpdir",
+    "totalmem",
+    "type",
+    "uptime",
+    "version",
+    "machine",
+  ];
+  for (const key of exportsWithStrings) {
+    // node implements Symbol.toPrimitive, not toString!
+    it(`${key}.toString()`, () => {
+      expect(os[key].toString()).toStartWith("function");
+    });
+
+    it(`${key} + ''`, () => {
+      expect(os[key] + "").toBe(os[key]() + "");
+    });
+  }
 });

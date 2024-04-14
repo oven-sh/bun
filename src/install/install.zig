@@ -4128,7 +4128,7 @@ pub const PackageManager = struct {
         );
     }
 
-    const debug = Output.scoped(.PackageManager, true);
+    const debug = Output.scoped(.pm, true);
 
     /// Q: "What do we do with a dependency in a package.json?"
     /// A: "We enqueue it!"
@@ -8730,6 +8730,232 @@ pub const PackageManager = struct {
 
         trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
 
+        pub const InstallState = enum {
+            verify,
+            download,
+            copy,
+            link,
+            binlink,
+            children,
+            lifecycle,
+            complete,
+            fail,
+        };
+
+        pub const Installation = struct {
+            packages_waiting: Bitset,
+            packages_that_need_to_be_downloaded: Bitset,
+            need_to_verify_installed_version_number: Bitset,
+            need_to_check_if_package_is_installed: Bitset,
+            waiting_to_download_the_packages: Bitset,
+
+            tree_states: []TreeState,
+
+            const TreeState = struct {
+                waiting_for: struct {
+                    verify: AutoBitSet,
+                    copy: AutoBitSet,
+                    binlink: AutoBitSet,
+                    download: AutoBitSet,
+
+                    pub fn init(this: *@This(), allocator: std.mem.Allocator, count: usize) !void {
+                        this.verify = try AutoBitSet.initEmpty(allocator, count);
+                        this.copy = try AutoBitSet.initEmpty(allocator, count);
+                        this.binlink = try AutoBitSet.initEmpty(allocator, count);
+                        this.download = try AutoBitSet.initEmpty(allocator, count);
+                    }
+                },
+
+                last_error: ?Syscall.Error = null,
+            };
+
+            const AutoBitSet = bun.bit_set.AutoBitSet;
+
+            const VerifyTask = struct {
+                tree_id: Lockfile.Tree.Id,
+                offset_in_tree: u32,
+                count: u8,
+                task: bun.ThreadPool.Task = .{ .callback = &runFromThreadPool },
+                install: *Installation,
+
+                const batch_size_per_core = 10;
+
+                pub fn createAndScheduleForTree(install: *Installation, total_size: usize, allocator: std.mem.Allocator, tree_id: Lockfile.Tree.Id) !void {
+                    if (total_size == 0) return;
+                    const thread_pool_size = PackageManager.instance.thread_pool.max_threads;
+                    const batch_size = @max(total_size / thread_pool_size, 1);
+                    const num_tasks = @max(batch_size / batch_size_per_core, 1);
+
+                    // we're going to leak the memory and that's okay.
+                    var verify_tasks = try std.ArrayList(VerifyTask).initCapacity(VerifyTask, num_tasks);
+                    var batch = bun.ThreadPool.Batch{};
+                    var remaining = total_size;
+                    while (remaining > 0) {
+                        const count: u8 = @truncate(@min(remaining, batch_size));
+                        remaining -= count;
+                        try verify_tasks.append(.{
+                            .tree_id = tree_id,
+                            .offset_in_tree = @truncate(total_size - remaining),
+                            .count = count,
+                            .install = install,
+                        });
+                        batch.push(bun.ThreadPool.Batch.from(&task.task));
+                    }
+                    _ = instance.pending_tasks.fetchAdd(verify_tasks.items.len, .Monotonic);
+                    instance.thread_pool.schedule(batch);
+                }
+
+                pub fn runFromThreadPool(task: *bun.ThreadPool.Task) void {
+                    const verify_task: *VerifyTask = @fieldParentPtr(VerifyTask, "task", task);
+                    var this = verify_task.install;
+
+                    this.verifyPlacements(verify_task.tree_id, verify_task.offset_in_tree, verify_task.count);
+                }
+            };
+
+            pub fn verifyPlacements(this: *Installation, tree_id: Lockfile.Tree.Id, offset: u32, len: u8) void {
+                var iterator = Lockfile.Tree.Iterator.init(this.lockfile);
+                iterator.tree_id = tree_id;
+                var tree_state = &this.tree_states[tree_id];
+                const node_modules = iterator.nextNodeModulesFolder(null) orelse Output.panic("expected node_modules folder", .{});
+
+                const dependencies: []DependencyID = node_modules.dependencies[offset..][0..len];
+                const package_ids = this.lockfile.packages.items(.resolutions);
+                const names = this.lockfile.packages.items(.name);
+                _ = names; // autofix
+                const versions = this.lockfile.packages.items(.version);
+                _ = versions; // autofix
+                const resolutions = this.lockfile.packages.items(.resolution);
+
+                for (dependencies, offset..) |dependency_id, i| {
+                    const package_id = package_ids[dependency_id];
+                    if (package_id < invalid_package_id) {
+                        tree_state.waiting_for.verify.atomic.unset(i);
+                        this.verifyPlacement(tree_state, node_modules.relative_path, tree_id, package_id, dependency_id, &resolutions[i]);
+                    }
+                }
+            }
+
+            pub fn verifyPlacement(
+                this: *Installation,
+                state: *TreeState,
+                relative_path: []const u8,
+                tree_id: Lockfile.Tree.Id,
+                package_id: PackageID,
+                dependency_id: DependencyID,
+                i: usize,
+            ) void {
+                var pathbuf1: bun.PathBuffer = undefined;
+                const path = bun.path.joinAbsStringBufZNT(bun.fs.FileSystem.instance.top_level_dir, &pathbuf1, .{
+                    relative_path,
+                    name,
+                }, comptime _platform: Platform)
+            }
+
+            pub fn start(this: *Installation, lockfile: *Lockfile, manager: *PackageManager) !void {
+                var iterator = Lockfile.Tree.Iterator.init(lockfile);
+                const allocator = bun.default_allocator;
+                _ = &iterator; // autofix
+                // These slices potentially get resized during iteration
+                // so we want to make sure they're not accessible to the rest of this function
+                // to make mistakes harder
+                var parts = lockfile.packages.slice();
+                _ = parts; // autofix
+
+                const completed_trees, const tree_ids_to_trees_the_id_depends_on, const tree_install_counts = trees: {
+                    const trees = lockfile.buffers.trees.items;
+                    const completed_trees = try Bitset.initEmpty(allocator, trees.len);
+                    var tree_ids_to_trees_the_id_depends_on = try Bitset.List.initEmpty(allocator, trees.len, trees.len);
+
+                    {
+                        // For each tree id, traverse through it's parents and mark all visited tree
+                        // ids as dependents for the current tree parent
+                        var deps = try Bitset.initEmpty(allocator, trees.len);
+                        defer deps.deinit(allocator);
+                        for (trees) |_curr| {
+                            var curr = _curr;
+                            tree_ids_to_trees_the_id_depends_on.set(curr.id, curr.id);
+
+                            while (curr.parent != Lockfile.Tree.invalid_id) {
+                                deps.set(curr.id);
+                                tree_ids_to_trees_the_id_depends_on.setUnion(curr.parent, deps);
+                                curr = trees[curr.parent];
+                            }
+
+                            deps.setAll(false);
+                        }
+                    }
+
+                    const tree_install_counts = try allocator.alloc(usize, trees.len);
+                    @memset(tree_install_counts, 0);
+
+                    if (comptime Environment.allow_assert) {
+                        if (trees.len > 0) {
+                            // last tree should not depend on another except for itself
+                            bun.assert(tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).count() == 1 and tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).isSet(trees.len - 1));
+                            // root tree should always depend on all trees
+                            bun.assert(tree_ids_to_trees_the_id_depends_on.at(0).count() == trees.len);
+                        }
+
+                        // a tree should always depend on itself
+                        for (0..trees.len) |j| {
+                            bun.assert(tree_ids_to_trees_the_id_depends_on.at(j).isSet(j));
+                        }
+                    }
+
+                    break :trees .{
+                        completed_trees,
+                        tree_ids_to_trees_the_id_depends_on,
+                        tree_install_counts,
+                    };
+                };
+                _ = tree_install_counts; // autofix
+                _ = tree_ids_to_trees_the_id_depends_on; // autofix
+
+                var trees_with_node_modules_folders = try Bitset.initEmpty(bun.default_allocator, lockfile.buffers.trees.items.len);
+                var does_package_have_any_missing_placements = try Bitset.initEmpty(bun.default_allocator, lockfile.packages.len);
+                var parent_trees = lockfile.buffers.trees.items(.parent);
+                var package_id_in_tree_root = lockfile.buffers.trees.items(.id);
+                const package_ids_by_dependency_id = lockfile.packages.items(.resolutions);
+                _ = package_ids_by_dependency_id; // autofix
+                _ = package_id_in_tree_root; // autofix
+                var tree_states: []TreeState = try allocator.alloc(TreeState, lockfile.buffers.trees.items.len);
+                const thread_pool_size = manager.thread_pool.max_threads;
+                _ = thread_pool_size; // autofix
+                while (iterator.nextNodeModulesFolder(&completed_trees)) |node_modules| {
+                    debug("+ <b>{s}" ++ std.fs.path.sep_str ++ "<r>", .{node_modules.relative_path});
+                    defer debug("- <b>{s}" ++ std.fs.path.sep_str ++ "<r>", .{node_modules.relative_path});
+                    var has_existing_node_modules_folder_on_disk = true;
+
+                    var parent_tree_id = parent_trees[node_modules.tree_id];
+                    while (parent_tree_id != 0) {
+                        if (!trees_with_node_modules_folders.isSet(parent_tree_id)) {
+                            has_existing_node_modules_folder_on_disk = false;
+                            break;
+                        }
+                        parent_tree_id = parent_trees[parent_tree_id];
+                    }
+
+                    var waiting_for = &tree_states[node_modules.tree_id].waiting_for;
+                    try waiting_for.init(allocator, node_modules.dependencies.len);
+
+                    if (has_existing_node_modules_folder_on_disk) {
+                        trees_with_node_modules_folders.set(node_modules.tree_id);
+                        @memset(waiting_for.verify.rawBytes(), 1);
+                        try VerifyTask.createAndScheduleForTree(this, node_modules.dependencies.len, allocator, node_modules.tree_id);
+                    } else if (node_modules.dependencies.len > 0) {
+                        const resolutions = this.lockfile.buffers.trees.items(.resolutions);
+                        for (node_modules.dependencies) |dependency_id| {
+                            const package_id = resolutions[dependency_id];
+                            if (package_id < invalid_package_id) {
+                                does_package_have_any_missing_placements.set(package_id);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
         pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: Options.LogLevel) void {
@@ -9061,7 +9287,7 @@ pub const PackageManager = struct {
                 .node_modules = &this.node_modules,
                 // .install_order = this.tree_iterator.order,
             };
-            debug("Installing {s}@{s}", .{ name, resolution_label });
+            debug("<d>install {s}@{s}<r>", .{ name, resolution_label });
 
             switch (resolution.tag) {
                 .npm => {
@@ -9928,6 +10154,9 @@ pub const PackageManager = struct {
             defer installer.deinit();
 
             while (iterator.nextNodeModulesFolder(&installer.completed_trees)) |node_modules| {
+                debug("+ <b>{s}" ++ std.fs.path.sep_str ++ "<r>", .{node_modules.relative_path});
+                defer debug("- <b>{s}" ++ std.fs.path.sep_str ++ "<r>", .{node_modules.relative_path});
+
                 installer.node_modules.path.items.len = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir).len + 1;
                 try installer.node_modules.path.appendSlice(node_modules.relative_path);
                 installer.node_modules.tree_id = node_modules.tree_id;

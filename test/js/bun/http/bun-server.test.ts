@@ -3,7 +3,44 @@ import { bunExe, bunEnv } from "harness";
 import path from "path";
 
 describe("Server", () => {
-  test("normlizes incoming request URLs", async () => {
+  test("should set a custom statusText", async () => {
+    const server = Bun.serve({
+      fetch(request) {
+        return new Response(request.url, {
+          headers: {
+            "Connection": "close",
+          },
+          statusText: "customStatusText",
+        });
+      },
+      port: 0,
+    });
+
+    const response = await fetch(server.url);
+    expect(response.statusText).toBe("customStatusText");
+
+    server.stop(true);
+  });
+
+  test("should set the default statusText if not statusText is defined", async () => {
+    const server = Bun.serve({
+      fetch(request) {
+        return new Response(request.url, {
+          headers: {
+            "Connection": "close",
+          },
+        });
+      },
+      port: 0,
+    });
+
+    const response = await fetch(server.url);
+    expect(response.statusText).toBe("OK");
+
+    server.stop(true);
+  });
+
+  test("normalizes incoming request URLs", async () => {
     const server = Bun.serve({
       fetch(request) {
         return new Response(request.url, {

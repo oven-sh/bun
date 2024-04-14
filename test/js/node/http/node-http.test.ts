@@ -41,6 +41,42 @@ function listen(server: Server, protocol: string = "http"): Promise<URL> {
 
 describe("node:http", () => {
   describe("createServer", async () => {
+    it("should set a custom statusText", async () => {
+      try {
+        var server = createServer((req, res) => {
+          res.writeHead(200, "customStatusText");
+
+          res.end("Hello World");
+        });
+        const url = await listen(server);
+        const res = await fetch(new URL(url));
+
+        expect(res.statusText).toBe("customStatusText");
+      } catch (e) {
+        throw e;
+      } finally {
+        server.close();
+      }
+    });
+
+    it("should set the default statusText if not custom statusText is defined", async () => {
+      try {
+        var server = createServer((req, res) => {
+          res.writeHead(200);
+
+          res.end("Hello World");
+        });
+        const url = await listen(server);
+        const res = await fetch(new URL(url));
+
+        expect(res.statusText).toBe("OK");
+      } catch (e) {
+        throw e;
+      } finally {
+        server.close();
+      }
+    });
+
     it("hello world", async () => {
       try {
         var server = createServer((req, res) => {

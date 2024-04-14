@@ -1859,7 +1859,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.flags.has_written_status = true;
 
             if (this.resp) |resp| {
-                if (HTTPStatusText.get(status)) |text| {
+                var response: *JSC.WebCore.Response = this.response_ptr.?;
+                const status_text = response.statusText();
+
+                if (status_text.length() != 0) {
+                    resp.writeStatus(std.fmt.bufPrint(&status_text_buf, "{d} {s}", .{ status, status_text.byteSlice() }) catch unreachable);
+                } else if (HTTPStatusText.get(status)) |text| {
                     resp.writeStatus(text);
                 } else {
                     resp.writeStatus(std.fmt.bufPrint(&status_text_buf, "{d} HM", .{status}) catch unreachable);

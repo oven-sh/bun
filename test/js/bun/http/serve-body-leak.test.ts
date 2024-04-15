@@ -106,8 +106,9 @@ for (const test of [
   ["should not leak memory when streaming the body incompletely", callIncompleteStreaming],
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho],
 ]) {
-  it(test[0] as string, async () => {
-    const report = await calculateMemoryLeak(test[1] as () => Promise<void>);
+  const [testName, fn] = test as [string, () => Promise<void>];
+  it(testName, async () => {
+    const report = await calculateMemoryLeak(fn);
     console.log(report);
 
     // peak memory is too high

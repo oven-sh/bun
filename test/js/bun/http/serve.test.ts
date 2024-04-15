@@ -1524,3 +1524,29 @@ describe("should error with invalid options", async () => {
     }).toThrow("Expected lowMemoryMode to be a boolean");
   });
 });
+it("should emit ABORT_ERR on body reader if requested ended with pending read", async () => {
+  let error: Error;
+  function shouldError(e: Error) {
+    error = e;
+  }
+  await runTest(
+    {
+      // @ts-ignore
+      fetch(req) {
+        req.body?.getReader().read().catch(shouldError);
+        return new Response("OK");
+      },
+    },
+    async server => {
+      const response = await fetch(server.url.origin, {
+        method: "POST",
+        body: "1".repeat(64 * 1024),
+      });
+      const text = await response.text();
+      expect(text).toContain("OK");
+      expect(error).toBeDefined();
+      expect(error?.message).toBe("Request aborted");
+      expect(error?.code).toBe("ABORT_ERR");
+    },
+  );
+});

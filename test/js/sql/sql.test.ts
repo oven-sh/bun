@@ -119,8 +119,7 @@ t("implicit json", async () => {
 
 // t("Empty array", async () => [true, Array.isArray((await sql`select ${sql.array([], 1009)} as x`)[0].x)]);
 
-t("array from string", async () => expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x.join("")).toEqual("123"));
-t("Array<Int>", async () =>
+t("string arg with ::int -> Array<int>", async () =>
   expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x).toEqual(new Int32Array([1, 2, 3])),
 );
 

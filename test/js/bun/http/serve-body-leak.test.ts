@@ -98,7 +98,7 @@ it("#10265 should not leak memory when ignoring the body", async () => {
 
   // peak memory is too high
   expect(report.peak_memory > report.start_memory * 2).toBe(false);
-  // acceptable memory leak 2mbish
+  // acceptable memory leak
   expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
 });
 
@@ -107,7 +107,7 @@ it("should not leak memory when buffering the body", async () => {
   console.log(report);
   // peak memory is too high
   expect(report.peak_memory > report.start_memory * 2).toBe(false);
-  // acceptable memory leak 2mbish
+  // acceptable memory leak
   expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
 });
 
@@ -117,7 +117,7 @@ it("should not leak memory when streaming the body", async () => {
 
   // peak memory is too high
   expect(report.peak_memory > report.start_memory * 2).toBe(false);
-  // acceptable memory leak 2mbish
+  // acceptable memory leak
   expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
 });
 
@@ -127,6 +127,6 @@ it("should not leak memory when streaming the body incompletely", async () => {
 
   // peak memory is too high
   expect(report.peak_memory > report.start_memory * 2).toBe(false);
-  // acceptable memory leak 2mbish
+  // acceptable memory leak
   expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
 });

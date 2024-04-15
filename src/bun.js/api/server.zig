@@ -1720,7 +1720,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.request_body) |body| {
-                if (body.value == .Locked) {
+                if (body.value == .Locked and body.value.Locked.deinit == false) {
                     return false;
                 }
             }

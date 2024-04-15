@@ -828,6 +828,7 @@ pub const Body = struct {
         }
 
         pub fn toErrorInstance(this: *Value, error_instance: JSC.JSValue, global: *JSGlobalObject) void {
+            error_instance.ensureStillAlive();
             if (this.* == .Locked) {
                 var locked = this.Locked;
                 locked.deinit = true;
@@ -842,6 +843,15 @@ pub const Body = struct {
                 }
 
                 if (locked.readable.get()) |readable| {
+                    if (readable.ptr == .Bytes) {
+                        // we are streaming so we inform the error to it
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .err = .{ .JSValue = error_instance },
+                            },
+                            bun.default_allocator,
+                        );
+                    }
                     readable.done(global);
                     locked.readable.deinit();
                 }

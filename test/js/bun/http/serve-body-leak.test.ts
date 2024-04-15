@@ -85,7 +85,7 @@ async function memoryMemoryLeak(fn: () => Promise<void>) {
   const leak = Math.floor(consumption > 0 ? consumption / 1024 / 1024 : 0);
   return { leak, start_memory, peak_memory, end_memory, memory_examples };
 }
-it("should not leak memory when ignoring the body", async () => {
+it("#10265 should not leak memory when ignoring the body", async () => {
   const report = await memoryMemoryLeak(callIgnore);
   console.log(report);
 

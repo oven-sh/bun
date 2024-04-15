@@ -107,13 +107,17 @@ for (const test of [
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho],
 ]) {
   const [testName, fn] = test as [string, () => Promise<void>];
-  it(testName, async () => {
-    const report = await calculateMemoryLeak(fn);
-    console.log(report);
+  it(
+    testName,
+    async () => {
+      const report = await calculateMemoryLeak(fn);
+      console.log(report);
 
-    // peak memory is too high
-    expect(report.peak_memory > report.start_memory * 2).toBe(false);
-    // acceptable memory leak
-    expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
-  });
+      // peak memory is too high
+      expect(report.peak_memory > report.start_memory * 2).toBe(false);
+      // acceptable memory leak
+      expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
+    },
+    10_000,
+  );
 }

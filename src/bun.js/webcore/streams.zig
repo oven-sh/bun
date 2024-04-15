@@ -148,6 +148,18 @@ pub const ReadableStream = struct {
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
 
+        switch (this.ptr) {
+            .Blob => |source| {
+                source.parent().cancel();
+            },
+            .File => |source| {
+                source.parent().cancel();
+            },
+            .Bytes => |source| {
+                source.parent().cancel();
+            },
+            else => {},
+        }
         ReadableStream__cancel(this.value, globalThis);
         this.detachIfPossible(globalThis);
     }
@@ -155,8 +167,7 @@ pub const ReadableStream = struct {
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
 
-        ReadableStream__cancel(this.value, globalThis);
-        this.detachIfPossible(globalThis);
+        this.cancel(globalThis);
     }
 
     pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {

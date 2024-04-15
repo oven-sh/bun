@@ -22,8 +22,7 @@ const server = Bun.serve({
     } else if (req.url.endsWith("/incomplete-streaming")) {
       const reader = req.body?.getReader();
       if (!reader) {
-        // we will receive ABORT_ERR here so we just catch it and ignores it
-        reader?.read().catch(() => {});
+        reader?.read();
       }
     } else if (req.url.endsWith("/streaming-echo")) {
       return new Response(req.body, {

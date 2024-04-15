@@ -843,15 +843,6 @@ pub const Body = struct {
                 }
 
                 if (locked.readable.get()) |readable| {
-                    if (readable.ptr == .Bytes) {
-                        // we are streaming so we inform the error to it
-                        readable.ptr.Bytes.onData(
-                            .{
-                                .err = .{ .JSValue = error_instance },
-                            },
-                            bun.default_allocator,
-                        );
-                    }
                     readable.abort(global);
                     locked.readable.deinit();
                 }

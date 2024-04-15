@@ -1524,16 +1524,20 @@ describe("should error with invalid options", async () => {
     }).toThrow("Expected lowMemoryMode to be a boolean");
   });
 });
-it("should emit ABORT_ERR on body reader if requested ended with pending read", async () => {
+it("should resolve pending promise if requested ended with pending read", async () => {
   let error: Error;
   function shouldError(e: Error) {
     error = e;
   }
+  let is_done = false;
+  function shouldMarkDone(result: { done: boolean; value: any }) {
+    is_done = result.done;
+  }
   await runTest(
     {
-      // @ts-ignore
       fetch(req) {
-        req.body?.getReader().read().catch(shouldError);
+        // @ts-ignore
+        req.body?.getReader().read().catch(shouldError).then(shouldMarkDone);
         return new Response("OK");
       },
     },
@@ -1544,9 +1548,8 @@ it("should emit ABORT_ERR on body reader if requested ended with pending read", 
       });
       const text = await response.text();
       expect(text).toContain("OK");
-      expect(error).toBeDefined();
-      expect(error?.message).toBe("Request aborted");
-      expect(error?.code).toBe("ABORT_ERR");
+      expect(is_done).toBe(true);
+      expect(error).toBeUndefined();
     },
   );
 });

@@ -1175,6 +1175,8 @@ pub const us_bun_socket_context_options_t = extern struct {
     secure_options: u32 = 0,
     reject_unauthorized: i32 = 0,
     request_cert: i32 = 0,
+    client_renegotiation_limit: u32 = 3,
+    client_renegotiation_window: u32 = 600,
 };
 
 pub const us_bun_verify_error_t = extern struct {

@@ -378,6 +378,7 @@ pub const PackageJSONVersionChecker = struct {
         .is_json = true,
         .json_warn_duplicate_keys = false,
         .allow_trailing_commas = true,
+        .allow_comments = true,
     };
 
     pub fn init(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
@@ -732,7 +733,44 @@ pub fn ParseJSON(
     return try parser.parseExpr(false, false);
 }
 
-/// Parse JSON
+/// Parse Package JSON
+/// Allow trailing commas & comments.
+/// This eagerly transcodes UTF-16 strings into UTF-8 strings
+/// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
+/// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
+pub fn ParsePackageJSONUTF8(
+    source: *const logger.Source,
+    log: *logger.Log,
+    allocator: std.mem.Allocator,
+) !Expr {
+    const len = source.contents.len;
+
+    switch (len) {
+        // This is to be consisntent with how disabled JS files are handled
+        0 => {
+            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+        },
+        // This is a fast pass I guess
+        2 => {
+            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+            }
+        },
+        else => {},
+    }
+
+    var parser = try TSConfigParser.init(allocator, source.*, log);
+    bun.assert(parser.source().contents.len > 0);
+
+    return try parser.parseExpr(false, true);
+}
+
+/// Parse Package JSON
+/// Allow trailing commas & comments.
 /// This eagerly transcodes UTF-16 strings into UTF-8 strings
 /// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
 /// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
@@ -794,6 +832,8 @@ pub fn ParseJSONUTF8AlwaysDecode(
     var parser = try JSONLikeParser(.{
         .is_json = true,
         .always_decode_escape_sequences = true,
+        .allow_comments = true,
+        .allow_trailing_commas = true,
     }).init(allocator, source.*, log);
     if (comptime Environment.allow_assert) {
         bun.assert(parser.source().contents.len > 0);

@@ -874,7 +874,6 @@ pub const ExtractData = struct {
 
 pub const PackageInstall = struct {
     cache_dir: std.fs.Dir,
-    destination_dir: std.fs.Dir,
     cache_dir_subpath: stringZ = "",
     destination_dir_subpath: stringZ = "",
     destination_dir_subpath_buf: []u8,
@@ -963,7 +962,12 @@ pub const PackageInstall = struct {
 
     // 1. verify that .bun-tag exists (was it installed from bun?)
     // 2. check .bun-tag against the resolved version
-    fn verifyGitResolution(this: *PackageInstall, repo: *const Repository, buf: []const u8) bool {
+    fn verifyGitResolution(
+        this: *PackageInstall,
+        repo: *const Repository,
+        buf: []const u8,
+        root_node_modules_dir: std.fs.Dir,
+    ) bool {
         bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ ".bun-tag");
         this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len] = 0;
         const bun_tag_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len :0];
@@ -971,8 +975,13 @@ pub const PackageInstall = struct {
         var git_tag_stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = git_tag_stack_fallback.get();
 
+        var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
+        defer {
+            if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
+        }
+
         const bun_tag_file = File.readFrom(
-            this.destination_dir,
+            destination_dir,
             bun_tag_path,
             allocator,
         ).unwrap() catch return false;
@@ -985,15 +994,16 @@ pub const PackageInstall = struct {
         this: *PackageInstall,
         resolution: *const Resolution,
         buf: []const u8,
+        root_node_modules_dir: std.fs.Dir,
     ) bool {
         return switch (resolution.tag) {
-            .git => this.verifyGitResolution(&resolution.value.git, buf),
-            .github => this.verifyGitResolution(&resolution.value.github, buf),
-            else => this.verifyPackageJSONNameAndVersion(),
+            .git => this.verifyGitResolution(&resolution.value.git, buf, root_node_modules_dir),
+            .github => this.verifyGitResolution(&resolution.value.github, buf, root_node_modules_dir),
+            else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir),
         };
     }
 
-    fn verifyPackageJSONNameAndVersion(this: *PackageInstall) bool {
+    fn verifyPackageJSONNameAndVersion(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {
         const allocator = this.allocator;
         var total: usize = 0;
         var read: usize = 0;
@@ -1018,7 +1028,12 @@ pub const PackageInstall = struct {
             const package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
             defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
 
-            var package_json_file = File.openat(this.destination_dir, package_json_path, std.os.O.RDONLY, 0).unwrap() catch return false;
+            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
+            defer {
+                if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
+            }
+
+            var package_json_file = File.openat(destination_dir, package_json_path, std.os.O.RDONLY, 0).unwrap() catch return false;
             defer package_json_file.close();
 
             // Heuristic: most package.jsons will be less than 2048 bytes.
@@ -1151,7 +1166,7 @@ pub const PackageInstall = struct {
     else
         Method.hardlink;
 
-    fn installWithClonefileEachDir(this: *PackageInstall) !Result {
+    fn installWithClonefileEachDir(this: *PackageInstall, destination_dir: std.fs.Dir) !Result {
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1212,7 +1227,7 @@ pub const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
+        var subdir = destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_dest_dir },
         };
 
@@ -1231,14 +1246,14 @@ pub const PackageInstall = struct {
     }
 
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
-    fn installWithClonefile(this: *PackageInstall) !Result {
+    fn installWithClonefile(this: *PackageInstall, destination_dir: std.fs.Dir) !Result {
         if (comptime !Environment.isMac) @compileError("clonefileat() is macOS only.");
 
         if (this.destination_dir_subpath[0] == '@') {
             if (strings.indexOfCharZ(this.destination_dir_subpath, std.fs.path.sep)) |slash| {
                 this.destination_dir_subpath_buf[slash] = 0;
                 const subdir = this.destination_dir_subpath_buf[0..slash :0];
-                this.destination_dir.makeDirZ(subdir) catch {};
+                destination_dir.makeDirZ(subdir) catch {};
                 this.destination_dir_subpath_buf[slash] = std.fs.path.sep;
             }
         }
@@ -1246,7 +1261,7 @@ pub const PackageInstall = struct {
         return switch (C.clonefileat(
             this.cache_dir.fd,
             this.cache_dir_subpath,
-            this.destination_dir.fd,
+            destination_dir.fd,
             this.destination_dir_subpath,
             0,
         )) {
@@ -1259,7 +1274,7 @@ pub const PackageInstall = struct {
                 // But, this can happen if this package contains a node_modules folder
                 // We want to continue installing as many packages as we can, so we shouldn't block while downloading
                 // We use the slow path in this case
-                .EXIST => try this.installWithClonefileEachDir(),
+                .EXIST => try this.installWithClonefileEachDir(destination_dir),
                 .ACCES => return error.AccessDenied,
                 else => error.Unexpected,
             },
@@ -1286,8 +1301,8 @@ pub const PackageInstall = struct {
 
     threadlocal var node_fs_for_package_installer: bun.JSC.Node.NodeFS = .{};
 
-    fn initInstallDir(this: *PackageInstall, state: *InstallDirState) Result {
-        const destbase = this.destination_dir;
+    fn initInstallDir(this: *PackageInstall, state: *InstallDirState, destination_dir: std.fs.Dir) Result {
+        const destbase = destination_dir;
         const destpath = this.destination_dir_subpath;
 
         state.cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
@@ -1361,9 +1376,9 @@ pub const PackageInstall = struct {
         return Result.success();
     }
 
-    fn installWithCopyfile(this: *PackageInstall) Result {
+    fn installWithCopyfile(this: *PackageInstall, destination_dir: std.fs.Dir) Result {
         var state = InstallDirState{};
-        const res = this.initInstallDir(&state);
+        const res = this.initInstallDir(&state, destination_dir);
         if (res.isFail()) return res;
         defer state.deinit();
 
@@ -1639,9 +1654,9 @@ pub const PackageInstall = struct {
         }
     };
 
-    fn installWithHardlink(this: *PackageInstall) !Result {
+    fn installWithHardlink(this: *PackageInstall, dest_dir: std.fs.Dir) !Result {
         var state = InstallDirState{};
-        const res = this.initInstallDir(&state);
+        const res = this.initInstallDir(&state, dest_dir);
         if (res.isFail()) return res;
         defer state.deinit();
 
@@ -1742,9 +1757,9 @@ pub const PackageInstall = struct {
         };
     }
 
-    fn installWithSymlink(this: *PackageInstall) !Result {
+    fn installWithSymlink(this: *PackageInstall, dest_dir: std.fs.Dir) !Result {
         var state = InstallDirState{};
-        const res = this.initInstallDir(&state);
+        const res = this.initInstallDir(&state, dest_dir);
         if (res.isFail()) return res;
         defer state.deinit();
 
@@ -1884,29 +1899,14 @@ pub const PackageInstall = struct {
         };
     }
 
-    pub fn uninstall(this: *PackageInstall) void {
-        this.destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
+    pub fn uninstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
+        destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
     }
 
-    pub fn uninstallBeforeInstall(this: *PackageInstall) void {
-        // TODO(dylan-conway): depth first package installation to allow lifecycle scripts to start earlier
-        //
-        // if (this.install_order == .depth_first) {
-        //     var subpath_dir = this.destination_dir.open(this.destination_dir_subpath, .{}) catch return;
-        //     defer subpath_dir.close();
-        //     var iter = subpath_dir.iterateAssumeFirstIteration();
-        //     while (iter.next() catch null) |entry| {
-        //         // skip node_modules because installation is depth first
-        //         if (entry.kind != .directory or !strings.eqlComptime(entry.name, "node_modules")) {
-        //             this.destination_dir.deleteTree(entry.name) catch {};
-        //         }
-        //     }
-        // } else {
-        //     this.destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
-        // }
+    pub fn uninstallBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
         var rand_path_buf: [48]u8 = undefined;
         const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
-        switch (bun.sys.renameat(bun.toFD(this.destination_dir), this.destination_dir_subpath, bun.toFD(this.destination_dir), temp_path)) {
+        switch (bun.sys.renameat(bun.toFD(destination_dir), this.destination_dir_subpath, bun.toFD(destination_dir), temp_path)) {
             .err => {
                 // if it fails, that means the directory doesn't exist or was inaccessible
             },
@@ -2040,11 +2040,11 @@ pub const PackageInstall = struct {
         return false;
     }
 
-    pub fn installFromLink(this: *PackageInstall, skip_delete: bool) Result {
+    pub fn installFromLink(this: *PackageInstall, skip_delete: bool, destination_dir: std.fs.Dir) Result {
         const dest_path = this.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallBeforeInstall();
+        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallBeforeInstall(destination_dir);
 
         const subdir = std.fs.path.dirname(dest_path);
 
@@ -2063,7 +2063,7 @@ pub const PackageInstall = struct {
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         if (comptime Environment.isWindows) {
             var wbuf: bun.WPathBuffer = undefined;
-            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(this.destination_dir.fd, &wbuf, dest_buf.len, 0);
+            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(destination_dir.fd, &wbuf, dest_buf.len, 0);
             if (dest_path_length == 0) {
                 const e = bun.windows.Win32Error.get();
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
@@ -2127,13 +2127,13 @@ pub const PackageInstall = struct {
             }
         } else {
             var dest_dir = if (subdir) |dir| brk: {
-                break :brk bun.MakePath.makeOpenPath(this.destination_dir, dir, .{}) catch |err| return Result{
+                break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result{
                     .fail = .{
                         .err = err,
                         .step = .linking,
                     },
                 };
-            } else this.destination_dir;
+            } else destination_dir;
             defer {
                 if (subdir != null) dest_dir.close();
             }
@@ -2184,10 +2184,10 @@ pub const PackageInstall = struct {
         };
     }
 
-    pub fn install(this: *PackageInstall, skip_delete: bool) Result {
+    pub fn install(this: *PackageInstall, skip_delete: bool, destination_dir: std.fs.Dir) Result {
         // If this fails, we don't care.
         // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall();
+        if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
 
         var supported_method_to_use = this.getInstallMethod();
 
@@ -2197,7 +2197,7 @@ pub const PackageInstall = struct {
 
                     // First, attempt to use clonefile
                     // if that fails due to ENOTSUP, mark it as unsupported and then fall back to copyfile
-                    if (this.installWithClonefile()) |result| {
+                    if (this.installWithClonefile(destination_dir)) |result| {
                         return result;
                     } else |err| {
                         switch (err) {
@@ -2217,7 +2217,7 @@ pub const PackageInstall = struct {
             },
             .clonefile_each_dir => {
                 if (comptime Environment.isMac) {
-                    if (this.installWithClonefileEachDir()) |result| {
+                    if (this.installWithClonefileEachDir(destination_dir)) |result| {
                         return result;
                     } else |err| {
                         switch (err) {
@@ -2236,7 +2236,7 @@ pub const PackageInstall = struct {
                 }
             },
             .hardlink => {
-                if (this.installWithHardlink()) |result| {
+                if (this.installWithHardlink(destination_dir)) |result| {
                     return result;
                 } else |err| outer: {
                     if (comptime !Environment.isWindows) {
@@ -2261,7 +2261,7 @@ pub const PackageInstall = struct {
                 if (comptime Environment.isWindows) {
                     supported_method_to_use = .copyfile;
                 } else {
-                    if (this.installWithSymlink()) |result| {
+                    if (this.installWithSymlink(destination_dir)) |result| {
                         return result;
                     } else |err| {
                         switch (err) {
@@ -2283,7 +2283,7 @@ pub const PackageInstall = struct {
         };
 
         // TODO: linux io_uring
-        return this.installWithCopyfile();
+        return this.installWithCopyfile(destination_dir);
     }
 };
 
@@ -2292,7 +2292,6 @@ const Progress = std.Progress;
 const TaggedPointer = @import("../tagged_pointer.zig");
 
 const DependencyInstallContext = struct {
-    fd: ?bun.FileDescriptor = null,
     tree_id: Lockfile.Tree.Id = 0,
     path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     dependency_id: DependencyID,
@@ -2776,17 +2775,6 @@ pub const PackageManager = struct {
         return this.global_link_dir_path;
     }
 
-    fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) !void {
-        if (this.preinstall_state.items.len >= count) {
-            return;
-        }
-
-        const offset = this.preinstall_state.items.len;
-        try this.preinstall_state.ensureTotalCapacity(this.allocator, count);
-        this.preinstall_state.expandToCapacity();
-        @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
-    }
-
     pub fn formatLaterVersionInCache(
         this: *PackageManager,
         name: []const u8,
@@ -2826,6 +2814,17 @@ pub const PackageManager = struct {
             },
             else => return null,
         }
+    }
+
+    fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) !void {
+        if (this.preinstall_state.items.len >= count) {
+            return;
+        }
+
+        const offset = this.preinstall_state.items.len;
+        try this.preinstall_state.ensureTotalCapacity(this.allocator, count);
+        this.preinstall_state.expandToCapacity();
+        @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
     }
 
     pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {
@@ -8657,33 +8656,26 @@ pub const PackageManager = struct {
     }
 
     pub const NodeModulesFolder = struct {
-        fd: ?bun.FileDescriptor = null,
         tree_id: Lockfile.Tree.Id = 0,
         path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
 
         pub fn deinit(this: *NodeModulesFolder) void {
-            if (this.fd) |fd| {
-                this.fd = null;
-                if (std.fs.cwd().fd == fd.cast()) {
-                    return;
-                }
-
-                _ = bun.sys.close(fd);
-            }
-
             this.path.clearAndFree();
         }
 
-        pub fn dir(this: *NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
-            if (this.fd) |fd| {
-                return fd.asDir();
+        pub fn openDir(this: *const NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
+            if (comptime Environment.isPosix) {
+                return root.openDir(this.path.items, .{ .iterate = true, .access_sub_paths = true });
             }
 
-            if (root.fd == std.fs.cwd().fd) {
-                this.fd = bun.toFD(std.fs.cwd());
-                return root;
-            }
+            return (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
+                .can_rename_or_delete = false,
+                .create = true,
+                .read_only = false,
+            }).unwrap()).asDir();
+        }
 
+        pub fn makeAndOpenDir(this: *NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
             const out = brk: {
                 if (comptime Environment.isPosix) {
                     break :brk try root.makeOpenPath(this.path.items, .{ .iterate = true, .access_sub_paths = true });
@@ -8696,7 +8688,6 @@ pub const PackageManager = struct {
                     .read_only = false,
                 }).unwrap()).asDir();
             };
-            this.fd = bun.toFD(out.fd);
             return out;
         }
     };
@@ -8840,21 +8831,8 @@ pub const PackageManager = struct {
                         const package_id = resolutions[context.dependency_id];
                         const name = lockfile.str(&this.names[package_id]);
                         const resolution = &this.resolutions[package_id];
-                        this.node_modules.fd = context.fd;
                         this.node_modules.tree_id = context.tree_id;
                         this.node_modules.path = context.path;
-                        var dir = this.node_modules.dir(this.root_node_modules_folder) catch |err| {
-                            if (log_level != .silent) {
-                                Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
-                                    name,
-                                    bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
-                                });
-                            }
-                            this.summary.fail += 1;
-                            continue;
-                        };
-                        defer dir.close();
-                        this.node_modules.fd = null;
                         this.current_tree_id = context.tree_id;
                         const needs_verify = false;
                         const is_pending_package_install = true;
@@ -8867,7 +8845,6 @@ pub const PackageManager = struct {
                             log_level,
                             name,
                             resolution,
-                            dir,
                             needs_verify,
                             is_pending_package_install,
                         );
@@ -9018,21 +8995,8 @@ pub const PackageManager = struct {
                 for (callbacks.items) |*cb| {
                     const context = cb.dependency_install_context;
                     if (this.canInstallPackageForTree(this.lockfile.buffers.trees.items, context.tree_id)) {
-                        this.node_modules.fd = context.fd;
                         this.node_modules.tree_id = context.tree_id;
                         this.node_modules.path = context.path;
-                        var dir = this.node_modules.dir(this.root_node_modules_folder) catch |err| {
-                            if (log_level != .silent) {
-                                Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
-                                    name,
-                                    bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
-                                });
-                            }
-                            this.summary.fail += 1;
-                            continue;
-                        };
-                        defer dir.close();
-                        this.node_modules.fd = null;
                         this.current_tree_id = context.tree_id;
                         const needs_verify = false;
                         const is_pending_package_install = false;
@@ -9045,7 +9009,6 @@ pub const PackageManager = struct {
                             log_level,
                             name,
                             resolution,
-                            dir,
                             needs_verify,
                             is_pending_package_install,
                         );
@@ -9147,7 +9110,6 @@ pub const PackageManager = struct {
             comptime log_level: Options.LogLevel,
             name: string,
             resolution: *const Resolution,
-            destination_dir: std.fs.Dir,
 
             // false when coming from download. if the package was downloaded
             // it was already determined to need an install
@@ -9174,7 +9136,6 @@ pub const PackageManager = struct {
                 .progress = this.progress,
                 .cache_dir = undefined,
                 .cache_dir_subpath = undefined,
-                .destination_dir = destination_dir,
                 .destination_dir_subpath = destination_dir_subpath,
                 .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
                 .allocator = this.lockfile.allocator,
@@ -9290,7 +9251,11 @@ pub const PackageManager = struct {
                 },
             }
 
-            const needs_install = this.force_install or this.skip_verify_installed_version_number or !needs_verify or !installer.verify(resolution, buf);
+            const needs_install = this.force_install or this.skip_verify_installed_version_number or !needs_verify or !installer.verify(
+                resolution,
+                buf,
+                this.root_node_modules_folder,
+            );
             this.summary.skipped += @intFromBool(!needs_install);
 
             if (needs_install) {
@@ -9301,7 +9266,6 @@ pub const PackageManager = struct {
 
                     const context: TaskCallbackContext = .{
                         .dependency_install_context = .{
-                            .fd = null,
                             .tree_id = this.current_tree_id,
                             .path = this.node_modules.path.clone() catch bun.outOfMemory(),
                             .dependency_id = dependency_id,
@@ -9375,16 +9339,31 @@ pub const PackageManager = struct {
                 if (!this.canInstallPackageForTree(this.lockfile.buffers.trees.items, this.current_tree_id)) {
                     this.pending_installs_to_tree_id[this.current_tree_id].append(this.manager.allocator, .{
                         .dependency_id = dependency_id,
-                        .fd = null,
                         .tree_id = this.current_tree_id,
                         .path = this.node_modules.path.clone() catch bun.outOfMemory(),
                     }) catch bun.outOfMemory();
                     return;
                 }
 
+                // creating this directory now, right before installing package
+                var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
+                    if (log_level != .silent) {
+                        Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
+                            name,
+                            bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
+                        });
+                    }
+                    this.summary.fail += 1;
+                    return;
+                };
+
+                defer {
+                    if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
+                }
+
                 const install_result = switch (resolution.tag) {
-                    .symlink, .workspace => installer.installFromLink(this.skip_delete),
-                    else => installer.install(this.skip_delete),
+                    .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
+                    else => installer.install(this.skip_delete, destination_dir),
                 };
 
                 switch (install_result) {
@@ -9433,7 +9412,7 @@ pub const PackageManager = struct {
                                     }
 
                                     if (this.manager.options.enable.fail_early) {
-                                        installer.uninstall();
+                                        installer.uninstall(destination_dir);
                                         Global.crash();
                                     }
                                 }
@@ -9554,6 +9533,21 @@ pub const PackageManager = struct {
                     },
                 }
             } else {
+                var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
+                    if (log_level != .silent) {
+                        Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
+                            name,
+                            bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
+                        });
+                    }
+                    this.summary.fail += 1;
+                    return;
+                };
+
+                defer {
+                    if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
+                }
+
                 const name_hash: TruncatedPackageNameHash = @truncate(this.lockfile.buffers.dependencies.items[dependency_id].name_hash);
                 const is_trusted, const is_trusted_through_update_request, const add_to_lockfile = brk: {
                     // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
@@ -9661,7 +9655,6 @@ pub const PackageManager = struct {
         pub fn installPackage(
             this: *PackageInstaller,
             dependency_id: DependencyID,
-            destination_dir: std.fs.Dir,
             comptime log_level: Options.LogLevel,
         ) void {
             const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
@@ -9686,7 +9679,6 @@ pub const PackageManager = struct {
                 log_level,
                 name,
                 resolution,
-                destination_dir,
                 needs_verify,
                 is_pending_package_install,
             );
@@ -9937,15 +9929,6 @@ pub const PackageManager = struct {
         if (options.enable.force_install) {
             skip_verify_installed_version_number = true;
             skip_delete = false;
-
-            // TODO(dylan-conway): depth first installation
-            // var node_modules_iter = node_modules_folder.iterateAssumeFirstIteration();
-            // defer node_modules_iter.reset();
-            // while (try node_modules_iter.next()) |entry| {
-            //     if (entry.kind != .directory or !strings.eqlComptime(entry.name, ".cache")) {
-            //         node_modules_folder.deleteTree(entry.name) catch {};
-            //     }
-            // }
         }
 
         var summary = PackageInstall.Summary{};
@@ -10061,7 +10044,6 @@ pub const PackageManager = struct {
                     .lockfile = this.lockfile,
                     .node = &install_node,
                     .node_modules = .{
-                        .fd = bun.toFD(node_modules_folder.fd),
                         .path = std.ArrayList(u8).fromOwnedSlice(
                             this.allocator,
                             try this.allocator.dupe(
@@ -10104,12 +10086,6 @@ pub const PackageManager = struct {
                 var remaining = node_modules.dependencies;
                 installer.current_tree_id = node_modules.tree_id;
 
-                var destination_dir = try installer.node_modules.dir(node_modules_folder);
-                defer {
-                    installer.node_modules.fd = null;
-                    destination_dir.close();
-                }
-
                 if (comptime Environment.allow_assert) {
                     bun.assert(node_modules.dependencies.len == this.lockfile.buffers.trees.items[installer.current_tree_id].dependencies.len);
                 }
@@ -10122,7 +10098,7 @@ pub const PackageManager = struct {
                 while (remaining.len > unroll_count) {
                     comptime var i: usize = 0;
                     inline while (i < unroll_count) : (i += 1) {
-                        installer.installPackage(remaining[i], destination_dir, comptime log_level);
+                        installer.installPackage(remaining[i], comptime log_level);
                     }
                     remaining = remaining[unroll_count..];
 
@@ -10148,7 +10124,7 @@ pub const PackageManager = struct {
                 }
 
                 for (remaining) |dependency_id| {
-                    installer.installPackage(dependency_id, destination_dir, log_level);
+                    installer.installPackage(dependency_id, log_level);
                 }
 
                 try this.runTasks(

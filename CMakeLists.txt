@@ -551,6 +551,7 @@ else()
             add_compile_definitions("BUN_DEBUG=1")
             set(ASSERT_ENABLED "1")
         endif()
+
         message(STATUS "Using WebKit from ${WEBKIT_DIR}")
     else()
         if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
@@ -1104,6 +1105,8 @@ else()
         -fvisibility-inlines-hidden
         -fno-rtti
         -fno-omit-frame-pointer
+        -fconstexpr-steps=1271242
+        -fconstexpr-depth=27
     )
     string(APPEND CMAKE_CXX_FLAGS " -std=c++2a")
 endif()

@@ -31,6 +31,48 @@ const constants = {
   SQLITE_PREPARE_PERSISTENT: 0x01,
   SQLITE_PREPARE_NORMALIZE: 0x02,
   SQLITE_PREPARE_NO_VTAB: 0x04,
+
+  SQLITE_FCNTL_LOCKSTATE: 1,
+  SQLITE_FCNTL_GET_LOCKPROXYFILE: 2,
+  SQLITE_FCNTL_SET_LOCKPROXYFILE: 3,
+  SQLITE_FCNTL_LAST_ERRNO: 4,
+  SQLITE_FCNTL_SIZE_HINT: 5,
+  SQLITE_FCNTL_CHUNK_SIZE: 6,
+  SQLITE_FCNTL_FILE_POINTER: 7,
+  SQLITE_FCNTL_SYNC_OMITTED: 8,
+  SQLITE_FCNTL_WIN32_AV_RETRY: 9,
+  SQLITE_FCNTL_PERSIST_WAL: 10,
+  SQLITE_FCNTL_OVERWRITE: 11,
+  SQLITE_FCNTL_VFSNAME: 12,
+  SQLITE_FCNTL_POWERSAFE_OVERWRITE: 13,
+  SQLITE_FCNTL_PRAGMA: 14,
+  SQLITE_FCNTL_BUSYHANDLER: 15,
+  SQLITE_FCNTL_TEMPFILENAME: 16,
+  SQLITE_FCNTL_MMAP_SIZE: 18,
+  SQLITE_FCNTL_TRACE: 19,
+  SQLITE_FCNTL_HAS_MOVED: 20,
+  SQLITE_FCNTL_SYNC: 21,
+  SQLITE_FCNTL_COMMIT_PHASETWO: 22,
+  SQLITE_FCNTL_WIN32_SET_HANDLE: 23,
+  SQLITE_FCNTL_WAL_BLOCK: 24,
+  SQLITE_FCNTL_ZIPVFS: 25,
+  SQLITE_FCNTL_RBU: 26,
+  SQLITE_FCNTL_VFS_POINTER: 27,
+  SQLITE_FCNTL_JOURNAL_POINTER: 28,
+  SQLITE_FCNTL_WIN32_GET_HANDLE: 29,
+  SQLITE_FCNTL_PDB: 30,
+  SQLITE_FCNTL_BEGIN_ATOMIC_WRITE: 31,
+  SQLITE_FCNTL_COMMIT_ATOMIC_WRITE: 32,
+  SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE: 33,
+  SQLITE_FCNTL_LOCK_TIMEOUT: 34,
+  SQLITE_FCNTL_DATA_VERSION: 35,
+  SQLITE_FCNTL_SIZE_LIMIT: 36,
+  SQLITE_FCNTL_CKPT_DONE: 37,
+  SQLITE_FCNTL_RESERVE_BYTES: 38,
+  SQLITE_FCNTL_CKPT_START: 39,
+  SQLITE_FCNTL_EXTERNAL_READER: 40,
+  SQLITE_FCNTL_CKSM_FILE: 41,
+  SQLITE_FCNTL_RESET_CACHE: 42,
 };
 
 var SQL;
@@ -161,6 +203,12 @@ class Statement {
     this.isFinalized = true;
     return this.#raw.finalize(...args);
   }
+
+  [Symbol.dispose]() {
+    if (!this.isFinalized) {
+      this.finalize();
+    }
+  }
 }
 
 var cachedCount = Symbol.for("Bun.Database.cache.count");
@@ -213,7 +261,7 @@ class Database {
       SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
     }
 
-    this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags);
+    this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags, this);
     this.filename = filename;
   }
 
@@ -222,7 +270,7 @@ class Database {
   #cachedQueriesLengths = [];
   #cachedQueriesValues = [];
   filename;
-
+  #hasClosed = false;
   get handle() {
     return this.#handle;
   }
@@ -255,6 +303,12 @@ class Database {
     return new Database(serialized, isReadOnly ? constants.SQLITE_OPEN_READONLY : 0);
   }
 
+  [Symbol.dispose]() {
+    if (!this.#hasClosed) {
+      this.close(true);
+    }
+  }
+
   static setCustomSQLite(path) {
     if (!SQL) {
       SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
@@ -263,13 +317,24 @@ class Database {
     return SQL.setCustomSQLite(path);
   }
 
-  close() {
+  fileControl(cmd, arg) {
+    const handle = this.#handle;
+
+    if (arguments.length <= 2) {
+      return SQL.fcntl(handle, null, arguments[0], arguments[1]);
+    }
+
+    return SQL.fcntl(handle, ...arguments);
+  }
+
+  close(throwOnError = false) {
     this.clearQueryCache();
-    return SQL.close(this.#handle);
+    this.#hasClosed = true;
+    return SQL.close(this.#handle, throwOnError);
   }
   clearQueryCache() {
     for (let item of this.#cachedQueriesValues) {
-      item.finalize();
+      item?.finalize?.();
     }
     this.#cachedQueriesKeys.length = 0;
     this.#cachedQueriesValues.length = 0;

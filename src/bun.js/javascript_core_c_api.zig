@@ -23,7 +23,6 @@ pub const struct_OpaqueJSContext = generic;
 pub const JSContextRef = *cpp.JSGlobalObject;
 pub const JSGlobalContextRef = ?*cpp.JSGlobalObject;
 
-
 pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
 pub const JSTypedArrayBytesDeallocator = ?*const fn (*anyopaque, *anyopaque) callconv(.C) void;

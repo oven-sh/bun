@@ -34,6 +34,8 @@
 #include <JavaScriptCore/ObjectPrototype.h>
 #include "BunBuiltinNames.h"
 #include "sqlite3_error_codes.h"
+#include "wtf/BitVector.h"
+#include "wtf/Vector.h"
 #include <atomic>
 
 /* ******************************************************************************** */
@@ -322,6 +324,9 @@ public:
     VersionSqlite3* version_db;
     uint64_t version;
     bool hasExecuted = false;
+    // Tracks which columns are valid in the current result set. Used to handle duplicate column names.
+    // The bit at index i is set if the column at index i is valid.
+    WTF::BitVector validColumns;
     std::unique_ptr<PropertyNameArray> columnNames;
     mutable JSC::WriteBarrier<JSC::JSObject> _prototype;
     mutable JSC::WriteBarrier<JSC::Structure> _structure;
@@ -462,6 +467,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             castedThis->columnNames->propertyNameMode(),
             castedThis->columnNames->privateSymbolMode()));
     }
+    castedThis->validColumns.clearAll();
     castedThis->update_version();
 
     JSC::VM& vm = lexicalGlobalObject->vm();
@@ -484,7 +490,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
         auto columnNames = castedThis->columnNames.get();
         bool anyHoles = false;
-        for (int i = 0; i < count; i++) {
+        for (int i = count - 1; i >= 0; i--) {
             const char* name = sqlite3_column_name(stmt, i);
 
             if (name == nullptr) {
@@ -498,7 +504,18 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 break;
             }
 
-            columnNames->add(Identifier::fromString(vm, WTF::String::fromUTF8({ name, len })));
+            // When joining multiple tables, the same column names can appear multiple times
+            // columnNames de-dupes property names internally
+            // We can't have two properties with the same name, so we use validColumns to track this.
+            auto preCount = columnNames->size();
+            columnNames->add(
+                Identifier::fromString(vm, WTF::String::fromUTF8({name, len}))
+            );
+            auto curCount = columnNames->size();
+
+            if (preCount != curCount) {
+                castedThis->validColumns.set(i);
+            }
         }
 
         if (LIKELY(!anyHoles)) {
@@ -506,6 +523,10 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), columnNames->size());
             vm.writeBarrier(castedThis, structure);
 
+            // We iterated over the columns in reverse order so we need to reverse the columnNames here
+            // Importantly we reverse before adding the properties to the structure to ensure that index accesses
+            // later refer to the correct property.
+            columnNames->data()->propertyNameVector().reverse();
             for (const auto& propertyName : *columnNames) {
                 structure = Structure::addPropertyTransition(vm, structure, propertyName, 0, offset);
             }
@@ -520,6 +541,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 castedThis->columnNames->vm(),
                 castedThis->columnNames->propertyNameMode(),
                 castedThis->columnNames->privateSymbolMode()));
+            castedThis->validColumns.clearAll();
         }
     }
 
@@ -531,7 +553,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     // see https://github.com/oven-sh/bun/issues/987
     JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(static_cast<unsigned>(count), JSFinalObject::maxInlineCapacity));
 
-    for (int i = 0; i < count; i++) {
+    for (int i = count - 1; i >= 0; i--) {
         const char* name = sqlite3_column_name(stmt, i);
 
         if (name == nullptr)
@@ -562,9 +584,18 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             }
         }
 
-        object->putDirect(vm, key, primitive, 0);
+        auto preCount = castedThis->columnNames->size();
         castedThis->columnNames->add(key);
+        auto curCount = castedThis->columnNames->size();
+
+        // only put the property if it's not a duplicate
+        if (preCount != curCount) {
+            castedThis->validColumns.set(i);
+            object->putDirect(vm, key, primitive, 0);
+        }
     }
+    // We iterated over the columns in reverse order so we need to reverse the columnNames here
+    castedThis->columnNames->data()->propertyNameVector().reverse();
     castedThis->_prototype.set(vm, castedThis, object);
 }
 
@@ -1495,8 +1526,15 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     if (auto* structure = castedThis->_structure.get()) {
         result = JSC::constructEmptyObject(vm, structure);
 
-        for (unsigned int i = 0; i < count; i++) {
-            result->putDirectOffset(vm, i, toJS(vm, lexicalGlobalObject, stmt, i));
+        // i: the index of columns returned from SQLite
+        // j: the index of object property
+        for (int i = 0, j = 0; j < count; i++, j++) {
+            if (!castedThis->validColumns.get(i)) {
+                // this column is duplicate, skip
+                j -= 1;
+                continue;
+            }
+            result->putDirectOffset(vm, j, toJS(vm, lexicalGlobalObject, stmt, i));
         }
 
     } else {
@@ -1506,9 +1544,56 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
             result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), JSFinalObject::maxInlineCapacity));
         }
 
-        for (int i = 0; i < count; i++) {
-            const auto& name = columnNames[i];
+        for (int i = 0, j = 0; j < count; i++, j++) {
+            if (!castedThis->validColumns.get(i)) {
+                j -= 1;
+                continue;
+            }
+            auto name = columnNames[j];
             result->putDirect(vm, name, toJS(vm, lexicalGlobalObject, stmt, i), 0);
+
+            switch (sqlite3_column_type(stmt, i)) {
+            case SQLITE_INTEGER: {
+                // https://github.com/oven-sh/bun/issues/1536
+                result->putDirect(vm, name, jsNumberFromSQLite(stmt, i), 0);
+                break;
+            }
+            case SQLITE_FLOAT: {
+                result->putDirect(vm, name, jsDoubleNumber(sqlite3_column_double(stmt, i)), 0);
+                break;
+            }
+            // > Note that the SQLITE_TEXT constant was also used in SQLite version
+            // > 2 for a completely different meaning. Software that links against
+            // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
+            // > not SQLITE_TEXT.
+            case SQLITE3_TEXT: {
+                size_t len = sqlite3_column_bytes(stmt, i);
+                const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
+
+                if (len > 64) {
+                    result->putDirect(vm, name, JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)), 0);
+                    continue;
+                }
+
+                result->putDirect(vm, name, jsString(vm, WTF::String::fromUTF8({ text, len })), 0);
+                break;
+            }
+            case SQLITE_BLOB: {
+                size_t len = sqlite3_column_bytes(stmt, i);
+                const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
+                JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
+
+                if (LIKELY(blob && len))
+                    memcpy(array->vector(), blob, len);
+
+                result->putDirect(vm, name, array, 0);
+                break;
+            }
+            default: {
+                result->putDirect(vm, name, jsNull(), 0);
+                break;
+            }
+            }
         }
     }
 
@@ -1524,10 +1609,14 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
     JSC::JSArray* result = JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
     auto* stmt = castedThis->stmt;
 
-    for (int i = 0; i < count; i++) {
+    for (int i = 0, j = 0; j < count; i++, j++) {
+        if (!castedThis->validColumns.get(i)) {
+            j -= 1;
+            continue;
+        }
         JSValue value = toJS(vm, lexicalGlobalObject, stmt, i);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
-        result->putDirectIndex(lexicalGlobalObject, i, value);
+        result->putDirectIndex(lexicalGlobalObject, j, value);
     }
 
     return result;

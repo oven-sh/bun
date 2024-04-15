@@ -778,6 +778,77 @@ it.skipIf(
   expect(db.prepare("SELECT TAN(0.25)").all()).toEqual([{ "TAN(0.25)": 0.25534192122103627 }]);
 });
 
+it("issue#6597", () => {
+  // better-sqlite3 returns the last value of duplicate fields
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE Users (Id INTEGER PRIMARY KEY, Name VARCHAR(255), CreatedAt TIMESTAMP)");
+  db.run(
+    "CREATE TABLE Cars (Id INTEGER PRIMARY KEY, Driver INTEGER, CreatedAt TIMESTAMP, FOREIGN KEY (Driver) REFERENCES Users(Id))",
+  );
+  db.run('INSERT INTO Users (Id, Name, CreatedAt) VALUES (1, "Alice", "2022-01-01");');
+  db.run('INSERT INTO Cars (Id, Driver, CreatedAt) VALUES (2, 1, "2023-01-01");');
+  const result = db.prepare("SELECT * FROM Cars JOIN Users ON Driver=Users.Id").get();
+  expect(result).toStrictEqual({
+    Id: 1,
+    Driver: 1,
+    CreatedAt: "2022-01-01",
+    Name: "Alice",
+  });
+  db.close();
+});
+
+it("issue#6597 with many columns", () => {
+  // better-sqlite3 returns the last value of duplicate fields
+  const db = new Database(":memory:");
+  const count = 100;
+  const columns = Array.from({ length: count }, (_, i) => `col${i}`);
+  const values_foo = Array.from({ length: count }, (_, i) => `'foo${i}'`);
+  const values_bar = Array.from({ length: count }, (_, i) => `'bar${i}'`);
+  values_bar[0] = values_foo[0];
+  db.run(`CREATE TABLE foo (${columns.join(",")})`);
+  db.run(`CREATE TABLE bar (${columns.join(",")})`);
+  db.run(`INSERT INTO foo (${columns.join(",")}) VALUES (${values_foo.join(",")})`);
+  db.run(`INSERT INTO bar (${columns.join(",")}) VALUES (${values_bar.join(",")})`);
+  const result = db.prepare("SELECT * FROM foo JOIN bar ON foo.col0 = bar.col0").get();
+  expect(result.col0).toBe("foo0");
+  for (let i = 1; i < count; i++) {
+    expect(result[`col${i}`]).toBe(`bar${i}`);
+  }
+  db.close();
+});
+
+it("issue#7147", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");
+  db.exec(
+    "CREATE TABLE bars (bar_id INTEGER NOT NULL PRIMARY KEY, foo_id INTEGER NOT NULL, bar_a INTEGER, bar_b INTEGER, FOREIGN KEY (foo_id) REFERENCES foos (foo_id))",
+  );
+  db.exec("INSERT INTO foos VALUES (1, 'foo_1', 'foo_2')");
+  db.exec("INSERT INTO bars VALUES (1, 1, 'bar_1', 'bar_2')");
+  db.exec("INSERT INTO bars VALUES (2, 1, 'baz_3', 'baz_4')");
+  const query = db.query("SELECT f.*, b.* FROM foos f JOIN bars b ON b.foo_id = f.foo_id");
+  const result = query.all();
+  expect(result).toStrictEqual([
+    {
+      foo_id: 1,
+      foo_a: "foo_1",
+      foo_b: "foo_2",
+      bar_id: 1,
+      bar_a: "bar_1",
+      bar_b: "bar_2",
+    },
+    {
+      foo_id: 1,
+      foo_a: "foo_1",
+      foo_b: "foo_2",
+      bar_id: 2,
+      bar_a: "baz_3",
+      bar_b: "baz_4",
+    },
+  ]);
+  db.close();
+});
+
 it("should close with WAL enabled", () => {
   const dir = tempDirWithFiles("sqlite-wal-test", { "empty.txt": "" });
   const file = path.join(dir, "my.db");
@@ -812,11 +883,12 @@ it("close() should NOT throw an error if the database is in use", () => {
 
 it("should dispose AND throw an error if the database is in use", () => {
   expect(() => {
+    let prepared;
     {
       using db = new Database(":memory:");
       db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
-      var prepared = db.prepare("SELECT * FROM foo");
+      prepared = db.prepare("SELECT * FROM foo");
     }
   }).toThrow("database is locked");
 });
@@ -832,8 +904,8 @@ it("should dispose", () => {
 });
 
 it("can continue to use existing statements after database has been GC'd", async () => {
-  var called = false;
-  var registry = new FinalizationRegistry(() => {
+  let called = false;
+  const registry = new FinalizationRegistry(() => {
     called = true;
   });
   function leakTheStatement() {
@@ -868,10 +940,11 @@ it("statements should be disposable", () => {
 
 it("query should work if the cached statement was finalized", () => {
   {
+    let prevQuery;
     using db = new Database("mydb.sqlite");
     {
       using query = db.query("select 'Hello world' as message;");
-      var prevQuery = query;
+      prevQuery = query;
       query.get();
     }
     {

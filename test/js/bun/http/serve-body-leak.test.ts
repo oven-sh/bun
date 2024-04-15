@@ -3,6 +3,9 @@ import { it, expect, beforeAll, afterAll } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import type { Subprocess } from "bun";
 
+const ACCEPTABLE_MEMORY_LEAK = 2; //MB for acceptable memory leak variance
+const payload = "1".repeat(64 * 1024); // decent size payload to test memory leak
+
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
 beforeAll(async () => {
@@ -28,7 +31,6 @@ async function garbageCollect() {
   await Bun.sleep(100);
   await fetch(`${url.origin}/gc`);
 }
-const payload = "1".repeat(64 * 1024);
 
 async function warmup() {
   for (let i = 0; i < 10_000; i++) {
@@ -64,7 +66,7 @@ async function callIgnore() {
   });
 }
 
-async function memoryMemoryLeak(fn: () => Promise<void>) {
+async function calculateMemoryLeak(fn: () => Promise<void>) {
   const start_memory = await getMemoryUsage();
   const memory_examples: Array<number> = [];
   let peak_memory = start_memory;
@@ -86,44 +88,45 @@ async function memoryMemoryLeak(fn: () => Promise<void>) {
   }
   // use first example as a reference if is a memory leak this should keep increasing and not be stable
   const consumption = end_memory - memory_examples[0];
+  // memory leak in MB
   const leak = Math.floor(consumption > 0 ? consumption / 1024 / 1024 : 0);
   return { leak, start_memory, peak_memory, end_memory, memory_examples };
 }
 it("#10265 should not leak memory when ignoring the body", async () => {
-  const report = await memoryMemoryLeak(callIgnore);
+  const report = await calculateMemoryLeak(callIgnore);
   console.log(report);
 
   // peak memory is too high
   expect(report.peak_memory > report.start_memory * 2).toBe(false);
   // acceptable memory leak 2mbish
-  expect(report.leak).toBeLessThanOrEqual(2);
+  expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
 });
 
 it("should not leak memory when buffering the body", async () => {
-  const report = await memoryMemoryLeak(callBuffering);
+  const report = await calculateMemoryLeak(callBuffering);
   console.log(report);
   // peak memory is too high
   expect(report.peak_memory > report.start_memory * 2).toBe(false);
   // acceptable memory leak 2mbish
-  expect(report.leak).toBeLessThanOrEqual(2);
+  expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
 });
 
 it("should not leak memory when streaming the body", async () => {
-  const report = await memoryMemoryLeak(callStreaming);
+  const report = await calculateMemoryLeak(callStreaming);
   console.log(report);
 
   // peak memory is too high
   expect(report.peak_memory > report.start_memory * 2).toBe(false);
   // acceptable memory leak 2mbish
-  expect(report.leak).toBeLessThanOrEqual(2);
+  expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
 });
 
 it("should not leak memory when streaming the body incompletely", async () => {
-  const report = await memoryMemoryLeak(callIncompleteStreaming);
+  const report = await calculateMemoryLeak(callIncompleteStreaming);
   console.log(report);
 
   // peak memory is too high
   expect(report.peak_memory > report.start_memory * 2).toBe(false);
   // acceptable memory leak 2mbish
-  expect(report.leak).toBeLessThanOrEqual(2);
+  expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
 });

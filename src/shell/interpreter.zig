@@ -10556,7 +10556,7 @@ pub const Interpreter = struct {
                     if (this.event_loop == .js) {
                         const vm: *JSC.VirtualMachine = this.event_loop.js.getVmImpl();
                         print("Yoops", .{});
-                        _ = JSC.Node.AsyncCpTask.createWithShellTask(
+                        _ = JSC.Node.ShellAsyncCpTask.createWithShellTask(
                             vm.global,
                             args,
                             vm,
@@ -10565,7 +10565,7 @@ pub const Interpreter = struct {
                             false,
                         );
                     } else {
-                        _ = JSC.Node.AsyncCpTask.createMini(
+                        _ = JSC.Node.ShellAsyncCpTask.createMini(
                             args,
                             bun.ArenaAllocator.init(bun.default_allocator),
                             this,

@@ -771,15 +771,17 @@ pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
         const flag_ = flag;
-        var is_enabled: ?bool = null;
+        const state = enum(u8) { idk, disabled, enabled };
+        var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
         pub fn get() bool {
-            return is_enabled orelse brk: {
-                is_enabled = false;
-                if (getenvZ(flag_)) |val| {
-                    is_enabled = strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true");
-                }
-
-                break :brk is_enabled.?;
+            return switch (is_enabled.load(.SeqCst)) {
+                .enabled => true,
+                .disabled => false,
+                .idk => {
+                    const enabled = if (getenvZ(flag_)) |val| strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true") else false;
+                    is_enabled.store(if (enabled) .enabled else .disabled, .SeqCst);
+                    return enabled;
+                },
             };
         }
     }.get();

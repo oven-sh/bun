@@ -797,7 +797,7 @@ it("issue#6597", () => {
   db.close();
 });
 
-it.only("issue#6597 with many columns", () => {
+it("issue#6597 with many columns", () => {
   // better-sqlite3 returns the last value of duplicate fields
   const db = new Database(":memory:");
   const count = 100;

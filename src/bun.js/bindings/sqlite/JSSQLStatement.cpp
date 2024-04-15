@@ -319,8 +319,10 @@ public:
     VersionSqlite3* version_db;
     uint64_t version;
     bool hasExecuted = false;
-    WTF::BitVector columnOffsets;
-    // uint16_t columnOffsets = 0;
+    // Tracks which columns should be skipped because another column with the same name
+    // is being used instead. Each bit corresponds to a column index. If the bit is set,
+    // the column should be skipped.
+    WTF::BitVector skippedColumns;
     std::unique_ptr<PropertyNameArray> columnNames;
     mutable JSC::WriteBarrier<JSC::JSObject> _prototype;
     mutable JSC::WriteBarrier<JSC::Structure> _structure;
@@ -420,7 +422,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             castedThis->columnNames->propertyNameMode(),
             castedThis->columnNames->privateSymbolMode()));
     }
-    castedThis->columnOffsets.clearAll();
+    castedThis->skippedColumns.clearAll();
     castedThis->update_version();
 
     JSC::VM& vm = lexicalGlobalObject->vm();
@@ -457,11 +459,9 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 break;
             }
 
-            // columnNames->add(Identifier::fromString(vm, WTF::String::fromUTF8({ name, len })));
-
             // When joining multiple tables, the same column names can appear multiple times
             // columnNames de-dupes property names internally
-            // We can't have two properties with the same name, so using columnOffsets to track this.
+            // We can't have two properties with the same name, so we use columnOffsets to track this.
             int preCount = columnNames->size();
             columnNames->add(
                 Identifier::fromString(vm, WTF::String::fromUTF8({name, len}))
@@ -469,8 +469,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             int curCount = columnNames->size();
 
             if (preCount != curCount) {
-                // castedThis->columnOffsets |= (1u << i);
-                castedThis->columnOffsets.set(i);
+                castedThis->skippedColumns.set(i);
             }
         }
 
@@ -478,10 +477,11 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), columnNames->size());
             vm.writeBarrier(castedThis, structure);
 
+            // We iterated over the columns in reverse order so we need to reverse the columnNames here
+            // Importantly we reverse before adding the properties to the structure to ensure that index accesses
+            // later refer to the correct property.
             columnNames->data()->propertyNameVector().reverse();
             for (const auto& propertyName : *columnNames) {
-            // for (auto it = nameVec.rbegin(); it != nameVec.rend(); ++it) {
-                // auto propertyName = *it;
                 structure = Structure::addPropertyTransition(vm, structure, propertyName, 0, offset);
             }
             castedThis->_structure.set(vm, castedThis, structure);
@@ -496,7 +496,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 castedThis->columnNames->propertyNameMode(),
                 castedThis->columnNames->privateSymbolMode()));
             // castedThis->columnOffsets = 0;
-            castedThis->columnOffsets.clearAll();
+            castedThis->skippedColumns.clearAll();
         }
     }
 
@@ -539,17 +539,17 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             }
         }
 
-        // object->putDirect(vm, key, primitive, 0);
         int preCount = castedThis->columnNames->size();
         castedThis->columnNames->add(key);
         int curCount = castedThis->columnNames->size();
 
+        // only put the property if it's not a duplicate
         if (preCount != curCount) {
-            // castedThis->columnOffsets |= (1u << i);
-            castedThis->columnOffsets.set(i);
+            castedThis->skippedColumns.set(i);
             object->putDirect(vm, key, primitive, 0);
         }
     }
+    // We iterated over the columns in reverse order so we need to reverse the columnNames here
     castedThis->columnNames->data()->propertyNameVector().reverse();
     castedThis->_prototype.set(vm, castedThis, object);
 }
@@ -1381,9 +1381,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         // i: the index of columns returned from SQLite
         // j: the index of object property
         for (int i = 0, j = 0; j < count; i++, j++) {
-            // columnOffsets stores all column we added in columnNames
-            // if ((castedThis->columnOffsets & (1u << i)) == 0) {
-            if (!castedThis->columnOffsets.get(i)) {
+            if (!castedThis->skippedColumns.get(i)) {
                 // this column is duplicate, skip
                 j -= 1;
                 continue;
@@ -1445,7 +1443,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         }
 
         for (int i = 0, j = 0; j < count; i++, j++) {
-            if (!castedThis->columnOffsets.get(i)) {
+            if (!castedThis->skippedColumns.get(i)) {
                 j -= 1;
                 continue;
             }
@@ -1508,12 +1506,10 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
     auto* stmt = castedThis->stmt;
 
     for (int i = 0, j = 0; j < count; i++, j++) {
-        // if ((castedThis->columnOffsets & (1u << i)) == 0) {
-        if (!castedThis->columnOffsets.get(i)) {
+        if (!castedThis->skippedColumns.get(i)) {
             j -= 1;
             continue;
         }
-    // for (int i = 0; i < count; i++) {
 
         switch (sqlite3_column_type(stmt, i)) {
         case SQLITE_INTEGER: {

@@ -1098,15 +1098,13 @@ else()
     target_compile_options(${bun} PUBLIC
         -fPIC
         -mtune=${CPU_TARGET}
-        -fconstexpr-steps=1271242
-        -fconstexpr-depth=27
+        -fconstexpr-steps=2542484
+        -fconstexpr-depth=54
         -fno-exceptions
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -fno-rtti
         -fno-omit-frame-pointer
-        -fconstexpr-steps=1271242
-        -fconstexpr-depth=27
     )
     string(APPEND CMAKE_CXX_FLAGS " -std=c++2a")
 endif()

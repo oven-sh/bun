@@ -33,6 +33,7 @@ if (isWindows) {
   test("which", () => {
     expect(which("cmd")).toBe("C:\\Windows\\system32\\cmd.exe");
     expect(which("cmd.exe")).toBe("C:\\Windows\\system32\\cmd.exe");
+    expect(which("cmd.EXE")).toBe("C:\\Windows\\system32\\cmd.EXE");
     expect(which("cmd.bat")).toBe(null);
     const exe = basename(process.execPath);
     const dir = join(process.execPath, "../");

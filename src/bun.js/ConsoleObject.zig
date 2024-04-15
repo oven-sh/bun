@@ -1043,8 +1043,6 @@ pub const Formatter = struct {
                 .cell = js_type,
             };
 
-            // Cell is the "unknown" type
-            // if we call JSObjectGetPrivate, it can segfault
             if (js_type == .Cell) {
                 return .{
                     .tag = .{ .NativeCode = {} },

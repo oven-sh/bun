@@ -223,7 +223,7 @@ pub export fn napi_get_boolean(_: napi_env, value: bool, result: *napi_value) na
 }
 pub export fn napi_create_array(env: napi_env, result: *napi_value) napi_status {
     log("napi_create_array", .{});
-    result.* = JSValue.c(JSC.C.JSObjectMakeArray(env.ref(), 0, null, null));
+    result.* = JSValue.createEmptyArray(env, 0);
     return .ok;
 }
 const prefilled_undefined_args_array: [128]JSC.JSValue = brk: {

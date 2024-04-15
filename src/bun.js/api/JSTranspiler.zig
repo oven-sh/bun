@@ -1196,7 +1196,7 @@ pub fn transformSync(
 
 fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExports) JSC.JSValue {
     if (named_exports.count() == 0)
-        return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArray(global, 0, null, null));
+        return JSValue.createEmptyArray(global, 0);
 
     var named_exports_iter = named_exports.iterator();
     var stack_fallback = std.heap.stackFallback(@sizeOf(bun.String) * 32, getAllocator(global));

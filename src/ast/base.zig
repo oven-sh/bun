@@ -137,14 +137,14 @@ pub const Index = packed struct(u32) {
         this.value = val;
     }
 
+    /// if you are within the parser, use p.isSourceRuntime() instead, as the
+    /// runtime index (0) is used as the id for single-file transforms.
     pub inline fn isRuntime(this: Index) bool {
-        return this.value == runtime.value;
+        return this.value == (comptime runtime.value);
     }
 
     pub const invalid = Index{ .value = std.math.maxInt(Int) };
-    pub const runtime = Index{
-        .value = 0,
-    };
+    pub const runtime = Index{ .value = 0 };
 
     pub const Int = u32;
 
@@ -262,7 +262,7 @@ pub const Ref = packed struct(u64) {
     }
 
     pub fn initSourceEnd(old: Ref) Ref {
-        std.debug.assert(old.tag != .invalid);
+        bun.assert(old.tag != .invalid);
         return init(old.inner_index, old.source_index, old.tag == .source_contents_slice);
     }
 

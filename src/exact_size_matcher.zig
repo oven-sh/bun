@@ -19,7 +19,7 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
             switch (str.len) {
                 1...max_bytes - 1 => {
                     var tmp: [max_bytes]u8 = undefined;
-                    if (comptime std.meta.trait.isSlice(@TypeOf(str))) {
+                    if (comptime bun.trait.isSlice(@TypeOf(str))) {
                         @memcpy(tmp[0..str.len], str);
                         @memset(tmp[str.len..], 0);
                     } else {
@@ -87,7 +87,7 @@ test "ExactSizeMatcher 5 letter" {
 
 test "ExactSizeMatcher 4 letter" {
     const Four = ExactSizeMatcher(4);
-    var word = "from".*;
+    const word = "from".*;
     try expect(Four.match(word) == Four.case("from"));
     try expect(Four.match(word) != Four.case("fro"));
 }

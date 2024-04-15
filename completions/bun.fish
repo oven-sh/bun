@@ -51,7 +51,7 @@ function __bun_last_cmd --argument-names n
 end
 
 set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
-set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't install devDependencies" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependenices" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
+set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't install devDependencies" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
 set -l bun_builtin_cmds dev create help bun upgrade discord run install remove add init link unlink pm x
 set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add init pm x

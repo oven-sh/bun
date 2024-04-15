@@ -1,9 +1,23 @@
-"use strict";
+// @ts-check
 
-/** This file is meant to be runnable in both Jest and Bun.
- *  `bunx jest mock-fn.test.js`
+/** This file is meant to be runnable in Jest, Vitest, and Bun:
+ *  `bun test test/js/bun/test/expect.test.js`
+ *  `bunx vitest test/js/bun/test/expect.test.js`
+ *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect.test.js`
  */
-var { isBun, test, describe, expect, jest, vi, mock, bunTest, spyOn } = require("./test-interop.js")();
+
+// import these functions typed with the bun:test types,
+// so this test can also be used to detect issues with the "bun:test" type definitions
+import test_interop from "./test-interop.js";
+var { isBun, test, it, describe, expect, jest, vi, mock, bunTest, spyOn } = await test_interop();
+const isJest = !vi;
+const isVitest = vi && !isBun;
+const hasJestExtended = !isVitest;
+
+const test_skipIf = (/** @type {boolean} */ cond) => (cond ? test.skip : test);
+
+/** Helper function which just type-casts to any */
+const ANY = (/** @type {any} */ arg) => arg;
 
 describe("expect()", () => {
   if (typeof Bun !== "undefined") {
@@ -20,8 +34,33 @@ describe("expect()", () => {
     });
   }
 
+  const expectFailure = (/** @type {() => unknown} */ asyncFn) => {
+    return expect(async () => {
+      try {
+        await asyncFn();
+      } catch (e) {
+        throw new Error(/** @type {any} */ (e).message);
+      }
+    });
+  };
+
   test("rejects", async () => {
-    await expect(Promise.reject(1)).rejects.toBe(1);
+    await expect(Promise.reject(4)).rejects.toBe(4);
+    await expect(Promise.reject(4)).rejects.not.toBe(5);
+    await expect(Promise.reject(4.2)).rejects.toBeCloseTo(4.2, 5);
+    await expect(Promise.reject(3)).rejects.not.toBeCloseTo(4.2, 5);
+    await expect(Promise.reject({ a: 1, b: 2 })).rejects.toMatchObject({ a: 1 });
+    await expect(Promise.reject({ a: 1, b: 2 })).rejects.not.toMatchObject({ c: 1 });
+    await expect(Promise.reject(new Error("rejectMessage"))).rejects.toMatchObject({ message: "rejectMessage" });
+    await expect(Promise.reject(new Error())).rejects.toThrow();
+
+    // not receiving a rejected promise -> should throw
+    if (isBun) {
+      // Should fail with "Received promise resolved instead of rejected"
+      await expectFailure(() => expect(Promise.resolve(4)).rejects.toBe(4)).toThrow();
+      // Should fail with "Matcher error: received value must be a promise or a function returning a promise"
+      await expectFailure(() => expect(4).rejects.toBe(4)).toThrow();
+    }
 
     // Different task
     await expect(
@@ -32,7 +71,26 @@ describe("expect()", () => {
   });
 
   test("resolves", async () => {
-    await expect(Promise.resolve(1)).resolves.toBe(1);
+    await expect(Promise.resolve(4)).resolves.toBe(4);
+    await expect(Promise.resolve(4)).resolves.not.toBe(5);
+    await expect(Promise.resolve(4.2)).resolves.toBeCloseTo(4.2, 5);
+    await expect(Promise.resolve(3)).resolves.not.toBeCloseTo(4.2, 5);
+    await expect(Promise.resolve({ a: 1, b: 2 })).resolves.toMatchObject({ a: 1 });
+    await expect(Promise.resolve({ a: 1, b: 2 })).resolves.not.toMatchObject({ c: 1 });
+    await expect(
+      Promise.resolve(() => {
+        throw new Error();
+      }),
+    ).resolves.toThrow();
+    await expect(Promise.resolve(new Error())).resolves.toThrow();
+
+    // not receiving a resolved promise -> should throw
+    if (isBun) {
+      // @ts-expect-error: Should fail with "Received promise rejected instead of resolve"
+      await expectFailure(() => expect(Promise.reject(4)).resolves.toBe(4)).toThrow();
+      // Should fail with "Matcher error: received value must be a promise or a function returning a promise"
+      await expectFailure(() => expect(4).resolves.toBe(4)).toThrow();
+    }
 
     // Different task
     await expect(
@@ -51,7 +109,9 @@ describe("expect()", () => {
     expect({}).toEqual({});
     expect({}).toStrictEqual({});
     expect({}).toEqual({ a: undefined });
+    expect({ a: undefined }).toEqual({});
     expect({}).not.toStrictEqual({ a: undefined });
+    expect({ a: undefined }).not.toStrictEqual({});
 
     class C {
       hi = 34;
@@ -64,7 +124,9 @@ describe("expect()", () => {
 
     expect(d).toEqual(c);
     expect(d).not.toStrictEqual(c);
+    // @ts-expect-error
     expect({ a: 1, b: undefined }).toEqual({ a: 1 });
+    // @ts-expect-error
     expect({ a: 1 }).toEqual({ a: 1, b: undefined });
     expect({ a: 1, b: undefined }).toEqual({ a: 1, b: undefined });
 
@@ -137,8 +199,8 @@ describe("expect()", () => {
     const s1 = Symbol("test1");
     const s2 = Symbol("test2");
 
-    let a = { a: 1, b: 2 };
-    let b = { a: 1, b: 2 };
+    let a = ANY({ a: 1, b: 2 });
+    let b = ANY({ a: 1, b: 2 });
     a[s1] = 1;
     b[s1] = 1;
     a[s2] = undefined;
@@ -150,11 +212,11 @@ describe("expect()", () => {
       }
     }
 
-    let f = new F("hello");
+    let f = new F();
     let j = new String("hello");
     expect(f).not.toEqual(j);
     class LaCroix {
-      constructor(flavor) {
+      constructor(/** @type {string} */ flavor) {
         this.flavor = flavor;
       }
     }
@@ -196,6 +258,152 @@ describe("expect()", () => {
 
     expect(new RegExp("s", "g")).toEqual(new RegExp("s", "g"));
     expect(new RegExp("s", "g")).not.toEqual(new RegExp("s", "i"));
+  });
+
+  test("deepEquals and deleted properties", () => {
+    var obj1 = { a: 1 };
+    var obj2 = {};
+    expect(obj1).not.toStrictEqual(obj2);
+    expect(obj2).not.toStrictEqual(obj1);
+    expect(obj1).not.toEqual(obj2);
+    expect(obj2).not.toEqual(obj1);
+    delete obj1.a;
+    expect(obj1).toStrictEqual(obj2);
+    expect(obj2).toStrictEqual(obj1);
+    expect(obj1).toEqual(obj2);
+    expect(obj2).toEqual(obj1);
+
+    var obj3 = { a: 1, b: 3, c: 4 };
+    var obj4 = { a: 1, b: 3 };
+    expect(obj3).not.toStrictEqual(obj4);
+    expect(obj4).not.toStrictEqual(obj3);
+    expect(obj3).not.toEqual(obj4);
+    expect(obj4).not.toEqual(obj3);
+    delete obj3.c;
+    expect(obj3).toStrictEqual(obj4);
+    expect(obj4).toStrictEqual(obj3);
+    expect(obj3).toEqual(obj4);
+    expect(obj4).toEqual(obj3);
+    delete obj3.b;
+    expect(obj3).not.toStrictEqual(obj4);
+    expect(obj4).not.toStrictEqual(obj3);
+    expect(obj3).not.toEqual(obj4);
+    expect(obj4).not.toEqual(obj3);
+    delete obj3.a;
+    expect(obj3).not.toStrictEqual(obj4);
+    expect(obj4).not.toStrictEqual(obj3);
+    expect(obj3).not.toEqual(obj4);
+    expect(obj4).not.toEqual(obj3);
+    delete obj4.a;
+    expect(obj3).not.toStrictEqual(obj4);
+    expect(obj4).not.toStrictEqual(obj3);
+    expect(obj3).not.toEqual(obj4);
+    expect(obj4).not.toEqual(obj3);
+    delete obj4.b;
+    expect(obj3).toStrictEqual(obj4);
+    expect(obj4).toStrictEqual(obj3);
+    expect(obj3).toEqual(obj4);
+    expect(obj4).toEqual(obj3);
+
+    var obj5 = {};
+    var obj6 = {};
+    expect(obj5).toStrictEqual(obj6);
+    expect(obj6).toStrictEqual(obj5);
+    expect(obj5).toEqual(obj6);
+    expect(obj6).toEqual(obj5);
+    delete obj5.a;
+    expect(obj5).toStrictEqual(obj6);
+    expect(obj6).toStrictEqual(obj5);
+    expect(obj5).toEqual(obj6);
+    expect(obj6).toEqual(obj5);
+    obj5.a = 1;
+    expect(obj5).not.toStrictEqual(obj6);
+    expect(obj6).not.toStrictEqual(obj5);
+    expect(obj5).not.toEqual(obj6);
+    expect(obj6).not.toEqual(obj5);
+    obj6.a = 1;
+    expect(obj5).toStrictEqual(obj6);
+    expect(obj6).toStrictEqual(obj5);
+    expect(obj5).toEqual(obj6);
+    expect(obj6).toEqual(obj5);
+    delete obj6.a;
+    expect(obj5).not.toStrictEqual(obj6);
+    expect(obj6).not.toStrictEqual(obj5);
+    expect(obj5).not.toEqual(obj6);
+    expect(obj6).not.toEqual(obj5);
+    delete obj5.a;
+    expect(obj5).toStrictEqual(obj6);
+    expect(obj6).toStrictEqual(obj5);
+    expect(obj5).toEqual(obj6);
+    expect(obj6).toEqual(obj5);
+
+    var obj7 = { a: 1, b: 1 };
+    var obj8 = { b: 1 };
+    expect(obj7).not.toStrictEqual(obj8);
+    expect(obj8).not.toStrictEqual(obj7);
+    expect(obj7).not.toEqual(obj8);
+    expect(obj8).not.toEqual(obj7);
+    delete obj7.a;
+    expect(obj7).toStrictEqual(obj8);
+    expect(obj8).toStrictEqual(obj7);
+    expect(obj7).toEqual(obj8);
+    expect(obj8).toEqual(obj7);
+    delete obj7.b;
+    expect(obj7).not.toStrictEqual(obj8);
+    expect(obj8).not.toStrictEqual(obj7);
+    expect(obj7).not.toEqual(obj8);
+    expect(obj8).not.toEqual(obj7);
+    delete obj8.b;
+    expect(obj7).toStrictEqual(obj8);
+    expect(obj8).toStrictEqual(obj7);
+    expect(obj7).toEqual(obj8);
+    expect(obj8).toEqual(obj7);
+  });
+
+  test("deepEquals and deleted indexes", () => {
+    var a1 = [1];
+    var a2 = [];
+    expect(a1).not.toStrictEqual(a2);
+    expect(a2).not.toStrictEqual(a1);
+    expect(a1).not.toEqual(a2);
+    expect(a2).not.toEqual(a1);
+    delete a1[0];
+    expect(a1).not.toStrictEqual(a2);
+    expect(a2).not.toStrictEqual(a1);
+    expect(a1).toEqual(a2);
+    expect(a2).toEqual(a1);
+
+    var a3 = [];
+    var a4 = [];
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+    delete a3[0];
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+    a3[0] = 1;
+    expect(a3).not.toStrictEqual(a4);
+    expect(a4).not.toStrictEqual(a3);
+    expect(a3).not.toEqual(a4);
+    expect(a4).not.toEqual(a3);
+    a4[0] = 1;
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+    delete a4[0];
+    expect(a3).not.toStrictEqual(a4);
+    expect(a4).not.toStrictEqual(a3);
+    expect(a3).not.toEqual(a4);
+    expect(a4).not.toEqual(a3);
+    delete a3[0];
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
   });
 
   test("deepEquals works with accessors", () => {
@@ -271,6 +479,9 @@ describe("expect()", () => {
   // Doesn't work on jest because of https://github.com/jestjs/jest/issues/10788
   if (isBun) {
     test("deepEquals works with proxies", () => {
+      /** Helper identity function that just prevents implicit-any type errors */
+      const _ = (/** @type {ProxyHandler<any>} */ arg) => arg;
+
       {
         let p1 = new Proxy({ a: 1, b: 2 }, {});
         let p2 = new Proxy({ a: 1, b: 2 }, {});
@@ -283,30 +494,30 @@ describe("expect()", () => {
       }
       {
         let t1 = { a: 1, b: 2 };
-        let h1 = { get: (t, k) => t[k] };
+        let h1 = _({ get: (t, k) => t[k] });
         let p1 = new Proxy(t1, h1);
         let t2 = { a: 1, b: 2 };
-        let h2 = { get: (t, k) => 0 };
+        let h2 = _({ get: (t, k) => 0 });
         let p2 = new Proxy(t2, h2);
         expect(p1).not.toEqual(p2);
         expect(p1).not.toStrictEqual(p2);
       }
       {
         let t1 = { a: 1, b: 2 };
-        let h1 = { get: (t, k) => t[k] + 2 };
+        let h1 = _({ get: (t, k) => t[k] + 2 });
         let p1 = new Proxy(t1, h1);
         let t2 = { a: 1, b: 2 };
-        let h2 = { get: (t, k) => t[k] + 2 };
+        let h2 = _({ get: (t, k) => t[k] + 2 });
         let p2 = new Proxy(t2, h2);
         expect(p1).toEqual(p2);
         expect(p1).toStrictEqual(p2);
       }
       {
         let t1 = { a: 1, b: 2 };
-        let h1 = { get: (t, k) => t[k] + 2 };
+        let h1 = _({ get: (t, k) => t[k] + 2 });
         let p1 = new Proxy(t1, h1);
         let t2 = { a: 1, b: 2 };
-        let h2 = { get: (t, k) => t[k] + 3 };
+        let h2 = _({ get: (t, k) => t[k] + 3 });
         let p2 = new Proxy(t2, h2);
         expect(p1).not.toEqual(p2);
         expect(p1).not.toStrictEqual(p2);
@@ -315,7 +526,7 @@ describe("expect()", () => {
         // same handlers, different targets
         let t1 = { a: 1, b: 2 };
         let t2 = { a: 1, b: 2 };
-        let h1 = { get: (t, k) => t[k] + 2 };
+        let h1 = _({ get: (t, k) => t[k] + 2 });
         let p1 = new Proxy(t1, h1);
         let p2 = new Proxy(t2, h1);
         expect(p1).toEqual(p2);
@@ -324,8 +535,8 @@ describe("expect()", () => {
       {
         // same targets, different handlers
         let t1 = { a: 1, b: 2 };
-        let h1 = { get: (t, k) => t[k] + 2 };
-        let h2 = { get: (t, k) => t[k] + 3 };
+        let h1 = _({ get: (t, k) => t[k] + 2 });
+        let h2 = _({ get: (t, k) => t[k] + 3 });
         let p1 = new Proxy(t1, h1);
         let p2 = new Proxy(t1, h2);
         expect(p1).not.toEqual(p2);
@@ -334,22 +545,22 @@ describe("expect()", () => {
       {
         // property with object
         let t1 = { a: { b: 3 } };
-        let h1 = { get: (t, k) => t[k] };
+        let h1 = _({ get: (t, k) => t[k] });
         let p1 = new Proxy(t1, h1);
 
         let t2 = { a: { b: 3 } };
-        let h2 = { get: (t, k) => t[k] };
+        let h2 = _({ get: (t, k) => t[k] });
         let p2 = new Proxy(t2, h2);
 
         expect(p1).toEqual(p2);
         expect(p1).toStrictEqual(p2);
 
         let t3 = { a: { b: 3 } };
-        let h3 = { get: (t, k) => t[k] };
+        let h3 = _({ get: (t, k) => t[k] });
         let p3 = new Proxy(t3, h3);
 
         let t4 = { a: { b: 4 } };
-        let h4 = { get: (t, k) => t[k] };
+        let h4 = _({ get: (t, k) => t[k] });
         let p4 = new Proxy(t4, h4);
 
         expect(p3).not.toEqual(p4);
@@ -358,18 +569,18 @@ describe("expect()", () => {
       {
         // proxy object equals itself
         let t1 = { a: 1, b: 2 };
-        let h1 = { get: (t, k) => t[k] + 2 };
+        let h1 = _({ get: (t, k) => t[k] + 2 });
         let p1 = new Proxy(t1, h1);
         expect(p1).toEqual(p1);
         expect(p1).toStrictEqual(p1);
       }
       {
         let t1 = { a: 1, b: 2 };
-        let h1 = { get: (t, k) => k };
+        let h1 = _({ get: (t, k) => k });
         let p1 = new Proxy(t1, h1);
 
         let t2 = { a: 1, b: 2 };
-        let h2 = { get: (t, k) => k };
+        let h2 = _({ get: (t, k) => k });
         let p2 = new Proxy(t2, h2);
 
         expect(p1).toEqual(p2);
@@ -416,13 +627,14 @@ describe("expect()", () => {
 
     var d = new Date();
     var e = new Date(d);
-    e[f] = "hello";
+    ANY(e)[f] = "hello";
 
     expect(d).toEqual(e);
     expect(e).toEqual(d);
 
     class Date2 extends Date {
       constructor() {
+        // @ts-ignore
         super(...arguments);
       }
     }
@@ -435,25 +647,25 @@ describe("expect()", () => {
 
     let d2 = new Date2();
     let e2 = new Date(d2);
-    d2[f] = "hello";
+    ANY(d2)[f] = "hello";
     expect(d2).toEqual(e2);
     expect(e2).toEqual(d2);
 
     let d3 = new Date3();
     let e3 = new Date(d3);
-    d3[f] = "hello";
+    ANY(d3)[f] = "hello";
     expect(d3).toEqual(e3);
     expect(e3).toEqual(d3);
 
     let d4 = new Date();
     let e4 = new Date3(d4);
-    d4[f] = "hello";
+    ANY(d4)[f] = "hello";
     expect(d4).toEqual(e4);
     expect(e4).toEqual(d4);
 
     let d5 = new Date2();
     let e5 = new Date3(d5);
-    d5[f] = "hello";
+    ANY(d5)[f] = "hello";
     expect(d5).toEqual(e5);
     expect(e5).toEqual(d5);
 
@@ -461,7 +673,7 @@ describe("expect()", () => {
 
     var s1 = new String("a");
     var s2 = new String("a");
-    s1[f] = "hello";
+    ANY(s1)[f] = "hello";
     expect(s1).toEqual(s2);
 
     class String2 extends String {
@@ -481,7 +693,7 @@ describe("expect()", () => {
 
     var s3 = new String2("a");
     var s4 = new String2("a");
-    s3[f] = "hello";
+    ANY(s3)[f] = "hello";
     expect(s3).toEqual(s4);
 
     var s5 = new String("a");
@@ -495,6 +707,7 @@ describe("expect()", () => {
     expect(s8).not.toEqual(s7);
 
     var s9 = new String2("a");
+    // @ts-ignore
     var s10 = new string4.constructor("a");
     expect(s9).not.toEqual(s10);
     expect(s10).not.toEqual(s9);
@@ -601,19 +814,23 @@ describe("expect()", () => {
       () => new Map(),
       () => new Set(),
       () => Promise.resolve(),
-      () => Promise.reject(Symbol("123")),
+      vi && (() => Promise.reject(Symbol("123"))), // on jest it causes an UnhandledPromiseRejection
       () => Symbol("123"),
     ];
     for (const weirdThing of weirdThings) {
-      expect(() => {
-        throw weirdThing();
-      }).toThrow();
+      if (weirdThing) {
+        expect(() => {
+          throw weirdThing();
+        }).toThrow();
+      }
     }
 
-    err.message = "null";
-    expect(() => {
-      throw null;
-    }).toThrow(err);
+    if (!isJest) {
+      err.message = "null";
+      expect(() => {
+        throw null;
+      }).toThrow(err);
+    }
   });
 
   test("deepEquals derived strings and strings", () => {
@@ -630,7 +847,7 @@ describe("expect()", () => {
       }
     }
 
-    let f = new F("hello");
+    let f = new F();
     expect(f).toEqual(f);
     expect(f).not.toEqual(b);
     expect(b).not.toEqual(f);
@@ -645,7 +862,7 @@ describe("expect()", () => {
       }
     }
 
-    let g = new G("hello");
+    let g = new G();
     expect(g).not.toEqual(f);
     expect(f).not.toEqual(g);
     expect(g).toEqual(g);
@@ -676,7 +893,7 @@ describe("expect()", () => {
     try {
       expect(a).not.toEqual(b);
     } catch (e) {
-      expect(e.message).toContain("a");
+      expect(ANY(e).message).toContain("a");
     }
 
     class B {
@@ -714,7 +931,7 @@ describe("expect()", () => {
     try {
       expect(o).not.toEqual(p);
     } catch (e) {
-      expect(e.message).toContain("c");
+      expect(ANY(e).message).toContain("c");
     }
 
     const s = Symbol("s");
@@ -723,29 +940,29 @@ describe("expect()", () => {
         throw new Error("d");
       },
     };
-    q[s] = 3;
+    ANY(q)[s] = 3;
 
     let r = {
       get x() {
         return 3;
       },
     };
-    r[s] = 3;
+    ANY(r)[s] = 3;
 
     try {
       expect(q).not.toEqual(r);
     } catch (e) {
-      expect(e.message).toContain("d");
+      expect(ANY(e).message).toContain("d");
     }
   });
 
   test("deepEquals large object", () => {
-    let o = {};
+    let o = ANY({});
     for (let i = 0; i < 65; i++) {
       o["bun" + i] = i;
     }
     expect(o).toEqual(o);
-    let b = {};
+    let b = ANY({});
     for (let i = 0; i < 63; i++) {
       b["bun" + i] = i;
     }
@@ -767,12 +984,12 @@ describe("expect()", () => {
     expect(e).not.toEqual(f);
     expect(f).not.toEqual(e);
 
-    let p = [];
+    let p = ANY([]);
     p[0] = {};
     for (let i = 0; i < 1000; i++) {
       p[0]["bun" + i] = i;
     }
-    let q = [];
+    let q = ANY([]);
     q[0] = {};
     for (let i = 0; i < 1000; i++) {
       q[0]["bun" + i] = i;
@@ -784,8 +1001,8 @@ describe("expect()", () => {
     expect(p).not.toEqual(q);
     expect(q).not.toEqual(p);
 
-    let r = { d: {} };
-    let s = { d: {} };
+    let r = ANY({ d: {} });
+    let s = ANY({ d: {} });
     for (let i = 0; i < 1000; i++) {
       r.d["bun" + i] = i;
       s.d["bun" + i] = i;
@@ -798,9 +1015,9 @@ describe("expect()", () => {
     expect(r).not.toEqual(s);
     expect(s).not.toEqual(r);
 
-    let t = [];
+    let t = ANY([]);
     t[5] = {};
-    let u = [];
+    let u = ANY([]);
     u[5] = {};
     for (let i = 0; i < 1000; i++) {
       t[5]["bun" + i] = i;
@@ -813,8 +1030,8 @@ describe("expect()", () => {
     expect(t).not.toEqual(u);
     expect(u).not.toEqual(t);
 
-    let v = { j: {} };
-    let w = { j: {} };
+    let v = ANY({ j: {} });
+    let w = ANY({ j: {} });
     for (let i = 0; i < 1000; i++) {
       v.j["bun" + i] = i;
       w.j["bun" + i] = i;
@@ -952,11 +1169,13 @@ describe("expect()", () => {
     const s1 = Symbol("test1");
     const s2 = Symbol("test2");
 
+    /** @type {any} */
     const o = { a: 1 };
     o[s1] = 45;
     o[99] = 99;
     o[s2] = 3;
 
+    /** @type {any} */
     const k = { a: 1 };
     k[99] = 99;
     k[s2] = 3;
@@ -971,11 +1190,12 @@ describe("expect()", () => {
       expect(obj).toEqual([1, 2, 3, 4]);
     }).toThrow();
     expect(() => {
+      // @ts-expect-error
       expect([1, 2, 3, 4]).toEqual(obj);
     }).toThrow();
   });
 
-  test("deepEquals URLs", () => {
+  test_skipIf(isJest)("deepEquals URLs", () => {
     const equals = [
       [
         [new URL("https://example.com"), new URL("https://example.com")],
@@ -1019,8 +1239,11 @@ describe("expect()", () => {
       let obj = { 0: 4, 1: 3, length: 4 };
       expect(Array.from(obj)).toEqual([4, 3]);
       expect(Array.from(obj)).not.toStrictEqual([4, 3]);
+      // @ts-expect-error
       expect(Array.from(obj)).toEqual([4, 3, undefined, undefined]);
+      // @ts-expect-error
       expect(Array.from(obj)).toStrictEqual([4, 3, undefined, undefined]);
+      // @ts-expect-error
       expect(Array.from(obj)).toEqual([4, 3, , ,]);
       expect(Array.from(obj)).not.toStrictEqual([4, 3, , ,]);
     }
@@ -1112,16 +1335,21 @@ describe("expect()", () => {
     expect({ a: 1, b: 2, c: 3 }).not.toEqual({ a: 1, b: 2 });
     expect([1, 2, 3, 4]).not.toEqual([1, 2, 3]);
 
-    let a = [{ a: 1 }, { b: 2, c: 3, d: 4 }, { e: 5, f: 6 }];
-    let b = [{ a: 1 }, { b: 2, c: 3, d: 4 }, { e: 5, f: 6 }];
+    /** @type {any} */ let a;
+    /** @type {any} */ let b;
+    /** @type {any} */ let c;
+    /** @type {any} */ let d;
+
+    a = [{ a: 1 }, { b: 2, c: 3, d: 4 }, { e: 5, f: 6 }];
+    b = [{ a: 1 }, { b: 2, c: 3, d: 4 }, { e: 5, f: 6 }];
     expect(a).toEqual(b);
     expect(b).toEqual(a);
     a[0].a = 2;
     expect(a).not.toEqual(b);
     expect(b).not.toEqual(a);
 
-    let c = { [Symbol("test")]: 1 };
-    let d = { [Symbol("test")]: 1 };
+    c = { [Symbol("test")]: 1 };
+    d = { [Symbol("test")]: 1 };
     expect(c).not.toEqual(d);
     expect(d).not.toEqual(c);
 
@@ -1339,12 +1567,15 @@ describe("expect()", () => {
   test("symbol based keys in arrays are processed correctly", () => {
     const mySymbol = Symbol("test");
 
+    /** @type {any} */
     const actual1 = [];
     actual1[mySymbol] = 3;
 
+    /** @type {any} */
     const actual2 = [];
     actual2[mySymbol] = 4;
 
+    /** @type {any} */
     const expected = [];
     expected[mySymbol] = 3;
 
@@ -1428,8 +1659,8 @@ describe("expect()", () => {
     expect(a1).toEqual(a2);
     expect(a2).toEqual(a1);
 
-    let a3 = new A();
-    let a4 = new A();
+    let a3 = ANY(new A());
+    let a4 = ANY(new A());
     a3.three = 4;
     // use indexed properties for slow path
     a3[1] = 2;
@@ -1437,8 +1668,8 @@ describe("expect()", () => {
     expect(a3).toEqual(a4);
     expect(a4).toEqual(a3);
 
-    let b1 = new B();
-    let a5 = new A();
+    let b1 = ANY(new B());
+    let a5 = ANY(new A());
     expect(b1).toEqual(a5);
     expect(a5).toEqual(b1);
 
@@ -1537,58 +1768,64 @@ describe("expect()", () => {
     expect(obj).not.toEqual({ a: 2 });
     expect({ a: 2 }).not.toEqual(obj);
 
-    let a = new Set();
-    a.add([1, 2, 3]);
-    a.add("hello");
-    a.add({ a: 1 });
-    a.add(89);
-    let b = new Set();
-    b.add(89);
-    b.add({ a: 1 });
-    b.add("hello");
-    b.add([1, 2, 3]);
-    expect(a).toEqual(b);
-    expect(b).toEqual(a);
-    let c = new Set();
-    c.add(89);
-    c.add("helo");
-    c.add({ a: 1 });
-    c.add([1, 2, 3]);
-    expect(a).not.toEqual(c);
+    {
+      let a = new Set();
+      a.add([1, 2, 3]);
+      a.add("hello");
+      a.add({ a: 1 });
+      a.add(89);
+      let b = new Set();
+      b.add(89);
+      b.add({ a: 1 });
+      b.add("hello");
+      b.add([1, 2, 3]);
+      expect(a).toEqual(b);
+      expect(b).toEqual(a);
+      let c = new Set();
+      c.add(89);
+      c.add("helo");
+      c.add({ a: 1 });
+      c.add([1, 2, 3]);
+      expect(a).not.toEqual(c);
+    }
 
-    a = new Map();
-    a.set(1, 89);
-    a.set("hello", 2);
-    a.set({ a: 1 }, 3);
-    a.set([1, 2, 3], 4);
-    b = new Map();
-    b.set(1, 89);
-    b.set("hello", 2);
-    b.set({ a: 1 }, 3);
-    b.set([1, 2, 3], 4);
-    expect(a).toEqual(b);
-    expect(b).toEqual(a);
-    c = new Map();
-    c.set({ a: 1 }, 3);
-    c.set(1, 80);
-    c.set([1, 2, 3], 4);
-    c.set("hello", 2);
-    expect(a).not.toEqual(c);
+    {
+      let a = new Map();
+      a.set(1, 89);
+      a.set("hello", 2);
+      a.set({ a: 1 }, 3);
+      a.set([1, 2, 3], 4);
+      let b = new Map();
+      b.set(1, 89);
+      b.set("hello", 2);
+      b.set({ a: 1 }, 3);
+      b.set([1, 2, 3], 4);
+      expect(a).toEqual(b);
+      expect(b).toEqual(a);
+      let c = new Map();
+      c.set({ a: 1 }, 3);
+      c.set(1, 80);
+      c.set([1, 2, 3], 4);
+      c.set("hello", 2);
+      expect(a).not.toEqual(c);
+    }
 
-    a = new Set();
-    a.add(89);
-    a.add("hello");
-    a.add({ a: 1 });
-    a.add([1, 2, 3]);
-    a.add(a);
-    b = new Set();
-    b.add(89);
-    b.add("hello");
-    b.add(b);
-    b.add({ a: 1 });
-    b.add([1, 2, 3]);
-    expect(a).toEqual(b);
-    expect(b).toEqual(a);
+    {
+      let a = new Set();
+      a.add(89);
+      a.add("hello");
+      a.add({ a: 1 });
+      a.add([1, 2, 3]);
+      a.add(a);
+      let b = new Set();
+      b.add(89);
+      b.add("hello");
+      b.add(b);
+      b.add({ a: 1 });
+      b.add([1, 2, 3]);
+      expect(a).toEqual(b);
+      expect(b).toEqual(a);
+    }
   });
   test("toHaveProperty() - emojis", () => {
     expect({ "👍": "thumbs up" }).toHaveProperty("👍", "thumbs up");
@@ -1853,8 +2090,9 @@ describe("expect()", () => {
     expect({ a: () => {} }).not.toHaveProperty("a", {});
 
     // test object with property "a" with value set, map, string
-    expect({ a: new Set([1, 2, 3]) }).toHaveProperty("a", new Set([3, 2, 1]));
+    // @ts-expect-error
     expect({ a: new Map([{ a: 1 }, { b: 2 }, { c: 3 }]) }).toHaveProperty("a", new Map([{ c: 3 }, { b: 2 }, { a: 1 }]));
+    expect({ a: new Set([1, 2, 3]) }).toHaveProperty("a", new Set([3, 2, 1]));
     expect({ a: new String("a") }).toHaveProperty("a", new String("a"));
     expect({ a: new String("a") }).not.toHaveProperty("a", "a");
     expect({ a: new String("a") }).not.toHaveProperty("a", "b");
@@ -1866,7 +2104,7 @@ describe("expect()", () => {
     expect({ a: new String("a") }).not.toHaveProperty("a", new Array());
     expect({ a: new String("a") }).not.toHaveProperty("a", new Function());
     expect({ a: new String("a") }).not.toHaveProperty("a", new Date());
-    expect({ a: new String("a") }).not.toHaveProperty("a", new RegExp());
+    expect({ a: new String("a") }).not.toHaveProperty("a", new RegExp("."));
     expect({ a: new String("a") }).not.toHaveProperty("a", new Error());
     expect({ a: new String("a") }).not.toHaveProperty("a", new Promise(() => {}));
     expect({ a: new String("a") }).not.toHaveProperty("a", new WeakSet());
@@ -1883,13 +2121,14 @@ describe("expect()", () => {
     expect({ a: new String("a") }).not.toHaveProperty("a", new Float64Array());
     expect({ a: new String("a") }).not.toHaveProperty("a", new BigInt64Array());
     expect({ a: new String("a") }).not.toHaveProperty("a", new BigUint64Array());
-    expect({ a: new String("a") }).not.toHaveProperty("a", new ArrayBuffer());
-    expect({ a: new String("a") }).not.toHaveProperty("a", new SharedArrayBuffer());
+    expect({ a: new String("a") }).not.toHaveProperty("a", new ArrayBuffer(1));
+    expect({ a: new String("a") }).not.toHaveProperty("a", new SharedArrayBuffer(1));
     expect({ a: new String("a") }).not.toHaveProperty("a", new DataView(new ArrayBuffer(1)));
 
     // test property equality with sets, maps, objects, arrays, and String
-    expect({ a: new Set([1, 2, 3]) }).toHaveProperty("a", new Set([1, 2, 3]));
+    // @ts-expect-error
     expect({ a: new Map([{ a: 1 }, { b: 2 }, { c: 3 }]) }).toHaveProperty("a", new Map([{ a: 1 }, { b: 2 }, { c: 3 }]));
+    expect({ a: new Set([1, 2, 3]) }).toHaveProperty("a", new Set([1, 2, 3]));
     expect({ a: { a: 1, b: 2, c: 3 } }).toHaveProperty("a", { a: 1, b: 2, c: 3 });
     expect({ a: [1, 2, 3] }).toHaveProperty("a", [1, 2, 3]);
     expect({ a: "a" }).toHaveProperty("a", "a");
@@ -1976,7 +2215,7 @@ describe("expect()", () => {
       expect(() => expect(Bun.file("/does-not-exist/file.txt")).toHaveLength(0)).toThrow();
 
       // Blob
-      expect(new Blob([1, 2, 3])).toHaveLength(3);
+      expect(new Blob(ANY([1, 2, 3]))).toHaveLength(3);
       expect(new Blob()).toHaveLength(0);
 
       // Set
@@ -1992,36 +2231,212 @@ describe("expect()", () => {
     });
   }
 
-  test("toContain()", () => {
-    const s1 = new String("123");
-    expect(s1).not.toContain("12");
-    const s2 = "123";
-    expect(s2).toContain("12");
+  test.each([
+    ["hello", "h"],
+    ["hello", ""],
+    ["hello", "hello"],
+    [new String("hello"), "h"],
+    ["emoji: 😃", "😃"],
+    ["😄", "😄"],
+    ["", ""],
+    [[1, 2, 3], 1],
+    [["a", "b", "c"], "c"],
+    [[null, undefined], undefined],
+    [[1n, "abc", null, -1n, undefined], -1n],
+    [[Symbol.for("a")], Symbol.for("a")],
+    [new Set([1, 2, 3]), 1],
+    [new Set(["a", "b", "c"]), "c"],
+    [new Uint8Array([1, 2, 3]), 1],
+    [new BigInt64Array([1n, 2n, 3n]), 2n],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield 1;
+          yield 2;
+          yield 3;
+        },
+      },
+      3,
+    ],
+  ])("expect(%p).toContain(%p)", (value, expected) => {
+    expect(value).toContain(expected);
+  });
 
-    expect("test").toContain("es");
-    expect("test").toContain("est");
-    // expect("test").not.toContain("test");
-    expect(["test", "es"]).toContain("es");
-    expect("").toContain("");
-    expect([""]).toContain("");
+  test.each([
+    ["hello", "a"],
+    ["hello", "hello?"],
+    [new String("hello"), "a"],
+    [new String("hello"), "hello?"],
+    [new String("hello"), "hello"],
+    [new String("hello"), "llo"],
+    [new String("hello"), ""],
+    ["emoji: 😃", "😄"],
+    [[1, 2, 3], -1],
+    [[1, 2, 3], 1n],
+    [["a", "b", "c"], "d"],
+    [[Symbol.for("a")], Symbol("a")],
+    [new Set([1, 2, 3]), 6],
+    [new Set(["a", "b", "c"]), "f"],
+    [new Uint8Array([1, 2, 3]), 0],
+    [new BigInt64Array([1n, 2n, 3n]), 1],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield 1;
+          yield 2;
+          yield 3;
+        },
+      },
+      6,
+    ],
+  ])("expect(%p).not.toContain(%p)", (value, expected) => {
+    expect(value).not.toContain(expected);
+  });
 
-    expect(["lemon", "lime"]).not.toContain("orange");
-    expect("citrus fruits").toContain("fruit");
+  test.each([
+    ["hello", "h"],
+    [new String("hello"), "h"],
+    ["emoji: 😃", "😃"],
+    ["😄", "😄"],
+    [new String("😄"), "😄"],
+    [[1, 2, 3], 1],
+    [[{ a: 1 }, { b: 2 }, { c: 3 }], { c: 3 }],
+    [[{}], {}],
+    [["a", "b", "c"], "c"],
+    [
+      [
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9],
+      ],
+      [7, 8, 9],
+    ],
+    [[null, undefined], undefined],
+    [[1n, "abc", null, -1n, undefined], -1n],
+    [[Symbol.for("a")], Symbol.for("a")],
+    [new Set([1, 2, 3]), 1],
+    ...[!isJest ? [new Set([[], { a: 1 }, new Headers()]), new Headers()] : []],
+    [new Set(["a", "b", "c"]), "c"],
+    [new Set([new Map([[1, 2]])]), new Map([[1, 2]])],
+    [new Uint8Array([1, 2, 3]), 1],
+    [new BigInt64Array([1n, 2n, 3n]), 2n],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield new Map();
+          yield {
+            a: 1,
+            b: new Map(),
+          };
+          yield null;
+        },
+      },
+      {
+        a: 1,
+        b: new Map(),
+      },
+    ],
+  ])("expect(%p).toContainEqual(%p)", (value, expected) => {
+    expect(value).toContainEqual(expected);
+  });
 
-    const a = new Uint16Array([1, 2, 3]);
-    expect(a).toContain(2);
-    expect(a).not.toContain(4);
-    expect([2, "2335", 5, true, false, null, undefined]).toContain(5);
-    expect([2, "2335", 5, true, false, null, undefined]).toContain("2335");
-    expect([2, "2335", 5, true, false, null, undefined]).toContain(true);
-    expect([2, "2335", 5, true, false, null, undefined]).toContain(false);
-    expect([2, "2335", 5, true, false, null, undefined]).toContain(null);
-    expect([2, "2335", 5, true, false, null, undefined]).toContain(undefined);
-    expect([2, "2335", 5, true, false, null, undefined]).not.toContain(3);
+  test.each([
+    ["hello", "a"],
+    ["hello", "hello?"],
+    ["hello", "hello"],
+    ["hello", "llo"],
+    ["hello", ""],
+    ["", ""],
+    [new String(""), new String("")],
+    [new String("hello"), "a"],
+    [new String("hello"), "hello?"],
+    [new String("hello"), "hello"],
+    [new String("hello"), "llo"],
+    [new String("hello"), ""],
+    ["😄", new String("😄")],
+    ["1", new String("1")],
+    ["emoji: 😃", "😄"],
+    [[1, 2, 3], -1],
+    [[{ a: 1 }, { b: 2 }, { c: 3 }], { c: 1 }],
+    [[], {}],
+    [[{}, { a: 1 }], { d: 4 }],
+    [[1, 2, 3], 1n],
+    [["a", "b", "c"], "d"],
+    [[Symbol.for("a")], Symbol("a")],
+    [new Set([1, 2, 3]), 6],
+    [new Set([{ a: 1 }, { b: 2 }, { c: 3 }]), { d: 4 }],
+    [new Set([]), {}],
+    [new Set(["a", "b", "c"]), "f"],
+    [new Uint8Array([1, 2, 3]), 0],
+    [new BigInt64Array([1n, 2n, 3n]), 1],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield 1;
+          yield 2;
+          yield 3;
+        },
+      },
+      6,
+    ],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield [1, 2, 3];
+        },
+      },
+      [1, 2, 4],
+    ],
+    [
+      {
+        *[Symbol.iterator]() {},
+      },
+      {},
+    ],
+  ])("expect(%p).not.toContainEqual(%p)", (value, expected) => {
+    expect(value).not.toContainEqual(expected);
+  });
 
-    // expect([4, 5, 6]).not.toContain(5);
+  test("toContainKey", () => {
+    const o = { a: "foo", b: "bar", c: "baz" };
+    expect(o).toContainKey("a");
+    expect(o).toContainKey("b");
+    expect(o).toContainKey("c");
+    expect(o).not.toContainKey("z");
+    expect(o).not.toContainKey({ a: "foo" });
+    expect(() => {
+      expect(undefined).not.toContainKey(["id"]);
+    }).toThrow("undefined is not an object");
+  });
 
-    expect([]).not.toContain([]);
+  test("toContainAnyKeys", () => {
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["a"]);
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["a", "c"]);
+    expect({ 1: "test", 2: "test2" }).toContainAnyKeys([1]);
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["b"]);
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["b", "c"]);
+    expect({ a: "hello", b: "world" }).not.toContainAnyKeys(["c"]);
+  });
+
+  test("toContainKeys", () => {
+    expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b"]);
+    expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b", "c"]);
+    expect({ a: "foo", 1: "test" }).toContainKeys(["a", 1]);
+    expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["a", "b", "e"]);
+    expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["z"]);
+
+    expect(undefined).not.toContainKeys(["id"]);
+    expect("").toContainKeys([]);
+    expect("").not.toContainKeys(["id"]);
+    expect(false).toContainKeys([]);
+    expect(false).not.toContainKeys(["id"]);
+
+    expect(() => {
+      expect(undefined).toContainKeys(["id"]);
+    }).toThrow(/(Received:)(.*undefined)/);
+    expect(() => {
+      expect(null).toContainKeys(["id"]);
+    }).toThrow(/(Received:)(.*null)/);
   });
 
   test("toBeTruthy()", () => {
@@ -2555,18 +2970,18 @@ describe("expect()", () => {
       const b = Symbol.for("bar");
 
       class Number2 extends Number {
-        constructor(value) {
+        constructor(/** @type {unknown} */ value) {
           super(value);
         }
       }
       class Number3 extends Number2 {
-        constructor(value) {
+        constructor(/** @type {unknown} */ value) {
           super(value);
         }
       }
 
       class Boolean2 extends Boolean {
-        constructor(value) {
+        constructor(/** @type {unknown} */ value) {
           super(value);
         }
       }
@@ -2580,30 +2995,39 @@ describe("expect()", () => {
       expect([5]).toMatchObject([5]);
       expect([5]).not.toMatchObject([4]);
       expect(() => {
+        // @ts-expect-error
         expect({}).toMatchObject();
       }).toThrow();
       expect(() => {
+        // @ts-expect-error
         expect(true).toMatchObject(true);
       }).toThrow();
       expect(() => {
+        // @ts-expect-error
         expect(true).toMatchObject(true);
       }).toThrow();
       expect(() => {
+        // @ts-expect-error
         expect(1).toMatchObject(1);
       }).toThrow();
       expect(() => {
+        // @ts-expect-error
         expect("a").toMatchObject("a");
       }).toThrow();
       expect(() => {
+        // @ts-expect-error
         expect(null).toMatchObject(null);
       }).toThrow();
       expect(() => {
+        // @ts-expect-error
         expect(undefined).toMatchObject(undefined);
       }).toThrow();
       expect(() => {
+        // @ts-expect-error
         expect(Symbol()).toMatchObject(Symbol());
       }).toThrow();
       expect(() => {
+        // @ts-expect-error
         expect(BigInt(1)).toMatchObject(BigInt(1));
       }).toThrow();
       expect([]).toMatchObject([]);
@@ -2636,7 +3060,7 @@ describe("expect()", () => {
       expect({ a: new Date(), b: "jj" }).not.toMatchObject({ b: expect.any(Number) });
       expect({ a: "123" }).not.toMatchObject({ a: expect.stringContaining("4") });
       class DString extends String {
-        constructor(str) {
+        constructor(/** @type {string} */ str) {
           super(str);
         }
       }
@@ -2750,6 +3174,7 @@ describe("expect()", () => {
         },
       });
 
+      /** @type {any} */
       var a1 = [1];
       a1[f] = 99;
       expect(a1).not.toMatchObject([1]);
@@ -2793,7 +3218,7 @@ describe("expect()", () => {
     }
   });
 
-  test("toBeNaN()", () => {
+  test_skipIf(isJest)("toBeNaN()", () => {
     expect(NaN).toBeNaN();
     expect(() => expect(NaN).not.toBeNaN()).toThrow();
     expect(0).not.toBeNaN();
@@ -2842,18 +3267,22 @@ describe("expect()", () => {
         label: `Buffer.from("")`,
         value: Buffer.from(""),
       },
-      {
-        label: `new Headers()`,
-        value: new Headers(),
-      },
-      {
-        label: `new URLSearchParams()`,
-        value: new URLSearchParams(),
-      },
-      {
-        label: `new FormData()`,
-        value: new FormData(),
-      },
+      ...(isBun
+        ? [
+            {
+              label: `new Headers()`,
+              value: new Headers(),
+            },
+            {
+              label: `new URLSearchParams()`,
+              value: new URLSearchParams(),
+            },
+            {
+              label: `new FormData()`,
+              value: new FormData(),
+            },
+          ]
+        : []),
       {
         label: `(function* () {})()`,
         value: (function* () {})(),
@@ -2876,6 +3305,7 @@ describe("expect()", () => {
   });
 
   describe("not.toBeEmpty()", () => {
+    /** @type {any[]} */
     const values = [
       {
         label: `" "`,
@@ -2917,26 +3347,30 @@ describe("expect()", () => {
         label: `Buffer.from(" ")`,
         value: Buffer.from(" "),
       },
-      {
-        label: `new Headers({...})`,
-        value: new Headers({
-          a: "b",
-          c: "d",
-        }),
-      },
-      {
-        label: `URL.searchParams`,
-        value: new URL("https://example.com?d=e&f=g").searchParams,
-      },
-      {
-        label: `FormData`,
-        value: (() => {
-          var a = new FormData();
-          a.append("a", "b");
-          a.append("c", "d");
-          return a;
-        })(),
-      },
+      ...(isBun
+        ? [
+            {
+              label: `new Headers({...})`,
+              value: new Headers({
+                a: "b",
+                c: "d",
+              }),
+            },
+            {
+              label: `URL.searchParams`,
+              value: new URL("https://example.com?d=e&f=g").searchParams,
+            },
+            {
+              label: `FormData`,
+              value: (() => {
+                var a = new FormData();
+                a.append("a", "b");
+                a.append("c", "d");
+                return a;
+              })(),
+            },
+          ]
+        : []),
       {
         label: `generator function`,
         value: (function* () {
@@ -2957,6 +3391,41 @@ describe("expect()", () => {
     }
   });
 
+  test("toBeEmptyObject()", () => {
+    // Map and Set are not considered as object in jest-extended
+    // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26
+    expect(new Map().set("a", 1)).not.toBeEmptyObject();
+    expect(new Map()).not.toBeEmptyObject();
+    expect(new Set()).not.toBeEmptyObject();
+    expect(new Set().add("1")).not.toBeEmptyObject();
+    expect([]).toBeEmptyObject();
+    expect({}).toBeEmptyObject();
+    expect([1, 2]).not.toBeEmptyObject();
+    expect({ a: "hello" }).not.toBeEmptyObject();
+    expect(true).not.toBeEmptyObject();
+    expect("notAnObject").not.toBeEmptyObject();
+
+    const object1 = {};
+
+    Object.defineProperty(object1, "property1", {
+      value: 42,
+    });
+
+    // Object.keys for non-enumerable properties returns an empty array
+    // jest-extended returns true for non enumerable object
+    expect(object1).toBeEmptyObject();
+
+    // jest-extended return false for Symbol
+    expect(Symbol("a")).not.toBeEmptyObject();
+    expect(Symbol()).not.toBeEmptyObject();
+
+    // jest-extended return false for Date
+    expect(new Date()).not.toBeEmptyObject();
+
+    // jest-extended return false for RegExp
+    expect(/(foo|bar)/g).not.toBeEmptyObject();
+  });
+
   test("toBeNil()", () => {
     expect(null).toBeNil();
     expect(undefined).toBeNil();
@@ -2968,7 +3437,7 @@ describe("expect()", () => {
     expect({}).not.toBeNil();
   });
 
-  test("toBeTypeOf()", () => {
+  test_skipIf(isJest)("toBeTypeOf()", () => {
     expect("Bun! 🫓").toBeTypeOf("string");
     expect(0).toBeTypeOf("number");
     expect(true).toBeTypeOf("boolean");
@@ -3014,6 +3483,7 @@ describe("expect()", () => {
   });
 
   test("toBeTrue()", () => {
+    if (!hasJestExtended) return;
     expect(true).toBeTrue();
     expect(false).not.toBeTrue();
     expect(0).not.toBeTrue();
@@ -3051,6 +3521,20 @@ describe("expect()", () => {
     expect(NaN).not.toBeInteger();
     expect("").not.toBeInteger();
     expect({}).not.toBeInteger();
+  });
+
+  test("toBeObject()", () => {
+    expect({}).toBeObject();
+    expect(class A {}).toBeObject();
+    expect([]).toBeObject();
+    expect(new Set()).toBeObject();
+    expect(new Map()).toBeObject();
+    expect(new Array(0)).toBeObject();
+    expect({ e: 1, e2: 2 }).toBeObject();
+    expect("notAnObject").not.toBeObject();
+    expect(1).not.toBeObject();
+    expect(NaN).not.toBeObject();
+    expect(undefined).not.toBeObject();
   });
 
   test("toBeFinite()", () => {
@@ -3117,6 +3601,7 @@ describe("expect()", () => {
 
     expect("hello world").not.toEqualIgnoringWhitespace("hello world!");
     expect(() => {
+      // @ts-expect-error
       expect({}).not.toEqualIgnoringWhitespace({});
     }).toThrow();
   });
@@ -3150,7 +3635,7 @@ describe("expect()", () => {
     expect(null).not.toBeDate();
   });
 
-  test.todo("toBeValidDate()", () => {
+  test("toBeValidDate()", () => {
     expect(new Date()).toBeValidDate();
     expect(new Date(-1)).toBeValidDate();
     expect("2021-01-01").not.toBeValidDate();
@@ -3191,5 +3676,824 @@ describe("expect()", () => {
     expect(" ").toEndWith("");
     expect("").toEndWith("");
     expect("bob").not.toEndWith("alice");
+  });
+
+  describe("asymmetric matchers", () => {
+    test("expect.any", () => {
+      class Thing {}
+
+      expect(expect.any(String)).toEqual("jest");
+      expect(expect.any(Number)).toEqual(1);
+      expect(expect.any(Function)).toEqual(() => {});
+      expect(expect.any(Boolean)).toEqual(true);
+      expect(expect.any(BigInt)).toEqual(1n);
+      expect(expect.any(Symbol)).toEqual(Symbol());
+      expect(expect.any(Object)).toEqual({});
+      //expect(expect.any(Object)).toEqual(null); // TODO: succeeds on jest, fails on bun
+      expect(expect.any(Array)).toEqual([]);
+      expect(expect.any(Thing)).toEqual(new Thing());
+    });
+
+    test("expect.any on primitive wrapper classes", () => {
+      expect(expect.any(String)).toEqual(new String("jest"));
+      expect(expect.any(Number)).toEqual(new Number(1));
+      expect(expect.any(Function)).toEqual(new Function("() => {}"));
+      expect(expect.any(Boolean)).toEqual(new Boolean(true));
+      expect(expect.any(BigInt)).toEqual(Object(1n));
+      expect(expect.any(Symbol)).toEqual(Object(Symbol()));
+    });
+
+    //test('Any.toAsymmetricMatcher()', () => {
+    //  expect(expect.any(Number).toAsymmetricMatcher()).toBe('Any<Number>');
+    //});
+
+    //test('Any.toAsymmetricMatcher() with function name', () => {
+    //  for (const [name, fn] of /** @type {const} */ ([
+    //    ['someFunc', function someFunc() {}],
+    //    ['$someFunc', function $someFunc() {}],
+    //    [
+    //      '$someFunc2',
+    //      (function () {
+    //        function $someFunc2() {}
+    //        Object.defineProperty($someFunc2, 'name', {value: ''});
+    //        return $someFunc2;
+    //      })(),
+    //    ],
+    //    [
+    //      '$someAsyncFunc',
+    //      (function () {
+    //        async function $someAsyncFunc() {}
+    //        Object.defineProperty($someAsyncFunc, 'name', {value: ''});
+    //        return $someAsyncFunc;
+    //      })(),
+    //    ],
+    //    [
+    //      '$someGeneratorFunc',
+    //      (function () {
+    //        function* $someGeneratorFunc() {}
+    //        Object.defineProperty($someGeneratorFunc, 'name', {value: ''});
+    //        return $someGeneratorFunc;
+    //      })(),
+    //    ],
+    //    [
+    //      '$someFuncWithFakeToString',
+    //      (function () {
+    //        function $someFuncWithFakeToString() {}
+    //        $someFuncWithFakeToString.toString = () => 'Fake to string';
+    //        return $someFuncWithFakeToString;
+    //      })(),
+    //    ],
+    //  ])) {
+    //    expect(expect.any(fn).toAsymmetricMatcher()).toBe(`Any<${name}>`);
+    //  }
+    //});
+
+    test("Any throws when called with empty constructor", () => {
+      // @ts-expect-error: Testing runtime error
+      expect(() => expect.any()).toThrow(
+        "any() expects to be passed a constructor function. Please pass one or use anything() to match any object.",
+      );
+    });
+
+    test("Anything matches any type", () => {
+      expect(expect.anything()).toEqual("jest");
+      expect(expect.anything()).toEqual(1);
+      expect(expect.anything()).toEqual(() => {});
+      expect(expect.anything()).toEqual(true);
+      expect(expect.anything()).toEqual({});
+      expect(expect.anything()).toEqual([]);
+    });
+
+    test("Anything does not match null and undefined", () => {
+      expect(expect.anything()).not.toEqual(null);
+      expect(expect.anything()).not.toEqual(undefined);
+    });
+
+    //test('Anything.toAsymmetricMatcher()', () => {
+    //  expect(expect.anything().toAsymmetricMatcher()).toBe('Anything');
+    //});
+
+    test("ArrayContaining matches", () => {
+      expect(expect.arrayContaining([])).toEqual(["foo", "bar"]);
+      expect(expect.arrayContaining(["foo"])).toEqual(["foo"]);
+      expect(expect.arrayContaining(["foo"])).toEqual(["foo", "bar"]);
+    });
+
+    test("ArrayContaining does not match", () => {
+      // we differ in jest on these cases: bun will fail matching non-array expected values, while jest doesn't
+      if (isBun) {
+        expect(expect.arrayContaining([])).not.toEqual(42);
+        expect(expect.arrayContaining([])).not.toEqual("jest");
+        expect(expect.arrayContaining([])).not.toEqual({});
+        expect(expect.arrayContaining(["foo"])).not.toEqual(42);
+      }
+      expect(expect.arrayContaining(["foo"])).not.toEqual("foo");
+      expect(expect.arrayContaining(["foo"])).not.toEqual(["bar"]);
+    });
+
+    test("ArrayContaining throws for non-arrays", () => {
+      expect(() => {
+        // @ts-expect-error: Testing runtime error
+        expect(expect.arrayContaining("foo")).toEqual([]);
+      }).toThrow(/*"You must provide an array to ArrayContaining, not 'string'."*/);
+    });
+
+    test("ArrayNotContaining matches", () => {
+      if (isBun) {
+        expect(expect.not.arrayContaining([])).toEqual(42);
+        expect(expect.not.arrayContaining([])).toEqual("jest");
+        expect(expect.not.arrayContaining([])).toEqual({});
+        expect(expect.not.arrayContaining(["foo"])).toEqual(42);
+      }
+      expect(expect.not.arrayContaining(["foo"])).toEqual("foo");
+      expect(expect.not.arrayContaining(["foo"])).toEqual(["bar"]);
+    });
+
+    test("ArrayNotContaining does not match", () => {
+      expect(expect.not.arrayContaining([])).not.toEqual(["foo"]);
+      expect(expect.not.arrayContaining(["foo"])).not.toEqual(["foo"]);
+      expect(expect.not.arrayContaining(["foo"])).not.toEqual(["foo", "bar"]);
+    });
+
+    test("ArrayNotContaining throws for non-arrays", () => {
+      expect(() => {
+        // @ts-expect-error: Testing runtime error
+        expect(expect.not.arrayContaining("foo")).toEqual([]);
+      }).toThrow(/*"You must provide an array to ArrayNotContaining, not 'string'."*/);
+    });
+
+    test("ObjectContaining matches", () => {
+      // we differ in jest on these cases: bun will fail matching non-object expected values, while jest doesn't
+      const foo = Symbol("foo");
+      expect(expect.objectContaining({ foo: "foo" })).toEqual({ foo: "foo", jest: "jest" });
+      expect(expect.objectContaining({ foo: undefined })).toEqual({ foo: undefined });
+      expect(expect.objectContaining({ first: expect.objectContaining({ second: {} }) })).toEqual({
+        first: { second: {} },
+      });
+      expect(expect.objectContaining({ foo: Buffer.from("foo") })).toEqual({
+        foo: Buffer.from("foo"),
+        jest: "jest",
+      });
+      expect(expect.objectContaining({ [foo]: "foo" })).toEqual({ [foo]: "foo" });
+    });
+
+    test("ObjectContaining does not match", () => {
+      const foo = Symbol("foo");
+      const bar = Symbol("bar");
+      if (isBun) {
+        // bun behaves differently to jest on these cases on purpose
+        expect(expect.objectContaining({})).not.toEqual(null);
+        expect(expect.objectContaining({})).not.toEqual(undefined);
+        expect(expect.objectContaining({})).not.toEqual(42);
+        expect(expect.objectContaining({})).not.toEqual("jest");
+      }
+      expect(expect.objectContaining({ foo: "foo" })).not.toEqual(42);
+      expect(expect.objectContaining({ foo: "foo" })).not.toEqual("jest");
+      expect(expect.objectContaining({ foo: "foo" })).not.toEqual({ bar: "bar" });
+      expect(expect.objectContaining({ foo: "foo" })).not.toEqual({ foo: "foox" });
+      expect(expect.objectContaining({ foo: undefined })).not.toEqual({});
+      expect(expect.objectContaining({ first: { second: {}, third: {} } })).not.toEqual({
+        first: { second: {} },
+      });
+      expect(expect.objectContaining({ first: { second: {} } })).not.toEqual({
+        first: { second: {}, third: {} },
+      });
+      expect(
+        expect.objectContaining({
+          answer: 42,
+          foo: { bar: "baz", foobar: "qux" },
+        }),
+      ).not.toEqual({ foo: { bar: "baz" } }),
+        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" });
+    });
+
+    test("ObjectContaining matches defined properties", () => {
+      const definedPropertyObject = {};
+      Object.defineProperty(definedPropertyObject, "foo", { get: () => "bar" });
+      expect(expect.objectContaining({ foo: "bar" })).toEqual(definedPropertyObject);
+    });
+
+    test("ObjectContaining matches prototype properties", () => {
+      const prototypeObject = { foo: "bar" };
+      let obj;
+
+      if (Object.create) {
+        obj = Object.create(prototypeObject);
+      } else {
+        function Foo() {}
+        Foo.prototype = prototypeObject;
+        Foo.prototype.constructor = Foo;
+        obj = new (ANY(Foo))();
+      }
+      expect(expect.objectContaining({ foo: "bar" })).toEqual(obj);
+    });
+
+    test("ObjectContaining throws for non-objects", () => {
+      expect(() => {
+        // @ts-expect-error: Testing runtime error
+        expect(expect.objectContaining(1337)).toEqual();
+      }).toThrow(/*"You must provide an object to ObjectContaining, not 'number'."*/);
+    });
+
+    test("ObjectContaining does not mutate the sample", () => {
+      const sample = { foo: { bar: {} } };
+      const sample_json = JSON.stringify(sample);
+      expect({ foo: { bar: {} } }).toEqual(expect.objectContaining(sample));
+      expect(JSON.stringify(sample)).toEqual(sample_json);
+    });
+
+    test("ObjectNotContaining matches", () => {
+      const foo = Symbol("foo");
+      const bar = Symbol("bar");
+
+      if (isBun) {
+        // bun behaves differently to jest on these cases on purpose
+        expect(expect.not.objectContaining({})).toEqual("jest");
+        expect(expect.not.objectContaining({})).toEqual(null);
+        expect(expect.not.objectContaining({})).toEqual(undefined);
+      }
+      expect(expect.not.objectContaining({ [foo]: "foo" })).toEqual({ [bar]: "bar" });
+      expect(expect.not.objectContaining({ foo: "foo" })).toEqual({ bar: "bar" });
+      expect(expect.not.objectContaining({ foo: "foo" })).toEqual({ foo: "foox" });
+      expect(expect.not.objectContaining({ foo: undefined })).toEqual({});
+      expect(
+        expect.not.objectContaining({
+          first: expect.not.objectContaining({ second: {} }),
+        }),
+      ).toEqual({ first: { second: {} } });
+      expect(expect.not.objectContaining({ first: { second: {}, third: {} } })).toEqual({
+        first: { second: {} },
+      });
+      expect(expect.not.objectContaining({ first: { second: {} } })).toEqual({
+        first: { second: {}, third: {} },
+      });
+      expect(expect.not.objectContaining({ foo: "foo", jest: "jest" })).toEqual({
+        foo: "foo",
+      });
+    });
+
+    test("ObjectNotContaining does not match", () => {
+      expect(expect.not.objectContaining({})).not.toEqual({});
+      expect(expect.not.objectContaining({ foo: "foo" })).not.toEqual({
+        foo: "foo",
+        jest: "jest",
+      });
+      expect(expect.not.objectContaining({ foo: undefined })).not.toEqual({ foo: undefined });
+      expect(expect.not.objectContaining({ first: { second: {} } })).not.toEqual({
+        first: { second: {} },
+      });
+      expect(
+        expect.not.objectContaining({
+          first: expect.objectContaining({ second: {} }),
+        }),
+      ).not.toEqual({ first: { second: {} } });
+    });
+
+    test("ObjectNotContaining inverts ObjectContaining", () => {
+      for (const [sample, received] of /** @type {const} */ ([
+        [{}, null],
+        [{ foo: "foo" }, { foo: "foo", jest: "jest" }],
+        [{ foo: "foo", jest: "jest" }, { foo: "foo" }],
+        [{ foo: undefined }, { foo: undefined }],
+        [{ foo: undefined }, {}],
+        [{ first: { second: {} } }, { first: { second: {} } }],
+        [{ first: expect.objectContaining({ second: {} }) }, { first: { second: {} } }],
+        [{ first: expect.not.objectContaining({ second: {} }) }, { first: { second: {} } }],
+        [{}, { foo: undefined }],
+      ])) {
+        let errs = 0;
+        try {
+          expect(expect.objectContaining(sample)).toEqual(received);
+        } catch (_) {
+          errs += 1;
+        }
+        try {
+          expect(expect.not.objectContaining(sample)).toEqual(received);
+        } catch (_) {
+          errs += 1;
+        }
+        expect(errs).toBe(1); // either contains or not-contains should throw, but not both nor none
+      }
+    });
+
+    test("ObjectNotContaining throws for non-objects", () => {
+      expect(() => {
+        // @ts-expect-error: Testing runtime error
+        expect(expect.not.objectContaining(1337)).toEqual();
+      }).toThrow(/*"You must provide an object to ObjectNotContaining, not 'number'."*/);
+    });
+
+    test("StringContaining matches string against string", () => {
+      expect(expect.stringContaining("en*")).toEqual("queen*");
+      expect(expect.stringContaining("en")).not.toEqual("queue");
+    });
+
+    test("StringContaining throws if expected value is not string", () => {
+      expect(() => {
+        // @ts-expect-error: Testing runtime error
+        expect(expect.stringContaining([1])).toEqual("queen");
+      }).toThrow(/*"Expected is not a string"*/);
+    });
+
+    test("StringContaining returns false if received value is not string", () => {
+      expect(expect.stringContaining("en*")).not.toEqual(1);
+    });
+
+    test("StringNotContaining matches string against string", () => {
+      expect(expect.not.stringContaining("en*")).not.toEqual("queen*");
+      expect(expect.not.stringContaining("en")).toEqual("queue");
+    });
+
+    test("StringNotContaining throws if expected value is not string", () => {
+      expect(() => {
+        // @ts-expect-error: Testing runtime error
+        expect(expect.not.stringContaining([1])).toEqual("queen");
+      }).toThrow(/*"Expected is not a string"*/);
+    });
+
+    test("StringNotContaining returns true if received value is not string", () => {
+      expect(expect.not.stringContaining("en*")).toEqual(1);
+    });
+
+    test("StringMatching matches string against regexp", () => {
+      expect(expect.stringMatching(/en/)).toEqual("queen");
+      expect(expect.stringMatching(/en/)).not.toEqual("queue");
+    });
+
+    test("StringMatching matches string against string", () => {
+      expect(expect.stringMatching("en")).toEqual("queen");
+      expect(expect.stringMatching("en")).not.toEqual("queue");
+    });
+
+    test("StringMatching throws if expected value is neither string nor regexp", () => {
+      expect(() => {
+        // @ts-expect-error: Testing runtime error
+        expect(expect.stringMatching([1])).toEqual("queen");
+      }).toThrow(/*"Expected is not a String or a RegExp"*/);
+    });
+
+    test("StringMatching returns false if received value is not string", () => {
+      expect(expect.stringMatching("en")).not.toEqual(1);
+    });
+
+    test("StringMatching returns false even if coerced non-string received value matches pattern", () => {
+      expect(expect.stringMatching("null")).not.toEqual(null);
+    });
+
+    test("StringNotMatching matches string against regexp", () => {
+      expect(expect.not.stringMatching(/en/)).not.toEqual("queen");
+      expect(expect.not.stringMatching(/en/)).toEqual("queue");
+    });
+
+    test("StringNotMatching matches string against string", () => {
+      expect(expect.not.stringMatching("en")).not.toEqual("queen");
+      expect(expect.not.stringMatching("en")).toEqual("queue");
+    });
+
+    test("StringNotMatching throws if expected value is neither string nor regexp", () => {
+      expect(() => {
+        // @ts-expect-error: Testing runtime error
+        expect(expect.not.stringMatching([1])).toEqual("queen");
+      }).toThrow(/*"Expected is not a String or a RegExp"*/);
+    });
+
+    test("StringNotMatching returns true if received value is not string", () => {
+      expect(expect.not.stringMatching("en")).toEqual(1);
+    });
+
+    describe("closeTo", () => {
+      for (const [expected, received] of [
+        [0, 0],
+        [0, 0.001],
+        [1.23, 1.229],
+        [1.23, 1.226],
+        [1.23, 1.225],
+        [1.23, 1.234],
+        [Infinity, Infinity],
+        [-Infinity, -Infinity],
+      ]) {
+        test(`${expected} closeTo ${received} return true`, () => {
+          expect(expect.closeTo(expected)).toEqual(received);
+        });
+        test(`${expected} notCloseTo ${received} return false`, () => {
+          expect(expect.not.closeTo(expected)).not.toEqual(received);
+        });
+      }
+
+      for (const [expected, received] of [
+        [0, 0.01],
+        [1, 1.23],
+        [1.23, 1.224_999_9],
+        [Infinity, -Infinity],
+        [Infinity, 1.23],
+        [-Infinity, -1.23],
+      ]) {
+        test(`${expected} closeTo ${received} return false`, () => {
+          expect(expect.closeTo(expected)).not.toEqual(received);
+        });
+        test(`${expected} notCloseTo ${received} return true`, () => {
+          expect(expect.not.closeTo(expected)).toEqual(received);
+        });
+      }
+
+      for (const [expected, received, precision] of [
+        [0, 0.1, 0],
+        [0, 0.0001, 3],
+        [0, 0.000_004, 5],
+        [2.000_000_2, 2, 5],
+      ]) {
+        test(`${expected} closeTo ${received} with precision ${precision} return true`, () => {
+          expect(expect.closeTo(expected, precision)).toEqual(received);
+        });
+        test(`${expected} notCloseTo ${received} with precision ${precision} return false`, () => {
+          expect(expect.not.closeTo(expected, precision)).not.toEqual(received);
+        });
+      }
+
+      for (const [expected, received, precision] of [
+        [3.141_592e-7, 3e-7, 8],
+        [56_789, 51_234, -4],
+      ]) {
+        test(`${expected} closeTo ${received} with precision ${precision} return false`, () => {
+          expect(expect.closeTo(expected, precision)).not.toEqual(received);
+        });
+        test(`${expected} notCloseTo ${received} with precision ${precision} return true`, () => {
+          expect(expect.not.closeTo(expected, precision)).toEqual(received);
+        });
+      }
+
+      test("closeTo throw if expected is not number", () => {
+        expect(() => {
+          // @ts-expect-error: Testing runtime error
+          expect.closeTo("a");
+        }).toThrow(/*"Expected is not a Number"*/);
+      });
+
+      test("notCloseTo throw if expected is not number", () => {
+        try {
+          // @ts-expect-error: Testing runtime error
+          expect.not.closeTo("a");
+        } catch (e) {}
+        expect(() => {
+          // @ts-expect-error: Testing runtime error
+          expect.not.closeTo("a");
+        }).toThrow(/*"Expected is not a Number"*/);
+      });
+
+      test("closeTo throw if precision is not number", () => {
+        expect(() => {
+          // @ts-expect-error: Testing runtime error
+          expect.closeTo(1, "a");
+        }).toThrow(/*"Precision is not a Number"*/);
+      });
+
+      test("notCloseTo throw if precision is not number", () => {
+        expect(() => {
+          // @ts-expect-error: Testing runtime error
+          expect.not.closeTo(1, "a");
+        }).toThrow(/*"Precision is not a Number"*/);
+      });
+
+      test("closeTo return false if received is not number", () => {
+        expect(expect.closeTo(1)).not.toEqual("a");
+      });
+
+      test("notCloseTo return false if received is not number", () => {
+        expect(expect.not.closeTo(1)).not.toEqual("a");
+      });
+    });
+  });
+
+  describe("async asymmetric matching", () => {
+    if (isBun) {
+      test("expect.rejectsTo", async () => {
+        await expect(Promise.reject("1")).toEqual(expect.rejectsTo.stringContaining("1"));
+        await expect(Promise.reject("2")).toEqual(expect.not.rejectsTo.stringContaining("1"));
+        await expect({ a: Promise.reject("1") }).toEqual({ a: expect.rejectsTo.stringContaining("1") });
+        await expect({ a: Promise.reject("1") }).toEqual({ a: expect.not.rejectsTo.stringContaining("2") });
+        await expect(Promise.reject(new Error("rejectMessage"))).rejects.toMatchObject({ message: "rejectMessage" });
+
+        // a resolved promise should not match
+        await expect(Promise.resolve("a")).not.toEqual(expect.rejectsTo.stringContaining("a"));
+
+        // a non-promise value should not match
+        await expect("a").not.toEqual(expect.rejectsTo.stringContaining("a"));
+
+        // Different task
+        await expect(
+          new Promise((_, reject) => {
+            setTimeout(() => reject("a"), 0);
+          }),
+        ).toEqual(expect.rejectsTo.stringContaining("a"));
+      });
+
+      test("expect.resolvesTo", async () => {
+        await expect(Promise.resolve("1")).toEqual(expect.resolvesTo.stringContaining("1"));
+        await expect(Promise.resolve("2")).toEqual(expect.not.resolvesTo.stringContaining("1"));
+        await expect({ a: Promise.resolve("1") }).toEqual({ a: expect.resolvesTo.stringContaining("1") });
+        await expect({ a: Promise.resolve("1") }).toEqual({ a: expect.not.resolvesTo.stringContaining("2") });
+        await expect(
+          Promise.resolve(() => {
+            throw new Error();
+          }),
+        ).resolves.toThrow();
+
+        // a rejected promise should not match
+        await expect(Promise.reject("a")).not.toEqual(expect.resolvesTo.stringContaining("a"));
+
+        // a non-promise value should not match
+        await expect("a").not.toEqual(expect.rejectsTo.stringContaining("a"));
+
+        // Different task
+        await expect(
+          new Promise(resolve => {
+            setTimeout(() => resolve("a"), 0);
+          }),
+        ).toEqual(expect.resolvesTo.stringContaining("a"));
+      });
+    }
+  });
+
+  describe("object matching", () => {
+    // tests of expect.objectContaining vs expect().toMatchObject
+
+    test("objectContaining, with nested object, containing full props/values", () => {
+      expect({ position: { x: 0, y: 0 } }).toEqual(
+        expect.objectContaining({
+          position: {
+            x: expect.any(Number),
+            y: expect.any(Number),
+          },
+        }),
+      );
+    });
+
+    test("objectContaining, with nested object, containing partial props/values", () => {
+      expect({ position: { x: 0, y: 0 } }).not.toEqual(
+        expect.objectContaining({
+          position: {
+            x: expect.any(Number),
+          },
+        }),
+      );
+    });
+
+    test("objectContaining, with nested object, also declared with objectContaining, containing partial props/values", () => {
+      expect({ position: { x: 0, y: 0 } }).toEqual(
+        expect.objectContaining({
+          position: expect.objectContaining({
+            x: expect.any(Number),
+          }),
+        }),
+      );
+    });
+
+    test("toMatchObject, with nested object, containing full props/values", () => {
+      expect({ position: { x: 0, y: 0 } }).toMatchObject({
+        position: {
+          x: expect.any(Number),
+          y: expect.any(Number),
+        },
+      });
+    });
+
+    test("toMatchObject, with nested object, containing partial props/values", () => {
+      expect({ position: { x: 0, y: 0 } }).toMatchObject({
+        position: {
+          x: expect.any(Number),
+        },
+      });
+    });
+
+    test("Array of dates", async () => {
+      const obj = new Date("2020-01-01T00:00:00.001Z");
+      const parsed = JSON.parse(JSON.stringify([obj, obj])).map(a => new Date(a));
+      expect(parsed).toEqual([obj, obj]);
+    });
+  });
+
+  test("expect.hasAssertions doesn't throw when valid", () => {
+    expect.hasAssertions();
+    expect("a").toEqual("a");
+  });
+
+  test("expect.assertions doesn't throw when valid", () => {
+    expect.assertions(1);
+    expect("a").toEqual("a");
+  });
+
+  test("expect.hasAssertions returns undefined", () => {
+    expect(expect.hasAssertions()).toBeUndefined();
+  });
+
+  test("expect.assertions returns undefined", () => {
+    expect(expect.assertions(1)).toBeUndefined();
+  });
+
+  const mocked = isBun ? mock(() => {}) : jest.fn(() => {});
+  mocked();
+
+  test("fail to return undefined", () => {
+    expect(expect().not.fail()).toBeUndefined();
+  });
+  test("pass to return undefined", () => {
+    expect(expect().pass()).toBeUndefined();
+  });
+  test("rejects to return undefined", () => {
+    expect(expect(Promise.reject("error")).rejects.toBe("error")).toBeUndefined();
+  });
+  test("resolves to return undefined", () => {
+    expect(expect(Promise.resolve(1)).resolves.toBe(1)).toBeUndefined();
+  });
+  test("toBe to return undefined", () => {
+    expect(expect(true).toBe(true)).toBeUndefined();
+  });
+  test("toBeArray to return undefined", () => {
+    expect(expect([]).toBeArray()).toBeUndefined();
+  });
+  test("toBeArrayOfSize to return undefined", () => {
+    expect(expect([]).toBeArrayOfSize(0)).toBeUndefined();
+  });
+  test("toBeBoolean to return undefined", () => {
+    expect(expect(true).toBeBoolean()).toBeUndefined();
+  });
+  test("toBeCloseTo to return undefined", () => {
+    expect(expect(0).toBeCloseTo(0)).toBeUndefined();
+  });
+  test("toBeDate to return undefined", () => {
+    expect(expect(new Date()).toBeDate()).toBeUndefined();
+  });
+  test("toBeDefined to return undefined", () => {
+    expect(expect(true).toBeDefined()).toBeUndefined();
+  });
+  test("toBeEmpty to return undefined", () => {
+    expect(expect("").toBeEmpty()).toBeUndefined();
+  });
+  test("toBeEven to return undefined", () => {
+    expect(expect(2).toBeEven()).toBeUndefined();
+  });
+  test("toBeFalse to return undefined", () => {
+    expect(expect(false).toBeFalse()).toBeUndefined();
+  });
+  test("toBeFalsy to return undefined", () => {
+    expect(expect(false).toBeFalsy()).toBeUndefined();
+  });
+  test("toBeFinite to return undefined", () => {
+    expect(expect(42).toBeFinite()).toBeUndefined();
+  });
+  test("toBeFunction to return undefined", () => {
+    expect(expect(() => {}).toBeFunction()).toBeUndefined();
+  });
+  test("toBeGreaterThan to return undefined", () => {
+    expect(expect(1).toBeGreaterThan(0)).toBeUndefined();
+  });
+  test("toBeGreaterThanOrEqual to return undefined", () => {
+    expect(expect(1).toBeGreaterThanOrEqual(0)).toBeUndefined();
+  });
+  test("toBeInstanceOf to return undefined", () => {
+    expect(expect(new String()).toBeInstanceOf(String)).toBeUndefined();
+  });
+  test("toBeInteger to return undefined", () => {
+    expect(expect(1).toBeInteger()).toBeUndefined();
+  });
+  test("toBeLessThan to return undefined", () => {
+    expect(expect(0).toBeLessThan(1)).toBeUndefined();
+  });
+  test("toBeLessThanOrEqual to return undefined", () => {
+    expect(expect(0).toBeLessThanOrEqual(1)).toBeUndefined();
+  });
+  test("toBeNaN to return undefined", () => {
+    expect(expect(NaN).toBeNaN()).toBeUndefined();
+  });
+  test("toBeNegative to return undefined", () => {
+    expect(expect(-1).toBeNegative()).toBeUndefined();
+  });
+  test("toBeNil to return undefined", () => {
+    expect(expect().toBeNil()).toBeUndefined();
+  });
+  test("toBeNull to return undefined", () => {
+    expect(expect(null).toBeNull()).toBeUndefined();
+  });
+  test("toBeNumber to return undefined", () => {
+    expect(expect(0).toBeNumber()).toBeUndefined();
+  });
+  test("toBeOdd to return undefined", () => {
+    expect(expect(1).toBeOdd()).toBeUndefined();
+  });
+  test("toBePositive to return undefined", () => {
+    expect(expect(1).toBePositive()).toBeUndefined();
+  });
+  test("toBeString to return undefined", () => {
+    expect(expect("").toBeString()).toBeUndefined();
+  });
+  test("toBeSymbol to return undefined", () => {
+    expect(expect(Symbol()).toBeSymbol()).toBeUndefined();
+  });
+  test("toBeTrue to return undefined", () => {
+    expect(expect(true).toBeTrue()).toBeUndefined();
+  });
+  test("toBeTruthy to return undefined", () => {
+    expect(expect(true).toBeTruthy()).toBeUndefined();
+  });
+  test("toBeTypeOf to return undefined", () => {
+    expect(expect(1).toBeTypeOf("number")).toBeUndefined();
+  });
+  test("toBeUndefined to return undefined", () => {
+    expect(expect(undefined).toBeUndefined()).toBeUndefined();
+  });
+  test("toBeWithin to return undefined", () => {
+    expect(expect(1).toBeWithin(0, 2)).toBeUndefined();
+  });
+  test("toContain to return undefined", () => {
+    expect(expect([1]).toContain(1)).toBeUndefined();
+  });
+  test.todo("toContainEqual to return undefined", () => {
+    expect(expect([1]).toContainEqual(1)).toBeUndefined();
+  });
+  test("toEndWith to return undefined", () => {
+    expect(expect("abc").toEndWith("c")).toBeUndefined();
+  });
+  test("toEqual to return undefined", () => {
+    expect(expect(1).toEqual(1)).toBeUndefined();
+  });
+  test("toEqualIgnoringWhitespace to return undefined", () => {
+    expect(expect("a b c").toEqualIgnoringWhitespace("a b c")).toBeUndefined();
+  });
+  test("toHaveBeenCalled to return undefined", () => {
+    expect(expect(mocked).toHaveBeenCalled()).toBeUndefined();
+  });
+  test("toHaveBeenCalledTimes to return undefined", () => {
+    expect(expect(mocked).toHaveBeenCalledTimes(1)).toBeUndefined();
+  });
+  test("toHaveBeenCalledWith to return undefined", () => {
+    expect(expect(mocked).toHaveBeenCalledWith()).toBeUndefined();
+  });
+  test("toHaveBeenLastCalledWith to return undefined", () => {
+    expect(expect(mocked).toHaveBeenLastCalledWith()).toBeUndefined();
+  });
+  test.todo("toHaveBeenNthCalledWith to return undefined", () => {
+    expect(expect(() => {}).toHaveBeenNthCalledWith()).toBeUndefined();
+  });
+  test.todo("toHaveLastReturnedWith to return undefined", () => {
+    expect(expect(() => {}).toHaveLastReturnedWith()).toBeUndefined();
+  });
+  test("toHaveLength to return undefined", () => {
+    expect(expect([1]).toHaveLength(1)).toBeUndefined();
+  });
+  test.todo("toHaveNthReturnedWith to return undefined", () => {
+    expect(expect(() => {}).toHaveNthReturnedWith()).toBeUndefined();
+  });
+  test.todo("toHaveProperty to return undefined", () => {
+    expect(expect({}).toHaveProperty()).toBeUndefined();
+  });
+  test.todo("toHaveReturnedTimes to return undefined", () => {
+    expect(expect(() => {}).toHaveReturnedTimes()).toBeUndefined();
+  });
+  test.todo("toHaveReturnedWith to return undefined", () => {
+    expect(expect(() => {}).toHaveReturnedWith()).toBeUndefined();
+  });
+  test("toInclude to return undefined", () => {
+    expect(expect("abc").toInclude("a")).toBeUndefined();
+  });
+  test.todo("toIncludeRepeated to return undefined", () => {
+    expect(expect("abc").toIncludeRepeated("a")).toBeUndefined();
+  });
+  test("toMatch to return undefined", () => {
+    expect(expect("abc").toMatch("a")).toBeUndefined();
+  });
+  test.todo("toMatchInlineSnapshot to return undefined", () => {
+    expect(expect("abc").toMatchInlineSnapshot()).toBeUndefined();
+  });
+  test("toMatchObject to return undefined", () => {
+    expect(expect({}).toMatchObject({})).toBeUndefined();
+  });
+  test("toMatchSnapshot to return undefined", () => {
+    expect(expect("abc").toMatchSnapshot()).toBeUndefined();
+  });
+  test("toSatisfy to return undefined", () => {
+    expect(expect(1).toSatisfy(() => true)).toBeUndefined();
+  });
+  test("toStartWith to return undefined", () => {
+    expect(expect("abc").toStartWith("a")).toBeUndefined();
+  });
+  test("toStrictEqual to return undefined", () => {
+    expect(expect(1).toStrictEqual(1)).toBeUndefined();
+  });
+  test("toThrow to return undefined", () => {
+    expect(
+      expect(() => {
+        throw "";
+      }).toThrow(),
+    ).toBeUndefined();
+  });
+  test.todo("toThrowErrorMatchingInlineSnapshot to return undefined", () => {
+    expect(expect(() => {}).toThrowErrorMatchingInlineSnapshot()).toBeUndefined();
+  });
+  test.todo("toThrowErrorMatchingSnapshot to return undefined", () => {
+    expect(expect(() => {}).toThrowErrorMatchingSnapshot()).toBeUndefined();
+  });
+
+  test(' " " to contain ""', () => {
+    expect(" ").toContain("");
   });
 });

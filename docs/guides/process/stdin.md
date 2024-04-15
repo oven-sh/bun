@@ -18,7 +18,7 @@ for await (const line of console) {
 Running this file results in a never-ending interactive prompt that echoes whatever the user types.
 
 ```sh
-$ bun run index.tsx
+$ bun run index.ts
 Type something: hello
 You typed: hello
 Type something: hello again

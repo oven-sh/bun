@@ -106,16 +106,21 @@ declare namespace HTMLRewriterTypes {
  */
 declare class HTMLRewriter {
   constructor();
-  on(
-    selector: string,
-    handlers: HTMLRewriterTypes.HTMLRewriterElementContentHandlers,
-  ): HTMLRewriter;
-  onDocument(
-    handlers: HTMLRewriterTypes.HTMLRewriterDocumentContentHandlers,
-  ): HTMLRewriter;
+  on(selector: string, handlers: HTMLRewriterTypes.HTMLRewriterElementContentHandlers): HTMLRewriter;
+  onDocument(handlers: HTMLRewriterTypes.HTMLRewriterDocumentContentHandlers): HTMLRewriter;
   /**
    * @param input - The HTML to transform
    * @returns A new {@link Response} with the transformed HTML
    */
-  transform(input: Response): Response;
+  transform(input: Response | Blob | Bun.BufferSource): Response;
+  /**
+   * @param input - The HTML string to transform
+   * @returns A new {@link String} containing the transformed HTML
+   */
+  transform(input: string): string;
+  /**
+   * @param input - The HTML to transform as a {@link ArrayBuffer}
+   * @returns A new {@link ArrayBuffer} with the transformed HTML
+   */
+  transform(input: ArrayBuffer): ArrayBuffer;
 }

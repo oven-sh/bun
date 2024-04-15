@@ -136,7 +136,9 @@ void JSCountQueuingStrategy::finishCreation(VM& vm)
 
 JSObject* JSCountQueuingStrategy::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSCountQueuingStrategyPrototype::create(vm, &globalObject, JSCountQueuingStrategyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSCountQueuingStrategyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSCountQueuingStrategyPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSCountQueuingStrategy::prototype(VM& vm, JSDOMGlobalObject& globalObject)

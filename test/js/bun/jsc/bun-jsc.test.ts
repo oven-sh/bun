@@ -86,7 +86,8 @@ describe("bun:jsc", () => {
     expect(optimizeNextInvocation(count)).toBeUndefined();
     count();
   });
-  it("numberOfDFGCompiles", () => {
+  it("numberOfDFGCompiles", async () => {
+    await Bun.sleep(5); // this failed once and i suspect it is because the query was done too fast
     expect(numberOfDFGCompiles(count)).toBeGreaterThan(0);
   });
   it("releaseWeakRefs", () => {

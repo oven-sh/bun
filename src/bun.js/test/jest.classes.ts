@@ -25,6 +25,30 @@ export default [
     proto: {},
   }),
   define({
+    name: "ExpectCloseTo",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["numberValue", "digitsValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
+    name: "ExpectObjectContaining",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["objectValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
     name: "ExpectStringContaining",
     construct: false,
     noConstructor: true,
@@ -61,6 +85,131 @@ export default [
     proto: {},
   }),
   define({
+    name: "ExpectCustomAsymmetricMatcher",
+    construct: false,
+    noConstructor: true,
+    call: false,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["matcherFn", "capturedArgs"],
+    configurable: false,
+    klass: {},
+    proto: {
+      asymmetricMatch: {
+        fn: "asymmetricMatch",
+        length: 1,
+      },
+    },
+  }),
+  define({
+    name: "ExpectMatcherContext",
+    construct: false,
+    noConstructor: true,
+    call: false,
+    finalize: true,
+    JSType: "0b11101110",
+    configurable: false,
+    klass: {},
+    proto: {
+      utils: {
+        getter: "getUtils",
+      },
+      isNot: {
+        getter: "getIsNot",
+      },
+      promise: {
+        getter: "getPromise",
+      },
+      expand: {
+        getter: "getExpand",
+      },
+      equals: {
+        fn: "equals",
+        length: 3,
+      },
+    },
+  }),
+  define({
+    name: "ExpectMatcherUtils",
+    construct: false,
+    noConstructor: true,
+    call: false,
+    finalize: true,
+    JSType: "0b11101110",
+    configurable: false,
+    klass: {},
+    proto: {
+      stringify: {
+        fn: "stringify",
+        length: 1,
+      },
+      printExpected: {
+        fn: "printExpected",
+        length: 1,
+      },
+      printReceived: {
+        fn: "printReceived",
+        length: 1,
+      },
+      matcherHint: {
+        fn: "matcherHint",
+        length: 1,
+      },
+    },
+  }),
+  define({
+    name: "ExpectStatic",
+    construct: false,
+    noConstructor: true,
+    call: false,
+    finalize: true,
+    JSType: "0b11101110",
+    configurable: false,
+    klass: {},
+    proto: {
+      anything: {
+        fn: "anything",
+        length: 1,
+      },
+      any: {
+        fn: "any",
+        length: 1,
+      },
+      arrayContaining: {
+        fn: "arrayContaining",
+        length: 1,
+      },
+      closeTo: {
+        fn: "closeTo",
+        length: 1,
+      },
+      objectContaining: {
+        fn: "objectContaining",
+        length: 1,
+      },
+      stringContaining: {
+        fn: "stringContaining",
+        length: 1,
+      },
+      stringMatching: {
+        fn: "stringMatching",
+        length: 1,
+      },
+      not: {
+        getter: "getNot",
+        this: true,
+      },
+      resolvesTo: {
+        getter: "getResolvesTo",
+        this: true,
+      },
+      rejectsTo: {
+        getter: "getRejectsTo",
+        this: true,
+      },
+    },
+  }),
+  define({
     name: "Expect",
     construct: true,
     call: true,
@@ -93,6 +242,10 @@ export default [
         fn: "hasAssertions",
         length: 1,
       },
+      closeTo: {
+        fn: "closeTo",
+        length: 1,
+      },
       objectContaining: {
         fn: "objectContaining",
         length: 1,
@@ -112,11 +265,11 @@ export default [
       not: {
         getter: "getStaticNot",
       },
-      resolves: {
-        getter: "getStaticResolves",
+      resolvesTo: {
+        getter: "getStaticResolvesTo",
       },
-      rejects: {
-        getter: "getStaticRejects",
+      rejectsTo: {
+        getter: "getStaticRejectsTo",
       },
       unreachable: {
         fn: "doUnreachable",
@@ -136,6 +289,10 @@ export default [
         fn: "toBe",
         length: 1,
       },
+      toBeCalled: {
+        fn: "toHaveBeenCalled",
+        length: 0,
+      },
       toHaveBeenCalled: {
         fn: "toHaveBeenCalled",
         length: 0,
@@ -144,20 +301,38 @@ export default [
         fn: "toHaveBeenCalledTimes",
         length: 1,
       },
+      toBeCalledTimes: {
+        fn: "toHaveBeenCalledTimes",
+        length: 1,
+      },
       toHaveBeenCalledWith: {
         fn: "toHaveBeenCalledWith",
-        length: 1,
+      },
+      toBeCalledWith: {
+        fn: "toHaveBeenCalledWith",
       },
       toHaveBeenLastCalledWith: {
         fn: "toHaveBeenLastCalledWith",
-        length: 1,
+      },
+      lastCalledWith: {
+        fn: "toHaveBeenLastCalledWith",
       },
       toHaveBeenNthCalledWith: {
         fn: "toHaveBeenNthCalledWith",
-        length: 1,
+      },
+      nthCalledWith: {
+        fn: "toHaveBeenNthCalledWith",
       },
       toHaveReturnedTimes: {
         fn: "toHaveReturnedTimes",
+        length: 1,
+      },
+      toReturn: {
+        fn: "toHaveReturned",
+        length: 1,
+      },
+      toHaveReturned: {
+        fn: "toHaveReturned",
         length: 1,
       },
       toHaveReturnedWith: {
@@ -168,7 +343,15 @@ export default [
         fn: "toHaveLastReturnedWith",
         length: 1,
       },
+      lastReturnedWith: {
+        fn: "toHaveLastReturnedWith",
+        length: 1,
+      },
       toHaveNthReturnedWith: {
+        fn: "toHaveNthReturnedWith",
+        length: 1,
+      },
+      nthReturnedWith: {
         fn: "toHaveNthReturnedWith",
         length: 1,
       },
@@ -232,6 +415,17 @@ export default [
         fn: "toContain",
         length: 1,
       },
+      toContainKey: {
+        fn: "toContainKey",
+        length: 1,
+      },
+      toContainAnyKeys: {
+        fn: "toContainAnyKeys",
+      },
+      toContainKeys: {
+        fn: "toContainKeys",
+        length: 1,
+      },
       toContainEqual: {
         fn: "toContainEqual",
         length: 1,
@@ -264,12 +458,20 @@ export default [
         fn: "toThrow",
         length: 1,
       },
+      toThrowError: {
+        fn: "toThrow",
+        length: 1,
+      },
       toThrowErrorMatchingSnapshot: {
         fn: "toThrowErrorMatchingSnapshot",
         length: 1,
       },
       toThrowErrorMatchingInlineSnapshot: {
         fn: "toThrowErrorMatchingInlineSnapshot",
+        length: 1,
+      },
+      toBeOneOf: {
+        fn: "toBeOneOf",
         length: 1,
       },
       not: {
@@ -287,6 +489,10 @@ export default [
       // jest-extended
       toBeEmpty: {
         fn: "toBeEmpty",
+        length: 0,
+      },
+      toBeEmptyObject: {
+        fn: "toBeEmptyObject",
         length: 0,
       },
       toBeEven: {
@@ -333,6 +539,10 @@ export default [
         fn: "toBeInteger",
         length: 0,
       },
+      toBeObject: {
+        fn: "toBeObject",
+        length: 0,
+      },
       toBeFinite: {
         fn: "toBeFinite",
         length: 0,
@@ -363,6 +573,10 @@ export default [
       },
       toBeDate: {
         fn: "toBeDate",
+        length: 0,
+      },
+      toBeValidDate: {
+        fn: "toBeValidDate",
         length: 0,
       },
       toBeString: {

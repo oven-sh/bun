@@ -1,19 +1,21 @@
 const EditorContext = @import("../open.zig").EditorContext;
 const Blob = JSC.WebCore.Blob;
-const default_allocator = @import("root").bun.default_allocator;
-const Output = @import("root").bun.Output;
+const default_allocator = bun.default_allocator;
+const Output = bun.Output;
 const RareData = @This();
 const Syscall = bun.sys;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const std = @import("std");
-const BoringSSL = @import("root").bun.BoringSSL;
+const BoringSSL = bun.BoringSSL;
 const bun = @import("root").bun;
+const FDImpl = bun.FDImpl;
+const Environment = bun.Environment;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
 const Async = bun.Async;
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const IPC = @import("./ipc.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
@@ -36,12 +38,23 @@ global_dns_data: ?*JSC.DNS.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
-mime_types: ?bun.HTTP.MimeType.Map = null,
+mime_types: ?bun.http.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
 listening_sockets_for_watch_mode_lock: bun.Lock = bun.Lock.init(),
+
+temp_pipe_read_buffer: ?*PipeReadBuffer = null,
+
+const PipeReadBuffer = [256 * 1024]u8;
+
+pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
+    return this.temp_pipe_read_buffer orelse {
+        this.temp_pipe_read_buffer = default_allocator.create(PipeReadBuffer) catch bun.outOfMemory();
+        return this.temp_pipe_read_buffer.?;
+    };
+}
 
 pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
     this.listening_sockets_for_watch_mode_lock.lock();
@@ -74,9 +87,9 @@ pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
     return &this.hot_map.?;
 }
 
-pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?bun.HTTP.MimeType {
+pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?bun.http.MimeType {
     if (this.mime_types == null) {
-        this.mime_types = bun.HTTP.MimeType.createHashTable(
+        this.mime_types = bun.http.MimeType.createHashTable(
             allocator,
         ) catch @panic("Out of memory");
     }
@@ -120,7 +133,7 @@ pub const HotMap = struct {
     }
 
     pub fn insert(this: *HotMap, key: []const u8, ptr: anytype) void {
-        var entry = this._map.getOrPut(key) catch @panic("Out of memory");
+        const entry = this._map.getOrPut(key) catch @panic("Out of memory");
         if (entry.found_existing) {
             @panic("HotMap already contains key");
         }
@@ -130,7 +143,7 @@ pub const HotMap = struct {
     }
 
     pub fn remove(this: *HotMap, key: []const u8) void {
-        var entry = this._map.getEntry(key) orelse return;
+        const entry = this._map.getEntry(key) orelse return;
         bun.default_allocator.free(entry.key_ptr.*);
         _ = this._map.orderedRemove(key);
     }
@@ -238,7 +251,7 @@ pub fn pushCleanupHook(
     ctx: ?*anyopaque,
     func: CleanupHook.Function,
 ) void {
-    var hook = JSC.VirtualMachine.get().allocator.create(CleanupHook) catch unreachable;
+    const hook = JSC.VirtualMachine.get().allocator.create(CleanupHook) catch unreachable;
     hook.* = CleanupHook.from(globalThis, ctx, func);
     if (this.cleanup_hook == null) {
         this.cleanup_hook = hook;
@@ -256,12 +269,15 @@ pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
 }
 
 pub fn stderr(rare: *RareData) *Blob.Store {
+    bun.Analytics.Features.@"Bun.stderr" += 1;
     return rare.stderr_store orelse brk: {
-        var store = default_allocator.create(Blob.Store) catch unreachable;
+        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDERR_FD)) {
+        const fd = if (Environment.isWindows) FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
-                mode = stat.mode;
+                mode = @intCast(stat.mode);
             },
             .err => {},
         }
@@ -272,7 +288,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDERR_FD,
+                        .fd = fd,
                     },
                     .is_atty = Output.stderr_descriptor_type == .terminal,
                     .mode = mode,
@@ -286,12 +302,15 @@ pub fn stderr(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdout(rare: *RareData) *Blob.Store {
+    bun.Analytics.Features.@"Bun.stdout" += 1;
     return rare.stdout_store orelse brk: {
-        var store = default_allocator.create(Blob.Store) catch unreachable;
+        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDOUT_FD)) {
+        const fd = if (Environment.isWindows) FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
-                mode = stat.mode;
+                mode = @intCast(stat.mode);
             },
             .err => {},
         }
@@ -301,7 +320,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDOUT_FD,
+                        .fd = fd,
                     },
                     .is_atty = Output.stdout_descriptor_type == .terminal,
                     .mode = mode,
@@ -314,12 +333,15 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdin(rare: *RareData) *Blob.Store {
+    bun.Analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
-        var store = default_allocator.create(Blob.Store) catch unreachable;
+        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDIN_FD)) {
+        const fd = if (Environment.isWindows) FDImpl.fromUV(0).encode() else bun.STDIN_FD;
+
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
-                mode = stat.mode;
+                mode = @intCast(stat.mode);
             },
             .err => {},
         }
@@ -329,9 +351,9 @@ pub fn stdin(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDIN_FD,
+                        .fd = fd,
                     },
-                    .is_atty = std.os.isatty(bun.fdcast(bun.STDIN_FD)),
+                    .is_atty = if (bun.STDIN_FD.isValid()) std.os.isatty(bun.STDIN_FD.cast()) else false,
                     .mode = mode,
                 },
             },
@@ -348,7 +370,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
         return ctx;
     }
 
-    var opts: uws.us_socket_context_options_t = .{};
+    const opts: uws.us_socket_context_options_t = .{};
     const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
     IPC.Socket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
     rare.spawn_ipc_usockets_context = ctx;

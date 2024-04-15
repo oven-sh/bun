@@ -15,9 +15,11 @@ const myPlugin: BunPlugin = {
     // implementation
   },
 };
+
+plugin(myPlugin);
 ```
 
-Plugins have to be registered before any other code runs! To achieve this, use the `preload` option in your [`bunfig.toml`](/docs/runtime/bunfig). Bun automatically loads the files/modules specified in `preload` before running a file.
+Plugins have to be loaded before any other code runs! To achieve this, use the `preload` option in your [`bunfig.toml`](/docs/runtime/bunfig). Bun automatically loads the files/modules specified in `preload` before running a file.
 
 ```toml
 preload = ["./myPlugin.ts"]
@@ -61,17 +63,16 @@ Plugins are primarily used to extend Bun with loaders for additional file types.
 ```ts#yamlPlugin.ts
 import { plugin } from "bun";
 
-plugin({
+await plugin({
   name: "YAML",
   async setup(build) {
     const { load } = await import("js-yaml");
-    const { readFileSync } = await import("fs");
 
     // when a .yaml file is imported...
-    build.onLoad({ filter: /\.(yaml|yml)$/ }, (args) => {
+    build.onLoad({ filter: /\.(yaml|yml)$/ }, async (args) => {
 
       // read and parse the file
-      const text = readFileSync(args.path, "utf8");
+      const text = await Bun.file(args.path).text();
       const exports = load(text) as Record<string, any>;
 
       // and returns it as a module
@@ -178,17 +179,16 @@ Loading a YAML file is useful, but plugins support more than just data loading. 
 ```ts#sveltePlugin.ts
 import { plugin } from "bun";
 
-plugin({
+await plugin({
   name: "svelte loader",
   async setup(build) {
     const { compile } = await import("svelte/compiler");
-    const { readFileSync } = await import("fs");
 
     // when a .svelte file is imported...
-    build.onLoad({ filter: /\.svelte$/ }, ({ path }) => {
+    build.onLoad({ filter: /\.svelte$/ }, async ({ path }) => {
 
       // read and compile it with the Svelte compiler
-      const file = readFileSync(path, "utf8");
+      const file = await Bun.file(path).text();
       const contents = compile(file, {
         filename: path,
         generate: "ssr",
@@ -214,7 +214,7 @@ With this plugin, Svelte components can now be directly imported and consumed.
 import "./sveltePlugin.ts";
 import MySvelteComponent from "./component.svelte";
 
-console.log(mySvelteComponent.render());
+console.log(MySvelteComponent.render());
 ```
 
 ## Virtual Modules
@@ -237,7 +237,7 @@ plugin({
 
   setup(build) {
     build.module(
-      // The specifier, which can be any string
+      // The specifier, which can be any string - except a built-in, such as "buffer"
       "my-transpiled-virtual-module",
       // The callback to run when the module is imported or required for the first time
       () => {

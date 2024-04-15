@@ -10,9 +10,11 @@ import {
   validateHeaderValue,
   ServerResponse,
   IncomingMessage,
+  OutgoingMessage,
 } from "node:http";
 
 import https from "node:https";
+import { EventEmitter } from "node:events";
 import { createServer as createHttpsServer } from "node:https";
 import { createTest } from "node-harness";
 import url from "node:url";
@@ -21,6 +23,7 @@ import { spawnSync } from "node:child_process";
 import nodefs from "node:fs";
 import { join as joinPath } from "node:path";
 import { unlinkSync } from "node:fs";
+import { PassThrough } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
@@ -134,6 +137,23 @@ describe("node:http", () => {
       expect(listenResponse).toBe(server);
       listenResponse.close();
     });
+
+    it("option method should be uppercase (#7250)", async () => {
+      try {
+        var server = createServer((req, res) => {
+          expect(req.method).toBe("OPTIONS");
+          res.writeHead(204, {});
+          res.end();
+        });
+        const url = await listen(server);
+        const res = await fetch(url, {
+          method: "OPTIONS",
+        });
+        expect(res.status).toBe(204);
+      } finally {
+        server.close();
+      }
+    });
   });
 
   describe("response", () => {
@@ -155,8 +175,8 @@ describe("node:http", () => {
 
   describe("request", () => {
     function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
-      var timer;
-      var server = createServer((req, res) => {
+      let timer;
+      const server = createServer((req, res) => {
         if (req.headers.__proto__ !== {}.__proto__) {
           throw new Error("Headers should inherit from Object.prototype");
         }
@@ -168,6 +188,15 @@ describe("node:http", () => {
               Location: `http://localhost:${server.port}/redirected`,
             });
             res.end("Got redirect!\n");
+            return;
+          }
+          if (reqUrl.pathname === "/multi-chunk-response") {
+            res.writeHead(200, { "Content-Type": "text/plain" });
+            const toWrite = "a".repeat(512);
+            for (let i = 0; i < 4; i++) {
+              res.write(toWrite);
+            }
+            res.end();
             return;
           }
           if (reqUrl.pathname === "/multiple-set-cookie") {
@@ -634,6 +663,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("reassign writeHead method, issue#3585", done => {
       runTest(done, (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}/customWriteHead`, res => {
@@ -644,6 +674,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("uploading file by 'formdata/multipart', issue#3116", done => {
       runTest(done, (server, serverPort, done) => {
         const boundary = "----FormBoundary" + Date.now();
@@ -687,6 +718,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("request via http proxy, issue#4295", done => {
       const proxyServer = createServer(function (req, res) {
         let option = url.parse(req.url);
@@ -744,10 +776,43 @@ describe("node:http", () => {
         req.end();
       });
     });
+
+    it("should correctly stream a multi-chunk response #5320", async done => {
+      runTest(done, (server, serverPort, done) => {
+        const req = request({ host: "localhost", port: `${serverPort}`, path: "/multi-chunk-response", method: "GET" });
+
+        req.on("error", err => done(err));
+
+        req.on("response", async res => {
+          const body = res.pipe(new PassThrough({ highWaterMark: 512 }));
+          const response = new Response(body);
+          const text = await response.text();
+
+          expect(text.length).toBe(2048);
+          done();
+        });
+
+        req.end();
+      });
+    });
+
+    it("should emit a socket event when connecting", async done => {
+      runTest(done, async (server, serverPort, done) => {
+        const req = request(`http://localhost:${serverPort}`, {});
+        await new Promise((resolve, reject) => {
+          req.on("error", reject);
+          req.on("socket", function onRequestSocket(socket) {
+            req.destroy();
+            done();
+            resolve();
+          });
+        });
+      });
+    });
   });
 
   describe("signal", () => {
-    it.skip("should abort and close the server", done => {
+    it("should abort and close the server", done => {
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("Hello World");
@@ -1108,6 +1173,62 @@ describe("server.address should be valid IP", () => {
         unlinkSync(socketPath);
       }
     });
+  });
+  test("ServerResponse init", done => {
+    try {
+      const req = {};
+      const res = new ServerResponse(req);
+      expect(res.req).toBe(req);
+      done();
+    } catch (err) {
+      done(err);
+    }
+  });
+  test("ServerResponse reply", done => {
+    const createDone = createDoneDotAll(done);
+    const doneRequest = createDone();
+    try {
+      const req = {};
+      const sendedText = "Bun\n";
+      const res = new ServerResponse(req, async (res: Response) => {
+        expect(await res.text()).toBe(sendedText);
+        doneRequest();
+      });
+      res.write(sendedText);
+      res.end();
+    } catch (err) {
+      doneRequest(err);
+    }
+  });
+  test("ServerResponse instanceof OutgoingMessage", () => {
+    expect(new ServerResponse({}) instanceof OutgoingMessage).toBe(true);
+  });
+  test("ServerResponse assign assignSocket", done => {
+    const createDone = createDoneDotAll(done);
+    const doneRequest = createDone();
+    const waitSocket = createDone();
+    const doneSocket = createDone();
+    try {
+      const socket = new EventEmitter();
+      const res = new ServerResponse({});
+      res.once("socket", socket => {
+        expect(socket).toBe(socket);
+        waitSocket();
+      });
+      res.once("close", () => {
+        doneRequest();
+      });
+      res.assignSocket(socket);
+      setImmediate(() => {
+        expect(res.socket).toBe(socket);
+        expect(socket._httpMessage).toBe(res);
+        expect(() => res.assignSocket(socket)).toThrow("ServerResponse has an already assigned socket");
+        socket.emit("close");
+        doneSocket();
+      });
+    } catch (err) {
+      doneRequest(err);
+    }
   });
 });
 
@@ -1555,4 +1676,132 @@ it("#6892", () => {
     expect(req.url).toBe(url);
     expect(req.method).toBeNull();
   }
+});
+
+it("#4415.1 ServerResponse es6", () => {
+  class Response extends ServerResponse {
+    constructor(req) {
+      super(req);
+    }
+  }
+  const req = {};
+  const res = new Response(req);
+  expect(res.req).toBe(req);
+});
+
+it("#4415.2 ServerResponse es5", () => {
+  function Response(req) {
+    ServerResponse.call(this, req);
+  }
+  Response.prototype = Object.create(ServerResponse.prototype);
+  const req = {};
+  const res = new Response(req);
+  expect(res.req).toBe(req);
+});
+
+it("#4415.3 Server es5", done => {
+  const server = Server((req, res) => {
+    res.end();
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`);
+      expect(res.status).toBe(200);
+      done();
+    } catch (err) {
+      done(err);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+it("#4415.4 IncomingMessage es5", () => {
+  const im = Object.create(IncomingMessage.prototype);
+  IncomingMessage.call(im, { url: "/foo" });
+  expect(im.url).toBe("/foo");
+});
+
+it("#9242.1 Server has constructor", () => {
+  const s = new Server();
+  expect(s.constructor).toBe(Server);
+});
+it("#9242.2 IncomingMessage has constructor", () => {
+  const im = new IncomingMessage("http://localhost");
+  expect(im.constructor).toBe(IncomingMessage);
+});
+it("#9242.3 OutgoingMessage has constructor", () => {
+  const om = new OutgoingMessage();
+  expect(om.constructor).toBe(OutgoingMessage);
+});
+it("#9242.4 ServerResponse has constructor", () => {
+  const sr = new ServerResponse({});
+  expect(sr.constructor).toBe(ServerResponse);
+});
+
+// Windows doesnt support SIGUSR1
+if (process.platform !== "win32") {
+  // By not timing out, this test passes.
+  test(".unref() works", async () => {
+    expect([joinPath(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
+  });
+}
+
+it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", done => {
+  // x = ascii
+  // á = latin1 supplementary character
+  // 📙 = emoji
+  // 👍🏽 = its a grapheme of 👍 🟤
+  // "\u{1F600}" = utf16
+  const chars = ["x", "á", "📙", "👍🏽", "\u{1F600}"];
+
+  // 128 = small than waterMark, 256 = waterMark, 1024 = large than waterMark
+  // 8Kb = small than cork buffer
+  // 16Kb = cork buffer
+  // 32Kb = large than cork buffer
+  const start_size = 128;
+  const increment_step = 1024;
+  const end_size = 32 * 1024;
+  let expected = "";
+
+  function finish(err) {
+    server.closeAllConnections();
+    Bun.gc(true);
+    done(err);
+  }
+  const server = require("http")
+    .createServer((_, response) => {
+      response.write(expected);
+      response.write("");
+      response.end();
+    })
+    .listen(0, "localhost", async (err, hostname, port) => {
+      expect(err).toBeFalsy();
+      expect(port).toBeGreaterThan(0);
+
+      for (const char of chars) {
+        for (let size = start_size; size <= end_size; size += increment_step) {
+          expected = char + "-".repeat(size) + "x";
+
+          try {
+            const url = `http://${hostname}:${port}`;
+            const count = 20;
+            const all = [];
+            const batchSize = 20;
+            while (all.length < count) {
+              const batch = Array.from({ length: batchSize }, () => fetch(url).then(a => a.text()));
+
+              all.push(...(await Promise.all(batch)));
+            }
+
+            for (const result of all) {
+              expect(result).toBe(expected);
+            }
+          } catch (err) {
+            return finish(err);
+          }
+        }
+      }
+      finish();
+    });
 });

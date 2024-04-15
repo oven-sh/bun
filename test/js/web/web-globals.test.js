@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { expect, it, test } from "bun:test";
-import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, withoutAggressiveGC } from "harness";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -21,6 +21,12 @@ test("exists", () => {
   expect(typeof FormData !== "undefined").toBe(true);
   expect(typeof Worker !== "undefined").toBe(true);
   expect(typeof File !== "undefined").toBe(true);
+  expect(typeof Performance !== "undefined").toBe(true);
+  expect(typeof PerformanceEntry !== "undefined").toBe(true);
+  expect(typeof PerformanceMark !== "undefined").toBe(true);
+  expect(typeof PerformanceMeasure !== "undefined").toBe(true);
+  expect(typeof PerformanceObserver !== "undefined").toBe(true);
+  expect(typeof PerformanceObserverEntryList !== "undefined").toBe(true);
 });
 
 const globalSetters = [
@@ -122,7 +128,7 @@ it("crypto.getRandomValues", () => {
   });
 
   // run it on a large input
-  expect(!!crypto.getRandomValues(new Uint8Array(8096)).find(a => a > 0)).toBe(true);
+  expect(!!crypto.getRandomValues(new Uint8Array(8192)).find(a => a > 0)).toBe(true);
 
   {
     // any additional input into getRandomValues() makes it unbuffered
@@ -225,11 +231,11 @@ test("navigator", () => {
   const userAgent = `Bun/${version}`;
   expect(navigator.hardwareConcurrency > 0).toBe(true);
   expect(navigator.userAgent).toBe(userAgent);
-  if (process.platform === "darwin") {
+  if (isMacOS) {
     expect(navigator.platform).toBe("MacIntel");
-  } else if (process.platform === "win32") {
+  } else if (isWindows) {
     expect(navigator.platform).toBe("Win32");
-  } else if (process.platform === "linux") {
+  } else if (isLinux) {
     expect(navigator.platform).toBe("Linux x86_64");
   }
 });
@@ -237,9 +243,7 @@ test("navigator", () => {
 test("confirm (yes)", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
-    stderr: "pipe",
-    stdin: "pipe",
-    stdout: "pipe",
+    stdio: ["pipe", "pipe", "pipe"],
     env: bunEnv,
   });
 
@@ -257,9 +261,7 @@ test("confirm (yes)", async () => {
 test("confirm (no)", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
-    stderr: "pipe",
-    stdin: "pipe",
-    stdout: "pipe",
+    stdio: ["pipe", "pipe", "pipe"],
     env: bunEnv,
   });
 
@@ -268,4 +270,20 @@ test("confirm (no)", async () => {
   await proc.exited;
 
   expect(await new Response(proc.stderr).text()).toBe("No\n");
+});
+
+test("globalThis.self = 123 works", () => {
+  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
+    configurable: true,
+    enumerable: true,
+    get: expect.any(Function),
+    set: expect.any(Function),
+  });
+  const original = Object.getOwnPropertyDescriptor(globalThis, "self");
+  try {
+    globalThis.self = 123;
+    expect(globalThis.self).toBe(123);
+  } finally {
+    Object.defineProperty(globalThis, "self", original);
+  }
 });

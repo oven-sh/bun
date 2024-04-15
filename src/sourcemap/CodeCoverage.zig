@@ -133,7 +133,7 @@ pub const CodeCoverageReport = struct {
         writer: anytype,
         comptime enable_colors: bool,
     ) !void {
-        var failing = fraction.*;
+        const failing = fraction.*;
         const fns = report.functionCoverageFraction();
         const lines = report.linesCoverageFraction();
         const stmts = report.stmtsCoverageFraction();
@@ -277,7 +277,7 @@ pub const CodeCoverageReport = struct {
         ignore_sourcemap_: bool,
     ) ?CodeCoverageReport {
         bun.JSC.markBinding(@src());
-        var vm = globalThis.vm();
+        const vm = globalThis.vm();
 
         var result: ?CodeCoverageReport = null;
 
@@ -353,7 +353,7 @@ pub const ByteRangeMapping = struct {
 
         var map_ = map orelse return null;
         const hash = bun.hash(slice.slice());
-        var entry = map_.getPtr(hash) orelse return null;
+        const entry = map_.getPtr(hash) orelse return null;
         return entry;
     }
 
@@ -365,7 +365,7 @@ pub const ByteRangeMapping = struct {
         function_blocks: []const BasicBlockRange,
         ignore_sourcemap: bool,
     ) !CodeCoverageReport {
-        var line_starts = this.line_offset_table.items(.byte_offset_to_start_of_line);
+        const line_starts = this.line_offset_table.items(.byte_offset_to_start_of_line);
 
         var executable_lines: Bitset = Bitset{};
         var lines_which_have_executed: Bitset = Bitset{};
@@ -617,7 +617,7 @@ pub const ByteRangeMapping = struct {
             return .zero;
         };
 
-        var str = bun.String.create(mutable_str.toOwnedSliceLeaky());
+        var str = bun.String.createUTF8(mutable_str.toOwnedSliceLeaky());
         defer str.deref();
         return str.toJS(globalThis);
     }

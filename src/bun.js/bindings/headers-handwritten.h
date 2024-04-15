@@ -262,7 +262,7 @@ typedef struct Uint8Array_alias Uint8Array_alias;
 extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl);
 extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
-extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, BunString*);
+extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
 extern "C" void BunString__toWTFString(BunString*);
 
 namespace Bun {
@@ -311,11 +311,12 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier);
 
-extern "C" void* Bun__transpileFile(
+extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
+    const BunString* typeAttribute,
     ErrorableResolvedSource* result, bool allowPromise);
 
 extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -359,10 +360,10 @@ extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char
 extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, size_t len, Encoding encoding);
 
 template<bool isStrict, bool enableAsymmetricMatchers>
-bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
+bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
 
 template<bool enableAsymmetricMatchers>
-bool Bun__deepMatch(JSC::JSValue object, JSC::JSValue subset, JSC::JSGlobalObject* globalObject, JSC::ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers);
+bool Bun__deepMatch(JSC::JSValue object, JSC::JSValue subset, JSC::JSGlobalObject* globalObject, JSC::ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers, bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
 

@@ -1,7 +1,7 @@
 import { file, spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
-import { bunEnv, bunExe, bunEnv as env } from "harness";
-import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { bunEnv, bunExe, bunEnv as env, isWindows } from "harness";
+import { mkdtemp, realpath, rm, writeFile, exists, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
@@ -12,9 +12,6 @@ beforeEach(async () => {
   run_dir = await realpath(
     await mkdtemp(join(tmpdir(), "bun-run.test." + Math.trunc(Math.random() * 9999999).toString(32))),
   );
-});
-afterEach(async () => {
-  // await rm(run_dir, { force: true, recursive: true });
 });
 
 for (let withRun of [false, true]) {
@@ -69,7 +66,7 @@ for (let withRun of [false, true]) {
             name: "test",
             version: "0.0.0",
             scripts: {
-              "boop": "echo 'hi'",
+              "boop": "echo hi",
             },
           }),
         );
@@ -83,31 +80,83 @@ for (let withRun of [false, true]) {
         });
 
         expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toBe("hi\n");
+        expect(stdout.toString().replaceAll("\r\n", "\n")).toBe("hi\n");
         expect(exitCode).toBe(0);
       });
 
       it("--silent omits error messages", async () => {
+        const exe = isWindows ? "bun.exe" : "bun";
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "run", "--silent", "bash", "-c", "exit 1"],
+          cmd: [bunExe(), "run", "--silent", exe, "doesnotexist"],
           cwd: run_dir,
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toBe("");
+        expect(stderr.toString()).not.toEndWith(`error: "${exe}" exited with code 1\n`);
         expect(stdout.toString()).toBe("");
         expect(exitCode).toBe(1);
       });
 
       it("no --silent includes error messages", async () => {
+        const exe = isWindows ? "bun.exe" : "bun";
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "run", "bash", "-c", "exit 1"],
+          cmd: [bunExe(), "run", exe, "doesnotexist"],
           cwd: run_dir,
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toStartWith('error: "bash" exited with code 1');
+        expect(stderr.toString()).toEndWith(`error: "${exe}" exited with code 1\n`);
         expect(exitCode).toBe(1);
+      });
+
+      it.skipIf(isWindows)("exit code message works above 128", async () => {
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "run", "bash", "-c", "exit 200"],
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toStartWith('error: "bash" exited with code 200');
+        expect(exitCode).toBe(200);
+      });
+
+      describe.each(["--silent", "not silent"])("%s", silentOption => {
+        const silent = silentOption === "--silent";
+        it.skipIf(isWindows)("exit signal works", async () => {
+          {
+            const { stdout, stderr, exitCode, signalCode } = spawnSync({
+              cmd: [bunExe(), silent ? "--silent" : "", "run", "bash", "-c", "kill -4 $$"].filter(Boolean),
+              cwd: run_dir,
+              env: bunEnv,
+            });
+
+            if (silent) {
+              expect(stderr.toString()).toBe("");
+            } else {
+              expect(stderr.toString()).toContain("bash");
+              expect(stderr.toString()).toContain("SIGILL");
+            }
+
+            expect(signalCode).toBe("SIGILL");
+            expect(exitCode).toBe(null);
+          }
+          {
+            const { stdout, stderr, exitCode, signalCode } = spawnSync({
+              cmd: [bunExe(), silent ? "--silent" : "", "run", "bash", "-c", "kill -9 $$"],
+              cwd: run_dir,
+              env: bunEnv,
+            });
+
+            if (silent) {
+              expect(stderr.toString()).toBe("");
+            } else {
+              expect(stderr.toString()).toContain("bash");
+              expect(stderr.toString()).toContain("SIGKILL");
+            }
+            expect(signalCode).toBe("SIGKILL");
+            expect(exitCode).toBe(null);
+          }
+        });
       });
 
       for (let withLogLevel of [true, false]) {
@@ -149,11 +198,10 @@ logLevel = "debug"
               cwd: run_dir,
               env: bunEnv,
             });
-            console.log(run_dir);
             if (withLogLevel) {
-              expect(stderr.toString().trim()).toContain("FileNotFound loading tsconfig.json extends");
+              expect(stderr.toString().trim()).toContain("ENOENT loading tsconfig.json extends");
             } else {
-              expect(stderr.toString().trim()).not.toContain("FileNotFound loading tsconfig.json extends");
+              expect(stderr.toString().trim()).not.toContain("ENOENT loading tsconfig.json extends");
             }
 
             expect(stdout.toString()).toBe("hi\n");
@@ -195,7 +243,7 @@ logLevel = "debug"
         });
 
         expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toBe("pre\n" + "main -a -b -c\n" + "post\n");
+        expect(stdout.toString().replaceAll("\r\n", "\n")).toBe("pre\n" + "main -a -b -c\n" + "post\n");
         expect(exitCode).toBe(0);
       });
     });
@@ -218,7 +266,7 @@ console.log(minify("print(6 * 7)").code);
   } = spawn({
     cmd: [bunExe(), "run", "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -232,6 +280,7 @@ console.log(minify("print(6 * 7)").code);
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
   expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4"]);
+  expect(await exists(join(run_dir, ".cache", "uglify-js", "3.17.4", "package.json"))).toBeTrue();
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.split(/\r?\n/)).toEqual(["print(42);", ""]);
@@ -244,7 +293,7 @@ console.log(minify("print(6 * 7)").code);
   } = spawn({
     cmd: [bunExe(), "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -265,13 +314,14 @@ console.log(minify("print(6 * 7)").code);
 });
 
 it("should download dependencies to run local file", async () => {
+  const filePath = join(import.meta.dir, "baz-0.0.3.tgz").replace(/\\/g, "\\\\");
   await writeFile(
     join(run_dir, "test.js"),
     `
 import { file } from "bun";
 import decompress from "decompress@4.2.1";
 
-const buffer = await file("${join(import.meta.dir, "baz-0.0.3.tgz")}").arrayBuffer();
+const buffer = await file("${filePath}").arrayBuffer();
 for (const entry of await decompress(Buffer.from(buffer))) {
   console.log(\`\${entry.type}: \${entry.path}\`);
 }
@@ -284,7 +334,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   } = spawn({
     cmd: [bunExe(), "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -298,12 +348,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
   expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1"]);
-  expect(await readdirSorted(join(run_dir, ".cache", "decompress", "4.2.1"))).toEqual([
-    "index.js",
-    "license",
-    "package.json",
-    "readme.md",
-  ]);
+  expect(await exists(join(run_dir, ".cache", "decompress", "4.2.1", "package.json"))).toBeTrue();
   expect(await file(join(run_dir, ".cache", "decompress", "4.2.1", "index.js")).text()).toContain(
     "\nmodule.exports = ",
   );
@@ -324,7 +369,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   } = spawn({
     cmd: [bunExe(), "run", "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -338,12 +383,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
   expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1"]);
-  expect(await readdirSorted(join(run_dir, ".cache", "decompress", "4.2.1"))).toEqual([
-    "index.js",
-    "license",
-    "package.json",
-    "readme.md",
-  ]);
+  expect(await exists(join(run_dir, ".cache", "decompress", "4.2.1", "package.json"))).toBeTrue();
   expect(await file(join(run_dir, ".cache", "decompress", "4.2.1", "index.js")).text()).toContain(
     "\nmodule.exports = ",
   );
@@ -378,4 +418,29 @@ import { prueba } from "pruebadfasdfasdkafasdyuif.js";
   });
   // The exit code will not be 1 if it panics.
   expect(await exited).toBe(1);
+});
+
+it("should show the correct working directory when run with --cwd", async () => {
+  await mkdir(join(run_dir, "subdir"));
+  await writeFile(
+    join(run_dir, "subdir", "test.js"),
+    `
+    console.log(process.cwd());
+  `,
+  );
+  const res = Bun.spawn({
+    cmd: [bunExe(), "run", "--cwd", "subdir", "test.js"],
+    cwd: run_dir,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
+    },
+  });
+
+  // The exit code will not be 1 if it panics.
+  expect(await res.exited).toBe(0);
+  expect(await Bun.readableStreamToText(res.stdout)).toMatch(/subdir/);
 });

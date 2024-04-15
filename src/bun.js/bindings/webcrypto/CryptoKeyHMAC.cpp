@@ -35,7 +35,6 @@
 #include "JsonWebKey.h"
 #include <wtf/text/Base64.h>
 #include <wtf/text/WTFString.h>
-#include "Bun_base64URLEncodeToString.h"
 
 namespace WebCore {
 
@@ -74,7 +73,7 @@ CryptoKeyHMAC::~CryptoKeyHMAC() = default;
 RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::generateFromBytes(void* data, size_t byteLength, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usages)
 {
 
-    Vector<uint8_t> vec_data((uint8_t*)data, byteLength);
+    Vector<uint8_t> vec_data(std::span { (uint8_t*)data, byteLength });
     return adoptRef(new CryptoKeyHMAC(vec_data, hash, extractable, usages));
 }
 
@@ -130,7 +129,7 @@ RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importJwk(size_t lengthBits, CryptoAlgorith
 JsonWebKey CryptoKeyHMAC::exportJwk() const
 {
 
-    JsonWebKey result;
+    JsonWebKey result {};
     result.kty = "oct"_s;
     result.k = Bun::base64URLEncodeToString(m_key);
     result.key_ops = usages();

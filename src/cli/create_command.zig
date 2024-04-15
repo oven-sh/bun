@@ -1,6 +1,5 @@
 const bun = @import("root").bun;
 const string = bun.string;
-const constStrToU8 = bun.constStrToU8;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
@@ -12,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -29,8 +28,8 @@ const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("root").bun.HTTP;
-const NetworkThread = HTTP.NetworkThread;
+const HTTP = bun.http;
+
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
@@ -38,9 +37,9 @@ const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
-const clap = @import("root").bun.clap;
+const clap = bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("root").bun.HTTP.Headers;
+const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
@@ -55,11 +54,14 @@ pub fn initializeStore() void {
     js_ast.Stmt.Data.Store.create(default_allocator);
 }
 
-const skip_dirs = &[_]string{ "node_modules", ".git" };
-const skip_files = &[_]string{
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
+const skip_dirs = &[_]bun.OSPathSlice{
+    bun.OSPathLiteral("node_modules"),
+    bun.OSPathLiteral(".git"),
+};
+const skip_files = &[_]bun.OSPathSlice{
+    bun.OSPathLiteral("package-lock.json"),
+    bun.OSPathLiteral("yarn.lock"),
+    bun.OSPathLiteral("pnpm-lock.yaml"),
 };
 
 const never_conflict = &[_]string{
@@ -107,8 +109,6 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     const npm_args = 2 * @as(usize, @intCast(@intFromBool(npm_client != null)));
     const total = count + npm_args;
     var argv = allocator.alloc(string, total) catch return;
-    var proc: std.ChildProcess = undefined;
-    defer if (argv.len > 32) allocator.free(argv);
 
     if (npm_client) |client| {
         argv[0] = client.bin;
@@ -144,12 +144,19 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     Output.disableBuffering();
     defer Output.enableBuffering();
 
-    proc = std.ChildProcess.init(argv, allocator);
-    proc.stdin_behavior = .Inherit;
-    proc.stdout_behavior = .Inherit;
-    proc.stderr_behavior = .Inherit;
-    proc.cwd = cwd;
-    _ = proc.spawnAndWait() catch undefined;
+    _ = bun.spawnSync(&.{
+        .argv = argv,
+        .envp = null,
+
+        .cwd = cwd,
+        .stderr = .inherit,
+        .stdout = .inherit,
+        .stdin = .inherit,
+
+        .windows = if (Environment.isWindows) .{
+            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+        } else {},
+    }) catch return;
 }
 
 // We don't want to allocate memory each time
@@ -188,14 +195,14 @@ const CreateOptions = struct {
     open: bool = false,
 
     const params = [_]clap.Param(clap.Help){
-        clap.parseParam("--help                     Print this menu") catch unreachable,
-        clap.parseParam("--force                    Overwrite existing files") catch unreachable,
-        clap.parseParam("--no-install               Don't install node_modules") catch unreachable,
-        clap.parseParam("--no-git                   Don't create a git repository") catch unreachable,
-        clap.parseParam("--verbose                  Too many logs") catch unreachable,
-        clap.parseParam("--no-package-json          Disable package.json transforms") catch unreachable,
-        clap.parseParam("--open                     On finish, start bun & open in-browser") catch unreachable,
-        clap.parseParam("<POS>...                   ") catch unreachable,
+        clap.parseParam("-h, --help                     Print this menu") catch unreachable,
+        clap.parseParam("--force                        Overwrite existing files") catch unreachable,
+        clap.parseParam("--no-install                   Don't install node_modules") catch unreachable,
+        clap.parseParam("--no-git                       Don't create a git repository") catch unreachable,
+        clap.parseParam("--verbose                      Too many logs") catch unreachable,
+        clap.parseParam("--no-package-json              Disable package.json transforms") catch unreachable,
+        clap.parseParam("--open                         On finish, start bun & open in-browser") catch unreachable,
+        clap.parseParam("<POS>...                       ") catch unreachable,
     };
 
     pub fn parse(ctx: Command.Context) !CreateOptions {
@@ -245,7 +252,7 @@ pub const CreateCommand = struct {
 
         var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
-            var map = try ctx.allocator.create(DotEnv.Map);
+            const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
@@ -289,7 +296,7 @@ pub const CreateCommand = struct {
 
         switch (example_tag) {
             Example.Tag.github_repository, Example.Tag.official => {
-                var tarball_bytes: MutableString = switch (example_tag) {
+                const tarball_bytes: MutableString = switch (example_tag) {
                     .official => Example.fetch(ctx, &env_loader, template, &progress, node) catch |err| {
                         switch (err) {
                             error.HTTPForbidden, error.ExampleNotFound => {
@@ -357,7 +364,7 @@ pub const CreateCommand = struct {
 
                 progress.refresh();
 
-                var file_buf = try ctx.allocator.alloc(u8, 16384);
+                const file_buf = try ctx.allocator.alloc(u8, 16384);
 
                 var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
                 var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
@@ -371,7 +378,7 @@ pub const CreateCommand = struct {
                 progress.refresh();
 
                 var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
-                    [1]Archive.Plucker{try Archive.Plucker.init("package.json", 2048, ctx.allocator)}
+                    [1]Archive.Plucker{try Archive.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
                 else
                     [1]Archive.Plucker{undefined};
 
@@ -432,14 +439,14 @@ pub const CreateCommand = struct {
                 );
 
                 if (!create_options.skip_package_json) {
-                    var plucker = pluckers[0];
+                    const plucker = pluckers[0];
 
-                    if (plucker.found and plucker.fd != 0) {
+                    if (plucker.found and plucker.fd != .zero) {
                         node.name = "Updating package.json";
                         progress.refresh();
 
                         package_json_contents = plucker.contents;
-                        package_json_file = std.fs.File{ .handle = bun.fdcast(plucker.fd) };
+                        package_json_file = plucker.fd.asFile();
                     }
                 }
             },
@@ -449,7 +456,7 @@ pub const CreateCommand = struct {
                 node.name = "Copying files";
                 progress.refresh();
 
-                const template_dir = std.fs.cwd().openIterableDir(filesystem.abs(&template_parts), .{}) catch |err| {
+                const template_dir = std.fs.openDirAbsolute(filesystem.abs(&template_parts), .{}) catch |err| {
                     node.end();
                     progress.refresh();
 
@@ -458,7 +465,7 @@ pub const CreateCommand = struct {
                 };
 
                 std.fs.deleteTreeAbsolute(destination) catch {};
-                const destination_dir__ = std.fs.cwd().makeOpenPathIterable(destination, .{}) catch |err| {
+                const destination_dir__ = std.fs.cwd().makeOpenPath(destination, .{}) catch |err| {
                     node.end();
 
                     progress.refresh();
@@ -466,7 +473,7 @@ pub const CreateCommand = struct {
                     Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
                     Global.exit(1);
                 };
-                const destination_dir = destination_dir__.dir;
+                const destination_dir = destination_dir__;
                 const Walker = @import("../walker_skippable.zig");
                 var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
@@ -481,35 +488,37 @@ pub const CreateCommand = struct {
                         while (try walker.next()) |entry| {
                             if (entry.kind != .file) continue;
 
-                            var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
-                                if (std.fs.path.dirname(entry.path)) |entry_dirname| {
-                                    destination_dir_.makePath(entry_dirname) catch {};
+                            const createFile = if (comptime Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFile;
+                            var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+                                if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                                    bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                                 }
-                                break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
+                                break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
                                     node_.end();
 
                                     progress_.refresh();
 
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                    Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                                     Global.exit(1);
                                 };
                             };
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            var infile = try entry.dir.dir.openFile(entry.basename, .{ .mode = .read_only });
+                            const openFile = if (comptime Environment.isWindows) std.fs.Dir.openFileW else std.fs.Dir.openFile;
+                            var infile = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
                             if (comptime Environment.isPosix) {
                                 // Assumption: you only really care about making sure something that was executable is still executable
                                 const stat = infile.stat() catch continue;
-                                _ = C.fchmod(outfile.handle, stat.mode);
+                                _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                             } else {
-                                bun.todo(@src(), void{});
+                                @panic("TODO on Windows");
                             }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
-                                Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                                 Global.exit(1);
                             };
                         }
@@ -551,6 +560,7 @@ pub const CreateCommand = struct {
                         package_json_contents = try MutableString.init(ctx.allocator, size);
                         package_json_contents.list.expandToCapacity();
 
+                        const prev_file_pos = if (comptime Environment.isWindows) try pkg.getPos() else 0;
                         _ = pkg.preadAll(package_json_contents.list.items, 0) catch |err| {
                             package_json_file = null;
 
@@ -561,6 +571,7 @@ pub const CreateCommand = struct {
                             Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
                             break :read_package_json;
                         };
+                        if (comptime Environment.isWindows) try pkg.seekTo(prev_file_pos);
                         // The printer doesn't truncate, so we must do so manually
                         std.os.ftruncate(pkg.handle, 0) catch {};
 
@@ -574,9 +585,9 @@ pub const CreateCommand = struct {
         node.end();
         progress.refresh();
 
-        var is_nextjs = false;
-        var is_create_react_app = false;
-        var create_react_app_entry_point_path: string = "";
+        const is_nextjs = false;
+        const is_create_react_app = false;
+        const create_react_app_entry_point_path: string = "";
         var preinstall_tasks = std.mem.zeroes(std.ArrayListUnmanaged([]const u8));
         var postinstall_tasks = std.mem.zeroes(std.ArrayListUnmanaged([]const u8));
         var has_dependencies: bool = false;
@@ -586,7 +597,7 @@ pub const CreateCommand = struct {
             var parent_dir = try std.fs.openDirAbsolute(destination, .{});
             defer parent_dir.close();
             if (comptime Environment.isWindows) {
-                try parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{});
+                parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{}) catch {};
             } else {
                 std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
             }
@@ -623,7 +634,7 @@ pub const CreateCommand = struct {
                     break :process_package_json;
                 }
 
-                var properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
+                const properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
 
                 if (ctx.log.errors > 0) {
                     if (Output.enable_ansi_colors) {
@@ -638,7 +649,7 @@ pub const CreateCommand = struct {
 
                 if (package_json_expr.asProperty("name")) |name_expr| {
                     if (name_expr.expr.data == .e_string) {
-                        var basename = std.fs.path.basename(destination);
+                        const basename = std.fs.path.basename(destination);
                         name_expr.expr.data.e_string.data = @as([*]u8, @ptrFromInt(@intFromPtr(basename.ptr)))[0..basename.len];
                     }
                 }
@@ -737,7 +748,7 @@ pub const CreateCommand = struct {
                             // is_nextjs = true;
                             // needs.bun_bun_for_nextjs = true;
 
-                            // next_q.expr.data.e_string.data = constStrToU8(target_nextjs_version);
+                            // next_q.expr.data.e_string.data = @constCast(target_nextjs_version);
                             // }
 
                             // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
@@ -1346,7 +1357,7 @@ pub const CreateCommand = struct {
                     package_json_expr.data.e_object.properties = js_ast.G.Property.List.init(package_json_expr.data.e_object.properties.ptr[0..property_i]);
                 }
 
-                var package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
+                const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
                 const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -1389,7 +1400,7 @@ pub const CreateCommand = struct {
         if (!create_options.skip_install) {
             npm_client_ = NPMClient{
                 .tag = .bun,
-                .bin = try std.fs.selfExePathAlloc(ctx.allocator),
+                .bin = try bun.selfExePath(),
             };
         }
 
@@ -1414,10 +1425,6 @@ pub const CreateCommand = struct {
 
             Output.pretty("<r>\n", .{});
             Output.flush();
-
-            var process = std.ChildProcess.init(install_args, ctx.allocator);
-            process.cwd = destination;
-
             defer {
                 Output.printErrorln("\n", .{});
                 Output.printStartEnd(start_time, std.time.nanoTimestamp());
@@ -1428,9 +1435,19 @@ pub const CreateCommand = struct {
                 Output.flush();
             }
 
-            _ = try process.spawnAndWait();
+            const process = try bun.spawnSync(&.{
+                .argv = install_args,
+                .envp = null,
+                .cwd = destination,
+                .stderr = .inherit,
+                .stdout = .inherit,
+                .stdin = .inherit,
 
-            _ = process.kill() catch undefined;
+                .windows = if (Environment.isWindows) .{
+                    .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                } else {},
+            });
+            _ = try process.unwrap();
         }
 
         if (postinstall_tasks.items.len > 0) {
@@ -1567,11 +1584,15 @@ pub const CreateCommand = struct {
         var example_tag = Example.Tag.unknown;
         var filesystem = try fs.FileSystem.init(null);
 
-        var create_options = try CreateOptions.parse(ctx);
+        const create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
+        if (positionals.len == 0) {
+            bun.CLI.Command.Tag.printHelp(.CreateCommand, false);
+            Global.crash();
+        }
 
         var env_loader: DotEnv.Loader = brk: {
-            var map = try ctx.allocator.create(DotEnv.Map);
+            const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
@@ -1587,9 +1608,9 @@ pub const CreateCommand = struct {
                 outer: {
                     if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                         var parts = [_]string{ home_dir, positional };
-                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                        const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
-                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                         std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
@@ -1598,9 +1619,9 @@ pub const CreateCommand = struct {
 
                 outer: {
                     var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR, positional };
-                    var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                    const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                     home_dir_buf[outdir_path.len] = 0;
-                    var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                    const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                     std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                     example_tag = Example.Tag.local_folder;
                     break :brk outdir_path;
@@ -1609,9 +1630,9 @@ pub const CreateCommand = struct {
                 outer: {
                     if (env_loader.map.get("HOME")) |home_dir| {
                         var parts = [_]string{ home_dir, BUN_CREATE_DIR, positional };
-                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                        const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
-                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                         std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
@@ -1672,7 +1693,7 @@ const Commands = .{
     &[_]string{""},
     &[_]string{""},
 };
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,
@@ -1699,7 +1720,7 @@ pub const Example = struct {
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
         for (examples) |example| {
-            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..@min(example.name.len, 492)]}) catch unreachable);
+            const app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..@min(example.name.len, 492)]}) catch unreachable);
 
             if (example.description.len > 0) {
                 Output.pretty("  <r># {s}<r>\n  <b>bun create <cyan>{s}<r><b> {s}<r>\n<d>  \n\n", .{
@@ -1722,48 +1743,41 @@ pub const Example = struct {
 
         var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
-            var folders = [3]std.fs.IterableDir{
-                .{
-                    .dir = .{ .fd = bun.fdcast(bun.invalid_fd) },
-                },
-                .{
-                    .dir = .{ .fd = bun.fdcast(bun.invalid_fd) },
-                },
-                .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } },
+            var folders = [3]std.fs.Dir{
+                bun.invalid_fd.asDir(),
+                bun.invalid_fd.asDir(),
+                bun.invalid_fd.asDir(),
             };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
-                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
+                const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[0] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
-                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
+                const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
-                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
+                const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             // subfolders with package.json
-            for (folders) |folder__| {
-                const folder_ = folder__.dir;
-
-                if (folder_.fd != bun.fdcast(bun.invalid_fd)) {
-                    const folder: std.fs.Dir = folder_;
-                    var iter = (std.fs.IterableDir{ .dir = folder }).iterate();
+            for (folders) |folder| {
+                if (folder.fd != bun.invalid_fd.cast()) {
+                    var iter = folder.iterate();
 
                     loop: while (iter.next() catch null) |entry_| {
-                        const entry: std.fs.IterableDir.Entry = entry_;
+                        const entry: std.fs.Dir.Entry = entry_;
 
                         switch (entry.kind) {
                             .directory => {
                                 inline for (skip_dirs) |skip_dir| {
-                                    if (strings.eqlComptime(entry.name, skip_dir)) {
+                                    if (strings.eqlComptime(entry.name, comptime bun.pathLiteral(skip_dir))) {
                                         continue :loop;
                                     }
                                 }
@@ -1773,7 +1787,7 @@ pub const Example = struct {
                                 bun.copy(u8, home_dir_buf[entry.name.len + 1 ..], "package.json");
                                 home_dir_buf[entry.name.len + 1 + "package.json".len] = 0;
 
-                                var path: [:0]u8 = home_dir_buf[0 .. entry.name.len + 1 + "package.json".len :0];
+                                const path: [:0]u8 = home_dir_buf[0 .. entry.name.len + 1 + "package.json".len :0];
 
                                 folder.accessZ(path, .{ .mode = .read_only }) catch continue :loop;
 
@@ -1805,8 +1819,8 @@ pub const Example = struct {
         refresher: *std.Progress,
         progress: *std.Progress.Node,
     ) !MutableString {
-        var owner_i = std.mem.indexOfScalar(u8, name, '/').?;
-        var owner = name[0..owner_i];
+        const owner_i = std.mem.indexOfScalar(u8, name, '/').?;
+        const owner = name[0..owner_i];
         var repository = name[owner_i + 1 ..];
 
         if (std.mem.indexOfScalar(u8, repository, '/')) |i| {
@@ -1823,7 +1837,7 @@ pub const Example = struct {
             }
         }
 
-        var api_url = URL.parse(
+        const api_url = URL.parse(
             try std.fmt.bufPrint(
                 &github_repository_url_buf,
                 "https://{s}/repos/{s}/{s}/tarball",
@@ -1853,9 +1867,9 @@ pub const Example = struct {
             }
         }
 
-        var http_proxy: ?URL = env_loader.getHttpProxy(api_url);
-        var mutable = try ctx.allocator.create(MutableString);
-        mutable.* = try MutableString.init(ctx.allocator, 8096);
+        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const mutable = try ctx.allocator.create(MutableString);
+        mutable.* = try MutableString.init(ctx.allocator, 8192);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
@@ -2064,10 +2078,10 @@ pub const Example = struct {
     pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*std.Progress.Node) ![]Example {
         url = URL.parse(examples_url);
 
-        var http_proxy: ?URL = env_loader.getHttpProxy(url);
+        const http_proxy: ?URL = env_loader.getHttpProxy(url);
 
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        var mutable = try ctx.allocator.create(MutableString);
+        const mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
         async_http.* = HTTP.AsyncHTTP.initSync(
@@ -2159,9 +2173,9 @@ pub const Example = struct {
 
 pub const CreateListExamplesCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        var filesystem = try fs.FileSystem.init(null);
+        const filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
-            var map = try ctx.allocator.create(DotEnv.Map);
+            const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
@@ -2170,7 +2184,7 @@ pub const CreateListExamplesCommand = struct {
         env_loader.loadProcess();
 
         var progress = std.Progress{};
-        var node = progress.start("Fetching manifest", 0);
+        const node = progress.start("Fetching manifest", 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
         progress.refresh();
 
@@ -2199,14 +2213,14 @@ pub const CreateListExamplesCommand = struct {
 };
 
 const GitHandler = struct {
-    var success: std.atomic.Atomic(u32) = undefined;
+    var success: std.atomic.Value(u32) = undefined;
     var thread: std.Thread = undefined;
     pub fn spawn(
         destination: string,
         PATH: string,
         verbose: bool,
     ) void {
-        success = std.atomic.Atomic(u32).init(0);
+        success = std.atomic.Value(u32).init(0);
 
         thread = std.Thread.spawn(.{}, spawnThread, .{ destination, PATH, verbose }) catch |err| {
             Output.prettyErrorln("<r><red>{s}<r>", .{@errorName(err)});
@@ -2256,18 +2270,30 @@ const GitHandler = struct {
     ) !bool {
         const git_start = std.time.nanoTimestamp();
 
-        // This feature flag is disabled.
-        // using libgit2 is slower than the CLI.
-        // [481.00ms] git
-        // [89.00ms] git
-        // if (comptime FeatureFlags.use_libgit2) {
-        // }
+        // Not sure why...
+        // But using libgit for this operation is slower than the CLI!
+        // Used to have a feature flag to try it but was removed:
+        // https://github.com/oven-sh/bun/commit/deafd3d0d42fb8d7ddf2b06cde2d7c7ee8bc7144
+        //
+        // ~/Build/throw
+        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
+        // Benchmark #1: bun create react3 app --force --no-install
+        //   Time (mean ± σ):     974.6 ms ±   6.8 ms    [User: 170.5 ms, System: 798.3 ms]
+        //   Range (min … max):   960.8 ms … 984.6 ms    10 runs
+        //
+        // ❯ mv /usr/local/opt/libgit2/lib/libgit2.dylib /usr/local/opt/libgit2/lib/libgit2.dylib.1
+        //
+        // ~/Build/throw
+        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
+        // Benchmark #1: bun create react3 app --force --no-install
+        //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
+        //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
 
         if (which(&bun_path_buf, PATH, destination, "git")) |git| {
             const git_commands = .{
-                &[_]string{ bun.asByteSlice(git), "init", "--quiet" },
-                &[_]string{ bun.asByteSlice(git), "add", destination, "--ignore-errors" },
-                &[_]string{ bun.asByteSlice(git), "commit", "-am", "Initial commit (via bun create)", "--quiet" },
+                &[_]string{ git, "init", "--quiet" },
+                &[_]string{ git, "add", destination, "--ignore-errors" },
+                &[_]string{ git, "commit", "-am", "Initial commit (via bun create)", "--quiet" },
             };
 
             if (comptime verbose) {
@@ -2285,7 +2311,7 @@ const GitHandler = struct {
                 process.stderr_behavior = .Inherit;
 
                 _ = try process.spawnAndWait();
-                _ = process.kill() catch undefined;
+                _ = process.kill() catch {};
             }
 
             Output.prettyError("\n", .{});

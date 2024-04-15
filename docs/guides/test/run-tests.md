@@ -64,7 +64,7 @@ Ran 2 tests across 1 files. [15.00ms]
 All tests have a name, defined using the first parameter to the `test` function. Tests can also be grouped into suites with `describe`.
 
 ```ts
-import { test, expect } from "bun:test";
+import { test, expect, describe } from "bun:test";
 
 describe("math", () => {
   test("add", () => {

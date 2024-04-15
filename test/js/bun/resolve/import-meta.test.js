@@ -1,12 +1,15 @@
 import { spawnSync } from "bun";
-import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, ospath } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as Module from "node:module";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import sync from "./require-json.json";
+import { tmpdir } from "node:os";
 
-const { path, dir } = import.meta;
+const { path, dir, dirname, filename } = import.meta;
+
+const tmpbase = tmpdir() + sep;
 
 it("import.meta.main", () => {
   const { exitCode } = spawnSync({
@@ -34,28 +37,58 @@ it("Module.createRequire", () => {
   expect(Module.createRequire(new URL(import.meta.url)).resolve(import.meta.path)).toBe(import.meta.path);
 });
 
+it("Module.createRequire works with a file url", () => {
+  const require = Module.createRequire(import.meta.url);
+  expect(require.resolve(import.meta.path)).toBe(path);
+  expect(require.resolve("./" + import.meta.file)).toBe(path);
+  const { resolve } = require;
+  expect(resolve("./" + import.meta.file)).toBe(path);
+});
+
+it("Module.createRequire works with a file url with a space", () => {
+  const path = join(import.meta.dir, "with space/hello.js");
+  const require = Module.createRequire(new URL("./with space/nonexist.js", import.meta.url).toString());
+  expect(require.resolve(import.meta.path)).toBe(import.meta.path);
+  expect(require.resolve("./hello")).toBe(path);
+  const { resolve } = require;
+  expect(resolve("./hello")).toBe(path);
+});
+
+it("Module.createRequire does not use file url as the referrer (err message check)", () => {
+  const require = Module.createRequire(import.meta.url);
+  try {
+    require("whaaat");
+    expect.unreachable();
+  } catch (e) {
+    expect(e.name).not.toBe("UnreachableError");
+    expect(e.message).not.toInclude("file:///");
+    expect(e.message).toInclude('"whaaat"');
+    expect(e.message).toInclude('"' + import.meta.path + '"');
+  }
+});
+
 it("require with a query string works on dynamically created content", () => {
-  rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
+  rmSync(tmpbase + "bun-test-import-meta-dynamic-dir", {
     recursive: true,
     force: true,
   });
   try {
-    const require = Module.createRequire("/tmp/bun-test-import-meta-dynamic-dir/foo.js");
+    const require = Module.createRequire(tmpbase + "bun-test-import-meta-dynamic-dir/foo.js");
     try {
       require("./bar.js?query=123.js");
     } catch (e) {
       expect(e.name).toBe("ResolveMessage");
     }
 
-    mkdirSync("/tmp/bun-test-import-meta-dynamic-dir", { recursive: true });
+    mkdirSync(tmpbase + "bun-test-import-meta-dynamic-dir", { recursive: true });
 
-    writeFileSync("/tmp/bun-test-import-meta-dynamic-dir/bar.js", "export default 'hello';", "utf8");
+    writeFileSync(tmpbase + "bun-test-import-meta-dynamic-dir/bar.js", "export default 'hello';", "utf8");
 
     expect(require("./bar.js?query=123.js").default).toBe("hello");
   } catch (e) {
     throw e;
   } finally {
-    rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
+    rmSync(tmpbase + "bun-test-import-meta-dynamic-dir", {
       recursive: true,
       force: true,
     });
@@ -157,11 +190,19 @@ it("import.meta.require (javascript, live bindings)", () => {
 });
 
 it("import.meta.dir", () => {
-  expect(dir.endsWith("/bun/test/js/bun/resolve")).toBe(true);
+  expect(dir).toEndWith(ospath("/bun/test/js/bun/resolve"));
+});
+
+it("import.meta.dirname", () => {
+  expect(dirname).toBe(dir);
+});
+
+it("import.meta.filename", () => {
+  expect(filename).toBe(import.meta.path);
 });
 
 it("import.meta.path", () => {
-  expect(path.endsWith("/bun/test/js/bun/resolve/import-meta.test.js")).toBe(true);
+  expect(path).toEndWith(ospath("/bun/test/js/bun/resolve/import-meta.test.js"));
 });
 
 it('require("bun") works', () => {
@@ -196,4 +237,37 @@ it("import non exist error code", async () => {
   } catch (e) {
     expect(e.code).toBe("ERR_MODULE_NOT_FOUND");
   }
+});
+
+it("import.meta paths have the correct slash", () => {
+  const correct_sep = sep;
+  const wrong_sep = correct_sep === "/" ? "\\" : "/";
+
+  expect(import.meta.path).toInclude(correct_sep);
+  expect(import.meta.path).not.toInclude(wrong_sep);
+  expect(import.meta.dir).toInclude(correct_sep);
+  expect(import.meta.dir).not.toInclude(wrong_sep);
+
+  expect(import.meta.file).not.toInclude(sep);
+  expect(import.meta.file).not.toInclude(sep);
+
+  expect(import.meta.url).toStartWith("file:///");
+  expect(import.meta.url).not.toInclude("\\");
+});
+
+it("import.meta is correct in a module that was imported with a query param", async () => {
+  const esm = (await import("./other.js?foo=bar")).default;
+
+  expect(esm.url).toBe(new URL("./other.js?foo=bar", import.meta.url).toString());
+  expect(esm.path).toBe(join(import.meta.dir, "./other.js"));
+  expect(esm.dir).toBe(import.meta.dir);
+  expect(esm.file).toBe("other.js");
+});
+
+it("import.meta is correct in a module that was required with a query param", async () => {
+  const cjs = require("./other-cjs.js?foo=bar").meta;
+  expect(cjs.url).toBe(new URL("./other-cjs.js?foo=bar", import.meta.url).toString());
+  expect(cjs.path).toBe(join(import.meta.dir, "./other-cjs.js"));
+  expect(cjs.dir).toBe(import.meta.dir);
+  expect(cjs.file).toBe("other-cjs.js");
 });

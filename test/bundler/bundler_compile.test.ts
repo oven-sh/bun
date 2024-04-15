@@ -1,6 +1,7 @@
 import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
+import { Database } from "bun:sqlite";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -13,7 +14,26 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  itBundled("compile/pathToFileURLWorks", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {pathToFileURL, fileURLToPath} from 'bun';
+        console.log(pathToFileURL(import.meta.path).href + " " + fileURLToPath(import.meta.url));
+        if (fileURLToPath(import.meta.url) !== import.meta.path) throw "fail";
+        if (pathToFileURL(import.meta.path).href !== import.meta.url) throw "fail";
+      `,
+    },
+    run: {
+      stdout:
+        process.platform !== "win32"
+          ? `file:///$bunfs/root/out /$bunfs/root/out`
+          : `file:///B:/~BUN/root/out B:\\~BUN\\root\\out`,
+      setCwd: true,
+    },
+  });
   itBundled("compile/VariousBunAPIs", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     compile: true,
     files: {
       "/entry.ts": `
@@ -85,5 +105,128 @@ describe("bundler", () => {
       stdout: "<!DOCTYPE html><html><head></head><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
     },
     compile: true,
+  });
+  itBundled("compile/DynamicRequire", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        const y = req('commonjs');
+        const z = req('esm').default;
+        console.log(JSON.stringify([w, x, y, z]));
+        module.exports = null;
+      `,
+      "/node_modules/commonjs/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/esm/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/other/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/other-esm/index.js": "throw new Error('Must be runtime import.')",
+    },
+    runtimeFiles: {
+      "/node_modules/commonjs/index.js": "module.exports = 2; require('other');",
+      "/node_modules/esm/index.js": "import 'other-esm'; export default 3;",
+      "/node_modules/other/index.js": "globalThis.x = 1;",
+      "/node_modules/other-esm/index.js": "globalThis.w = 0;",
+    },
+    run: {
+      stdout: "[0,1,2,3]",
+      setCwd: true,
+    },
+    compile: true,
+  });
+  itBundled("compile/DynamicImport", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import 'static';
+        const imp = (x) => import(x).then(x => x.default);
+        const y = await imp('commonjs');
+        const z = await imp('esm');
+        console.log(JSON.stringify([w, x, y, z]));
+      `,
+      "/node_modules/static/index.js": "'use strict';",
+      "/node_modules/commonjs/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/esm/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/other/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/other-esm/index.js": "throw new Error('Must be runtime import.')",
+    },
+    runtimeFiles: {
+      "/node_modules/commonjs/index.js": "module.exports = 2; require('other');",
+      "/node_modules/esm/index.js": "import 'other-esm'; export default 3;",
+      "/node_modules/other/index.js": "globalThis.x = 1;",
+      "/node_modules/other-esm/index.js": "globalThis.w = 0;",
+    },
+    run: {
+      stdout: "[0,1,2,3]",
+      setCwd: true,
+    },
+    compile: true,
+  });
+  // see comment in `usePackageManager` for why this is a test
+  itBundled("compile/NoAutoInstall", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        console.log(req('express'));
+      `,
+    },
+    run: {
+      error: 'Cannot find package "express"',
+      setCwd: true,
+    },
+    compile: true,
+  });
+  itBundled("compile/CanRequireLocalPackages", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        console.log(req('react/package.json').version);
+      `,
+    },
+    run: {
+      stdout: require("react/package.json").version,
+      setCwd: false,
+    },
+    compile: true,
+  });
+  itBundled("compile/EmbeddedSqlite", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite", embed: "true"};
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    run: { stdout: "Hello, world!" },
+  });
+  itBundled("compile/sqlite-file", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite"};
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+    },
+    runtimeFiles: {
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    run: { stdout: "Hello, world!", setCwd: true },
+  });
+  itBundled("compile/Utf8", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(JSON.stringify({\u{6211}: "\u{6211}"}));
+      `,
+    },
+    run: { stdout: '{"\u{6211}":"\u{6211}"}' },
   });
 });

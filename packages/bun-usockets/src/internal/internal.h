@@ -143,6 +143,7 @@ struct us_internal_callback_t {
   int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
+  unsigned has_added_timer_to_event_loop;
 };
 
 #endif
@@ -253,7 +254,10 @@ void us_internal_ssl_socket_context_on_data(
     struct us_internal_ssl_socket_t *(*on_data)(
         struct us_internal_ssl_socket_t *s, char *data, int length));
 
-void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s);
+void us_internal_update_handshake(struct us_internal_ssl_socket_t *s);
+int us_internal_renegotiate(struct us_internal_ssl_socket_t *s);
+void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
+                                            int success);
 void us_internal_on_ssl_handshake(
     struct us_internal_ssl_socket_context_t *context,
     us_internal_on_handshake_t onhandshake, void *custom_data);
@@ -289,7 +293,7 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
     struct us_internal_ssl_socket_context_t *context, const char *path,
-    int options, int socket_ext_size);
+    size_t pathlen, int options, int socket_ext_size);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
@@ -297,7 +301,7 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
     struct us_internal_ssl_socket_context_t *context, const char *server_path,
-    int options, int socket_ext_size);
+    size_t pathlen, int options, int socket_ext_size);
 
 int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
                                  const char *data, int length, int msg_more);

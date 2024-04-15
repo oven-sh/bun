@@ -7,21 +7,19 @@
     "noEmit": true,
     "emitDeclarationOnly": false,
     "paths": {
-      "$shared": ["./internal/shared.ts"], //deprecated
       "internal/*": ["./internal/*"] //deprecated
     }
   },
   "include": [
     //
-    "node",
-    "bun",
-    "builtins",
-    "functions",
-    "internal",
-    "thirdparty",
-    "_codegen",
-    "builtins.d.ts",
-    "private.d.ts",
-    "../../packages/bun-types/index.d.ts"
+    "./node",
+    "./bun",
+    "./builtins",
+    "./functions",
+    "./internal",
+    "./thirdparty",
+    "./builtins.d.ts",
+    "./private.d.ts",
+    "../../build/codegen/WebCoreJSBuiltins.d.ts"
   ]
 }

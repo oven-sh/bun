@@ -90,7 +90,7 @@ describe("url", () => {
   search: "",
   searchParams: ${Bun.inspect(new URLSearchParams())},
   toJSON: [Function: toJSON],
-  toString: [Function: toString]
+  toString: [Function: toString],
 }`);
 
     expect(
@@ -109,9 +109,9 @@ describe("url", () => {
   pathname: "/oven-sh/bun/issues/135",
   hash: "",
   search: "?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  searchParams: URLSearchParams {\n    \"hello i have spaces thank you good night\": \"\"\n  },
+  searchParams: URLSearchParams {\n    \"hello i have spaces thank you good night\": \"\",\n  },
   toJSON: [Function: toJSON],
-  toString: [Function: toString]
+  toString: [Function: toString],
 }`);
   });
   it("works", () => {
@@ -225,6 +225,10 @@ describe("url", () => {
         // @ts-expect-error
         expect(URL.canParse(url, base)).toBe(expected);
       });
+    });
+
+    it("URL.canParse.length should be 1", () => {
+      expect(URL.canParse.length).toBe(1);
     });
   });
 });

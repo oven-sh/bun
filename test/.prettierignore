@@ -1,1 +1,4 @@
 node_modules
+snapshots
+js/deno
+*.min.js

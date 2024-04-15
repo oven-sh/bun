@@ -12,7 +12,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -36,11 +36,10 @@ var estimated_input_lines_of_code_: usize = undefined;
 
 pub const BuildCommand = struct {
     pub fn exec(
-        ctx_: Command.Context,
+        ctx: Command.Context,
     ) !void {
         Global.configureAllocator(.{ .long_running = true });
-        var ctx = ctx_;
-        var allocator = ctx.allocator;
+        const allocator = ctx.allocator;
         var log = ctx.log;
         estimated_input_lines_of_code_ = 0;
         if (ctx.bundler_options.compile) {
@@ -62,6 +61,9 @@ pub const BuildCommand = struct {
             return;
         }
         var outfile = ctx.bundler_options.outfile;
+
+        this_bundler.options.public_path = ctx.bundler_options.public_path;
+        this_bundler.resolver.opts.public_path = ctx.bundler_options.public_path;
 
         this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
         this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
@@ -104,10 +106,8 @@ pub const BuildCommand = struct {
                 return;
             }
 
-            // We never want to hit the filesystem for these files
-            // This "compiled" protocol is specially handled by the module resolver.
-            this_bundler.options.public_path = "compiled://root/";
-            this_bundler.resolver.opts.public_path = "compiled://root/";
+            this_bundler.options.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
+            this_bundler.resolver.opts.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
@@ -139,10 +139,17 @@ pub const BuildCommand = struct {
             }
         }
 
-        if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> to use multiple entry points, specify <b>--outdir<r>", .{});
-            Global.exit(1);
-            return;
+        if (ctx.bundler_options.outdir.len == 0) {
+            if (this_bundler.options.entry_points.len > 1) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
+                Global.exit(1);
+                return;
+            }
+            if (this_bundler.options.code_splitting) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when code splitting is enabled", .{});
+                Global.exit(1);
+                return;
+            }
         }
 
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
@@ -168,7 +175,7 @@ pub const BuildCommand = struct {
             };
             defer dir.close();
 
-            break :brk1 bun.getFdPath(dir.fd, &src_root_dir_buf) catch |err| {
+            break :brk1 bun.getFdPath(bun.toFD(dir.fd), &src_root_dir_buf) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> resolving root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             };
@@ -301,21 +308,21 @@ pub const BuildCommand = struct {
                         root_path = std.fs.path.dirname(ctx.args.entry_points[0]) orelse ".";
 
                     const root_dir = if (root_path.len == 0 or strings.eqlComptime(root_path, "."))
-                        std.fs.IterableDir{ .dir = std.fs.cwd() }
+                        std.fs.cwd()
                     else
-                        std.fs.cwd().makeOpenPathIterable(root_path, .{}) catch |err| {
+                        std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
                             Output.prettyErrorln("<r><red>{s}<r> while attemping to open output directory {}", .{ @errorName(err), bun.fmt.quote(root_path) });
                             exitOrWatch(1, ctx.debug.hot_reload == .watch);
                             unreachable;
                         };
 
-                    var all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
+                    const all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
                     var max_path_len: usize = 0;
                     for (all_paths, output_files) |*dest, src| {
                         dest.* = src.dest_path;
                     }
 
-                    var from_path = resolve_path.longestCommonPath(all_paths);
+                    const from_path = resolve_path.longestCommonPath(all_paths);
 
                     for (output_files) |f| {
                         max_path_len = @max(
@@ -335,6 +342,7 @@ pub const BuildCommand = struct {
                         );
 
                         Output.flush();
+
                         try bun.StandaloneModuleGraph.toExecutable(
                             allocator,
                             output_files,
@@ -356,8 +364,9 @@ pub const BuildCommand = struct {
 
                         Output.printElapsedStdoutTrim(@as(f64, @floatFromInt(compiled_elapsed)));
 
-                        Output.prettyln(" <green>compile<r>  <b><blue>{s}<r>", .{
+                        Output.prettyln(" <green>compile<r>  <b><blue>{s}{s}<r>", .{
                             outfile,
+                            if (Environment.isWindows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
                         });
 
                         break :dump;
@@ -390,7 +399,7 @@ pub const BuildCommand = struct {
                                     rel_path = resolve_path.relative(from_path, f.dest_path);
                                     if (std.fs.path.dirname(rel_path)) |parent| {
                                         if (parent.len > root_path.len) {
-                                            try root_dir.dir.makePath(parent);
+                                            try root_dir.makePath(parent);
                                         }
                                     }
                                 }
@@ -411,7 +420,7 @@ pub const BuildCommand = struct {
                                         },
                                         .encoding = .buffer,
                                         .mode = if (f.is_executable) 0o755 else 0o644,
-                                        .dirfd = bun.toFD(root_dir.dir.fd),
+                                        .dirfd = bun.toFD(root_dir.fd),
                                         .file = .{
                                             .path = JSC.Node.PathLike{
                                                 .string = JSC.PathString.init(rel_path),
@@ -431,12 +440,12 @@ pub const BuildCommand = struct {
                                 rel_path = filepath_buf[0 .. primary.len + 2];
                                 rel_path = value.pathname;
 
-                                try f.moveTo(root_path, bun.constStrToU8(rel_path), bun.toFD(root_dir.dir.fd));
+                                try f.moveTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
                             },
                             .copy => |value| {
                                 rel_path = value.pathname;
 
-                                try f.copyTo(root_path, bun.constStrToU8(rel_path), bun.toFD(root_dir.dir.fd));
+                                try f.copyTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
                             },
                             .noop => {},
                             .pending => unreachable,

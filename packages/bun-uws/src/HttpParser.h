@@ -18,6 +18,10 @@
 #ifndef UWS_HTTPPARSER_H
 #define UWS_HTTPPARSER_H
 
+#ifndef UWS_HTTP_MAX_HEADERS_COUNT
+#define UWS_HTTP_MAX_HEADERS_COUNT 100
+#endif
+
 // todo: HttpParser is in need of a few clean-ups and refactorings
 
 /* The HTTP parser is an independent module subject to unit testing / fuzz testing */
@@ -26,6 +30,8 @@
 #include <cstring>
 #include <algorithm>
 #include <climits>
+#include <string_view>
+#include <map>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
 
@@ -46,11 +52,10 @@ namespace uWS
         friend struct HttpParser;
 
     private:
-        const static int MAX_HEADERS = 50;
         struct Header
         {
             std::string_view key, value;
-        } headers[MAX_HEADERS];
+        } headers[UWS_HTTP_MAX_HEADERS_COUNT];
         bool ancientHttp;
         unsigned int querySeparator;
         bool didYield;
@@ -199,43 +204,27 @@ namespace uWS
 
     private:
         std::string fallback;
-        /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
-        unsigned int remainingStreamingBytes = 0;
+         /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
+        uint64_t remainingStreamingBytes = 0;
 
-        const size_t MAX_FALLBACK_SIZE = 1024 * 4;
+        const size_t MAX_FALLBACK_SIZE = 1024 * 8;
 
         /* Returns UINT_MAX on error. Maximum 999999999 is allowed. */
-        static unsigned int toUnsignedInteger(std::string_view str)
-        {
-            /* We assume at least 32-bit integer giving us safely 999999999 (9 number of 9s) */
-            if (str.length() > 9)
-            {
+        static uint64_t toUnsignedInteger(std::string_view str) {
+            /* We assume at least 64-bit integer giving us safely 999999999999999999 (18 number of 9s) */
+            if (str.length() > 18) {
                 return UINT_MAX;
             }
 
-            unsigned int unsignedIntegerValue = 0;
-            for (char c : str)
-            {
+            uint64_t unsignedIntegerValue = 0;
+            for (char c : str) {
                 /* As long as the letter is 0-9 we cannot overflow. */
-                if (c < '0' || c > '9')
-                {
+                if (c < '0' || c > '9') {
                     return UINT_MAX;
                 }
-                unsignedIntegerValue = unsignedIntegerValue * 10u + ((unsigned int)c - (unsigned int)'0');
+                unsignedIntegerValue = unsignedIntegerValue * 10ull + ((unsigned int) c - (unsigned int) '0');
             }
             return unsignedIntegerValue;
-        }
-
-        /* RFC 9110 16.3.1 Field Name Registry (TLDR; alnum + hyphen is allowed)
-         * [...] It MUST conform to the field-name syntax defined in Section 5.1,
-         * and it SHOULD be restricted to just letters, digits,
-         * and hyphen ('-') characters, with the first character being a letter. */
-        static inline bool isFieldNameByte(unsigned char x)
-        {
-            return (x == '-') |
-                   ((x > '/') & (x < ':')) |
-                   ((x > '@') & (x < '[')) |
-                   ((x > 96) & (x < '{'));
         }
 
         static inline uint64_t hasLess(uint64_t x, uint64_t n)
@@ -262,23 +251,56 @@ namespace uWS
                    hasMore(x, 'z');
         }
 
-        static inline void *consumeFieldName(char *p)
+        /* RFC 9110 5.6.2. Tokens */
+        /* Hyphen is not checked here as it is very common */
+        static inline bool isUnlikelyFieldNameByte(unsigned char c)
         {
-            for (; true; p += 8)
-            {
-                uint64_t word;
-                memcpy(&word, p, sizeof(uint64_t));
-                if (notFieldNameWord(word))
-                {
-                    while (isFieldNameByte(*(unsigned char *)p))
-                    {
-                        *(p++) |= 0x20;
-                    }
+            /* Digits and 14 of the 15 non-alphanum characters (lacking hyphen) */
+            return ((c == '~') | (c == '|') | (c == '`') | (c == '_') | (c == '^') | (c == '.') | (c == '+')
+                | (c == '*') | (c == '!')) || ((c >= 48) & (c <= 57)) || ((c <= 39) & (c >= 35));
+        }
+
+        static inline bool isFieldNameByteFastLowercased(unsigned char &in) {
+            /* Most common is lowercase alpha and hyphen */
+            if (((in >= 97) & (in <= 122)) | (in == '-')) [[likely]] {
+                return true;
+            /* Second is upper case alpha */
+            } else if ((in >= 65) & (in <= 90)) [[unlikely]] {
+                in |= 32;
+                return true;
+            /* These are rarely used but still valid */
+            } else if (isUnlikelyFieldNameByte(in)) [[unlikely]] {
+                return true;
+            }
+            return false;
+        }
+        
+        static inline void *consumeFieldName(char *p) {
+            /* Best case fast path (particularly useful with clang) */
+            while (true) {
+                while ((*p >= 65) & (*p <= 90)) [[likely]] {
+                    *p |= 32;
+                    p++;
+                }
+                while (((*p >= 97) & (*p <= 122))) [[likely]] {
+                    p++;
+                }
+                if (*p == ':') {
                     return (void *)p;
                 }
-                word |= 0x2020202020202020ull;
-                memcpy(p, &word, sizeof(uint64_t));
+                if (*p == '-') {
+                    p++;
+                } else if (!((*p >= 65) & (*p <= 90))) {
+                    /* Exit fast path parsing */
+                    break;
+                }
             }
+
+            /* Generic */
+            while (isFieldNameByteFastLowercased(*(unsigned char *)p)) {
+                p++;
+            }
+            return (void *)p;
         }
 
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
@@ -386,7 +408,7 @@ namespace uWS
             }
             headers++;
 
-            for (unsigned int i = 1; i < HttpRequest::MAX_HEADERS - 1; i++)
+            for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++)
             {
                 /* Lower case and consume the field name */
                 preliminaryKey = postPaddedBuffer;
@@ -473,7 +495,7 @@ namespace uWS
          * From here we return either [consumed, user] for "keep going",
          * or [consumed, nullptr] for "break; I am closed or upgraded to websocket"
          * or [whatever, fullptr] for "break and close me, I am a parser error!" */
-        template <int CONSUME_MINIMALLY>
+        template<int CONSUME_MINIMALLY>
         std::pair<unsigned int, void *> fenceAndConsumePostPadded(char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler)
         {
 
@@ -490,6 +512,11 @@ namespace uWS
                 data += consumed;
                 length -= consumed;
                 consumedTotal += consumed;
+
+                /* Even if we could parse it, check for length here as well */
+                if (consumed > MAX_FALLBACK_SIZE) {
+                    return {0, FULLPTR};
+                }
 
                 /* Store HTTP version (ancient 1.0 or 1.1) */
                 req->ancientHttp = isAncientHttp;
@@ -591,7 +618,7 @@ namespace uWS
 
                     if (!CONSUME_MINIMALLY)
                     {
-                        unsigned int emittable = std::min<unsigned int>(remainingStreamingBytes, length);
+                        unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                         dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
                         remainingStreamingBytes -= emittable;
 
@@ -654,8 +681,8 @@ namespace uWS
                     {
                         void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
 
-                        data += remainingStreamingBytes;
-                        length -= remainingStreamingBytes;
+                        data += (unsigned int) remainingStreamingBytes;
+                        length -= (unsigned int) remainingStreamingBytes;
 
                         remainingStreamingBytes = 0;
 
@@ -665,8 +692,8 @@ namespace uWS
                         } else {
                             void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
 
-                            data += remainingStreamingBytes;
-                            length -= remainingStreamingBytes;
+                            data += (unsigned int) remainingStreamingBytes;
+                            length -= (unsigned int) remainingStreamingBytes;
 
                             remainingStreamingBytes = 0;
 

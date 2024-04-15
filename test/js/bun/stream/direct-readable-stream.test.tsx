@@ -58,8 +58,7 @@ const fixtures = [
   [
     "😋<span>Hello World!</span>",
     <>
-      😋
-      <span>Hello World!</span>
+      😋<span>Hello World!</span>
     </>,
   ],
   [

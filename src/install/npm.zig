@@ -12,15 +12,15 @@ const ExternalStringMap = @import("./install.zig").ExternalStringMap;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
-const logger = @import("root").bun.logger;
-const Output = @import("root").bun.Output;
+const logger = bun.logger;
+const Output = bun.Output;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
-const Environment = @import("root").bun.Environment;
+const Environment = bun.Environment;
 const Aligner = @import("./install.zig").Aligner;
-const HTTPClient = @import("root").bun.HTTP;
+const HTTPClient = bun.http;
 const json_parser = bun.JSON;
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
@@ -102,7 +102,7 @@ pub const Registry = struct {
                             }
 
                             const eql_i = strings.indexOfChar(segment, '=') orelse continue;
-                            var value = segment[eql_i + 1 ..];
+                            const value = segment[eql_i + 1 ..];
                             segment = segment[0..eql_i];
 
                             // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
@@ -134,7 +134,7 @@ pub const Registry = struct {
                                 var remain = pathname[last_slash + 1 ..];
                                 if (strings.indexOfChar(remain, '=')) |eql_i| {
                                     const segment = remain[0..eql_i];
-                                    var value = remain[eql_i + 1 ..];
+                                    const value = remain[eql_i + 1 ..];
 
                                     // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
                                     // Bearer Token
@@ -216,7 +216,7 @@ pub const Registry = struct {
         not_found: void,
     };
 
-    const Pico = @import("root").bun.picohttp;
+    const Pico = bun.picohttp;
     pub fn getPackageMetadata(
         allocator: std.mem.Allocator,
         response: Pico.Response,
@@ -368,6 +368,41 @@ pub const OperatingSystem = enum(u16) {
     }
 };
 
+pub const Libc = enum(u8) {
+    none = 0,
+    _,
+
+    pub const glibc: u8 = 1 << 1;
+    pub const musl: u8 = 1 << 2;
+
+    pub const NameMap = ComptimeStringMap(u8, .{
+        .{ "glibc", glibc },
+        .{ "musl", musl },
+    });
+
+    pub inline fn has(this: Libc, other: u8) bool {
+        return (@intFromEnum(this) & other) != 0;
+    }
+
+    pub fn apply(this_: Libc, str: []const u8) Libc {
+        if (str.len == 0) {
+            return this_;
+        }
+        const this = @intFromEnum(this_);
+
+        const is_not = str[0] == '!';
+        const offset: usize = if (str[0] == '!') 1 else 0;
+
+        const field: u8 = NameMap.get(str[offset..]) orelse return this_;
+
+        if (is_not) {
+            return @as(Libc, @enumFromInt(this & ~field));
+        } else {
+            return @as(Libc, @enumFromInt(this | field));
+        }
+    }
+};
+
 /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
 /// https://nodejs.org/api/os.html#osarch
 pub const Architecture = enum(u16) {
@@ -483,13 +518,18 @@ pub const PackageVersion = extern struct {
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
 
-    pub fn verify(this: *const PackageVersion) void {
-        if (comptime !Environment.allow_assert)
-            return;
+    /// `"libc"` field in package.json, not exposed in npm registry api yet.
+    libc: Libc = Libc.none,
 
-        this.man_dir.value.assertDefined();
-    }
+    /// `hasInstallScript` field in registry API.
+    has_install_script: bool = false,
 };
+
+comptime {
+    if (@sizeOf(Npm.PackageVersion) != 224) {
+        @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
+    }
+}
 
 pub const NpmPackage = extern struct {
     /// HTTP response headers
@@ -522,23 +562,6 @@ pub const PackageManifest = struct {
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
 
-    pub fn verify(this: *const PackageManifest) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        for (this.extern_strings_bin_entries) |*entry| {
-            entry.value.assertDefined();
-        }
-
-        for (this.external_strings_for_versions) |entry| {
-            entry.value.assertDefined();
-        }
-
-        for (this.package_versions) |package| {
-            package.tarball_url.value.assertDefined();
-        }
-    }
-
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
     }
@@ -565,13 +588,11 @@ pub const PackageManifest = struct {
                 };
             }
             const Sort = struct {
-                fn lessThan(trash: *i32, lhs: Data, rhs: Data) bool {
-                    _ = trash;
+                fn lessThan(_: void, lhs: Data, rhs: Data) bool {
                     return lhs.alignment > rhs.alignment;
                 }
             };
-            var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.block(Data, &data, &trash, Sort.lessThan);
+            std.sort.pdq(Data, &data, {}, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
             for (data, 0..) |elem, i| {
@@ -636,17 +657,17 @@ pub const PackageManifest = struct {
             }
         }
 
-        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.IterableDir) !void {
-            var tmpfile = try tmpdir.dir.createFileZ(tmp_path, .{
+        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir) !void {
+            var tmpfile = try tmpdir.createFileZ(tmp_path, .{
                 .truncate = true,
             });
             defer tmpfile.close();
-            var writer = tmpfile.writer();
+            const writer = tmpfile.writer();
             try Serializer.write(this, @TypeOf(writer), writer);
         }
 
-        pub fn save(this: *const PackageManifest, tmpdir: std.fs.IterableDir, cache_dir: std.fs.IterableDir) !void {
-            const file_id = bun.Wyhash.hash(0, this.name());
+        pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
+            const file_id = bun.Wyhash11.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
@@ -656,18 +677,18 @@ pub const PackageManifest = struct {
             const hex_timestamp_fmt = bun.fmt.hexIntLower(hex_timestamp);
             try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
-            var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
+            const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             try writeFile(this, tmp_path, tmpdir);
-            var out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
-            try std.os.renameatZ(tmpdir.dir.fd, tmp_path, cache_dir.dir.fd, out_path);
+            const out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
+            try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
         }
 
-        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.IterableDir, package_name: string) !?PackageManifest {
-            const file_id = bun.Wyhash.hash(0, package_name);
+        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
+            const file_id = bun.Wyhash11.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
-            var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
-            var cache_file = cache_dir.dir.openFileZ(
+            const file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
+            var cache_file = cache_dir.openFileZ(
                 file_path,
                 .{ .mode = .read_only },
             ) catch return null;
@@ -676,7 +697,7 @@ pub const PackageManifest = struct {
                 timer = std.time.Timer.start() catch @panic("timer fail");
             }
             defer cache_file.close();
-            var bytes = try cache_file.readToEndAllocOptions(
+            const bytes = try cache_file.readToEndAllocOptions(
                 allocator,
                 std.math.maxInt(u32),
                 cache_file.getEndPos() catch null,
@@ -715,8 +736,6 @@ pub const PackageManifest = struct {
                     );
                 }
             }
-
-            package_manifest.verify();
 
             return package_manifest;
         }
@@ -873,7 +892,7 @@ pub const PackageManifest = struct {
         const source = logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
-        var arena = @import("root").bun.ArenaAllocator.init(allocator);
+        var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = json_parser.ParseJSONUTF8(
             &source,
@@ -941,7 +960,7 @@ pub const PackageManifest = struct {
                     const sliced_version = SlicedString.init(version_name, version_name);
                     const parsed_version = Semver.Version.parse(sliced_version);
 
-                    if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
+                    if (Environment.allow_assert) assert(parsed_version.valid);
                     if (!parsed_version.valid) {
                         log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
                         continue;
@@ -1051,7 +1070,7 @@ pub const PackageManifest = struct {
         }
 
         var versioned_packages = try allocator.alloc(PackageVersion, release_versions_len + pre_versions_len);
-        var all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tags_count);
+        const all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tags_count);
         var all_extern_strings = try allocator.alloc(ExternalString, extern_string_count + tarball_urls_count);
         var version_extern_strings = try allocator.alloc(ExternalString, dependency_sum);
         var extern_strings_bin_entries = try allocator.alloc(ExternalString, extern_string_count_bin);
@@ -1060,30 +1079,30 @@ pub const PackageManifest = struct {
         var tarball_url_strings = all_tarball_url_strings;
 
         if (versioned_packages.len > 0) {
-            var versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
+            const versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
             @memset(versioned_packages_bytes, 0);
         }
         if (all_semver_versions.len > 0) {
-            var all_semver_versions_bytes = std.mem.sliceAsBytes(all_semver_versions);
+            const all_semver_versions_bytes = std.mem.sliceAsBytes(all_semver_versions);
             @memset(all_semver_versions_bytes, 0);
         }
         if (all_extern_strings.len > 0) {
-            var all_extern_strings_bytes = std.mem.sliceAsBytes(all_extern_strings);
+            const all_extern_strings_bytes = std.mem.sliceAsBytes(all_extern_strings);
             @memset(all_extern_strings_bytes, 0);
         }
         if (version_extern_strings.len > 0) {
-            var version_extern_strings_bytes = std.mem.sliceAsBytes(version_extern_strings);
+            const version_extern_strings_bytes = std.mem.sliceAsBytes(version_extern_strings);
             @memset(version_extern_strings_bytes, 0);
         }
 
         var versioned_package_releases = versioned_packages[0..release_versions_len];
-        var all_versioned_package_releases = versioned_package_releases;
+        const all_versioned_package_releases = versioned_package_releases;
         var versioned_package_prereleases = versioned_packages[release_versions_len..][0..pre_versions_len];
-        var all_versioned_package_prereleases = versioned_package_prereleases;
+        const all_versioned_package_prereleases = versioned_package_prereleases;
         var _versions_open = all_semver_versions;
-        var all_release_versions = _versions_open[0..release_versions_len];
+        const all_release_versions = _versions_open[0..release_versions_len];
         _versions_open = _versions_open[release_versions_len..];
-        var all_prerelease_versions = _versions_open[0..pre_versions_len];
+        const all_prerelease_versions = _versions_open[0..pre_versions_len];
         _versions_open = _versions_open[pre_versions_len..];
         var dist_tag_versions = _versions_open[0..dist_tags_count];
         var release_versions = all_release_versions;
@@ -1114,13 +1133,13 @@ pub const PackageManifest = struct {
 
                 const versions = versions_q.expr.data.e_object.properties.slice();
 
-                var all_dependency_names_and_values = all_extern_strings[0..dependency_sum];
+                const all_dependency_names_and_values = all_extern_strings[0..dependency_sum];
 
                 // versions change more often than names
                 // so names go last because we are better able to dedupe at the end
                 var dependency_values = version_extern_strings;
                 var dependency_names = all_dependency_names_and_values;
-                var prev_extern_bin_group = extern_strings_bin_entries;
+                var prev_extern_bin_group: ?[]ExternalString = null;
                 const empty_version = bun.serializable(PackageVersion{
                     .bin = Bin.init(),
                 });
@@ -1130,15 +1149,15 @@ pub const PackageManifest = struct {
                     var sliced_version = SlicedString.init(version_name, version_name);
                     var parsed_version = Semver.Version.parse(sliced_version);
 
-                    if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
+                    if (Environment.allow_assert) assert(parsed_version.valid);
                     // We only need to copy the version tags if it contains pre and/or build
                     if (parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre()) {
                         const version_string = string_builder.append(String, version_name);
                         sliced_version = version_string.sliced(string_buf);
                         parsed_version = Semver.Version.parse(sliced_version);
                         if (Environment.allow_assert) {
-                            std.debug.assert(parsed_version.valid);
-                            std.debug.assert(parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre());
+                            assert(parsed_version.valid);
+                            assert(parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre());
                         }
                     }
                     if (!parsed_version.valid) continue;
@@ -1189,6 +1208,37 @@ pub const PackageManifest = struct {
                         }
                     }
 
+                    if (prop.value.?.asProperty("libc")) |libc| {
+                        package_version.libc = Libc.none;
+
+                        switch (libc.expr.data) {
+                            .e_array => |arr| {
+                                const items = arr.slice();
+                                if (items.len > 0) {
+                                    package_version.libc = Libc.none;
+                                    for (items) |item| {
+                                        if (item.asString(allocator)) |libc_str_| {
+                                            package_version.libc = package_version.libc.apply(libc_str_);
+                                        }
+                                    }
+                                }
+                            },
+                            .e_string => |stri| {
+                                package_version.libc = Libc.apply(.none, stri.data);
+                            },
+                            else => {},
+                        }
+                    }
+
+                    if (prop.value.?.asProperty("hasInstallScript")) |has_install_script| {
+                        switch (has_install_script.expr.data) {
+                            .e_boolean => |val| {
+                                package_version.has_install_script = val.value;
+                            },
+                            else => {},
+                        }
+                    }
+
                     bin: {
                         // bins are extremely repetitive
                         // We try to avoid storing copies the string
@@ -1214,17 +1264,17 @@ pub const PackageManifest = struct {
                                         else => {
                                             var group_slice = extern_strings_bin_entries[0 .. obj.properties.len * 2];
 
-                                            var is_identical = prev_extern_bin_group.len == group_slice.len;
+                                            var is_identical = if (prev_extern_bin_group) |bin_group| bin_group.len == group_slice.len else false;
                                             var group_i: u32 = 0;
 
                                             for (obj.properties.slice()) |bin_prop| {
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.key.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
-                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group.?[group_i].hash;
                                                     if (comptime Environment.allow_assert) {
                                                         if (is_identical) {
                                                             const first = group_slice[group_i].slice(string_builder.allocatedSlice());
-                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group.?[group_i].slice(string_builder.allocatedSlice());
                                                             if (!strings.eqlLong(first, second, true)) {
                                                                 Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
                                                             }
@@ -1235,11 +1285,11 @@ pub const PackageManifest = struct {
 
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.value.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
-                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group.?[group_i].hash;
                                                     if (comptime Environment.allow_assert) {
                                                         if (is_identical) {
                                                             const first = group_slice[group_i].slice(string_builder.allocatedSlice());
-                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group.?[group_i].slice(string_builder.allocatedSlice());
                                                             if (!strings.eqlLong(first, second, true)) {
                                                                 Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
                                                             }
@@ -1250,7 +1300,7 @@ pub const PackageManifest = struct {
                                             }
 
                                             if (is_identical) {
-                                                group_slice = prev_extern_bin_group;
+                                                group_slice = prev_extern_bin_group.?;
                                             } else {
                                                 prev_extern_bin_group = group_slice;
                                                 extern_strings_bin_entries = extern_strings_bin_entries[group_slice.len..];
@@ -1354,8 +1404,8 @@ pub const PackageManifest = struct {
                                 var this_names = dependency_names[0..count];
                                 var this_versions = dependency_values[0..count];
 
-                                var name_hasher = bun.Wyhash.init(0);
-                                var version_hasher = bun.Wyhash.init(0);
+                                var name_hasher = bun.Wyhash11.init(0);
+                                var version_hasher = bun.Wyhash11.init(0);
 
                                 const is_peer = comptime strings.eqlComptime(pair.prop, "peerDependencies");
 
@@ -1438,7 +1488,7 @@ pub const PackageManifest = struct {
                                     const name_map_hash = name_hasher.final();
                                     const version_map_hash = version_hasher.final();
 
-                                    var name_entry = try external_string_maps.getOrPut(name_map_hash);
+                                    const name_entry = try external_string_maps.getOrPut(name_map_hash);
                                     if (name_entry.found_existing) {
                                         name_list = name_entry.value_ptr.*;
                                         this_names = name_list.mut(all_extern_strings);
@@ -1447,7 +1497,7 @@ pub const PackageManifest = struct {
                                         dependency_names = dependency_names[count..];
                                     }
 
-                                    var version_entry = try external_string_maps.getOrPut(version_map_hash);
+                                    const version_entry = try external_string_maps.getOrPut(version_map_hash);
                                     if (version_entry.found_existing) {
                                         version_list = version_entry.value_ptr.*;
                                         this_versions = version_list.mut(version_extern_strings);
@@ -1472,13 +1522,13 @@ pub const PackageManifest = struct {
                                 if (comptime Environment.allow_assert) {
                                     const dependencies_list = @field(package_version, pair.field);
 
-                                    std.debug.assert(dependencies_list.name.off < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.value.off < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len);
+                                    assert(dependencies_list.name.off < all_extern_strings.len);
+                                    assert(dependencies_list.value.off < all_extern_strings.len);
+                                    assert(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len);
+                                    assert(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len);
 
-                                    std.debug.assert(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names));
-                                    std.debug.assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
+                                    assert(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names));
+                                    assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
                                     var j: usize = 0;
                                     const name_dependencies = dependencies_list.name.get(all_extern_strings);
 
@@ -1486,31 +1536,31 @@ pub const PackageManifest = struct {
                                         if (optional_peer_dep_names.items.len == 0) {
                                             while (j < name_dependencies.len) : (j += 1) {
                                                 const dep_name = name_dependencies[j];
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
                                             }
 
                                             j = 0;
                                             while (j < dependencies_list.value.len) : (j += 1) {
                                                 const dep_name = dependencies_list.value.get(version_extern_strings)[j];
 
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
                                             }
                                         }
                                     } else {
                                         while (j < name_dependencies.len) : (j += 1) {
                                             const dep_name = name_dependencies[j];
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
                                         }
 
                                         j = 0;
                                         while (j < dependencies_list.value.len) : (j += 1) {
                                             const dep_name = dependencies_list.value.get(version_extern_strings)[j];
 
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
                                         }
                                     }
                                 }
@@ -1519,12 +1569,12 @@ pub const PackageManifest = struct {
                     }
 
                     if (!parsed_version.version.tag.hasPre()) {
-                        release_versions[0] = parsed_version.version.fill();
+                        release_versions[0] = parsed_version.version.min();
                         versioned_package_releases[0] = package_version;
                         release_versions = release_versions[1..];
                         versioned_package_releases = versioned_package_releases[1..];
                     } else {
-                        prerelease_versions[0] = parsed_version.version.fill();
+                        prerelease_versions[0] = parsed_version.version.min();
                         versioned_package_prereleases[0] = package_version;
                         prerelease_versions = prerelease_versions[1..];
                         versioned_package_prereleases = versioned_package_prereleases[1..];
@@ -1552,7 +1602,7 @@ pub const PackageManifest = struct {
 
                         const sliced_string = dist_tag_value_literal.value.sliced(string_buf);
 
-                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string).version.fill();
+                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string).version.min();
                         dist_tag_i += 1;
                     }
                 }
@@ -1563,8 +1613,8 @@ pub const PackageManifest = struct {
                 };
 
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(std.meta.eql(result.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]));
-                    std.debug.assert(std.meta.eql(result.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]));
+                    assert(std.meta.eql(result.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]));
+                    assert(std.meta.eql(result.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]));
                 }
 
                 extern_strings = extern_strings[dist_tag_i..];
@@ -1630,7 +1680,7 @@ pub const PackageManifest = struct {
 
                 var all_indices = try bun.default_allocator.alloc(Int, max_versions_count);
                 defer bun.default_allocator.free(all_indices);
-                var releases_list = .{ &result.pkg.releases, &result.pkg.prereleases };
+                const releases_list = .{ &result.pkg.releases, &result.pkg.prereleases };
 
                 var all_cloned_versions = try bun.default_allocator.alloc(Semver.Version, max_versions_count);
                 defer bun.default_allocator.free(all_cloned_versions);
@@ -1640,11 +1690,11 @@ pub const PackageManifest = struct {
 
                 inline for (0..2) |release_i| {
                     var release = releases_list[release_i];
-                    var indices = all_indices[0..release.keys.len];
-                    var cloned_packages = all_cloned_packages[0..release.keys.len];
-                    var cloned_versions = all_cloned_versions[0..release.keys.len];
-                    var versioned_packages_ = @constCast(release.values.get(versioned_packages));
-                    var semver_versions_ = @constCast(release.keys.get(all_semver_versions));
+                    const indices = all_indices[0..release.keys.len];
+                    const cloned_packages = all_cloned_packages[0..release.keys.len];
+                    const cloned_versions = all_cloned_versions[0..release.keys.len];
+                    const versioned_packages_ = @constCast(release.values.get(versioned_packages));
+                    const semver_versions_ = @constCast(release.keys.get(all_semver_versions));
                     @memcpy(cloned_packages, versioned_packages_);
                     @memcpy(cloned_versions, semver_versions_);
 
@@ -1652,12 +1702,12 @@ pub const PackageManifest = struct {
                         dest.* = @truncate(i);
                     }
 
-                    var sorter = ExternVersionSorter{
+                    const sorter = ExternVersionSorter{
                         .string_bytes = string_buf,
                         .all_versions = semver_versions_,
                         .all_versioned_packages = versioned_packages_,
                     };
-                    std.sort.block(Int, indices, sorter, ExternVersionSorter.isLessThan);
+                    std.sort.pdq(Int, indices, sorter, ExternVersionSorter.isLessThan);
 
                     for (indices, versioned_packages_, semver_versions_) |i, *pkg, *version| {
                         pkg.* = cloned_packages[i];
@@ -1673,21 +1723,21 @@ pub const PackageManifest = struct {
                             const first = semver_versions_[0];
                             const second = semver_versions_[1];
                             const order = second.order(first, string_buf, string_buf);
-                            std.debug.assert(order == .gt);
+                            assert(order == .gt);
                         }
                     }
                 }
             },
             else => {
-                std.debug.assert(max_versions_count == 0);
+                assert(max_versions_count == 0);
             },
         }
 
         if (extern_strings.len + tarball_urls_count > 0) {
-            var src = std.mem.sliceAsBytes(all_tarball_url_strings[0 .. all_tarball_url_strings.len - tarball_url_strings.len]);
+            const src = std.mem.sliceAsBytes(all_tarball_url_strings[0 .. all_tarball_url_strings.len - tarball_url_strings.len]);
             if (src.len > 0) {
                 var dst = std.mem.sliceAsBytes(all_extern_strings[all_extern_strings.len - extern_strings.len ..]);
-                std.debug.assert(dst.len >= src.len);
+                assert(dst.len >= src.len);
                 @memcpy(dst[0..src.len], src);
             }
 
@@ -1719,3 +1769,5 @@ pub const PackageManifest = struct {
         return result;
     }
 };
+
+const assert = bun.assert;

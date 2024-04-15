@@ -1,10 +1,24 @@
 interface PropertyAttribute {
   enumerable?: boolean;
   configurable?: boolean;
+  /**
+   * The name for a private symbol to use as the property name. The value should
+   * be a private symbol from `BunBuiltinNames.h`. This will omit the property
+   * from the prototype hash table, instead setting it using `putDirect()`.
+   */
+  privateSymbol?: string;
 }
 
 export type Field =
-  | ({ getter: string; cache?: true | string; this?: boolean } & PropertyAttribute)
+  | ({
+      getter: string;
+      cache?: true | string;
+      /**
+       * Allow overriding the value of the property
+       */
+      writable?: boolean;
+      this?: boolean;
+    } & PropertyAttribute)
   | { value: string }
   | ({ setter: string; this?: boolean } & PropertyAttribute)
   | ({
@@ -21,13 +35,23 @@ export type Field =
         pure?: boolean;
       };
     } & PropertyAttribute)
-  | { internal: true };
+  | { internal: true }
+  | {
+      /**
+       * The function is a builtin (its implementation is defined in
+       * src/js/builtins/), this value is the name of the code generator
+       * function: `camelCase(fileName + functionName + "CodeGenerator"`)
+       */
+      builtin: string;
+      length?: number;
+    };
 
 export interface ClassDefinition {
   name: string;
   construct?: boolean;
   call?: boolean;
   finalize?: boolean;
+  overridesToJS?: boolean;
   klass: Record<string, Field>;
   proto: Record<string, Field>;
   values?: string[];
@@ -61,6 +85,7 @@ export function define(
     klass = {},
     proto = {},
     values = [],
+    overridesToJS = false,
     estimatedSize = false,
     call = false,
     construct = false,
@@ -71,6 +96,7 @@ export function define(
   return {
     ...rest,
     call,
+    overridesToJS,
     construct,
     estimatedSize,
     structuredClone,

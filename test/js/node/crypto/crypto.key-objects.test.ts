@@ -25,13 +25,21 @@ import { test, it, expect, describe } from "bun:test";
 import { createContext, Script } from "node:vm";
 import fs from "fs";
 import path from "path";
+import { isWindows } from "harness";
 
-const publicPem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_public.pem"), "ascii");
-const privatePem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_private.pem"), "ascii");
-const privateEncryptedPem = fs.readFileSync(
-  path.join(import.meta.dir, "fixtures", "rsa_private_encrypted.pem"),
-  "ascii",
-);
+function readFile(...args) {
+  const result = fs.readFileSync(...args);
+
+  if (isWindows) {
+    return result.replace(/\r\n/g, "\n");
+  }
+
+  return result;
+}
+
+const publicPem = readFile(path.join(import.meta.dir, "fixtures", "rsa_public.pem"), "ascii");
+const privatePem = readFile(path.join(import.meta.dir, "fixtures", "rsa_private.pem"), "ascii");
+const privateEncryptedPem = readFile(path.join(import.meta.dir, "fixtures", "rsa_private_encrypted.pem"), "ascii");
 
 // Constructs a regular expression for a PEM-encoded key with the given label.
 function getRegExpForPEM(label: string, cipher?: string) {
@@ -337,8 +345,8 @@ describe("crypto.KeyObjects", () => {
 
   [
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed25519_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed25519_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ed25519_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ed25519_public.pem"), "ascii"),
       keyType: "ed25519",
       jwk: {
         crv: "Ed25519",
@@ -348,8 +356,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed448_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed448_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ed448_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ed448_public.pem"), "ascii"),
       keyType: "ed448",
       jwk: {
         crv: "Ed448",
@@ -359,8 +367,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "x25519_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "x25519_public.pem"), "ascii"),
       keyType: "x25519",
       jwk: {
         crv: "X25519",
@@ -370,8 +378,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x448_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x448_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "x448_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "x448_public.pem"), "ascii"),
       keyType: "x448",
       jwk: {
         crv: "X448",
@@ -431,8 +439,8 @@ describe("crypto.KeyObjects", () => {
 
   [
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p256_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p256_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ec_p256_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ec_p256_public.pem"), "ascii"),
       keyType: "ec",
       namedCurve: "prime256v1",
       jwk: {
@@ -444,8 +452,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_secp256k1_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_secp256k1_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ec_secp256k1_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ec_secp256k1_public.pem"), "ascii"),
       keyType: "ec",
       namedCurve: "secp256k1",
       jwk: {
@@ -457,8 +465,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p384_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p384_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ec_p384_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ec_p384_public.pem"), "ascii"),
       keyType: "ec",
       namedCurve: "secp384r1",
       jwk: {
@@ -470,8 +478,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p521_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p521_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ec_p521_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ec_p521_public.pem"), "ascii"),
       keyType: "ec",
       namedCurve: "secp521r1",
       jwk: {
@@ -581,11 +589,8 @@ describe("crypto.KeyObjects", () => {
   [2048, 4096].forEach(suffix => {
     test(`RSA-${suffix} should work`, async () => {
       {
-        const publicPem = fs.readFileSync(path.join(import.meta.dir, "fixtures", `rsa_public_${suffix}.pem`), "ascii");
-        const privatePem = fs.readFileSync(
-          path.join(import.meta.dir, "fixtures", `rsa_private_${suffix}.pem`),
-          "ascii",
-        );
+        const publicPem = readFile(path.join(import.meta.dir, "fixtures", `rsa_public_${suffix}.pem`), "ascii");
+        const privatePem = readFile(path.join(import.meta.dir, "fixtures", `rsa_private_${suffix}.pem`), "ascii");
         const publicKey = createPublicKey(publicPem);
         const expectedKeyDetails = {
           modulusLength: suffix,
@@ -1430,7 +1435,6 @@ describe("crypto.KeyObjects", () => {
           }
         );
 
-        
         assertApproximateSize(publicKeyDER, 74);
 
         const publicKey = {
@@ -1476,122 +1480,105 @@ describe("crypto.KeyObjects", () => {
   });
 });
 
-test.todo("RSA-PSS should work", async () => {
+test("RSA-PSS should work", async () => {
   // Test RSA-PSS.
+  const expectedKeyDetails = {
+    modulusLength: 2048,
+    publicExponent: 65537n,
+  };
   {
-    // This key pair does not restrict the message digest algorithm or salt
-    // length.
-    // const publicPem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_pss_public_2048.pem"), "ascii");
-    // const privatePem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_pss_private_2048.pem"), "ascii");
-    // const publicKey = createPublicKey(publicPem);
-    // const privateKey = createPrivateKey(privatePem);
-    // // Because no RSASSA-PSS-params appears in the PEM, no defaults should be
-    // // added for the PSS parameters. This is different from an empty
-    // // RSASSA-PSS-params sequence (see test below).
-    // const expectedKeyDetails = {
-    //   modulusLength: 2048,
-    //   publicExponent: 65537n,
-    // };
-    // expect(publicKey.type).toBe("public");
-    // expect(publicKey.asymmetricKeyType).toBe("rsa-pss");
-    // expect(publicKey.asymmetricKeyDetails).toBe(expectedKeyDetails);
-    // expect(privateKey.type).toBe("private");
-    // expect(privateKey.asymmetricKeyType).toBe("rsa-pss");
-    // expect(privateKey.asymmetricKeyDetails).toBe(expectedKeyDetails);
-    // assert.throws(
-    //   () => publicKey.export({ format: 'jwk' }),
-    //   { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
-    // assert.throws(
-    //   () => privateKey.export({ format: 'jwk' }),
-    //   { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
-    // for (const key of [privatePem, privateKey]) {
-    //   // Any algorithm should work.
-    //   for (const algo of ['sha1', 'sha256']) {
-    //     // Any salt length should work.
-    //     for (const saltLength of [undefined, 8, 10, 12, 16, 18, 20]) {
-    //       const signature = createSign(algo)
-    //                         .update('foo')
-    //                         .sign({ key, saltLength });
-    //       for (const pkey of [key, publicKey, publicPem]) {
-    //         const okay = createVerify(algo)
-    //                      .update('foo')
-    //                      .verify({ key: pkey, saltLength }, signature);
-    //         assert.ok(okay);
-    //       }
-    //     }
-    //   }
-    // }
-    // // Exporting the key using PKCS#1 should not work since this would discard
-    // // any algorithm restrictions.
-    // assert.throws(() => {
-    //   publicKey.export({ format: 'pem', type: 'pkcs1' });
-    // }, {
-    //   code: 'ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS'
-    // });
-    //   {
-    //     // This key pair enforces sha1 as the message digest and the MGF1
-    //     // message digest and a salt length of 20 bytes.
-    //     const publicPem = fixtures.readKey('rsa_pss_public_2048_sha1_sha1_20.pem');
-    //     const privatePem =
-    //         fixtures.readKey('rsa_pss_private_2048_sha1_sha1_20.pem');
-    //     const publicKey = createPublicKey(publicPem);
-    //     const privateKey = createPrivateKey(privatePem);
-    //     // Unlike the previous key pair, this key pair contains an RSASSA-PSS-params
-    //     // sequence. However, because all values in the RSASSA-PSS-params are set to
-    //     // their defaults (see RFC 3447), the ASN.1 structure contains an empty
-    //     // sequence. Node.js should add the default values to the key details.
-    //     const expectedKeyDetails = {
-    //       modulusLength: 2048,
-    //       publicExponent: 65537n,
-    //       hashAlgorithm: 'sha1',
-    //       mgf1HashAlgorithm: 'sha1',
-    //       saltLength: 20
-    //     };
-    //     assert.strictEqual(publicKey.type, 'public');
-    //     assert.strictEqual(publicKey.asymmetricKeyType, 'rsa-pss');
-    //     assert.deepStrictEqual(publicKey.asymmetricKeyDetails, expectedKeyDetails);
-    //     assert.strictEqual(privateKey.type, 'private');
-    //     assert.strictEqual(privateKey.asymmetricKeyType, 'rsa-pss');
-    //     assert.deepStrictEqual(privateKey.asymmetricKeyDetails, expectedKeyDetails);
-    //   }
-    //   {
-    //     // This key pair enforces sha256 as the message digest and the MGF1
-    //     // message digest and a salt length of at least 16 bytes.
-    //     const publicPem =
-    //       fixtures.readKey('rsa_pss_public_2048_sha256_sha256_16.pem');
-    //     const privatePem =
-    //       fixtures.readKey('rsa_pss_private_2048_sha256_sha256_16.pem');
-    //     const publicKey = createPublicKey(publicPem);
-    //     const privateKey = createPrivateKey(privatePem);
-    //     assert.strictEqual(publicKey.type, 'public');
-    //     assert.strictEqual(publicKey.asymmetricKeyType, 'rsa-pss');
-    //     assert.strictEqual(privateKey.type, 'private');
-    //     assert.strictEqual(privateKey.asymmetricKeyType, 'rsa-pss');
-    //     for (const key of [privatePem, privateKey]) {
-    //       // Signing with anything other than sha256 should fail.
-    //       assert.throws(() => {
-    //         createSign('sha1').sign(key);
-    //       }, /digest not allowed/);
-    //       // Signing with salt lengths less than 16 bytes should fail.
-    //       for (const saltLength of [8, 10, 12]) {
-    //         assert.throws(() => {
-    //           createSign('sha1').sign({ key, saltLength });
-    //         }, /pss saltlen too small/);
-    //       }
-    //       // Signing with sha256 and appropriate salt lengths should work.
-    //       for (const saltLength of [undefined, 16, 18, 20]) {
-    //         const signature = createSign('sha256')
-    //                           .update('foo')
-    //                           .sign({ key, saltLength });
-    //         for (const pkey of [key, publicKey, publicPem]) {
-    //           const okay = createVerify('sha256')
-    //                        .update('foo')
-    //                        .verify({ key: pkey, saltLength }, signature);
-    //           assert.ok(okay);
-    //         }
-    //       }
-    //     }
-    //   }
+    const { privateKey, publicKey } = generateKeyPairSync("rsa-pss", {
+      modulusLength: 2048,
+      publicExponent: 65537,
+    });
+    expect(publicKey.type).toBe("public");
+    expect(publicKey.asymmetricKeyType).toBe("rsa-pss");
+    expect(publicKey.asymmetricKeyDetails).toEqual(expectedKeyDetails);
+    expect(privateKey.type).toBe("private");
+    expect(privateKey.asymmetricKeyType).toBe("rsa-pss");
+    expect(privateKey.asymmetricKeyDetails).toEqual(expectedKeyDetails);
+    expect(() => publicKey.export({ format: "jwk" })).toThrow(/ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE/);
+    expect(() => privateKey.export({ format: "jwk" })).toThrow(/ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE/);
+
+    for (const key of [privateKey]) {
+      // Any algorithm should work.
+      for (const algo of ["sha1", "sha256"]) {
+        // Any salt length should work.
+        for (const saltLength of [undefined, 8, 10, 12, 16, 18, 20]) {
+          const signature = sign(algo, Buffer.from("foo"), { key, saltLength });
+          for (const pkey of [key, publicKey]) {
+            const okay = verify(algo, Buffer.from("foo"), { key: pkey, saltLength }, signature);
+            expect(okay).toBeTrue();
+          }
+        }
+      }
+    }
+    // Exporting the key using PKCS#1 should not work since this would discard
+    // any algorithm restrictions.
+    expect(() => {
+      publicKey.export({ format: "pem", type: "pkcs1" });
+    }).toThrow(/ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE/);
+
+    {
+      // Unlike the previous key pair, this key pair contains an RSASSA-PSS-params
+      // sequence. However, because all values in the RSASSA-PSS-params are set to
+      // their defaults (see RFC 3447), the ASN.1 structure contains an empty
+      // sequence. Node.js should add the default values to the key details.
+      const { privateKey, publicKey } = generateKeyPairSync("rsa-pss", {
+        modulusLength: 2048,
+        publicExponent: 65537,
+        hashAlgorithm: "sha1",
+        mgf1HashAlgorithm: "sha1",
+        saltLength: 20,
+      });
+
+      expect(publicKey.type).toBe("public");
+      expect(publicKey.asymmetricKeyType).toBe("rsa-pss");
+      // RSA_get0_pss_params returns NULL. In OpenSSL, this function retries RSA-PSS
+      // parameters associated with |RSA| objects, but BoringSSL does not support
+      // the id-RSASSA-PSS key encoding.
+      // We expect only modulusLength and publicExponent to be present.
+      expect(publicKey.asymmetricKeyDetails).toEqual(expectedKeyDetails);
+      expect(privateKey.type).toBe("private");
+      expect(privateKey.asymmetricKeyType).toBe("rsa-pss");
+    }
+    {
+      // This key pair enforces sha256 as the message digest and the MGF1
+      // message digest and a salt length of at least 16 bytes.
+      const { privateKey, publicKey } = generateKeyPairSync("rsa-pss", {
+        modulusLength: 2048,
+        publicExponent: 65537,
+        hashAlgorithm: "sha256",
+        saltLength: 16,
+      });
+      expect(publicKey.type).toBe("public");
+      expect(publicKey.asymmetricKeyType).toBe("rsa-pss");
+      expect(privateKey.type).toBe("private");
+      expect(privateKey.asymmetricKeyType).toBe("rsa-pss");
+      for (const key of [privateKey]) {
+        // Signing with anything other than sha256 should fail.
+        expect(() => {
+          sign("sha1", Buffer.from("foo"), key);
+        }).toThrow(/digest not allowed/);
+        // Signing with salt lengths less than 16 bytes should fail.
+        // We don't enforce this yet because of BoringSSL's limitations. TODO: check this
+        // for (const saltLength of [8, 10, 12]) {
+        //   expect(() => {
+        //     createSign("sha1").sign({ key, saltLength });
+        //   }).toThrow(/pss saltlen too small/);
+        // }
+        // Signing with sha256 and appropriate salt lengths should work.
+        for (const saltLength of [undefined, 16, 18, 20]) {
+          const signature = sign("sha256", Buffer.from("foo"), { key, saltLength });
+          for (const pkey of [key, publicKey]) {
+            const okay = verify("sha256", Buffer.from("foo"), { key: pkey, saltLength }, signature);
+            expect(okay).toBeTrue();
+          }
+        }
+      }
+    }
+
+    // TODO: check how to use MGF1 and saltLength using BoringSSL
     //   {
     //     // This key enforces sha512 as the message digest and sha256 as the MGF1
     //     // message digest.
@@ -1640,4 +1627,73 @@ test.todo("RSA-PSS should work", async () => {
     //   }
     // }
   }
+});
+
+test("Ed25519 should work", async () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+
+  expect(publicKey.type).toBe("public");
+  expect(publicKey.asymmetricKeyType).toBe("ed25519");
+  expect(publicKey.asymmetricKeyDetails).toEqual({ namedCurve: "Ed25519" });
+  expect(privateKey.type).toBe("private");
+  expect(privateKey.asymmetricKeyType).toBe("ed25519");
+  expect(privateKey.asymmetricKeyDetails).toEqual({ namedCurve: "Ed25519" });
+
+  {
+    const signature = sign(undefined, Buffer.from("foo"), privateKey);
+    const okay = verify(undefined, Buffer.from("foo"), publicKey, signature);
+    expect(okay).toBeTrue();
+  }
+});
+
+test("ECDSA should work", async () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+
+  expect(publicKey.type).toBe("public");
+  expect(publicKey.asymmetricKeyType).toBe("ec");
+  expect(publicKey.asymmetricKeyDetails).toEqual({ namedCurve: "prime256v1" });
+  expect(privateKey.type).toBe("private");
+  expect(privateKey.asymmetricKeyType).toBe("ec");
+  expect(privateKey.asymmetricKeyDetails).toEqual({ namedCurve: "prime256v1" });
+
+  // default format (DER)
+  {
+    const signature = sign("sha256", Buffer.from("foo"), privateKey);
+    expect(signature.byteLength).not.toBe(64);
+    const okay = verify("sha256", Buffer.from("foo"), publicKey, signature);
+    expect(okay).toBeTrue();
+  }
+  // IeeeP1363 format
+  {
+    const signature = sign("sha256", Buffer.from("foo"), { key: privateKey, dsaEncoding: "ieee-p1363" });
+    expect(signature.byteLength).toBe(64);
+
+    const okay = verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "ieee-p1363" }, signature);
+    expect(okay).toBeTrue();
+  }
+  // DER format
+  {
+    const signature = sign("sha256", Buffer.from("foo"), { key: privateKey, dsaEncoding: "der" });
+    expect(signature.byteLength).not.toBe(64);
+
+    const okay = verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "der" }, signature);
+    expect(okay).toBeTrue();
+  }
+
+  expect(() => {
+    //@ts-ignore
+    sign("sha256", Buffer.from("foo"), { key: privateKey, dsaEncoding: "kjshdakjshd" });
+  }).toThrow(/invalid dsaEncoding/);
+
+  expect(() => {
+    const signature = sign("sha256", Buffer.from("foo"), privateKey);
+    //@ts-ignore
+    verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "ieee-p136" }, signature);
+  }).toThrow(/invalid dsaEncoding/);
+
+  expect(() => {
+    //@ts-ignore
+    const signature = sign("sha256", Buffer.from("foo"), { key: privateKey, dsaEncoding: "ieee-p136" });
+    verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "der" }, signature);
+  }).toThrow(/invalid dsaEncoding/);
 });

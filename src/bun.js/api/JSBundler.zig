@@ -1,6 +1,5 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const http = @import("../../bun_dev_http_server.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
@@ -67,6 +66,7 @@ pub const JSBundler = struct {
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -263,6 +263,30 @@ pub const JSBundler = struct {
                 return error.JSException;
             }
 
+            if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
+                if (conditions_value.isString()) {
+                    var slice = conditions_value.toSliceOrNull(globalThis) orelse {
+                        globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
+                        return error.JSException;
+                    };
+                    defer slice.deinit();
+                    try this.conditions.insert(slice.slice());
+                } else if (conditions_value.jsType().isArray()) {
+                    var iter = conditions_value.arrayIterator(globalThis);
+                    while (iter.next()) |entry_point| {
+                        var slice = entry_point.toSliceOrNull(globalThis) orelse {
+                            globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
+                            return error.JSException;
+                        };
+                        defer slice.deinit();
+                        try this.conditions.insert(slice.slice());
+                    }
+                } else {
+                    globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
+                    return error.JSException;
+                }
+            }
+
             {
                 const path: ZigString.Slice = brk: {
                     if (try config.getOptional(globalThis, "root", ZigString.Slice)) |slice| {
@@ -304,9 +328,9 @@ pub const JSBundler = struct {
 
             // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
-            //     this.dir.appendSliceExact(slice.slice()) catch unreachable;
+            //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
-            //     this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
+            //     this.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
             // }
 
             if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
@@ -494,6 +518,7 @@ pub const JSBundler = struct {
             self.outdir.deinit();
             self.rootdir.deinit();
             self.public_path.deinit();
+            self.conditions.deinit();
         }
     };
 
@@ -550,6 +575,10 @@ pub const JSBundler = struct {
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
             original_target: Target,
+
+            pub inline fn loader(_: *const MiniImportRecord) ?options.Loader {
+                return null;
+            }
         };
 
         pub fn create(
@@ -639,7 +668,7 @@ pub const JSBundler = struct {
             completion.ref();
 
             this.js_task = AnyTask.init(this);
-            var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
+            const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
                 completion.deref();
                 this.deinit();
                 return;
@@ -795,7 +824,7 @@ pub const JSBundler = struct {
             completion.ref();
 
             this.js_task = AnyTask.init(this);
-            var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
+            const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
                 completion.deref();
                 this.deinit();
                 return;
@@ -828,14 +857,9 @@ pub const JSBundler = struct {
                     return;
                 }
             } else {
-                var buffer_or_string: JSC.Node.SliceOrBuffer = JSC.Node.SliceOrBuffer.fromJS(completion.globalThis, bun.default_allocator, source_code_value) orelse
-                    @panic("expected buffer or string");
-
-                const source_code = switch (buffer_or_string) {
-                    .buffer => |arraybuffer| bun.default_allocator.dupe(u8, arraybuffer.slice()) catch @panic("Out of memory in onLoad callback"),
-                    .string => |slice| (slice.cloneIfNeeded(bun.default_allocator) catch @panic("Out of memory in onLoad callback")).slice(),
-                };
-
+                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(completion.globalThis, source_code_value, bun.default_allocator) catch
+                // TODO:
+                    @panic("Unexpected: source_code is not a string");
                 this.value = .{
                     .success = .{
                         .loader = @as(options.Loader, @enumFromInt(@as(u8, @intCast(loader_as_int.to(i32))))),
@@ -856,7 +880,7 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
         pub fn create(globalObject: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
             JSC.markBinding(@src());
-            var plugin = JSBundlerPlugin__create(globalObject, target);
+            const plugin = JSBundlerPlugin__create(globalObject, target);
             JSC.JSValue.fromCell(plugin).protect();
             return plugin;
         }
@@ -901,8 +925,8 @@ pub const JSBundler = struct {
             const namespace_string = if (path.isFile())
                 bun.String.empty
             else
-                bun.String.create(path.namespace);
-            const path_string = bun.String.create(path.text);
+                bun.String.createUTF8(path.namespace);
+            const path_string = bun.String.createUTF8(path.text);
             return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
         }
 
@@ -920,8 +944,8 @@ pub const JSBundler = struct {
             const namespace_string = if (namespace.len == 0)
                 bun.String.static("file")
             else
-                bun.String.create(namespace);
-            const path_string = bun.String.create(path);
+                bun.String.createUTF8(namespace);
+            const path_string = bun.String.createUTF8(path);
             defer namespace_string.deref();
             defer path_string.deref();
             JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context, @intFromEnum(default_loader));
@@ -942,9 +966,9 @@ pub const JSBundler = struct {
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
                 bun.String.empty
             else
-                bun.String.create(namespace);
-            const path_string = bun.String.create(path);
-            const importer_string = bun.String.create(importer);
+                bun.String.createUTF8(namespace);
+            const path_string = bun.String.createUTF8(path);
+            const importer_string = bun.String.createUTF8(importer);
             defer namespace_string.deref();
             defer path_string.deref();
             defer importer_string.deref();
@@ -1043,7 +1067,7 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return @call(.always_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
     }
 
     pub fn getJSON(
@@ -1051,27 +1075,27 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return @call(.always_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
     }
     pub fn getArrayBuffer(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
     }
     pub fn getSlice(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return @call(.always_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
     }
     pub fn getType(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getType, .{ &this.blob, globalThis });
+        return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalThis });
     }
 
     pub fn getStream(
@@ -1079,7 +1103,7 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getStream, .{
+        return @call(bun.callmod_inline, Blob.getStream, .{
             &this.blob,
             globalThis,
             callframe,
@@ -1110,11 +1134,11 @@ pub const BuildArtifact = struct {
     }
 
     pub fn getSize(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getSize, .{ &this.blob, globalObject });
+        return @call(bun.callmod_inline, Blob.getSize, .{ &this.blob, globalObject });
     }
 
     pub fn getMimeType(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getType, .{ &this.blob, globalObject });
+        return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalObject });
     }
 
     pub fn getOutputKind(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {

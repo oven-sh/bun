@@ -330,7 +330,11 @@ test("parameter decorators", () => {
   }
 
   class Maybe {
-    constructor(@m1 private x: number, @m2 public y: boolean, @m3 protected z: string) {}
+    constructor(
+      @m1 private x: number,
+      @m2 public y: boolean,
+      @m3 protected z: string,
+    ) {}
   }
 
   function m1(target, propertyKey, index) {
@@ -883,7 +887,10 @@ describe("constructor statements", () => {
     }
 
     class A extends B {
-      constructor(value: number, public v: string = "test") {
+      constructor(
+        value: number,
+        public v: string = "test",
+      ) {
         const newValue = value * 10;
         super(newValue);
       }
@@ -909,7 +916,11 @@ describe("constructor statements", () => {
 
     class A extends B {
       b: number;
-      constructor(value: number, @d1 b: number, public v: string = "test") {
+      constructor(
+        value: number,
+        @d1 b: number,
+        public v: string = "test",
+      ) {
         const newValue = value * 10;
         super(newValue);
         expect(this.v).toBe("test");
@@ -946,7 +957,11 @@ describe("constructor statements", () => {
 
     class A {
       l: number;
-      constructor(protected u: string, @d1 l: number = 3, @d2 public k: number = 4) {
+      constructor(
+        protected u: string,
+        @d1 l: number = 3,
+        @d2 public k: number = 4,
+      ) {
         this.l = l;
       }
     }
@@ -980,7 +995,10 @@ describe("constructor statements", () => {
     };
 
     const A = class a extends B {
-      constructor(value: number, public v: string = "test") {
+      constructor(
+        value: number,
+        public v: string = "test",
+      ) {
         const newValue = value * 10;
         super(newValue);
       }

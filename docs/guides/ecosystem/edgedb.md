@@ -90,7 +90,7 @@ Open that file and paste the following contents.
 ```txt
 module default {
   type Movie {
-    title: str;
+    required title: str;
     releaseYear: int64;
   }
 };
@@ -109,7 +109,7 @@ Applied m1uwekrn4ni4qs7ul7hfar4xemm5kkxlpswolcoyqj3xdhweomwjrq (00001.edgeql)
 
 ---
 
-With out schema applied, let's execute some queries using EdgeDB's JavaScript client library. We'll install the client library and EdgeDB's codegen CLI, and create a `seed.ts`.file.
+With our schema applied, let's execute some queries using EdgeDB's JavaScript client library. We'll install the client library and EdgeDB's codegen CLI, and create a `seed.ts`.file.
 
 ```sh
 $ bun add edgedb
@@ -121,7 +121,7 @@ $ touch seed.ts
 
 Paste the following code into `seed.ts`.
 
-The client auto-connects to the database. We insert a couple movies using the `.execute()` method.
+The client auto-connects to the database. We insert a couple movies using the `.execute()` method. We will use EdgeQL's `for` expression to turn this bulk insert into a single optimized query.
 
 ```ts
 import { createClient } from "edgedb";
@@ -129,10 +129,13 @@ import { createClient } from "edgedb";
 const client = createClient();
 
 const INSERT_MOVIE = `
-  insert Movie {
-    title := <str>$title,
-    releaseYear := <int64>$year,
-  }
+  with movies := <array<tuple<title: str, year: int64>>>$movies
+  for movie in array_unpack(movies) union (
+    insert Movie {
+      title := movie.title,
+      releaseYear := movie.year,
+    }
+  )
 `;
 
 const movies = [
@@ -141,9 +144,7 @@ const movies = [
   { title: "The Matrix Revolutions", year: 2003 },
 ];
 
-for (const movie of movies) {
-  await client.execute(INSERT_MOVIE, movie);
-}
+await client.execute(INSERT_MOVIE, { movies });
 
 console.log(`Seeding complete.`);
 process.exit();

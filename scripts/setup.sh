@@ -11,8 +11,8 @@ has_exec() {
   which "$1" >/dev/null 2>&1 || return 1
 }
 fail() {
+  has_failure=1
   printf "${C_RED}setup error${C_RESET}: %s\n" "$@"
-  exit 1
 }
 
 LLVM_VERSION=16
@@ -42,10 +42,14 @@ $(
 ) || fail "Rust and Cargo version must be installed (minimum version 1.57)"
 has_exec "go" || fail "'go' is missing"
 
-has_exec "pkg-config" || fail "'pkg-config' is missing"
+has_exec "${PKG_CONFIG:-pkg-config}" || fail "'pkg-config' is missing"
 has_exec "automake" || fail "'automake' is missing"
 has_exec "perl" || fail "'perl' is missing"
 has_exec "ruby" || fail "'ruby' is missing"
+
+if [ -n "$has_failure" ]; then
+  exit 1
+fi
 
 rm -f .vscode/clang++
 ln -s "$CXX" .vscode/clang++
@@ -71,7 +75,14 @@ make runtime_js fallback_decoder bun_error node-fallbacks
 
 mkdir -p build
 rm -f build/CMakeCache.txt
-cmake -B build -S . -DUSE_DEBUG_JSC=ON -DCMAKE_BUILD_TYPE=Debug -G Ninja -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
+cmake -B build -S . \
+  -G Ninja \
+  -DUSE_DEBUG_JSC=ON \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_COMPILER="$CC" \
+  -DCMAKE_CXX_COMPILER="$CXX" \
+  -UZIG_COMPILER "$*" \
+
 ninja -C build
 
 printf "Checking if built bun functions\n"

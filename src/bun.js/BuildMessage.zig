@@ -27,8 +27,26 @@ pub const BuildMessage = struct {
         return null;
     }
 
+    pub fn getNotes(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        const notes: []const logger.Data = this.msg.notes orelse &[_]logger.Data{};
+        const array = JSC.JSValue.createEmptyArray(globalThis, notes.len);
+        for (notes, 0..) |note, i| {
+            const cloned = note.clone(bun.default_allocator) catch {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            };
+            array.putIndex(
+                globalThis,
+                @intCast(i),
+                BuildMessage.create(globalThis, bun.default_allocator, logger.Msg{ .data = cloned, .kind = .note }),
+            );
+        }
+
+        return array;
+    }
+
     pub fn toStringFn(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        var text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
+        const text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
             globalThis.throwOutOfMemory();
             return .zero;
         };

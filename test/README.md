@@ -11,7 +11,7 @@ Tests are located in the [`test/`](test/) directory and are organized using the 
   * `regression/` - tests that reproduce a specific issue.
   * `harness.ts` - utility functions that can be imported from any test.
 
-The tests in [`test/js/`](test/js/) directory are further categorized by the type of API.
+The tests in [`test/js/`](js/) directory are further categorized by the type of API.
 
 * `test/js/`
   * `bun/` - tests for `Bun`-specific APIs.

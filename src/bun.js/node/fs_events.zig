@@ -239,8 +239,8 @@ pub const FSEventsLoop = struct {
         callback: *const (fn (*anyopaque) void),
 
         pub fn run(this: *Task) void {
-            var callback = this.callback;
-            var ctx = this.ctx;
+            const callback = this.callback;
+            const ctx = this.ctx;
             callback(ctx.?);
         }
 
@@ -254,7 +254,7 @@ pub const FSEventsLoop = struct {
                 }
 
                 pub fn wrap(this: ?*anyopaque) void {
-                    @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+                    @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
                 }
             };
         }
@@ -327,7 +327,7 @@ pub const FSEventsLoop = struct {
             return error.FailedToCreateCoreFoudationSourceLoop;
         }
 
-        var fs_loop = FSEventsLoop{ .sem = Semaphore.init(0), .mutex = Mutex.init(), .signal_source = signal_source };
+        const fs_loop = FSEventsLoop{ .sem = Semaphore.init(0), .mutex = Mutex.init(), .signal_source = signal_source };
 
         this.* = fs_loop;
         this.thread = try std.Thread.spawn(.{}, FSEventsLoop.CFThreadLoop, .{this});
@@ -419,7 +419,7 @@ pub const FSEventsLoop = struct {
         this.has_scheduled_watchers = false;
         const watcher_count = this.watcher_count;
 
-        var watchers = this.watchers.slice();
+        const watchers = this.watchers.slice();
 
         const CF = CoreFoundation.get();
         const CS = CoreServices.get();
@@ -590,7 +590,7 @@ pub const FSEventsWatcher = struct {
     pub const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(loop: *FSEventsLoop, path: string, recursive: bool, callback: Callback, updateEnd: UpdateEndCallback, ctx: ?*anyopaque) *FSEventsWatcher {
-        var this = bun.default_allocator.create(FSEventsWatcher) catch unreachable;
+        const this = bun.default_allocator.create(FSEventsWatcher) catch unreachable;
 
         this.* = FSEventsWatcher{
             .path = path,

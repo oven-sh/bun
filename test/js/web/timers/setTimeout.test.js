@@ -2,6 +2,9 @@ import { spawnSync } from "bun";
 import { it, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "node:path";
+
+const isWindows = process.platform === "win32";
+
 it("setTimeout", async () => {
   var lastID = -1;
   const result = await new Promise((resolve, reject) => {
@@ -131,7 +134,7 @@ it("Bun.sleep", async () => {
   await Bun.sleep(2);
   sleeps++;
   const end = performance.now();
-  expect((end - start) * 1000).toBeGreaterThanOrEqual(3);
+  expect((end - start) * 1000).toBeGreaterThan(2);
 
   expect(sleeps).toBe(3);
 });
@@ -148,11 +151,21 @@ it("Bun.sleep propagates exceptions", async () => {
 });
 
 it("Bun.sleep works with a Date object", async () => {
-  var ten_ms = new Date();
-  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
+  const offset = isWindows ? 100 : 10;
   const now = performance.now();
+  var ten_ms = new Date();
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
-  expect(performance.now() - now).toBeGreaterThanOrEqual(10);
+  expect(Math.ceil(performance.now() - now)).toBeGreaterThan(offset);
+});
+
+it("Bun.sleep(Date) fulfills after Date", async () => {
+  const offset = isWindows ? 100 : 10;
+  let ten_ms = new Date();
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
+  await Bun.sleep(ten_ms);
+  let now = new Date();
+  expect(+now).toBeGreaterThanOrEqual(+ten_ms);
 });
 
 it("node.js timers/promises setTimeout propagates exceptions", async () => {
@@ -167,7 +180,7 @@ it("node.js timers/promises setTimeout propagates exceptions", async () => {
   }
 });
 
-it.skip("order of setTimeouts", done => {
+it("order of setTimeouts", done => {
   var nums = [];
   var maybeDone = cb => {
     return () => {
@@ -251,7 +264,7 @@ it("setTimeout if refreshed before run, should reschedule to run later", done =>
   let start = Date.now();
   let timer = setTimeout(() => {
     let end = Date.now();
-    expect(end - start).toBeGreaterThanOrEqual(150);
+    expect(end - start).toBeGreaterThan(149);
     done();
   }, 100);
 
@@ -290,4 +303,16 @@ it("setTimeout should not refresh after clearTimeout", done => {
     expect(count).toBe(0);
     done();
   }, 100);
+});
+
+it("setTimeout CPU usage #7790", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "setTimeout-cpu-fixture.js")],
+    env: bunEnv,
+    stdout: "inherit",
+  });
+  const code = await process.exited;
+  expect(code).toBe(0);
+  const stats = process.resourceUsage();
+  expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
 });

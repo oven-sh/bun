@@ -24,6 +24,7 @@
  */
 
 #pragma once
+
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "JSDOMGlobalObject.h"
@@ -37,10 +38,10 @@ template<typename T> struct Converter;
 
 namespace Detail {
 
-template<typename T> inline T* getPtrOrRef(const T* p) { return const_cast<T*>(p); }
-template<typename T> inline T& getPtrOrRef(const T& p) { return const_cast<T&>(p); }
-template<typename T> inline T* getPtrOrRef(const RefPtr<T>& p) { return p.get(); }
-template<typename T> inline T& getPtrOrRef(const Ref<T>& p) { return p.get(); }
+template <typename T> inline T* getPtrOrRef(const T* p) { return const_cast<T*>(p); }
+template <typename T> inline T& getPtrOrRef(const T& p) { return const_cast<T&>(p); }
+template <typename T> inline T* getPtrOrRef(const RefPtr<T>& p) { return p.get(); }
+template <typename T> inline T& getPtrOrRef(const Ref<T>& p) { return p.get(); }
 
 }
 
@@ -87,6 +88,7 @@ template<typename T, typename ExceptionThrower> inline typename Converter<T>::Re
 {
     return Converter<T>::convert(lexicalGlobalObject, value, globalObject, std::forward<ExceptionThrower>(exceptionThrower));
 }
+
 
 // Conversion from Implementation -> JSValue
 template<typename T> struct JSConverter;
@@ -169,7 +171,7 @@ template<typename T, typename U> inline JSC::JSValue toJS(JSC::JSGlobalObject& l
             auto result = valueOrFunctor();
             if (UNLIKELY(result.hasException())) {
                 propagateException(lexicalGlobalObject, throwScope, result.releaseException());
-                return {};
+                return { };
             }
             return JSC::jsUndefined();
         } else
@@ -178,7 +180,7 @@ template<typename T, typename U> inline JSC::JSValue toJS(JSC::JSGlobalObject& l
         if constexpr (IsExceptionOr<U>) {
             if (UNLIKELY(valueOrFunctor.hasException())) {
                 propagateException(lexicalGlobalObject, throwScope, valueOrFunctor.releaseException());
-                return {};
+                return { };
             }
 
             return toJS<T>(lexicalGlobalObject, valueOrFunctor.releaseReturnValue());
@@ -199,7 +201,7 @@ template<typename T, typename U> inline JSC::JSValue toJS(JSC::JSGlobalObject& l
             auto result = valueOrFunctor();
             if (UNLIKELY(result.hasException())) {
                 propagateException(lexicalGlobalObject, throwScope, result.releaseException());
-                return {};
+                return { };
             }
             return JSC::jsUndefined();
         } else
@@ -208,7 +210,7 @@ template<typename T, typename U> inline JSC::JSValue toJS(JSC::JSGlobalObject& l
         if constexpr (IsExceptionOr<U>) {
             if (UNLIKELY(valueOrFunctor.hasException())) {
                 propagateException(lexicalGlobalObject, throwScope, valueOrFunctor.releaseException());
-                return {};
+                return { };
             }
 
             return toJS<T>(lexicalGlobalObject, globalObject, valueOrFunctor.releaseReturnValue());
@@ -217,7 +219,7 @@ template<typename T, typename U> inline JSC::JSValue toJS(JSC::JSGlobalObject& l
     }
 }
 
-template<typename T, typename U> inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSC::ThrowScope& throwScope, U&& valueOrFunctor)
+template<typename T, typename U> inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, WebCore::JSDOMGlobalObject& globalObject, JSC::ThrowScope& throwScope, U&& valueOrFunctor)
 {
     if constexpr (std::is_invocable_v<U>) {
         using FunctorReturnType = std::invoke_result_t<U>;
@@ -229,7 +231,7 @@ template<typename T, typename U> inline JSC::JSValue toJSNewlyCreated(JSC::JSGlo
             auto result = valueOrFunctor();
             if (UNLIKELY(result.hasException())) {
                 propagateException(lexicalGlobalObject, throwScope, result.releaseException());
-                return {};
+                return { };
             }
             return JSC::jsUndefined();
         } else
@@ -239,7 +241,7 @@ template<typename T, typename U> inline JSC::JSValue toJSNewlyCreated(JSC::JSGlo
         if constexpr (IsExceptionOr<U>) {
             if (UNLIKELY(valueOrFunctor.hasException())) {
                 propagateException(lexicalGlobalObject, throwScope, valueOrFunctor.releaseException());
-                return {};
+                return { };
             }
 
             return toJSNewlyCreated<T>(lexicalGlobalObject, globalObject, valueOrFunctor.releaseReturnValue());

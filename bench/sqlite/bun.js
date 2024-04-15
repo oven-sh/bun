@@ -1,7 +1,8 @@
 import { run, bench } from "mitata";
 import { Database } from "bun:sqlite";
+import { join } from "path";
 
-const db = Database.open("./src/northwind.sqlite");
+const db = Database.open(join(import.meta.dir, "src", "northwind.sqlite"));
 
 {
   const sql = db.prepare(`SELECT * FROM "Order"`);

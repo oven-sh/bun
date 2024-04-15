@@ -2,9 +2,9 @@ const std = @import("std");
 const Environment = @import("./env.zig");
 
 const Output = @import("output.zig");
-const use_mimalloc = @import("root").bun.use_mimalloc;
+const use_mimalloc = bun.use_mimalloc;
 const StringTypes = @import("./string_types.zig");
-const Mimalloc = @import("root").bun.Mimalloc;
+const Mimalloc = bun.Mimalloc;
 const bun = @import("root").bun;
 
 const version_string = Environment.version_string;
@@ -61,7 +61,7 @@ else
 
 pub inline fn getStartTime() i128 {
     if (Environment.isTest) return 0;
-    return @import("root").bun.start_time;
+    return bun.start_time;
 }
 
 pub fn setThreadName(name: StringTypes.stringZ) void {
@@ -69,6 +69,8 @@ pub fn setThreadName(name: StringTypes.stringZ) void {
         _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
+    } else if (Environment.isWindows) {
+        // _ = std.os.SetThreadDescription(std.os.GetCurrentThread(), name);
     }
 }
 
@@ -90,10 +92,37 @@ pub fn runExitCallbacks() void {
 
 /// Flushes stdout and stderr and exits with the given code.
 pub fn exit(code: u8) noreturn {
-    runExitCallbacks();
+    exitWide(@as(u32, code));
+}
+
+pub fn exitWide(code: u32) noreturn {
+    std.c.exit(@bitCast(code));
+}
+
+pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
+    if (comptime @TypeOf(sig) == bun.SignalCode) {
+        return raiseIgnoringPanicHandler(@intFromEnum(sig));
+    }
+
     Output.flush();
-    std.mem.doNotOptimizeAway(&Bun__atexit);
-    std.c._exit(code);
+    @import("./crash_reporter.zig").on_error = null;
+    if (!Environment.isWindows) {
+        if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
+            const act = std.os.Sigaction{
+                .handler = .{ .sigaction = @ptrCast(@alignCast(std.os.SIG.DFL)) },
+                .mask = std.os.empty_sigset,
+                .flags = 0,
+            };
+            std.os.sigaction(@intCast(sig), &act, null) catch {};
+        }
+    }
+
+    Output.Source.Stdio.restore();
+
+    // TODO(@paperdave): report a bug that this intcast shouldnt be needed. signals are i32 not u32
+    // after that is fixed we can make this function take i32
+    _ = std.c.raise(@intCast(sig));
+    std.c.abort();
 }
 
 pub const AllocatorConfiguration = struct {
@@ -133,26 +162,6 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
     }
 }
 
-// std.debug.assert but happens at runtime
-pub fn invariant(condition: bool, comptime fmt: string, args: anytype) void {
-    if (!condition) {
-        _invariant(fmt, args);
-    }
-}
-
-inline fn _invariant(comptime fmt: string, args: anytype) noreturn {
-    @setCold(true);
-
-    if (comptime Environment.isWasm) {
-        Output.printErrorln(fmt, args);
-        Output.flush();
-        @panic(fmt);
-    } else {
-        Output.prettyErrorln(fmt, args);
-        Global.exit(1);
-    }
-}
-
 pub fn notimpl() noreturn {
     @setCold(true);
     Global.panic("Not implemented yet!!!!!", .{});
@@ -165,11 +174,11 @@ pub fn crash() noreturn {
 }
 
 const Global = @This();
-const string = @import("root").bun.string;
+const string = bun.string;
 
 pub const BunInfo = struct {
     bun_version: string,
-    platform: Analytics.GenerateHeader.GeneratePlatform.Platform = undefined,
+    platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
     framework: string = "",
     framework_version: string = "",
 
@@ -197,4 +206,20 @@ pub export const Bun__userAgent: [*:0]const u8 = Global.user_agent;
 
 comptime {
     _ = Bun__userAgent;
+}
+
+pub export fn Bun__onExit() void {
+    runExitCallbacks();
+    Output.flush();
+    std.mem.doNotOptimizeAway(&Bun__atexit);
+
+    Output.Source.Stdio.restore();
+
+    if (Environment.isWindows) {
+        bun.windows.libuv.uv_library_shutdown();
+    }
+}
+
+comptime {
+    _ = Bun__onExit;
 }

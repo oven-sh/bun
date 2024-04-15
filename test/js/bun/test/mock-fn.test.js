@@ -1,8 +1,11 @@
 /**
- * This file is meant to be runnable in both Jest and Bun.
- * `bunx jest mock-fn.test.js`
+ * This file is meant to be runnable in Jest, Vitest, and Bun:
+ *  `bun test test/js/bun/test/mock-fn.test.js`
+ *  `bunx vitest test/js/bun/test/mock-fn.test.js`
+ *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
-var { isBun, expect, jest, vi, mock, spyOn } = require("./test-interop.js")();
+import test_interop from "./test-interop.js";
+var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
 // if you want to test vitest, comment the above and uncomment the below
 
@@ -35,6 +38,28 @@ describe("mock()", () => {
       expect(jest.fn).toBe(mock);
       expect(jest.fn).toBe(vi.fn);
     });
+
+    test("mock", () => {
+      const binaryType = "arraybuffer";
+      const data = new ArrayBuffer(10);
+      const port = 1234;
+      const address = "1";
+      const type = ArrayBuffer;
+      const onData = mock((socket, data, port, address) => {
+        expect(socket).toBeInstanceOf(Object);
+        expect(socket.binaryType).toBe(binaryType || "nodebuffer");
+        expect(data).toBeInstanceOf(type);
+        expect(port).toBeInteger();
+        expect(port).toBeWithin(1, 65535 + 1);
+        expect(port).not.toBe(socket.port);
+        expect(address).toBeString();
+        expect(address).not.toBeEmpty();
+      });
+
+      onData({ binaryType }, data, port, address);
+
+      expect(onData).toHaveBeenCalled();
+    });
   }
   test("are callable", () => {
     const fn = jest.fn(() => 42);
@@ -43,11 +68,28 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
     expect(fn()).toBe(42);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
+    expect(fn).toHaveBeenCalledWith();
   });
+
+  test("jest.clearAllMocks()", () => {
+    const func = jest.fn(() => 42);
+    expect(func).not.toHaveBeenCalled();
+    expect(func()).toBe(42);
+    expect(func).toHaveBeenCalled();
+
+    jest.clearAllMocks();
+
+    expect(func).not.toHaveBeenCalled();
+    expect(func()).toBe(42);
+    expect(func).toHaveBeenCalled();
+  });
+
   test("passes this value", () => {
     const fn = jest.fn(function hey() {
       "use strict";
@@ -85,10 +127,13 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
     expect(Number(fn.call(234))).toBe(234);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
+    expect(fn).toHaveBeenCalledWith();
   });
   test(".apply works", function () {
     const fn = jest.fn(function hey() {
@@ -99,10 +144,13 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
     expect(Number(fn.apply(234))).toBe(234);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
+    expect(fn).toHaveBeenCalledWith();
   });
   test(".bind works", () => {
     const fn = jest.fn(function hey() {
@@ -113,10 +161,13 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
     expect(Number(fn.bind(234)())).toBe(234);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
+    expect(fn).toHaveBeenCalledWith();
   });
   test(".name works", () => {
     const fn = jest.fn(function hey() {
@@ -159,6 +210,10 @@ describe("mock()", () => {
       value: 43,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenCalled();
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
   });
   test("works when throwing", () => {
     const instance = new Error("foo");
@@ -171,6 +226,8 @@ describe("mock()", () => {
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
   });
   test("mockReset works", () => {
     const instance = new Error("foo");
@@ -183,11 +240,15 @@ describe("mock()", () => {
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
     fn.mockReset();
     expect(fn.mock.calls).toBeEmpty();
     expect(fn.mock.results).toBeEmpty();
     expect(fn.mock.instances).toBeEmpty();
     expect(fn).not.toHaveBeenCalled();
+    expect(fn).not.toHaveBeenLastCalledWith(43);
+    expect(fn).not.toHaveBeenCalledWith(43);
     expect(() => expect(fn).toHaveBeenCalled()).toThrow();
     expect(fn(43)).toBe(undefined);
     expect(fn.mock.results).toEqual([
@@ -197,6 +258,8 @@ describe("mock()", () => {
       },
     ]);
     expect(fn.mock.calls).toEqual([[43]]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
   });
   test("mockClear works", () => {
     const instance = new Error("foo");
@@ -209,17 +272,23 @@ describe("mock()", () => {
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
     fn.mockClear();
     expect(fn.mock.calls).toBeEmpty();
     expect(fn.mock.results).toBeEmpty();
     expect(fn.mock.instances).toBeEmpty();
     expect(fn).not.toHaveBeenCalled();
+    expect(fn).not.toHaveBeenLastCalledWith(43);
+    expect(fn).not.toHaveBeenCalledWith(43);
     expect(() => fn(43)).toThrow("foo");
     expect(fn.mock.results[0]).toEqual({
       type: "throw",
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
   });
   // this is an implementation detail i don't think we *need* to support
   test("mockClear doesnt update existing object", () => {
@@ -233,10 +302,14 @@ describe("mock()", () => {
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
     const stolen = fn.mock;
     fn.mockClear();
     expect(stolen).not.toBe(fn.mock);
     expect(fn.mock.calls).toBeEmpty();
+    expect(fn).not.toHaveBeenLastCalledWith(43);
+    expect(fn).not.toHaveBeenCalledWith(43);
     expect(stolen.calls).not.toBeEmpty();
     expect(fn.mock.results).toBeEmpty();
     expect(stolen.results).not.toBeEmpty();
@@ -249,22 +322,29 @@ describe("mock()", () => {
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
   });
   test("multiple calls work", () => {
     const fn = jest.fn(f => f);
     expect(fn(43)).toBe(43);
+    expect(fn).toHaveBeenLastCalledWith(43);
     expect(fn(44)).toBe(44);
+    expect(fn).toHaveBeenLastCalledWith(44);
     expect(fn.mock.calls[0]).toEqual([43]);
     expect(fn.mock.results[0]).toEqual({
       type: "return",
       value: 43,
     });
     expect(fn.mock.calls[1]).toEqual([44]);
+    expect(fn).toHaveBeenLastCalledWith(44);
     expect(fn.mock.results[1]).toEqual({
       type: "return",
       value: 44,
     });
     expect(fn.mock.contexts).toEqual([undefined, undefined]);
+    expect(fn).toHaveBeenCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(44);
   });
   test("this arg", () => {
     const fn = jest.fn(function (add) {
@@ -273,6 +353,8 @@ describe("mock()", () => {
     const obj = { foo: 42, fn };
     expect(obj.fn(2)).toBe(44);
     expect(fn.mock.calls[0]).toEqual([2]);
+    expect(fn).toHaveBeenLastCalledWith(2);
+    expect(fn).toHaveBeenCalledWith(2);
     expect(fn.mock.results[0]).toEqual({
       type: "return",
       value: 44,
@@ -298,19 +380,26 @@ describe("mock()", () => {
     });
     const obj = { foo: 42, fn };
     expect(obj.fn(2)).toBe(44);
+    expect(fn).toHaveBeenLastCalledWith(2);
     const this2 = { foo: 43 };
     expect(fn.call(this2, 2)).toBe(45);
+    expect(fn).toHaveBeenLastCalledWith(2);
     const this3 = { foo: 44 };
     expect(fn.apply(this3, [2])).toBe(46);
+    expect(fn).toHaveBeenLastCalledWith(2);
     const this4 = { foo: 45 };
     expect(fn.bind(this4)(3)).toBe(48);
+    expect(fn).toHaveBeenLastCalledWith(3);
     const this5 = { foo: 45 };
     expect(fn.bind(this5, 2)()).toBe(47);
+    expect(fn).toHaveBeenLastCalledWith(2);
     expect(fn.mock.calls[0]).toEqual([2]);
     expect(fn.mock.calls[1]).toEqual([2]);
     expect(fn.mock.calls[2]).toEqual([2]);
     expect(fn.mock.calls[3]).toEqual([3]);
     expect(fn.mock.calls[4]).toEqual([2]);
+    expect(fn).toHaveBeenCalledWith(2);
+    expect(fn).toHaveBeenCalledWith(3);
     expect(fn.mock.results[0]).toEqual({
       type: "return",
       value: 44,
@@ -487,6 +576,79 @@ describe("mock()", () => {
     expect(fn1.mock.invocationCallOrder).toEqual([first, first + 3]);
     expect(fn2.mock.invocationCallOrder).toEqual([first + 1, first + 2]);
   });
+
+  test("toHaveBeenCalledWith, toHaveBeenLastCalledWith works", () => {
+    const fn = jest.fn();
+    expect(() => expect(() => {}).not.toHaveBeenLastCalledWith()).toThrow();
+    expect(() => expect(() => {}).not.toHaveBeenNthCalledWith()).toThrow();
+    expect(() => expect(() => {}).not.toHaveBeenCalledWith()).toThrow();
+    expect(fn).not.toHaveBeenCalled();
+    expect(() => expect(fn).toHaveBeenCalledTimes(-1)).toThrow();
+    expect(fn).toHaveBeenCalledTimes(0);
+    expect(fn).not.toHaveBeenCalledWith();
+    expect(fn).not.toHaveBeenLastCalledWith();
+    expect(() => expect(fn).toHaveBeenNthCalledWith(0)).toThrow();
+    expect(() => expect(fn).toHaveBeenNthCalledWith(-1)).toThrow();
+    expect(() => expect(fn).toHaveBeenNthCalledWith(1.1)).toThrow();
+    expect(fn).not.toHaveBeenNthCalledWith(1);
+    fn();
+    expect(fn).toHaveBeenCalled();
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn).toHaveBeenCalledWith();
+    expect(fn).toHaveBeenLastCalledWith();
+    expect(fn).toHaveBeenNthCalledWith(1);
+    expect(fn).not.toHaveBeenNthCalledWith(1, 1);
+    expect(fn).not.toHaveBeenCalledWith(1);
+    fn(1);
+    expect(fn).toHaveBeenCalledWith(1);
+    expect(fn).toHaveBeenLastCalledWith(1);
+    expect(fn).toHaveBeenNthCalledWith(1);
+    expect(fn).toHaveBeenNthCalledWith(2, 1);
+    fn(1, 2, 3);
+    expect(fn).not.toHaveBeenCalledWith("123");
+    expect(fn).not.toHaveBeenLastCalledWith(1);
+    expect(fn).not.toHaveBeenLastCalledWith(1, 2);
+    expect(fn).not.toHaveBeenLastCalledWith("123");
+    expect(fn).toHaveBeenLastCalledWith(1, 2, 3);
+    expect(fn).not.toHaveBeenLastCalledWith(3, 2, 1);
+    expect(fn).toHaveBeenNthCalledWith(3, 1, 2, 3);
+    expect(fn).not.toHaveBeenNthCalledWith(4, 3, 2, 1);
+    fn("random string");
+    expect(fn).toHaveBeenCalledWith();
+    expect(fn).toHaveBeenNthCalledWith(1);
+    expect(fn).toHaveBeenCalledWith(1);
+    expect(fn).toHaveBeenNthCalledWith(2, 1);
+    expect(fn).toHaveBeenCalledWith(1, 2, 3);
+    expect(fn).toHaveBeenNthCalledWith(3, 1, 2, 3);
+    expect(fn).toHaveBeenCalledWith("random string");
+    expect(fn).toHaveBeenLastCalledWith("random string");
+    expect(fn).toHaveBeenNthCalledWith(4, "random string");
+    expect(fn).toHaveBeenCalledWith(expect.stringMatching(/^random \w+$/));
+    expect(fn).toHaveBeenLastCalledWith(expect.stringMatching(/^random \w+$/));
+    expect(fn).toHaveBeenNthCalledWith(4, expect.stringMatching(/^random \w+$/));
+    fn(1, undefined);
+    expect(fn).toHaveBeenLastCalledWith(1, undefined);
+    expect(fn).not.toHaveBeenLastCalledWith(1);
+    expect(fn).toHaveBeenCalledWith(1, undefined);
+    expect(fn).not.toHaveBeenCalledWith(undefined);
+    expect(fn).toHaveBeenNthCalledWith(5, 1, undefined);
+    expect(fn).not.toHaveBeenNthCalledWith(5, 1);
+  });
+
+  it("no segmentation fault when passing jest.fn into another jest.fn, issue#5900", () => {
+    function foo() {
+      return true;
+    }
+
+    function bar(fn = jest.fn(foo)) {
+      expect(fn.getMockName()).toBe("foo");
+      let newFn = jest.fn(fn);
+      expect(newFn.getMockName()).toBe("foo");
+      return newFn;
+    }
+
+    expect(bar()()).toBe(true);
+  });
 });
 
 describe("spyOn", () => {
@@ -507,6 +669,13 @@ describe("spyOn", () => {
     expect(() => expect(fn).not.toHaveBeenCalledTimes(1)).toThrow();
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
+    jest.clearAllMocks();
+    // verify that the spy's history is cleared, but the spy is still intact
+    expect(fn).not.toHaveBeenCalled();
+    expect(fn.mock.calls).toHaveLength(0);
+    expect(obj.original()).toBe(42);
+    expect(fn).toHaveBeenCalled();
+    expect(fn).toHaveBeenCalledTimes(1);
     jest.restoreAllMocks();
     expect(() => expect(obj.original).toHaveBeenCalled()).toThrow();
     expect(fn).not.toHaveBeenCalled();
@@ -566,8 +735,18 @@ describe("spyOn", () => {
       expect(fn).toHaveBeenCalledTimes(1);
       expect(fn.mock.calls).toHaveLength(1);
       expect(fn.mock.calls[0]).toBeEmpty();
+      jest.clearAllMocks();
+      // verify that the spy's history is cleared, but the spy is still intact
+      expect(fn).not.toHaveBeenCalled();
+      expect(fn.mock.calls).toHaveLength(0);
+      expect(obj.original).toBe(42);
+      expect(fn).toHaveBeenCalled();
+      expect(fn).toHaveBeenCalledTimes(1);
       jest.restoreAllMocks();
       expect(() => expect(obj.original).toHaveBeenCalled()).toThrow();
+      expect(fn).not.toHaveBeenCalled();
+      expect(obj.original).toBe(42);
+      expect(fn).not.toHaveBeenCalled();
     });
 
     test("spyOn on object doens't crash if object GC'd", () => {
@@ -596,6 +775,13 @@ describe("spyOn", () => {
       expect(fn).toHaveBeenCalledTimes(1);
       expect(fn.mock.calls).toHaveLength(1);
       expect(fn.mock.calls[0]).toBeEmpty();
+      jest.clearAllMocks();
+      // verify that the spy's history is cleared, but the spy is still intact
+      expect(fn).not.toHaveBeenCalled();
+      expect(fn.mock.calls).toHaveLength(0);
+      expect(obj.original).toBe(42);
+      expect(fn).toHaveBeenCalled();
+      expect(fn).toHaveBeenCalledTimes(1);
       jest.restoreAllMocks();
       expect(() => expect(obj.original).toHaveBeenCalled()).toThrow();
       obj.original;

@@ -13,8 +13,8 @@ const std = @import("std");
 pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
     return struct {
         pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
-            var keys = try allocator.alloc(string, count);
-            var values = try allocator.alloc(t, count);
+            const keys = try allocator.alloc(string, count);
+            const values = try allocator.alloc(t, count);
 
             return @This(){ .keys = keys, .values = values };
         }

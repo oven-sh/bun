@@ -7,7 +7,7 @@
 
 #include "../src/ChunkedEncoding.h"
 
-void consumeChunkEncoding(int maxConsume, std::string_view &chunkEncoded, unsigned int &state) {
+void consumeChunkEncoding(int maxConsume, std::string_view &chunkEncoded, uint64_t &state) {
     //int maxConsume = 200;
 
     if (uWS::isParsingChunkedEncoding(state)) {
@@ -80,7 +80,7 @@ void runBetterTest(unsigned int maxConsume) {
     std::string buffer = ss.str();
     std::string_view chunkEncoded = buffer;
 
-    unsigned int state = 0;
+    uint64_t state = 0;
 
     if (uWS::isParsingChunkedEncoding(state)) {
         std::abort();
@@ -128,7 +128,7 @@ void runTest(unsigned int maxConsume) {
     unsigned int stoppedWithClearState = 0;
     
     /* Begin with a clear state and the full data */
-    unsigned int state = 0;
+    uint64_t state = 0;
     unsigned int chunkOffset = 0;
     std::string_view chunkEncoded = buffer;
 
@@ -200,7 +200,7 @@ void testWithoutTrailer() {
     std::string buffer = ss.str();
     std::string_view dataToConsume(buffer.data(), buffer.length());
 
-    unsigned int state = uWS::STATE_IS_CHUNKED;
+    uint64_t state = uWS::STATE_IS_CHUNKED;
 
     for (auto chunk : uWS::ChunkIterator(&dataToConsume, &state)) {
 

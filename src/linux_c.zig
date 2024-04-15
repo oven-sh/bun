@@ -142,13 +142,14 @@ pub const SystemErrno = enum(u8) {
     pub const max = 134;
 
     pub fn init(code: anytype) ?SystemErrno {
-        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
-            if (code < 0)
-                return init(-code);
+        if (code < 0) {
+            if (code <= -max) {
+                return null;
+            }
+            return @enumFromInt(-code);
         }
-
         if (code >= max) return null;
-        return @as(SystemErrno, @enumFromInt(code));
+        return @enumFromInt(code);
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -548,14 +549,14 @@ const posix_spawn_file_actions_addchdir_np_type = *const fn (actions: *posix_spa
 
 /// When not available, these functions will return 0.
 pub fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: std.os.fd_t) c_int {
-    var function = bun.C.dlsym(posix_spawn_file_actions_addfchdir_np_type, "posix_spawn_file_actions_addfchdir_np") orelse
+    const function = bun.C.dlsym(posix_spawn_file_actions_addfchdir_np_type, "posix_spawn_file_actions_addfchdir_np") orelse
         return 0;
     return function(actions, filedes);
 }
 
 /// When not available, these functions will return 0.
 pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int {
-    var function = bun.C.dlsym(posix_spawn_file_actions_addchdir_np_type, "posix_spawn_file_actions_addchdir_np") orelse
+    const function = bun.C.dlsym(posix_spawn_file_actions_addchdir_np_type, "posix_spawn_file_actions_addchdir_np") orelse
         return 0;
     return function(actions, path);
 }
@@ -565,17 +566,111 @@ pub extern fn vmsplice(fd: c_int, iovec: [*]const std.os.iovec, iovec_count: usi
 const net_c = @cImport({
     @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
     @cInclude("net/if.h"); // IFF_RUNNING, IFF_UP
+    @cInclude("fcntl.h"); // F_DUPFD_CLOEXEC
+    @cInclude("sys/socket.h");
 });
-pub const ifaddrs = net_c.ifaddrs;
-pub const getifaddrs = net_c.getifaddrs;
+
+pub const FD_CLOEXEC = net_c.FD_CLOEXEC;
 pub const freeifaddrs = net_c.freeifaddrs;
+pub const getifaddrs = net_c.getifaddrs;
+pub const ifaddrs = net_c.ifaddrs;
+pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
 pub const IFF_RUNNING = net_c.IFF_RUNNING;
 pub const IFF_UP = net_c.IFF_UP;
-pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
+pub const MSG_DONTWAIT = net_c.MSG_DONTWAIT;
+pub const MSG_NOSIGNAL = net_c.MSG_NOSIGNAL;
+
+pub const F = struct {
+    pub const DUPFD_CLOEXEC = net_c.F_DUPFD_CLOEXEC;
+    pub const DUPFD = net_c.F_DUPFD;
+};
 
 pub const Mode = u32;
 pub const E = std.os.E;
+pub const S = std.os.S;
+
+pub extern "c" fn umask(Mode) Mode;
 
 pub fn getErrno(rc: anytype) E {
     return std.c.getErrno(rc);
 }
+
+pub const getuid = std.os.linux.getuid;
+pub const getgid = std.os.linux.getgid;
+pub const linux_fs = if (bun.Environment.isLinux) @cImport({
+    @cInclude("linux/fs.h");
+}) else struct {};
+
+/// https://man7.org/linux/man-pages/man2/ioctl_ficlone.2.html
+///
+/// Support for FICLONE is dependent on the filesystem driver.
+pub fn ioctl_ficlone(dest_fd: bun.FileDescriptor, srcfd: bun.FileDescriptor) usize {
+    return std.os.linux.ioctl(dest_fd.cast(), linux_fs.FICLONE, @intCast(srcfd.int()));
+}
+
+pub const RWFFlagSupport = enum(u8) {
+    unknown = 0,
+    unsupported = 2,
+    supported = 1,
+
+    var rwf_bool = std.atomic.Value(RWFFlagSupport).init(RWFFlagSupport.unknown);
+
+    pub fn isLinuxKernelVersionWithBuggyRWF_NONBLOCK() bool {
+        return bun.linuxKernelVersion().major == 5 and switch (bun.linuxKernelVersion().minor) {
+            9, 10 => true,
+            else => false,
+        };
+    }
+
+    pub fn disable() void {
+        rwf_bool.store(.unsupported, .Monotonic);
+    }
+
+    /// Workaround for https://github.com/google/gvisor/issues/2601
+    pub fn isMaybeSupported() bool {
+        if (comptime !bun.Environment.isLinux) return false;
+        switch (rwf_bool.load(.Monotonic)) {
+            .unknown => {
+                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK()) {
+                    rwf_bool.store(.unsupported, .Monotonic);
+                    return false;
+                }
+
+                rwf_bool.store(.supported, .Monotonic);
+                return true;
+            },
+            .supported => {
+                return true;
+            },
+            else => {
+                return false;
+            },
+        }
+
+        unreachable;
+    }
+};
+
+pub extern "C" fn sys_preadv2(
+    fd: c_int,
+    iov: [*]const std.os.iovec,
+    iovcnt: c_int,
+    offset: std.os.off_t,
+    flags: c_uint,
+) isize;
+
+pub extern "C" fn sys_pwritev2(
+    fd: c_int,
+    iov: [*]const std.os.iovec_const,
+    iovcnt: c_int,
+    offset: std.os.off_t,
+    flags: c_uint,
+) isize;
+
+// #define RENAME_NOREPLACE    (1 << 0)    /* Don't overwrite target */
+// #define RENAME_EXCHANGE     (1 << 1)    /* Exchange source and dest */
+// #define RENAME_WHITEOUT     (1 << 2)    /* Whiteout source */
+
+pub const RENAME_NOREPLACE = 1 << 0;
+pub const RENAME_EXCHANGE = 1 << 1;
+pub const RENAME_WHITEOUT = 1 << 2;

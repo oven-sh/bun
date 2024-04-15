@@ -86,10 +86,10 @@ String URLSearchParams::get(const String& name) const
     return String();
 }
 
-bool URLSearchParams::has(const String& name) const
+bool URLSearchParams::has(const String& name, const String& value) const
 {
     for (const auto& pair : m_pairs) {
-        if (pair.key == name)
+        if (pair.key == name && (value.isNull() || pair.value == value))
             return true;
     }
     return false;
@@ -101,6 +101,7 @@ void URLSearchParams::sort()
         return WTF::codePointCompareLessThan(a.key, b.key);
     });
     updateURL();
+    needsSorting = false;
 }
 
 void URLSearchParams::set(const String& name, const String& value)
@@ -141,19 +142,17 @@ Vector<String> URLSearchParams::getAll(const String& name) const
     values.reserveInitialCapacity(m_pairs.size());
     for (const auto& pair : m_pairs) {
         if (pair.key == name)
-            values.uncheckedAppend(pair.value);
+            values.unsafeAppendWithoutCapacityCheck(pair.value);
     }
     values.shrinkToFit();
     return values;
 }
 
-void URLSearchParams::remove(const String& name)
+void URLSearchParams::remove(const String& name, const String& value)
 {
-    if (!m_pairs.removeAllMatching([&](const auto& pair) {
-            return pair.key == name;
-        })
-        && m_pairs.size() > 0)
-        return;
+    m_pairs.removeAllMatching([&](const auto& pair) {
+        return pair.key == name && (value.isNull() || pair.value == value);
+    });
     updateURL();
     needsSorting = true;
 }
@@ -166,7 +165,7 @@ String URLSearchParams::toString() const
 void URLSearchParams::updateURL()
 {
     if (m_associatedURL)
-        m_associatedURL->setQuery(WTF::URLParser::serialize(m_pairs));
+        m_associatedURL->setSearch(WTF::URLParser::serialize(m_pairs));
 }
 
 void URLSearchParams::updateFromAssociatedURL()

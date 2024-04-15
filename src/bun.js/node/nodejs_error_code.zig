@@ -1094,4 +1094,13 @@ pub const Code = enum {
     /// Used when an attempt is made to use a zlib object after it has already been closed.
     /// CPU USAGE
     ERR_CPU_USAGE,
+
+    /// Used by node:util parseArgs
+    ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+
+    /// Used by node:util parseArgs
+    ERR_PARSE_ARGS_UNKNOWN_OPTION,
+
+    /// Used by node:util parseArgs
+    ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL,
 };

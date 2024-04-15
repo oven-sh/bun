@@ -4,11 +4,20 @@ set -e
 export TARGET_PLATFORM=${1:-win32}
 export TARGET_ARCH=${2:-x64}
 
+if ! which bun; then
+  export PATH="$PATH:$HOME/.bun/bin"
+fi
+
 cd "$(dirname "${BASH_SOURCE[0]}")/../"
 
 OUT=build-codegen-${TARGET_PLATFORM}-${TARGET_ARCH}
 
-rm -rf "$OUT"
+if [ -n "$3" ]; then
+  OUT="$3"
+fi
+
+rm -rf "$OUT/codegen"
+rm -rf "$OUT/js"
 mkdir -p "$OUT"
 mkdir -p "$OUT/"{codegen,js,tmp_functions,tmp_modules}
 
@@ -28,7 +37,6 @@ task() {
   fi
 }
 
-task bun ./src/codegen/bundle-functions.ts --debug=OFF "$OUT"
 task bun ./src/codegen/bundle-modules.ts --debug=OFF "$OUT"
 
 rm -rf "$OUT/tmp_functions"

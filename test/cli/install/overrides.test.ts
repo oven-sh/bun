@@ -8,8 +8,8 @@ function install(cwd: string, args: string[]) {
   const exec = Bun.spawnSync({
     cmd: [bunExe(), ...args],
     cwd,
-    stdout: "pipe",
-    stdin: "ignore",
+    stdout: "inherit",
+    stdin: "inherit",
     stderr: "inherit",
     env: bunEnv,
   });
@@ -23,8 +23,8 @@ function installExpectFail(cwd: string, args: string[]) {
   const exec = Bun.spawnSync({
     cmd: [bunExe(), ...args],
     cwd,
-    stdout: "pipe",
-    stdin: "ignore",
+    stdout: "inherit",
+    stdin: "inherit",
     stderr: "inherit",
     env: bunEnv,
   });
@@ -42,11 +42,12 @@ function versionOf(cwd: string, path: string) {
 
 function ensureLockfileDoesntChangeOnBunI(cwd: string) {
   install(cwd, ["install"]);
-  const lockb_hash = new Bun.CryptoHasher("sha256").update(readFileSync(join(cwd, "bun.lockb"))).digest();
+  const lockb1 = readFileSync(join(cwd, "bun.lockb"));
   install(cwd, ["install", "--frozen-lockfile"]);
   install(cwd, ["install", "--force"]);
-  const lockb_hash2 = new Bun.CryptoHasher("sha256").update(readFileSync(join(cwd, "bun.lockb"))).digest();
-  expect(lockb_hash).toEqual(lockb_hash2);
+  const lockb2 = readFileSync(join(cwd, "bun.lockb"));
+
+  expect(lockb1.toString("hex")).toEqual(lockb2.toString("hex"));
 }
 
 test("overrides affect your own packages", async () => {
@@ -62,7 +63,6 @@ test("overrides affect your own packages", async () => {
   );
   install(tmp, ["install", "lodash"]);
   expect(versionOf(tmp, "node_modules/lodash/package.json")).toBe("4.0.0");
-
   ensureLockfileDoesntChangeOnBunI(tmp);
 });
 

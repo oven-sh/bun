@@ -17,12 +17,7 @@ export function parse(stackString): StackFrame[] {
   const lines = stackString.split("\n");
 
   return lines.reduce((stack, line) => {
-    const parseResult =
-      parseChrome(line) ||
-      parseWinjs(line) ||
-      parseGecko(line) ||
-      parseNode(line) ||
-      parseJSC(line);
+    const parseResult = parseChrome(line) || parseWinjs(line) || parseGecko(line) || parseNode(line) || parseJSC(line);
 
     if (parseResult) {
       stack.push(parseResult);
@@ -32,15 +27,14 @@ export function parse(stackString): StackFrame[] {
   }, []);
 }
 
-const formatFile = (file) => {
+const formatFile = file => {
   if (!file) {
     return "";
   }
 
   if (file.startsWith("blob:")) {
     if (globalThis["__BUN"]?.client) {
-      const replacement =
-        globalThis["__BUN"]?.client.dependencies.getFilePathFromBlob(file);
+      const replacement = globalThis["__BUN"]?.client.dependencies.getFilePathFromBlob(file);
       if (replacement) {
         file = replacement;
       }
@@ -146,8 +140,7 @@ function parseGecko(line) {
   };
 }
 
-const javaScriptCoreRe =
-  /^\s*(?:([^@]*)(?:\((.*?)\))?@)?(\S.*?):(\d+)(?::(\d+))?\s*$/i;
+const javaScriptCoreRe = /^\s*(?:([^@]*)(?:\((.*?)\))?@)?(\S.*?):(\d+)(?::(\d+))?\s*$/i;
 
 function parseJSC(line) {
   const parts = javaScriptCoreRe.exec(line);
@@ -166,8 +159,7 @@ function parseJSC(line) {
   };
 }
 
-const nodeRe =
-  /^\s*at (?:((?:\[object object\])?[^\\/]+(?: \[as \S+\])?) )?\(?(.*?):(\d+)(?::(\d+))?\)?\s*$/i;
+const nodeRe = /^\s*at (?:((?:\[object object\])?[^\\/]+(?: \[as \S+\])?) )?\(?(.*?):(\d+)(?::(\d+))?\)?\s*$/i;
 
 function parseNode(line) {
   const parts = nodeRe.exec(line);

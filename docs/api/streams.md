@@ -56,6 +56,45 @@ const stream = new ReadableStream({
 
 When using a direct `ReadableStream`, all chunk queueing is handled by the destination. The consumer of the stream receives exactly what is passed to `controller.write()`, without any encoding or modification.
 
+## Async generator streams
+
+Bun also supports async generator functions as a source for `Response` and `Request`. This is an easy way to create a `ReadableStream` that fetches data from an asynchronous source.
+
+```ts
+const response = new Response(async function* () {
+  yield "hello";
+  yield "world";
+}());
+
+await response.text(); // "helloworld"
+```
+
+You can also use `[Symbol.asyncIterator]` directly.
+
+```ts
+const response = new Response({
+  [Symbol.asyncIterator]: async function* () {
+    yield "hello";
+    yield "world";
+  },
+});
+
+await response.text(); // "helloworld"
+```
+
+If you need more granular control over the stream, `yield` will return the direct ReadableStream controller.
+
+```ts
+const response = new Response({
+  [Symbol.asyncIterator]: async function* () {
+    const controller = yield "hello";
+    await controller.end();
+  },
+});
+
+await response.text(); // "hello"
+```
+
 ## `Bun.ArrayBufferSink`
 
 The `Bun.ArrayBufferSink` class is a fast incremental writer for constructing an `ArrayBuffer` of unknown size.
@@ -73,10 +112,11 @@ sink.end();
 // ArrayBuffer(5) [ 104, 101, 108, 108, 111 ]
 ```
 
-To instead retrieve the data as a `Uint8Array`, pass the `asUint8Array` option to the constructor.
+To instead retrieve the data as a `Uint8Array`, pass the `asUint8Array` option to the `start` method.
 
 ```ts-diff
-const sink = new Bun.ArrayBufferSink({
+const sink = new Bun.ArrayBufferSink();
+sink.start({
 + asUint8Array: true
 });
 
@@ -103,7 +143,8 @@ sink.end();
 Once `.end()` is called, no more data can be written to the `ArrayBufferSink`. However, in the context of buffering a stream, it's useful to continuously write data and periodically `.flush()` the contents (say, into a `WriteableStream`). To support this, pass `stream: true` to the constructor.
 
 ```ts
-const sink = new Bun.ArrayBufferSink({
+const sink = new Bun.ArrayBufferSink();
+sink.start({
   stream: true,
 });
 
@@ -124,7 +165,8 @@ The `.flush()` method returns the buffered data as an `ArrayBuffer` (or `Uint8Ar
 To manually set the size of the internal buffer in bytes, pass a value for `highWaterMark`:
 
 ```ts
-const sink = new Bun.ArrayBufferSink({
+const sink = new Bun.ArrayBufferSink();
+sink.start({
   highWaterMark: 1024 * 1024, // 1 MB
 });
 ```

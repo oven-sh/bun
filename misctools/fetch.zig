@@ -14,13 +14,13 @@ pub usingnamespace @import("root").bun;
 const clap = bun.clap;
 
 const URL = @import("../src/url.zig").URL;
-const Headers = @import("root").bun.HTTP.Headers;
+const Headers = bun.http.Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const HTTPThread = @import("root").bun.HTTP.HTTPThread;
-const HTTP = @import("root").bun.HTTP;
+const HTTPThread = bun.http.HTTPThread;
+const HTTP = bun.http;
 fn noop_resolver(in: string) !string {
     return in;
 }

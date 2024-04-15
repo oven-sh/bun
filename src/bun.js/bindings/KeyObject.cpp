@@ -22,6 +22,9 @@
 // IN THE SOFTWARE.
 
 #include "KeyObject.h"
+#include "JavaScriptCore/JSArrayBufferView.h"
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSCast.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
 #include "webcrypto/CryptoKeyOKP.h"
@@ -42,7 +45,16 @@
 #include <openssl/pem.h>
 #include <openssl/curve25519.h>
 #include "JSBuffer.h"
-
+#include "CryptoAlgorithmHMAC.h"
+#include "CryptoAlgorithmEd25519.h"
+#include "CryptoAlgorithmRSA_PSS.h"
+#include "CryptoAlgorithmRSASSA_PKCS1_v1_5.h"
+#include "CryptoAlgorithmECDSA.h"
+#include "CryptoAlgorithmEcdsaParams.h"
+#include "CryptoAlgorithmRsaPssParams.h"
+#include "CryptoAlgorithmRegistry.h"
+#include "wtf/ForbidHeapAllocation.h"
+#include "wtf/Noncopyable.h"
 using namespace JSC;
 using namespace Bun;
 using JSGlobalObject
@@ -83,20 +95,21 @@ static bool KeyObject__IsASN1Sequence(const unsigned char* data, size_t size,
 
     return true;
 }
-static bool KeyObject__IsRSAPrivateKey(const unsigned char* data, size_t size)
-{
-    // Both RSAPrivateKey and RSAPublicKey structures start with a SEQUENCE.
-    size_t offset, len;
-    if (!KeyObject__IsASN1Sequence(data, size, &offset, &len))
-        return false;
+// TODO: @cirospaciari - is this supposed to be unused?
+// static bool KeyObject__IsRSAPrivateKey(const unsigned char* data, size_t size)
+// {
+//     // Both RSAPrivateKey and RSAPublicKey structures start with a SEQUENCE.
+//     size_t offset, len;
+//     if (!KeyObject__IsASN1Sequence(data, size, &offset, &len))
+//         return false;
 
-    // An RSAPrivateKey sequence always starts with a single-byte integer whose
-    // value is either 0 or 1, whereas an RSAPublicKey starts with the modulus
-    // (which is the product of two primes and therefore at least 4), so we can
-    // decide the type of the structure based on the first three bytes of the
-    // sequence.
-    return len >= 3 && data[offset] == 2 && data[offset + 1] == 1 && !(data[offset + 2] & 0xfe);
-}
+//     // An RSAPrivateKey sequence always starts with a single-byte integer whose
+//     // value is either 0 or 1, whereas an RSAPublicKey starts with the modulus
+//     // (which is the product of two primes and therefore at least 4), so we can
+//     // decide the type of the structure based on the first three bytes of the
+//     // sequence.
+//     return len >= 3 && data[offset] == 2 && data[offset + 1] == 1 && !(data[offset + 2] & 0xfe);
+// }
 
 static bool KeyObject__IsEncryptedPrivateKeyInfo(const unsigned char* data, size_t size)
 {
@@ -121,21 +134,115 @@ struct AsymmetricKeyValueWithDER {
     long der_len;
 };
 
-struct PrivateKeyPassphrase {
-    char* passphrase;
-    size_t passphrase_len;
+class KeyPassphrase {
+public:
+    enum class Tag {
+        None = 0,
+        String = 1,
+        ArrayBuffer = 2,
+    };
+
+private:
+    WTF::CString m_passphraseString;
+    JSC::JSUint8Array* m_passphraseArray = nullptr;
+    Tag tag = Tag::None;
+
+public:
+    bool hasPassphrase()
+    {
+        return tag != Tag::None;
+    }
+
+    char* data()
+    {
+        switch (tag) {
+        case Tag::ArrayBuffer: {
+            return reinterpret_cast<char*>(this->m_passphraseArray->vector());
+        }
+
+        case Tag::String: {
+            return const_cast<char*>(this->m_passphraseString.data());
+        }
+
+        default: {
+            return nullptr;
+        }
+        }
+
+        return nullptr;
+    }
+
+    size_t length()
+    {
+        switch (tag) {
+        case Tag::ArrayBuffer: {
+            return this->m_passphraseArray->length();
+        }
+        case Tag::String: {
+            return this->m_passphraseString.length();
+        }
+        default: {
+            return 0;
+        }
+        }
+
+        return 0;
+    }
+
+    KeyPassphrase(JSValue passphraseJSValue, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
+    {
+        this->tag = Tag::None;
+        this->m_passphraseString = WTF::CString();
+        this->m_passphraseArray = nullptr;
+
+        if (passphraseJSValue.isUndefinedOrNull() || passphraseJSValue.isEmpty()) {
+            return;
+        }
+        if (passphraseJSValue.isString()) {
+            auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!passphrase_wtfstr.isNull()) {
+                if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
+                    if (pass.has_value()) {
+                        this->tag = Tag::String;
+                        this->m_passphraseString = WTFMove(pass.value());
+                    }
+                }
+            }
+        } else if (auto* array = jsDynamicCast<JSUint8Array*>(passphraseJSValue)) {
+            if (UNLIKELY(array->isDetached())) {
+                JSC::throwTypeError(globalObject, scope, "passphrase must not be detached"_s);
+                return;
+            }
+
+            this->m_passphraseArray = array;
+            this->tag = Tag::ArrayBuffer;
+        } else {
+            JSC::throwTypeError(globalObject, scope, "passphrase must be a Buffer or String"_s);
+        }
+    }
+
+    ~KeyPassphrase()
+    {
+    }
+
+    WTF_MAKE_NONCOPYABLE(KeyPassphrase);
+    WTF_FORBID_HEAP_ALLOCATION(KeyPassphrase);
 };
 
 int PasswordCallback(char* buf, int size, int rwflag, void* u)
 {
-    auto result = static_cast<PrivateKeyPassphrase*>(u);
-    if (result != nullptr && size > 0 && result->passphrase != nullptr) {
-        size_t buflen = static_cast<size_t>(size);
-        size_t len = result->passphrase_len;
-        if (buflen < len)
-            return -1;
-        memcpy(buf, result->passphrase, buflen);
-        return len;
+    auto result = static_cast<KeyPassphrase*>(u);
+    if (result != nullptr && result->hasPassphrase() && size > 0) {
+        auto data = result->data();
+        if (data != nullptr) {
+            size_t buflen = static_cast<size_t>(size);
+            size_t len = result->length();
+            if (buflen < len)
+                return -1;
+            memcpy(buf, result->data(), len);
+            return len;
+        }
     }
 
     return -1;
@@ -360,33 +467,11 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
     }
 
     JSValue passphraseJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
-    PrivateKeyPassphrase passphrase = { nullptr, 0 };
-
-    auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
-
-    if (hasPassphrase) {
-        if (passphraseJSValue.isString()) {
-            auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, encodedJSValue());
-            if (!passphrase_wtfstr.isNull()) {
-                if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
-                    if (pass.has_value()) {
-                        auto value = pass.value();
-                        passphrase.passphrase = const_cast<char*>(value.data());
-                        passphrase.passphrase_len = value.length();
-                    }
-                }
-            }
-        } else if (auto* passphraseBuffer = jsDynamicCast<JSUint8Array*>(passphraseJSValue)) {
-            passphrase.passphrase = (char*)passphraseBuffer->vector();
-            passphrase.passphrase_len = passphraseBuffer->byteLength();
-        } else {
-            JSC::throwTypeError(globalObject, scope, "passphrase must be a Buffer or String"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-    }
+    KeyPassphrase passphrase(passphraseJSValue, globalObject, scope);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     if (format == "pem"_s) {
+        ASSERT(data);
         auto bio = BIOPtr(BIO_new_mem_buf(const_cast<char*>((char*)data), byteLength));
         auto pkey = EvpPKeyPtr(PEM_read_bio_PrivateKey(bio.get(), nullptr, PasswordCallback, &passphrase));
 
@@ -501,7 +586,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                 auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageDecrypt);
                 return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
             } else if (pKeyID == EVP_PKEY_ED25519) {
-                auto result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageSign);
+                auto result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>(std::span { (uint8_t*)data, byteLength }), true, CryptoKeyUsageSign);
                 if (UNLIKELY(result == nullptr)) {
                     throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 private key"_s));
                     return JSValue::encode(JSC::jsUndefined());
@@ -509,7 +594,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                 auto impl = result.releaseNonNull();
                 return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
             } else if (pKeyID == EVP_PKEY_X25519) {
-                auto result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageSign);
+                auto result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>(std::span { (uint8_t*)data, byteLength }), true, CryptoKeyUsageSign);
                 if (UNLIKELY(result == nullptr)) {
                     throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 private key"_s));
                     return JSValue::encode(JSC::jsUndefined());
@@ -542,9 +627,9 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                     throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
                     return JSValue::encode(JSC::jsUndefined());
                 }
-                auto result = CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier::ECDH, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageSign);
+                auto result = CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier::ECDH, curve, Vector<uint8_t>(std::span { (uint8_t*)data, byteLength }), true, CryptoKeyUsageSign);
                 if (UNLIKELY(result == nullptr)) {
-                    result = CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageSign);
+                    result = CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>(std::span { (uint8_t*)data, byteLength }), true, CryptoKeyUsageSign);
                 }
                 EC_KEY_free(ec_key);
                 if (UNLIKELY(result == nullptr)) {
@@ -740,7 +825,6 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
         return KeyObject__createECFromPrivate(globalObject, pkey, curve, CryptoAlgorithmIdentifier::ECDSA);
     } else if (pKeyID == EVP_PKEY_ED25519 || pKeyID == EVP_PKEY_X25519) {
         size_t out_len = 0;
-        auto& vm = globalObject->vm();
         if (!EVP_PKEY_get_raw_private_key(pkey, nullptr, &out_len)) {
             throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
             return JSValue::encode(JSC::jsUndefined());
@@ -783,8 +867,8 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
     Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     auto* structure = zigGlobalObject->JSCryptoKeyStructure();
 
-    void* data;
-    size_t byteLength;
+    void* data = nullptr;
+    size_t byteLength = 0;
     if (auto* key = jsDynamicCast<JSCryptoKey*>(keyJSValue)) {
         auto& wrapped = key->wrapped();
         auto key_type = wrapped.type();
@@ -945,32 +1029,8 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
             // maybe is a private pem
             auto bio = BIOPtr(BIO_new_mem_buf(const_cast<char*>((char*)data), byteLength));
             JSValue passphraseJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
-            PrivateKeyPassphrase passphrase = { nullptr, 0 };
-
-            auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
-
-            if (hasPassphrase) {
-                if (passphraseJSValue.isString()) {
-                    auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-                    if (!passphrase_wtfstr.isNull()) {
-                        if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
-                            if (pass.has_value()) {
-                                auto value = pass.value();
-                                passphrase.passphrase = const_cast<char*>(value.data());
-                                passphrase.passphrase_len = value.length();
-                            }
-                        }
-                    }
-                } else if (auto* passphraseBuffer = jsDynamicCast<JSUint8Array*>(passphraseJSValue)) {
-                    passphrase.passphrase = (char*)passphraseBuffer->vector();
-                    passphrase.passphrase_len = passphraseBuffer->byteLength();
-                } else {
-                    JSC::throwTypeError(globalObject, scope, "passphrase must be a Buffer or String"_s);
-                    return JSC::JSValue::encode(JSC::JSValue {});
-                }
-            }
-
+            KeyPassphrase passphrase(passphraseJSValue, globalObject, scope);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
             auto pkey = EvpPKeyPtr(PEM_read_bio_PrivateKey(bio.get(), nullptr, PasswordCallback, &passphrase));
             if (!pkey) {
                 throwException(globalObject, scope, createTypeError(globalObject, "Invalid PEM data"_s));
@@ -987,7 +1047,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
             auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Public, WTFMove(pkey), true, CryptoKeyUsageEncrypt);
             return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
         } else if (pKeyID == EVP_PKEY_ED25519) {
-            auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
+            auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>(std::span { (uint8_t*)pem.der_data, (size_t)pem.der_len }), true, CryptoKeyUsageVerify);
             if (pem.der_data) {
                 OPENSSL_clear_free(pem.der_data, pem.der_len);
             }
@@ -998,7 +1058,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
             auto impl = result.releaseNonNull();
             return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
         } else if (pKeyID == EVP_PKEY_X25519) {
-            auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
+            auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>(std::span { (uint8_t*)pem.der_data, (size_t)pem.der_len }), true, CryptoKeyUsageVerify);
             if (pem.der_data) {
                 OPENSSL_clear_free(pem.der_data, pem.der_len);
             }
@@ -1043,9 +1103,9 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                 throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
                 return JSValue::encode(JSC::jsUndefined());
             }
-            auto result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDH, curve, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
+            auto result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDH, curve, Vector<uint8_t>(std::span { (uint8_t*)pem.der_data, (size_t)pem.der_len }), true, CryptoKeyUsageVerify);
             if (UNLIKELY(result == nullptr)) {
-                result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
+                result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>(std::span { (uint8_t*)pem.der_data, (size_t)pem.der_len }), true, CryptoKeyUsageVerify);
             }
             if (pem.der_data) {
                 OPENSSL_clear_free(pem.der_data, pem.der_len);
@@ -1110,7 +1170,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                 auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Public, WTFMove(pkey), true, CryptoKeyUsageEncrypt);
                 return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
             } else if (pKeyID == EVP_PKEY_ED25519) {
-                auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
+                auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>(std::span { (uint8_t*)data, byteLength }), true, CryptoKeyUsageVerify);
                 if (UNLIKELY(result == nullptr)) {
                     throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
                     return JSValue::encode(JSC::jsUndefined());
@@ -1118,7 +1178,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                 auto impl = result.releaseNonNull();
                 return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
             } else if (pKeyID == EVP_PKEY_X25519) {
-                auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
+                auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>(std::span { (uint8_t*)data, byteLength }), true, CryptoKeyUsageVerify);
                 if (UNLIKELY(result == nullptr)) {
                     throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
                     return JSValue::encode(JSC::jsUndefined());
@@ -1152,10 +1212,10 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                     return JSValue::encode(JSC::jsUndefined());
                 }
                 auto alg = CryptoAlgorithmIdentifier::ECDH;
-                auto result = CryptoKeyEC::platformImportSpki(alg, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
+                auto result = CryptoKeyEC::platformImportSpki(alg, curve, Vector<uint8_t>(std::span { (uint8_t*)data, byteLength }), true, CryptoKeyUsageVerify);
                 if (UNLIKELY(result == nullptr)) {
                     alg = CryptoAlgorithmIdentifier::ECDSA;
-                    result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
+                    result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>(std::span { (uint8_t*)data, byteLength }), true, CryptoKeyUsageVerify);
                 }
                 if (UNLIKELY(result == nullptr)) {
                     throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC public key"_s));
@@ -1239,6 +1299,472 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
     return JSValue::encode(JSC::jsUndefined());
 }
 
+static ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
+{
+    if (!bufferArg.isCell()) {
+        return Exception { OperationError };
+    }
+
+    auto bufferArgCell = bufferArg.asCell();
+    auto type = bufferArgCell->type();
+
+    switch (type) {
+    case DataViewType:
+    case Uint8ArrayType:
+    case Uint8ClampedArrayType:
+    case Uint16ArrayType:
+    case Uint32ArrayType:
+    case Int8ArrayType:
+    case Int16ArrayType:
+    case Int32ArrayType:
+    case Float32ArrayType:
+    case Float64ArrayType:
+    case BigInt64ArrayType:
+    case BigUint64ArrayType: {
+        JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(bufferArgCell);
+
+        void* data = view->vector();
+        size_t byteLength = view->length();
+        if (UNLIKELY(!data)) {
+            break;
+        }
+        return Vector<uint8_t>(std::span { (uint8_t*)data, byteLength });
+    }
+    case ArrayBufferType: {
+        auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(bufferArgCell);
+        if (UNLIKELY(!jsBuffer)) {
+            break;
+        }
+        auto* buffer = jsBuffer->impl();
+        void* data = buffer->data();
+        size_t byteLength = buffer->byteLength();
+        if (UNLIKELY(!data)) {
+            break;
+        }
+        return Vector<uint8_t>(std::span { (uint8_t*)data, byteLength });
+    }
+    default: {
+        break;
+    }
+    }
+    return Exception { OperationError };
+}
+JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto count = callFrame->argumentCount();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (count < 3) {
+        JSC::throwTypeError(globalObject, scope, "sign requires 3 arguments"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
+    if (!key) {
+        // No JSCryptoKey instance
+        JSC::throwTypeError(globalObject, scope, "expected CryptoKey as first argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    JSValue bufferArg = callFrame->uncheckedArgument(1);
+
+    auto buffer = KeyObject__GetBuffer(bufferArg);
+    if (buffer.hasException()) {
+        JSC::throwTypeError(globalObject, scope, "expected Buffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto vectorData = buffer.releaseReturnValue();
+    auto& wrapped = key->wrapped();
+    auto id = wrapped.keyClass();
+
+    auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
+    auto algorithm = callFrame->argument(2);
+    auto customHash = false;
+    if (!algorithm.isUndefinedOrNull() && !algorithm.isEmpty()) {
+        customHash = true;
+        if (!algorithm.isString()) {
+            JSC::throwTypeError(globalObject, scope, "algorithm is expected to be a string"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto algorithm_str = algorithm.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+        auto identifier = CryptoAlgorithmRegistry::singleton().identifier(algorithm_str);
+        if (UNLIKELY(!identifier)) {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        switch (*identifier) {
+        case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_512: {
+
+            hash = *identifier;
+            break;
+        }
+        default: {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        }
+    }
+
+    switch (id) {
+    case CryptoKeyClass::HMAC: {
+        const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
+        auto result = (customHash) ? WebCore::CryptoAlgorithmHMAC::platformSignWithAlgorithm(hmac, hash, vectorData) : WebCore::CryptoAlgorithmHMAC::platformSign(hmac, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto resultData = result.releaseReturnValue();
+        auto* buffer = createBuffer(globalObject, resultData);
+        return JSC::JSValue::encode(buffer);
+    }
+    case CryptoKeyClass::OKP: {
+        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+        auto result = WebCore::CryptoAlgorithmEd25519::platformSign(okpKey, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto resultData = result.releaseReturnValue();
+        auto* buffer = WebCore::createBuffer(globalObject, resultData);
+        return JSC::JSValue::encode(buffer);
+    }
+    case CryptoKeyClass::EC: {
+        const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
+        CryptoAlgorithmEcdsaParams params;
+        params.identifier = CryptoAlgorithmIdentifier::ECDSA;
+        params.hashIdentifier = hash;
+        params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+
+        if (count > 3) {
+            auto encoding = callFrame->argument(3);
+            if (!encoding.isUndefinedOrNull() && !encoding.isEmpty()) {
+                if (!encoding.isString()) {
+                    JSC::throwTypeError(globalObject, scope, "dsaEncoding is expected to be a string"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+                auto encoding_str = encoding.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+                if (encoding_str == "ieee-p1363"_s) {
+                    params.encoding = CryptoAlgorithmECDSAEncoding::IeeeP1363;
+                } else if (encoding_str == "der"_s) {
+                    params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+                } else {
+                    JSC::throwTypeError(globalObject, scope, "invalid dsaEncoding"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+            }
+        }
+        auto result = WebCore::CryptoAlgorithmECDSA::platformSign(params, ec, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto resultData = result.releaseReturnValue();
+        auto* buffer = WebCore::createBuffer(globalObject, resultData);
+        return JSC::JSValue::encode(buffer);
+    }
+    case CryptoKeyClass::RSA: {
+        const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+        CryptoAlgorithmIdentifier restrict_hash;
+        bool isRestrictedToHash = rsa.isRestrictedToHash(restrict_hash);
+        if (isRestrictedToHash && hash != restrict_hash) {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        switch (rsa.algorithmIdentifier()) {
+        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5: {
+            auto result = (customHash) ? WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignWithAlgorithm(rsa, hash, vectorData) : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(rsa, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            auto resultData = result.releaseReturnValue();
+            auto* buffer = WebCore::createBuffer(globalObject, resultData);
+
+            return JSC::JSValue::encode(buffer);
+        }
+        case CryptoAlgorithmIdentifier::RSA_PSS: {
+            CryptoAlgorithmRsaPssParams params;
+            params.padding = RSA_PKCS1_PADDING;
+            if (count > 4) {
+                auto padding = callFrame->argument(4);
+                if (!padding.isUndefinedOrNull() && !padding.isEmpty()) {
+                    if (!padding.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "padding is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.padding = padding.toUInt32(globalObject);
+                }
+                // requires saltLength
+                if (params.padding == RSA_PKCS1_PSS_PADDING) {
+                    if (count <= 5) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+
+                    auto saltLength = callFrame->argument(5);
+                    if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || !saltLength.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                } else if (count > 5) {
+                    auto saltLength = callFrame->argument(5);
+                    if (!saltLength.isUndefinedOrNull() && !saltLength.isEmpty() && !saltLength.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                    params.padding = RSA_PKCS1_PSS_PADDING; // if saltLength is provided, padding must be RSA_PKCS1_PSS_PADDING
+                }
+            }
+            params.identifier = CryptoAlgorithmIdentifier::RSA_PSS;
+            auto result = (customHash) ? WebCore::CryptoAlgorithmRSA_PSS::platformSignWithAlgorithm(params, hash, rsa, vectorData) : CryptoAlgorithmRSA_PSS::platformSign(params, rsa, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            auto resultData = result.releaseReturnValue();
+            auto* buffer = WebCore::createBuffer(globalObject, resultData);
+
+            return JSC::JSValue::encode(buffer);
+        }
+        default: {
+            JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for this key type"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        }
+    }
+    case CryptoKeyClass::AES: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for AES key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    case CryptoKeyClass::Raw: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for Raw key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    default: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for this key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    }
+}
+
+JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto count = callFrame->argumentCount();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (count < 4) {
+        JSC::throwTypeError(globalObject, scope, "verify requires 4 arguments"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
+    if (!key) {
+        // No JSCryptoKey instance
+        JSC::throwTypeError(globalObject, scope, "expected CryptoKey as first argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    JSValue bufferArg = callFrame->uncheckedArgument(1);
+    auto buffer = KeyObject__GetBuffer(bufferArg);
+    if (buffer.hasException()) {
+        JSC::throwTypeError(globalObject, scope, "expected data to be Buffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto vectorData = buffer.releaseReturnValue();
+
+    JSValue signatureBufferArg = callFrame->uncheckedArgument(2);
+    auto signatureBuffer = KeyObject__GetBuffer(signatureBufferArg);
+    if (signatureBuffer.hasException()) {
+        JSC::throwTypeError(globalObject, scope, "expected signature to be Buffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto signatureData = signatureBuffer.releaseReturnValue();
+
+    auto& wrapped = key->wrapped();
+    auto id = wrapped.keyClass();
+
+    auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
+    auto customHash = false;
+
+    auto algorithm = callFrame->argument(3);
+    if (!algorithm.isUndefinedOrNull() && !algorithm.isEmpty()) {
+        customHash = true;
+        if (!algorithm.isString()) {
+            JSC::throwTypeError(globalObject, scope, "algorithm is expected to be a string"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto algorithm_str = algorithm.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+        auto identifier = CryptoAlgorithmRegistry::singleton().identifier(algorithm_str);
+        if (UNLIKELY(!identifier)) {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        switch (*identifier) {
+        case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_512: {
+
+            hash = *identifier;
+            break;
+        }
+        default: {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        }
+    }
+
+    switch (id) {
+    case CryptoKeyClass::HMAC: {
+        const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
+        auto result = (customHash) ? WebCore::CryptoAlgorithmHMAC::platformVerifyWithAlgorithm(hmac, hash, signatureData, vectorData) : WebCore::CryptoAlgorithmHMAC::platformVerify(hmac, signatureData, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+    }
+    case CryptoKeyClass::OKP: {
+        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+        auto result = WebCore::CryptoAlgorithmEd25519::platformVerify(okpKey, signatureData, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+    }
+    case CryptoKeyClass::EC: {
+        const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
+        CryptoAlgorithmEcdsaParams params;
+        params.identifier = CryptoAlgorithmIdentifier::ECDSA;
+        params.hashIdentifier = hash;
+        params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+
+        if (count > 4) {
+            auto encoding = callFrame->argument(4);
+            if (!encoding.isUndefinedOrNull() && !encoding.isEmpty()) {
+                if (!encoding.isString()) {
+                    JSC::throwTypeError(globalObject, scope, "dsaEncoding is expected to be a string"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+                auto encoding_str = encoding.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+                if (encoding_str == "ieee-p1363"_s) {
+                    params.encoding = CryptoAlgorithmECDSAEncoding::IeeeP1363;
+                } else if (encoding_str == "der"_s) {
+                    params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+                } else {
+                    JSC::throwTypeError(globalObject, scope, "invalid dsaEncoding"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+            }
+        }
+        auto result = WebCore::CryptoAlgorithmECDSA::platformVerify(params, ec, signatureData, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+    }
+    case CryptoKeyClass::RSA: {
+        const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+        CryptoAlgorithmIdentifier restrict_hash;
+        bool isRestrictedToHash = rsa.isRestrictedToHash(restrict_hash);
+        if (isRestrictedToHash && hash != restrict_hash) {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        switch (rsa.algorithmIdentifier()) {
+        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5: {
+            auto result = (customHash) ? WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyWithAlgorithm(rsa, hash, signatureData, vectorData) : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(rsa, signatureData, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+        }
+        case CryptoAlgorithmIdentifier::RSA_PSS: {
+            CryptoAlgorithmRsaPssParams params;
+            params.padding = RSA_PKCS1_PADDING;
+            if (count > 5) {
+
+                auto padding = callFrame->argument(5);
+                if (!padding.isUndefinedOrNull() && !padding.isEmpty()) {
+                    if (!padding.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "padding is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.padding = padding.toUInt32(globalObject);
+                }
+                // requires saltLength
+                if (params.padding == RSA_PKCS1_PSS_PADDING) {
+                    if (count <= 6) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+
+                    auto saltLength = callFrame->argument(6);
+                    if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || !saltLength.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                } else if (count > 6) {
+                    auto saltLength = callFrame->argument(6);
+                    if (!saltLength.isUndefinedOrNull() && !saltLength.isEmpty() && !saltLength.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                    params.padding = RSA_PKCS1_PSS_PADDING; // if saltLength is provided, padding must be RSA_PKCS1_PSS_PADDING
+                }
+            }
+            params.identifier = CryptoAlgorithmIdentifier::RSA_PSS;
+            auto result = (customHash) ? WebCore::CryptoAlgorithmRSA_PSS::platformVerifyWithAlgorithm(params, hash, rsa, signatureData, vectorData) : CryptoAlgorithmRSA_PSS::platformVerify(params, rsa, signatureData, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+        }
+        default: {
+            JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for RSA key type"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        }
+    }
+    case CryptoKeyClass::AES: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for AES key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    case CryptoKeyClass::Raw: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for Raw key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    default: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for this key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    }
+}
+
 JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
 
@@ -1265,7 +1791,8 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
         JSValue formatJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "format"_s)));
         JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "type"_s)));
         JSValue passphraseJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
-        auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
+        KeyPassphrase passphrase(passphraseJSValue, globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
         if (formatJSValue.isUndefinedOrNull() || formatJSValue.isEmpty()) {
             JSC::throwTypeError(globalObject, scope, "format is expected to be a string"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -1273,7 +1800,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
 
         auto string = formatJSValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        if (string == "jwk"_s && hasPassphrase) {
+        if (string == "jwk"_s && passphrase.hasPassphrase()) {
             JSC::throwTypeError(globalObject, scope, "encryption is not supported for jwk format"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
@@ -1283,10 +1810,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
             const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
             if (string == "buffer"_s) {
                 auto keyData = hmac.key();
-                auto size = keyData.size();
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-                if (size > 0)
-                    memcpy(buffer->vector(), keyData.data(), size);
+                auto* buffer = createBuffer(globalObject, keyData);
 
                 return JSC::JSValue::encode(buffer);
             } else if (string == "jwk"_s) {
@@ -1300,10 +1824,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
             const auto& aes = downcast<WebCore::CryptoKeyAES>(wrapped);
             if (string == "buffer"_s) {
                 auto keyData = aes.key();
-                auto size = keyData.size();
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-                if (size > 0)
-                    memcpy(buffer->vector(), keyData.data(), size);
+                auto* buffer = createBuffer(globalObject, keyData);
 
                 return JSC::JSValue::encode(buffer);
             } else if (string == "jwk"_s) {
@@ -1316,11 +1837,16 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
         case CryptoKeyClass::RSA: {
             const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
             if (string == "jwk"_s) {
+                if (rsa.algorithmIdentifier() == CryptoAlgorithmIdentifier::RSA_PSS) {
+                    JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE: encryption is not supported for jwk format"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
                 const JsonWebKey& jwkValue = rsa.exportJwk();
                 Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
                 return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue, true));
             } else {
                 WTF::String type = "pkcs1"_s;
+
                 if (!typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty()) {
                     if (!typeJSValue.isString()) {
                         JSC::throwTypeError(globalObject, scope, "type must be a string"_s);
@@ -1328,6 +1854,12 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                     type = typeJSValue.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, encodedJSValue());
+                }
+                if (type == "pkcs1"_s) {
+                    if (rsa.algorithmIdentifier() == CryptoAlgorithmIdentifier::RSA_PSS) {
+                        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE: encryption is not supported for jwk format"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
                 }
 
                 auto* bio = BIO_new(BIO_s_mem());
@@ -1399,31 +1931,9 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                             }
                         }
                     }
-                    void* passphrase = nullptr;
-                    size_t passphrase_len = 0;
-                    if (hasPassphrase) {
+                    if (passphrase.hasPassphrase()) {
                         if (!cipher) {
                             JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
-                            BIO_free(bio);
-                            return JSC::JSValue::encode(JSC::JSValue {});
-                        }
-                        if (passphraseJSValue.isString()) {
-                            auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
-                            RETURN_IF_EXCEPTION(scope, encodedJSValue());
-                            if (!passphrase_wtfstr.isNull()) {
-                                if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
-                                    if (pass.has_value()) {
-                                        auto value = pass.value();
-                                        passphrase = const_cast<char*>(value.data());
-                                        passphrase_len = value.length();
-                                    }
-                                }
-                            }
-                        } else if (auto* passphraseBuffer = jsDynamicCast<JSUint8Array*>(passphraseJSValue)) {
-                            passphrase = passphraseBuffer->vector();
-                            passphrase_len = passphraseBuffer->byteLength();
-                        } else {
-                            JSC::throwTypeError(globalObject, scope, "passphrase must be a Buffer or String"_s);
                             BIO_free(bio);
                             return JSC::JSValue::encode(JSC::JSValue {});
                         }
@@ -1431,13 +1941,13 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
 
                     if (string == "pem"_s) {
                         if (type == "pkcs1"_s) {
-                            if (PEM_write_bio_RSAPrivateKey(bio, rsa_ptr, cipher, (unsigned char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                            if (PEM_write_bio_RSAPrivateKey(bio, rsa_ptr, cipher, (unsigned char*)passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
                             }
                         } else if (type == "pkcs8"_s) {
-                            if (PEM_write_bio_PKCS8PrivateKey(bio, rsaKey, cipher, (char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                            if (PEM_write_bio_PKCS8PrivateKey(bio, rsaKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -1455,7 +1965,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                 return JSC::JSValue::encode(JSC::JSValue {});
                             }
                         } else if (type == "pkcs8"_s) {
-                            if (i2d_PKCS8PrivateKey_bio(bio, rsaKey, cipher, (char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                            if (i2d_PKCS8PrivateKey_bio(bio, rsaKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -1472,17 +1982,15 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                 }
 
-                BUF_MEM* bptr;
+                BUF_MEM* bptr = nullptr;
                 BIO_get_mem_ptr(bio, &bptr);
                 auto length = bptr->length;
                 if (string == "pem"_s) {
-                    auto str = WTF::String::fromUTF8(bptr->data, length);
+                    auto str = WTF::String::fromUTF8(std::span { bptr->data, length });
                     return JSValue::encode(JSC::jsString(vm, str));
                 }
 
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, length)));
-                if (length > 0)
-                    memcpy(buffer->vector(), bptr->data, length);
+                auto* buffer = createBuffer(globalObject, bptr->data, length);
 
                 BIO_free(bio);
                 return JSC::JSValue::encode(buffer);
@@ -1546,7 +2054,6 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         return JSC::JSValue::encode(JSC::JSValue {});
                     }
                 } else {
-                    JSValue passphraseJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
                     JSValue cipherJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "cipher"_s)));
 
                     const EVP_CIPHER* cipher = nullptr;
@@ -1568,33 +2075,11 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                             }
                         }
                     }
-                    void* passphrase = nullptr;
-                    size_t passphrase_len = 0;
-                    auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
 
-                    if (hasPassphrase) {
+                    if (passphrase.hasPassphrase()) {
+
                         if (!cipher) {
                             JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
-                            BIO_free(bio);
-                            return JSC::JSValue::encode(JSC::JSValue {});
-                        }
-                        if (passphraseJSValue.isString()) {
-                            auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
-                            RETURN_IF_EXCEPTION(scope, encodedJSValue());
-                            if (!passphrase_wtfstr.isNull()) {
-                                if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
-                                    if (pass.has_value()) {
-                                        auto value = pass.value();
-                                        passphrase = const_cast<char*>(value.data());
-                                        passphrase_len = value.length();
-                                    }
-                                }
-                            }
-                        } else if (auto* passphraseBuffer = jsDynamicCast<JSUint8Array*>(passphraseJSValue)) {
-                            passphrase = passphraseBuffer->vector();
-                            passphrase_len = passphraseBuffer->byteLength();
-                        } else {
-                            JSC::throwTypeError(globalObject, scope, "passphrase must be a Buffer or String"_s);
                             BIO_free(bio);
                             return JSC::JSValue::encode(JSC::JSValue {});
                         }
@@ -1602,13 +2087,13 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
 
                     if (string == "pem"_s) {
                         if (type == "sec1"_s) {
-                            if (PEM_write_bio_ECPrivateKey(bio, ec_ptr, cipher, (unsigned char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                            if (PEM_write_bio_ECPrivateKey(bio, ec_ptr, cipher, (unsigned char*)passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
                             }
                         } else if (type == "pkcs8"_s) {
-                            if (PEM_write_bio_PKCS8PrivateKey(bio, ecKey, cipher, (char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                            if (PEM_write_bio_PKCS8PrivateKey(bio, ecKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -1626,7 +2111,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                 return JSC::JSValue::encode(JSC::JSValue {});
                             }
                         } else if (type == "pkcs8"_s) {
-                            if (i2d_PKCS8PrivateKey_bio(bio, ecKey, cipher, (char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                            if (i2d_PKCS8PrivateKey_bio(bio, ecKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -1643,17 +2128,15 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                 }
 
-                BUF_MEM* bptr;
+                BUF_MEM* bptr = nullptr;
                 BIO_get_mem_ptr(bio, &bptr);
                 auto length = bptr->length;
                 if (string == "pem"_s) {
-                    auto str = WTF::String::fromUTF8(bptr->data, length);
+                    auto str = WTF::String::fromUTF8(std::span { bptr->data, length });
                     return JSValue::encode(JSC::jsString(vm, str));
                 }
 
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, length)));
-                if (length > 0)
-                    memcpy(buffer->vector(), bptr->data, length);
+                auto* buffer = createBuffer(globalObject, bptr->data, length);
 
                 BIO_free(bio);
                 return JSC::JSValue::encode(buffer);
@@ -1688,7 +2171,6 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                 // TODO: CHECK THIS WHEN X488 AND ED448 ARE ADDED
                 if (okpKey.type() == CryptoKeyType::Private) {
                     evpKey = EVP_PKEY_new_raw_private_key(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? EVP_PKEY_X25519 : EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
-                    JSValue passphraseJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
                     JSValue cipherJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "cipher"_s)));
 
                     const EVP_CIPHER* cipher = nullptr;
@@ -1711,33 +2193,10 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                             }
                         }
                     }
-                    void* passphrase = nullptr;
-                    size_t passphrase_len = 0;
-                    auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
 
-                    if (hasPassphrase) {
+                    if (passphrase.hasPassphrase()) {
                         if (!cipher) {
                             JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
-                            BIO_free(bio);
-                            return JSC::JSValue::encode(JSC::JSValue {});
-                        }
-                        if (passphraseJSValue.isString()) {
-                            auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
-                            RETURN_IF_EXCEPTION(scope, encodedJSValue());
-                            if (!passphrase_wtfstr.isNull()) {
-                                if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
-                                    if (pass.has_value()) {
-                                        auto value = pass.value();
-                                        passphrase = const_cast<char*>(value.data());
-                                        passphrase_len = value.length();
-                                    }
-                                }
-                            }
-                        } else if (auto* passphraseBuffer = jsDynamicCast<JSUint8Array*>(passphraseJSValue)) {
-                            passphrase = passphraseBuffer->vector();
-                            passphrase_len = passphraseBuffer->byteLength();
-                        } else {
-                            JSC::throwTypeError(globalObject, scope, "passphrase must be a Buffer or String"_s);
                             BIO_free(bio);
                             return JSC::JSValue::encode(JSC::JSValue {});
                         }
@@ -1745,7 +2204,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
 
                     if (string == "pem"_s) {
                         if (type == "pkcs8"_s) {
-                            if (PEM_write_bio_PKCS8PrivateKey(bio, evpKey, cipher, (char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                            if (PEM_write_bio_PKCS8PrivateKey(bio, evpKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 EVP_PKEY_free(evpKey);
@@ -1759,7 +2218,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         }
                     } else if (string == "der"_s) {
                         if (type == "pkcs8"_s) {
-                            if (i2d_PKCS8PrivateKey_bio(bio, evpKey, cipher, (char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                            if (i2d_PKCS8PrivateKey_bio(bio, evpKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 EVP_PKEY_free(evpKey);
@@ -1816,18 +2275,16 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                 }
 
-                BUF_MEM* bptr;
+                BUF_MEM* bptr = nullptr;
                 BIO_get_mem_ptr(bio, &bptr);
                 auto length = bptr->length;
                 if (string == "pem"_s) {
-                    auto str = WTF::String::fromUTF8(bptr->data, length);
+                    auto str = WTF::String::fromUTF8(std::span { bptr->data, length });
                     EVP_PKEY_free(evpKey);
                     return JSValue::encode(JSC::jsString(vm, str));
                 }
 
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, length)));
-                if (length > 0)
-                    memcpy(buffer->vector(), bptr->data, length);
+                auto* buffer = WebCore::createBuffer(globalObject, std::span { bptr->data, length });
 
                 BIO_free(bio);
                 EVP_PKEY_free(evpKey);
@@ -1838,12 +2295,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
             const auto& raw = downcast<WebCore::CryptoKeyRaw>(wrapped);
             if (string == "buffer"_s) {
                 auto keyData = raw.key();
-                auto size = keyData.size();
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-                if (size > 0)
-                    memcpy(buffer->vector(), keyData.data(), size);
-
-                return JSC::JSValue::encode(buffer);
+                return JSC::JSValue::encode(WebCore::createBuffer(globalObject, keyData));
             }
 
             JSC::throwTypeError(globalObject, scope, "format is expected to be 'buffer'"_s);
@@ -2044,8 +2496,55 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
 
     Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* structure = zigGlobalObject->JSCryptoKeyStructure();
-    // TODO: rsa-pss
     if (type_str == "rsa"_s) {
+        if (count == 1) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength are required for rsa"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1));
+        if (options == nullptr) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options is expected to be a object"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto modulusLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "modulusLength"_s)));
+        if (!modulusLengthJS.isNumber()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength is expected to be a number"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto publicExponentJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "publicExponent"_s)));
+        uint32_t publicExponent = 0x10001;
+        if (publicExponentJS.isNumber()) {
+            publicExponent = publicExponentJS.toUInt32(lexicalGlobalObject);
+        } else if (!publicExponentJS.isUndefinedOrNull() && !publicExponentJS.isEmpty()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a number"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        uint8_t publicExponentArray[4];
+        publicExponentArray[0] = (uint8_t)(publicExponent >> 24);
+        publicExponentArray[1] = (uint8_t)(publicExponent >> 16);
+        publicExponentArray[2] = (uint8_t)(publicExponent >> 8);
+        publicExponentArray[3] = (uint8_t)publicExponent;
+
+        int modulusLength = modulusLengthJS.toUInt32(lexicalGlobalObject);
+        auto returnValue = JSC::JSValue {};
+        auto keyPairCallback = [&](CryptoKeyPair&& pair) {
+            pair.publicKey->setUsagesBitmap(pair.publicKey->usagesBitmap() & CryptoKeyUsageVerify);
+            pair.privateKey->setUsagesBitmap(pair.privateKey->usagesBitmap() & CryptoKeyUsageSign);
+
+            auto obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 2);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "publicKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.publicKey.releaseNonNull()), 0);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
+            returnValue = obj;
+        };
+        auto failureCallback = [&]() {
+            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
+        };
+        // this is actually sync
+        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>(std::span { (uint8_t*)&publicExponentArray, 4 }), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
+        return JSValue::encode(returnValue);
+    }
+    if (type_str == "rsa-pss"_s) {
         if (count == 1) {
             JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength are required for rsa"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -2085,11 +2584,50 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
             returnValue = obj;
         };
+
+        auto hashAlgoJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
+        auto hasHash = false;
+        auto hash = CryptoAlgorithmIdentifier::SHA_1;
+        if (!hashAlgoJS.isUndefinedOrNull() && !hashAlgoJS.isEmpty()) {
+            if (!hashAlgoJS.isString()) {
+                JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is expected to be a string"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            hasHash = true;
+            auto hashAlgo = hashAlgoJS.toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+            auto identifier = CryptoAlgorithmRegistry::singleton().identifier(hashAlgo);
+            if (UNLIKELY(!identifier)) {
+                JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is invalid"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+
+            switch (*identifier) {
+            case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_512: {
+
+                hash = *identifier;
+                break;
+            }
+            default: {
+                JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is invalid"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            }
+        }
+
+        // TODO: @cirospaciari is saltLength supposed to be used here?
+        // auto saltLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
+
         auto failureCallback = [&]() {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
         };
         // this is actually sync
-        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>((uint8_t*)&publicExponentArray, 4), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
+        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_PSS, hash, hasHash, modulusLength, Vector<uint8_t>(std::span { (uint8_t*)&publicExponentArray, 4 }), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
         return JSValue::encode(returnValue);
     } else if (type_str == "ec"_s) {
         if (count == 1) {
@@ -2152,7 +2690,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
         return JSValue::encode(obj);
     } else {
-        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'rsa', 'ec', 'x25519' or 'ed25519'"_s));
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'rsa', 'rsa-pss', 'ec', 'x25519' or 'ed25519'"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
     return JSValue::encode(JSC::jsUndefined());
@@ -2191,9 +2729,7 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Invalid length"_s));
             return JSValue::encode(JSC::jsUndefined());
         }
-        // TODO(@paperdave 2023-10-19): i removed WTFMove from result.releaseNonNull() as per MSVC compiler error.
-        // We need to evaluate if that is the proper fix here.
-        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, (result.releaseNonNull())));
+        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, result.releaseNonNull()));
     } else if (type_str == "aes"_s) {
         Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
         auto* structure = zigGlobalObject->JSCryptoKeyStructure();
@@ -2214,7 +2750,7 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
         }
         // TODO(@paperdave 2023-10-19): i removed WTFMove from result.releaseNonNull() as per MSVC compiler error.
         // We need to evaluate if that is the proper fix here.
-        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, (result.releaseNonNull())));
+        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, result.releaseNonNull()));
     } else {
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'aes' or 'hmac'"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -2313,7 +2849,6 @@ JSC::EncodedJSValue KeyObject__Equals(JSC::JSGlobalObject* lexicalGlobalObject, 
             auto& wrapped = key->wrapped();
             auto& wrapped2 = key2->wrapped();
             auto key_type = wrapped.type();
-            auto key_class = wrapped.keyClass();
             if (key_type != wrapped2.type()) {
                 return JSC::JSValue::encode(jsBoolean(false));
             }
@@ -2391,4 +2926,38 @@ JSC::EncodedJSValue KeyObject__SymmetricKeySize(JSC::JSGlobalObject* globalObjec
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto* obj = constructEmptyObject(globalObject);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "symmetricKeySize"_s)), JSC::JSFunction::create(vm, globalObject, 1, "symmetricKeySize"_s, KeyObject__SymmetricKeySize, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyType"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyType"_s, KeyObject__AsymmetricKeyType, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyDetails"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyDetails"_s, KeyObject_AsymmetricKeyDetails, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "equals"_s)), JSC::JSFunction::create(vm, globalObject, 2, "equals"_s, KeyObject__Equals, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, KeyObject__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createSecretKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createSecretKey"_s, KeyObject__createSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPublicKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPublicKey"_s, KeyObject__createPublicKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPrivateKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPrivateKey"_s, KeyObject__createPrivateKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "generateKeySync"_s)), JSC::JSFunction::create(vm, globalObject, 2, "generateKeySync"_s, KeyObject__generateKeySync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "generateKeyPairSync"_s)), JSC::JSFunction::create(vm, globalObject, 2, "generateKeyPairSync"_s, KeyObject__generateKeyPairSync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "sign"_s)), JSC::JSFunction::create(vm, globalObject, 3, "sign"_s, KeyObject__Sign, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "verify"_s)), JSC::JSFunction::create(vm, globalObject, 4, "verify"_s, KeyObject__Verify, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    return obj;
 }
+
+} // namespace WebCore

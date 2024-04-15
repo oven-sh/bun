@@ -27,25 +27,19 @@
 export function getStdioWriteStream(fd) {
   const tty = require("node:tty");
 
-  const stream = tty.WriteStream(fd);
+  let stream;
+  if (tty.isatty(fd)) {
+    stream = new tty.WriteStream(fd);
+    process.on("SIGWINCH", () => {
+      stream._refreshSize();
+    });
+    stream._type = "tty";
+  } else {
+    stream = new (require("node:fs").WriteStream)(fd, { autoClose: false, fd });
+    stream._type = "fs";
+  }
 
-  process.on("SIGWINCH", () => {
-    stream._refreshSize();
-  });
-
-  if (fd === 1) {
-    stream.destroySoon = stream.destroy;
-    stream._destroy = function (err, cb) {
-      cb(err);
-      this._undestroy();
-
-      if (!this._writableState.emitClose) {
-        process.nextTick(() => {
-          this.emit("close");
-        });
-      }
-    };
-  } else if (fd === 2) {
+  if (fd === 1 || fd === 2) {
     stream.destroySoon = stream.destroy;
     stream._destroy = function (err, cb) {
       cb(err);
@@ -59,31 +53,67 @@ export function getStdioWriteStream(fd) {
     };
   }
 
-  stream._type = "tty";
   stream._isStdio = true;
   stream.fd = fd;
 
-  return stream;
+  return [stream, stream[require("internal/shared").fileSinkSymbol]];
 }
 
 export function getStdinStream(fd) {
-  var reader: ReadableStreamDefaultReader | undefined;
+  // Ideally we could use this:
+  // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
+  // but we need to extend TTY/FS ReadStream
+  const native = Bun.stdin.stream();
+
+  var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   var readerRef;
+
+  var shouldUnref = false;
+
   function ref() {
-    reader ??= Bun.stdin.stream().getReader();
+    $debug("ref();", reader ? "already has reader" : "getting reader");
+    reader ??= native.getReader();
     // TODO: remove this. likely we are dereferencing the stream
     // when there is still more data to be read.
     readerRef ??= setInterval(() => {}, 1 << 30);
+    shouldUnref = false;
   }
 
   function unref() {
+    $debug("unref();");
     if (readerRef) {
       clearInterval(readerRef);
       readerRef = undefined;
+      $debug("cleared timeout");
     }
     if (reader) {
-      reader.cancel();
-      reader = undefined;
+      try {
+        reader.releaseLock();
+        reader = undefined;
+        $debug("released reader");
+      } catch (e: any) {
+        $debug("reader lock cannot be released, waiting");
+        $assert(e.message === "There are still pending read requests, cannot release the lock");
+
+        // Releasing the lock is not possible as there are active reads
+        // we will instead pretend we are unref'd, and release the lock once the reads are finished.
+        shouldUnref = true;
+
+        // unref the native part of the stream
+        try {
+          $getByIdDirectPrivate(
+            $getByIdDirectPrivate(native, "readableStreamController"),
+            "underlyingByteSource",
+          ).$resume(false);
+        } catch (e) {
+          if (IS_BUN_DEVELOPMENT) {
+            // we assume this isn't possible, but because we aren't sure
+            // we will ignore if error during release, but make a big deal in debug
+            console.error(e);
+            $assert(!"reachable");
+          }
+        }
+      }
     }
   }
 
@@ -95,6 +125,7 @@ export function getStdinStream(fd) {
   const originalOn = stream.on;
 
   let stream_destroyed = false;
+  let stream_endEmitted = false;
   stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -115,26 +146,31 @@ export function getStdinStream(fd) {
 
   const originalPause = stream.pause;
   stream.pause = function () {
+    $debug("pause();");
+    let r = originalPause.$call(this);
     unref();
-    return originalPause.$call(this);
+    return r;
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
+    $debug("resume();");
     ref();
     return originalResume.$call(this);
   };
 
   async function internalRead(stream) {
+    $debug("internalRead();");
     try {
-      var done: any, value: any;
-      const read = reader?.readMany();
+      var done: boolean, value: Uint8Array[];
+      $assert(reader);
+      const pendingRead = reader.readMany();
 
-      if ($isPromise(read)) {
-        ({ done, value } = await read);
+      if ($isPromise(pendingRead)) {
+        ({ done, value } = await pendingRead);
       } else {
-        // @ts-expect-error
-        ({ done, value } = read);
+        $debug("readMany() did not return a promise");
+        ({ done, value } = pendingRead);
       }
 
       if (!done) {
@@ -145,8 +181,13 @@ export function getStdinStream(fd) {
         for (let i = 1; i < length; i++) {
           stream.push(value[i]);
         }
+
+        if (shouldUnref) unref();
       } else {
-        stream.emit("end");
+        if (!stream_endEmitted) {
+          stream_endEmitted = true;
+          stream.emit("end");
+        }
         if (!stream_destroyed) {
           stream_destroyed = true;
           stream.destroy();
@@ -159,10 +200,16 @@ export function getStdinStream(fd) {
   }
 
   stream._read = function (size) {
-    internalRead(this);
+    $debug("_read();", reader);
+    if (!reader) return;
+
+    if (!shouldUnref) {
+      internalRead(this);
+    }
   };
 
   stream.on("resume", () => {
+    $debug('on("resume");');
     ref();
     stream._undestroy();
   });
@@ -207,130 +254,8 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
 
   var setup;
   setup = () => {
-    queue = (function createQueue() {
-      // Currently optimal queue size, tested on V8 6.0 - 6.6. Must be power of two.
-      const kSize = 2048;
-      const kMask = kSize - 1;
-
-      // The FixedQueue is implemented as a singly-linked list of fixed-size
-      // circular buffers. It looks something like this:
-      //
-      //  head                                                       tail
-      //    |                                                          |
-      //    v                                                          v
-      // +-----------+ <-----\       +-----------+ <------\         +-----------+
-      // |  [null]   |        \----- |   next    |         \------- |   next    |
-      // +-----------+               +-----------+                  +-----------+
-      // |   item    | <-- bottom    |   item    | <-- bottom       |  [empty]  |
-      // |   item    |               |   item    |                  |  [empty]  |
-      // |   item    |               |   item    |                  |  [empty]  |
-      // |   item    |               |   item    |                  |  [empty]  |
-      // |   item    |               |   item    |       bottom --> |   item    |
-      // |   item    |               |   item    |                  |   item    |
-      // |    ...    |               |    ...    |                  |    ...    |
-      // |   item    |               |   item    |                  |   item    |
-      // |   item    |               |   item    |                  |   item    |
-      // |  [empty]  | <-- top       |   item    |                  |   item    |
-      // |  [empty]  |               |   item    |                  |   item    |
-      // |  [empty]  |               |  [empty]  | <-- top  top --> |  [empty]  |
-      // +-----------+               +-----------+                  +-----------+
-      //
-      // Or, if there is only one circular buffer, it looks something
-      // like either of these:
-      //
-      //  head   tail                                 head   tail
-      //    |     |                                     |     |
-      //    v     v                                     v     v
-      // +-----------+                               +-----------+
-      // |  [null]   |                               |  [null]   |
-      // +-----------+                               +-----------+
-      // |  [empty]  |                               |   item    |
-      // |  [empty]  |                               |   item    |
-      // |   item    | <-- bottom            top --> |  [empty]  |
-      // |   item    |                               |  [empty]  |
-      // |  [empty]  | <-- top            bottom --> |   item    |
-      // |  [empty]  |                               |   item    |
-      // +-----------+                               +-----------+
-      //
-      // Adding a value means moving `top` forward by one, removing means
-      // moving `bottom` forward by one. After reaching the end, the queue
-      // wraps around.
-      //
-      // When `top === bottom` the current queue is empty and when
-      // `top + 1 === bottom` it's full. This wastes a single space of storage
-      // but allows much quicker checks.
-
-      class FixedCircularBuffer {
-        top: number;
-        bottom: number;
-        list: Array<FixedCircularBuffer | undefined>;
-        next: FixedCircularBuffer | null;
-
-        constructor() {
-          this.bottom = 0;
-          this.top = 0;
-          this.list = $newArrayWithSize(kSize);
-          this.next = null;
-        }
-
-        isEmpty() {
-          return this.top === this.bottom;
-        }
-
-        isFull() {
-          return ((this.top + 1) & kMask) === this.bottom;
-        }
-
-        push(data) {
-          this.list[this.top] = data;
-          this.top = (this.top + 1) & kMask;
-        }
-
-        shift() {
-          var { list, bottom } = this;
-          const nextItem = list[bottom];
-          if (nextItem === undefined) return null;
-          list[bottom] = undefined;
-          this.bottom = (bottom + 1) & kMask;
-          return nextItem;
-        }
-      }
-
-      class FixedQueue {
-        head: FixedCircularBuffer;
-        tail: FixedCircularBuffer;
-
-        constructor() {
-          this.head = this.tail = new FixedCircularBuffer();
-        }
-
-        isEmpty() {
-          return this.head.isEmpty();
-        }
-
-        push(data) {
-          if (this.head.isFull()) {
-            // Head is full: Creates a new queue, sets the old queue's `.next` to it,
-            // and sets it as the new main queue.
-            this.head = this.head.next = new FixedCircularBuffer();
-          }
-          this.head.push(data);
-        }
-
-        shift() {
-          const tail = this.tail;
-          const next = tail.shift();
-          if (tail.isEmpty() && tail.next !== null) {
-            // If there is another queue, it forms the new tail.
-            this.tail = tail.next;
-            tail.next = null;
-          }
-          return next;
-        }
-      }
-
-      return new FixedQueue();
-    })();
+    const { FixedQueue } = require("internal/fixed_queue");
+    queue = new FixedQueue();
 
     function processTicksAndRejections() {
       var tock;
@@ -414,4 +339,67 @@ $overriddenName = "set mainModule";
 export function setMainModule(value) {
   $putByIdDirectPrivate(this, "main", value);
   return true;
+}
+
+type InternalEnvMap = Record<string, string>;
+
+export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string>) {
+  // The use of String(key) here is intentional because Node.js as of v21.5.0 will throw
+  // on symbol keys as it seems they assume the user uses string keys:
+  //
+  // it throws "Cannot convert a Symbol value to a string"
+
+  (internalEnv as any)[Bun.inspect.custom] = () => {
+    let o = {};
+    for (let k of envMapList) {
+      o[k] = internalEnv[k.toUpperCase()];
+    }
+    return o;
+  };
+
+  (internalEnv as any).toJSON = () => {
+    return { ...internalEnv };
+  };
+
+  return new Proxy(internalEnv, {
+    get(_, p) {
+      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
+    },
+    set(_, p, value) {
+      const k = String(p).toUpperCase();
+      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
+      if (!(k in internalEnv) && !envMapList.includes(p)) {
+        envMapList.push(p);
+      }
+      internalEnv[k] = value;
+      return true;
+    },
+    has(_, p) {
+      return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
+    },
+    deleteProperty(_, p) {
+      const k = String(p).toUpperCase();
+      const i = envMapList.findIndex(x => x.toUpperCase() === k);
+      if (i !== -1) {
+        envMapList.splice(i, 1);
+      }
+      return typeof p !== "symbol" ? delete internalEnv[k] : false;
+    },
+    defineProperty(_, p, attributes) {
+      const k = String(p).toUpperCase();
+      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      if (!(k in internalEnv) && !envMapList.includes(p)) {
+        envMapList.push(p);
+      }
+      return $Object.$defineProperty(internalEnv, k, attributes);
+    },
+    getOwnPropertyDescriptor(target, p) {
+      return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;
+    },
+    ownKeys() {
+      // .slice() because paranoia that there is a way to call this without the engine cloning it for us
+      return envMapList.slice();
+    },
+  });
 }

@@ -51,7 +51,7 @@ const c = struct {
     }.mi_posix_memalign;
 };
 const Allocator = mem.Allocator;
-const assert = std.debug.assert;
+const assert = @import("root").bun.assert;
 const CAllocator = struct {
     const malloc_size = c.malloc_size;
     pub const supports_posix_memalign = true;
@@ -59,7 +59,7 @@ const CAllocator = struct {
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
-        var ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
+        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
             mimalloc.mi_malloc_aligned(len, alignment)
         else
             mimalloc.mi_malloc(len);
@@ -120,7 +120,7 @@ const ZAllocator = struct {
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
-        var ptr = if (mimalloc.canUseAlignedAlloc(len, alignment))
+        const ptr = if (mimalloc.canUseAlignedAlloc(len, alignment))
             mimalloc.mi_zalloc_aligned(len, alignment)
         else
             mimalloc.mi_zalloc(len);
@@ -180,7 +180,7 @@ const HugeAllocator = struct {
         assert(len > 0);
         assert(std.math.isPowerOfTwo(alignment));
 
-        var slice = std.os.mmap(
+        const slice = std.os.mmap(
             null,
             len,
             std.os.PROT.READ | std.os.PROT.WRITE,

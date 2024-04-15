@@ -27,6 +27,7 @@ export const enum Loader {
   base64 = 11,
   dataurl = 12,
   text = 13,
+  sqlite = 14,
 }
 export const LoaderKeys: {
   1: "jsx";
@@ -55,6 +56,8 @@ export const LoaderKeys: {
   dataurl: "dataurl";
   13: "text";
   text: "text";
+  14: "sqlite";
+  sqlite: "sqlite";
 };
 export const enum FrameworkEntryPointType {
   client = 1,
@@ -201,6 +204,7 @@ export const enum DotEnvBehavior {
   disable = 1,
   prefix = 2,
   load_all = 3,
+  load_all_without_inlining = 4,
 }
 export const DotEnvBehaviorKeys: {
   1: "disable";
@@ -209,6 +213,8 @@ export const DotEnvBehaviorKeys: {
   prefix: "prefix";
   3: "load_all";
   load_all: "load_all";
+  4: "load_all_without_inlining";
+  load_all_without_inlining: "load_all_without_inlining";
 };
 export const enum SourceMapMode {
   inline_into_file = 1,
@@ -720,6 +726,7 @@ export interface BunInstall {
   global_bin_dir?: string;
   frozen_lockfile?: boolean;
   exact?: boolean;
+  concurrent_scripts?: uint32;
 }
 
 export interface ClientServerModule {

@@ -18,6 +18,7 @@ cmake "${CMAKE_FLAGS[@]}" . \
     -DMI_BUILD_TESTS=OFF \
     -DMI_OSX_ZONE=OFF \
     -DMI_OSX_INTERPOSE=OFF \
+    -DMI_TRACK_VALGRIND=ON \
     -DMI_BUILD_OBJECT=ON \
     -DMI_USE_CXX=ON \
     -DMI_OVERRIDE=OFF \
@@ -26,5 +27,14 @@ cmake "${CMAKE_FLAGS[@]}" . \
 
 ninja
 
-cp libmimalloc-debug.a $BUN_DEPS_OUT_DIR/libmimalloc-debug.a
+if [ -f libmimalloc-valgrind-debug.a ]; then
+    file="libmimalloc-valgrind-debug.a"
+elif [ -f libmimalloc-debug.a ]; then
+    file="libmimalloc-debug.a"
+else
+    echo "Could not find libmimalloc-valgrind-debug.a or libmimalloc-debug.a"
+    exit 1
+fi
+
+cp $file $BUN_DEPS_OUT_DIR/libmimalloc-debug.a
 cp CMakeFiles/mimalloc-obj.dir/src/static.c.o $BUN_DEPS_OUT_DIR/libmimalloc-debug.o

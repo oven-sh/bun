@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { resolve } from "path";
+import { resolve, dirname } from "path";
 
 declare global {
   var failingObject: any;
@@ -89,8 +89,9 @@ plugin({
     }));
 
     builder.onLoad({ filter: /.*/, namespace: "delay" }, ({ path }) => ({
-      contents: (globalThis.laterCode ||= ""),
+      contents: globalThis.laterCode || "",
       loader: "js",
+      resolveDir: process.cwd(),
     }));
   },
 });
@@ -319,7 +320,7 @@ describe("dynamic import", () => {
 describe("import statement", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", async () => {
     laterCode = `
-import Hello from "${resolve(import.meta.dir, "hello2.svelte")}";
+import Hello from ${JSON.stringify(resolve(import.meta.dir, "hello2.svelte"))};
 export default Hello;
 `;
     const { default: SvelteApp } = await import("delay:hello2.svelte");

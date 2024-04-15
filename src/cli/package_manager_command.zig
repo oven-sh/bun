@@ -1,9 +1,12 @@
 const std = @import("std");
+const Progress = std.Progress;
 const bun = @import("root").bun;
 const Global = bun.Global;
 const Output = bun.Output;
 const string = bun.string;
 const strings = bun.strings;
+const log = bun.log;
+const logger = bun.logger;
 const Command = @import("../cli.zig").Command;
 const Fs = @import("../fs.zig");
 const Dependency = @import("../install/dependency.zig");
@@ -15,20 +18,12 @@ const Lockfile = @import("../install/lockfile.zig");
 const NodeModulesFolder = Lockfile.Tree.NodeModulesFolder;
 const Path = @import("../resolver/resolve_path.zig");
 const String = @import("../install/semver.zig").String;
-
-fn handleLoadLockfileErrors(load_lockfile: Lockfile.LoadFromDiskResult, pm: *PackageManager) void {
-    if (load_lockfile == .not_found) {
-        if (pm.options.log_level != .silent)
-            Output.prettyErrorln("Lockfile not found", .{});
-        Global.exit(1);
-    }
-
-    if (load_lockfile == .err) {
-        if (pm.options.log_level != .silent)
-            Output.prettyErrorln("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
-        Global.exit(1);
-    }
-}
+const ArrayIdentityContext = bun.ArrayIdentityContext;
+const DepIdSet = std.ArrayHashMapUnmanaged(DependencyID, void, ArrayIdentityContext, false);
+const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
+const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
+const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
+const Environment = bun.Environment;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -44,12 +39,28 @@ const ByName = struct {
 };
 
 pub const PackageManagerCommand = struct {
+    pub fn handleLoadLockfileErrors(load_lockfile: Lockfile.LoadFromDiskResult, pm: *PackageManager) void {
+        if (load_lockfile == .not_found) {
+            if (pm.options.log_level != .silent) {
+                Output.errGeneric("Lockfile not found", .{});
+            }
+            Global.exit(1);
+        }
+
+        if (load_lockfile == .err) {
+            if (pm.options.log_level != .silent) {
+                Output.errGeneric("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+            }
+            Global.exit(1);
+        }
+    }
+
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
         var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
         @memcpy(lockfile_buffer[0..lockfile_.len], lockfile_);
         lockfile_buffer[lockfile_.len] = 0;
-        var lockfile = lockfile_buffer[0..lockfile_.len :0];
+        const lockfile = lockfile_buffer[0..lockfile_.len :0];
         var pm = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
 
         const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, lockfile);
@@ -57,7 +68,7 @@ pub const PackageManagerCommand = struct {
 
         Output.flush();
         Output.disableBuffering();
-        try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
+        try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
         Output.enableBuffering();
         Global.exit(0);
     }
@@ -86,16 +97,20 @@ pub const PackageManagerCommand = struct {
         Output.prettyln(
             \\<b><blue>bun pm<r>: Package manager utilities
             \\
-            \\  bun pm <b>bin<r>          print the path to bin folder
-            \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
-            \\  bun pm <b>ls<r>           list the dependency tree according to the current lockfile
-            \\  bun pm <b>ls<r> <cyan>--all<r>     list the entire dependency tree according to the current lockfile
-            \\  bun pm <b>hash<r>         generate & print the hash of the current lockfile
-            \\  bun pm <b>hash-string<r>  print the string used to hash the lockfile
-            \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
-            \\  bun pm <b>cache<r>        print the path to the cache folder
-            \\  bun pm <b>cache rm<r>     clear the cache
-            \\  bun pm <b>migrate<r>      migrate another package manager's lockfile without installing anything
+            \\  bun pm <b>bin<r>                print the path to bin folder
+            \\  <d>└<r>  <cyan>-g<r>                     print the <b>global<r> path to bin folder
+            \\  bun pm <b>ls<r>                 list the dependency tree according to the current lockfile
+            \\  <d>└<r>  <cyan>--all<r>                  list the entire dependency tree according to the current lockfile
+            \\  bun pm <b>hash<r>               generate & print the hash of the current lockfile
+            \\  bun pm <b>hash-string<r>        print the string used to hash the lockfile
+            \\  bun pm <b>hash-print<r>         print the hash stored in the current lockfile
+            \\  bun pm <b>cache<r>              print the path to the cache folder
+            \\  bun pm <b>cache rm<r>           clear the cache
+            \\  bun pm <b>migrate<r>            migrate another package manager's lockfile without installing anything
+            \\  bun pm <b>untrusted<r>          print current untrusted dependencies with scripts
+            \\  bun pm <b>trust<r> <d>names ...<r>    run scripts for untrusted dependencies and add to `trustedDependencies`
+            \\  <d>└<r>  <cyan>--all<r>                  trust all untrusted dependencies
+            \\  bun pm <b>default-trusted<r>    print the default trusted dependencies list
             \\
             \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>
             \\
@@ -107,22 +122,26 @@ pub const PackageManagerCommand = struct {
         args = args[1..];
 
         var pm = PackageManager.init(ctx, PackageManager.Subcommand.pm) catch |err| {
-            // TODO: error messages here
-            // if (err == error.MissingPackageJSON) {
-            //     // TODO: error messages
-            //     // var cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, PackageManager.Subcommand.pm, &_ctx);
-            // }
-
+            if (err == error.MissingPackageJSON) {
+                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                if (bun.getcwd(&cwd_buf)) |cwd| {
+                    Output.errGeneric("No package.json was found for directory \"{s}\"", .{cwd});
+                } else |_| {
+                    Output.errGeneric("No package.json was found", .{});
+                }
+                Output.note("Run \"bun init\" to initialize a project", .{});
+                Global.exit(1);
+            }
             return err;
         };
 
         const subcommand = getSubcommand(&pm.options.positionals);
         if (pm.options.global) {
-            try pm.setupGlobalDir(&ctx);
+            try pm.setupGlobalDir(ctx);
         }
 
         if (strings.eqlComptime(subcommand, "bin")) {
-            var output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));
+            const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));
             Output.prettyln("{s}", .{output_path});
             if (Output.stdout_descriptor_type == .terminal) {
                 Output.prettyln("\n", .{});
@@ -132,8 +151,8 @@ pub const PackageManagerCommand = struct {
                 warner: {
                     if (Output.enable_ansi_colors_stderr) {
                         if (bun.getenvZ("PATH")) |path| {
-                            var path_splitter = std.mem.split(u8, path, ":");
-                            while (path_splitter.next()) |entry| {
+                            var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
+                            while (path_iter.next()) |entry| {
                                 if (strings.eql(entry, output_path)) {
                                     break :warner;
                                 }
@@ -151,11 +170,11 @@ pub const PackageManagerCommand = struct {
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
             handleLoadLockfileErrors(load_lockfile, pm);
 
-            _ = try pm.lockfile.hasMetaHashChanged(false);
+            _ = try pm.lockfile.hasMetaHashChanged(false, pm.lockfile.packages.len);
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
+            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
@@ -164,32 +183,81 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
+            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
             handleLoadLockfileErrors(load_lockfile, pm);
 
-            _ = try pm.lockfile.hasMetaHashChanged(true);
+            _ = try pm.lockfile.hasMetaHashChanged(true, pm.lockfile.packages.len);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: [bun.MAX_PATH_BYTES]u8 = undefined;
             var fd = pm.getCacheDirectory();
-            var outpath = bun.getFdPath(fd.dir.fd, &dir) catch |err| {
+            const outpath = bun.getFdPath(fd.fd, &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
                 Global.crash();
             };
 
             if (pm.options.positionals.len > 1 and strings.eqlComptime(pm.options.positionals[1], "rm")) {
+                fd.close();
+
+                var had_err = false;
+
                 std.fs.deleteTreeAbsolute(outpath) catch |err| {
-                    Output.prettyErrorln("{s} deleting cache directory", .{@errorName(err)});
-                    Global.crash();
+                    Output.err(err, "Could not delete {s}", .{outpath});
+                    had_err = true;
                 };
-                Output.prettyln("Cache directory deleted:\n  {s}", .{outpath});
-                Global.exit(0);
+                Output.prettyln("Cleared 'bun install' cache", .{});
+
+                bunx: {
+                    const tmp = bun.fs.FileSystem.RealFS.platformTempDir();
+                    const tmp_dir = std.fs.openDirAbsolute(tmp, .{ .iterate = true }) catch |err| {
+                        Output.err(err, "Could not open {s}", .{tmp});
+                        had_err = true;
+                        break :bunx;
+                    };
+                    var iter = tmp_dir.iterate();
+
+                    // This is to match 'bunx_command.BunxCommand.exec's logic
+                    const prefix = try std.fmt.allocPrint(ctx.allocator, "bunx-{d}-", .{
+                        if (bun.Environment.isPosix) bun.C.getuid() else bun.windows.userUniqueId(),
+                    });
+
+                    var deleted: usize = 0;
+                    while (iter.next() catch |err| {
+                        Output.err(err, "Could not read {s}", .{tmp});
+                        had_err = true;
+                        break :bunx;
+                    }) |entry| {
+                        if (std.mem.startsWith(u8, entry.name, prefix)) {
+                            tmp_dir.deleteTree(entry.name) catch |err| {
+                                Output.err(err, "Could not delete {s}", .{entry.name});
+                                had_err = true;
+                                continue;
+                            };
+
+                            deleted += 1;
+                        }
+                    }
+
+                    Output.prettyln("Cleared {d} cached 'bunx' packages", .{deleted});
+                }
+
+                Global.exit(if (had_err) 1 else 0);
             }
+
             Output.writer().writeAll(outpath) catch {};
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "default-trusted")) {
+            try DefaultTrustedCommand.exec();
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "untrusted")) {
+            try UntrustedCommand.exec(ctx, pm, args);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "trust")) {
+            try TrustCommand.exec(ctx, pm, args);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
@@ -197,12 +265,14 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            const lockfile = load_lockfile.ok;
+            const lockfile = load_lockfile.ok.lockfile;
             var iterator = Lockfile.Tree.Iterator.init(lockfile);
+
+            var max_depth: usize = 0;
 
             var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
             defer directories.deinit();
-            while (iterator.nextNodeModulesFolder()) |node_modules| {
+            while (iterator.nextNodeModulesFolder(null)) |node_modules| {
                 const path_len = node_modules.relative_path.len;
                 const path = try ctx.allocator.alloc(u8, path_len + 1);
                 bun.copy(u8, path, node_modules.relative_path);
@@ -211,16 +281,20 @@ pub const PackageManagerCommand = struct {
                 const dependencies = try ctx.allocator.alloc(DependencyID, node_modules.dependencies.len);
                 bun.copy(DependencyID, dependencies, node_modules.dependencies);
 
+                if (max_depth < node_modules.depth + 1) max_depth = node_modules.depth + 1;
+
                 try directories.append(.{
                     .relative_path = path[0..path_len :0],
                     .dependencies = dependencies,
+                    .tree_id = node_modules.tree_id,
+                    .depth = node_modules.depth,
                 });
             }
 
             const first_directory = directories.orderedRemove(0);
 
-            // TODO: find max depth beforehand
-            var more_packages = [_]bool{false} ** 16;
+            var more_packages = try ctx.allocator.alloc(bool, max_depth);
+            @memset(more_packages, false);
             if (first_directory.dependencies.len > 1) more_packages[0] = true;
 
             if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
@@ -243,7 +317,7 @@ pub const PackageManagerCommand = struct {
                 for (sorted_dependencies, 0..) |*dep, i| {
                     dep.* = @as(DependencyID, @truncate(root_deps.off + i));
                 }
-                std.sort.block(DependencyID, sorted_dependencies, ByName{
+                std.sort.pdq(DependencyID, sorted_dependencies, ByName{
                     .dependencies = dependencies,
                     .buf = string_bytes,
                 }, ByName.isLessThan);
@@ -252,7 +326,7 @@ pub const PackageManagerCommand = struct {
                     const package_id = lockfile.buffers.resolutions.items[dependency_id];
                     if (package_id >= lockfile.packages.len) continue;
                     const name = dependencies[dependency_id].name.slice(string_bytes);
-                    const resolution = resolutions[package_id].fmt(string_bytes);
+                    const resolution = resolutions[package_id].fmt(string_bytes, .auto);
 
                     if (index < sorted_dependencies.len - 1) {
                         Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
@@ -286,7 +360,7 @@ pub const PackageManagerCommand = struct {
                 Global.exit(1);
             }
             handleLoadLockfileErrors(load_lockfile, pm);
-            const lockfile = load_lockfile.ok;
+            const lockfile = load_lockfile.ok.lockfile;
             lockfile.saveToDisk(pm.options.lockfile_path);
             Global.exit(0);
         }
@@ -310,10 +384,9 @@ fn printNodeModulesFolderStructure(
     depth: usize,
     directories: *std.ArrayList(NodeModulesFolder),
     lockfile: *Lockfile,
-    more_packages_: [16]bool,
+    more_packages: []bool,
 ) !void {
     const allocator = lockfile.allocator;
-    var more_packages = more_packages_;
     const resolutions = lockfile.packages.items(.resolution);
     const string_bytes = lockfile.buffers.string_bytes.items;
 
@@ -348,7 +421,7 @@ fn printNodeModulesFolderStructure(
                     }
                 }
             }
-            const directory_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[id].fmt(string_bytes)});
+            const directory_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[id].fmt(string_bytes, .auto)});
             if (std.mem.indexOf(u8, path, "node_modules")) |j| {
                 Output.prettyln("{s}<d>@{s}<r>", .{ path[0 .. j - 1], directory_version });
             } else {
@@ -368,15 +441,15 @@ fn printNodeModulesFolderStructure(
     const sorted_dependencies = try allocator.alloc(DependencyID, directory.dependencies.len);
     defer allocator.free(sorted_dependencies);
     bun.copy(DependencyID, sorted_dependencies, directory.dependencies);
-    std.sort.block(DependencyID, sorted_dependencies, ByName{
+    std.sort.pdq(DependencyID, sorted_dependencies, ByName{
         .dependencies = dependencies,
         .buf = string_bytes,
     }, ByName.isLessThan);
 
     for (sorted_dependencies, 0..) |dependency_id, index| {
         const package_name = dependencies[dependency_id].name.slice(string_bytes);
-
-        var possible_path = try std.fmt.allocPrint(allocator, "{s}/{s}/node_modules", .{ directory.relative_path, package_name });
+        const fmt = "{s}" ++ std.fs.path.sep_str ++ "{s}" ++ std.fs.path.sep_str ++ "node_modules";
+        const possible_path = try std.fmt.allocPrint(allocator, fmt, .{ directory.relative_path, package_name });
         defer allocator.free(possible_path);
 
         if (index + 1 == sorted_dependencies.len) {
@@ -389,7 +462,7 @@ fn printNodeModulesFolderStructure(
         while (dir_index < directories.items.len) : (dir_index += 1) {
             // Recursively print node_modules. node_modules is removed from
             // the directories list before traversal.
-            if (strings.eql(possible_path, directories.items[dir_index].relative_path)) {
+            if (strings.eqlLong(possible_path, directories.items[dir_index].relative_path, true)) {
                 found_node_modules = true;
                 const next = directories.orderedRemove(dir_index);
 
@@ -423,7 +496,7 @@ fn printNodeModulesFolderStructure(
         }
 
         var resolution_buf: [512]u8 = undefined;
-        const package_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes)});
+        const package_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes, .auto)});
         Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
     }
 }

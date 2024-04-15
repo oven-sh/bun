@@ -24,6 +24,7 @@
 "use strict";
 
 const { URL, URLSearchParams } = globalThis;
+const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 
 function Url() {
   this.protocol = null;
@@ -308,13 +309,13 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
       this.hostname = this.hostname.toLowerCase();
     }
 
-    if (!ipv6Hostname) {
-      /*
-       * IDNA Support: Returns a punycoded representation of "domain".
-       * It only converts parts of the domain name that
-       * have non-ASCII characters, i.e. it doesn't matter if
-       * you call it with a domain that already is ASCII-only.
-       */
+    /*
+     * IDNA Support: Returns a punycoded representation of "domain".
+     * It only converts parts of the domain name that
+     * have non-ASCII characters, i.e. it doesn't matter if
+     * you call it with a domain that already is ASCII-only.
+     */
+    if (this.hostname) {
       this.hostname = new URL("http://" + this.hostname).hostname;
     }
 
@@ -822,9 +823,6 @@ function urlToHttpOptions(url) {
   return options;
 }
 
-const pathToFileURL = $lazy("pathToFileURL");
-const fileURLToPath = $lazy("fileURLToPath");
-
 export default {
   parse: urlParse,
   resolve: urlResolve,
@@ -833,7 +831,9 @@ export default {
   Url,
   URLSearchParams,
   URL,
-  pathToFileURL,
-  fileURLToPath,
+  pathToFileURL: Bun.pathToFileURL,
+  fileURLToPath: Bun.fileURLToPath,
   urlToHttpOptions,
+  domainToASCII,
+  domainToUnicode,
 };

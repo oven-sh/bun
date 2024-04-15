@@ -1,6 +1,6 @@
-const BoringSSL = @import("root").bun.BoringSSL;
+const BoringSSL = bun.BoringSSL;
 const std = @import("std");
-pub const bun = @import("./bun.zig");
+pub const bun = @import("root").bun;
 
 fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, comptime Full: anytype, comptime Init: anytype, comptime Update: anytype, comptime Final: anytype) type {
     return struct {
@@ -15,7 +15,7 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
                 .hasher = undefined,
             };
 
-            std.debug.assert(Init(&this.hasher) == 1);
+            bun.assert(Init(&this.hasher) == 1);
             return this;
         }
 
@@ -26,12 +26,12 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
 
         pub fn update(this: *@This(), data: []const u8) void {
             @setRuntimeSafety(false);
-            std.debug.assert(Update(&this.hasher, data.ptr, data.len) == 1);
+            bun.assert(Update(&this.hasher, data.ptr, data.len) == 1);
         }
 
         pub fn final(this: *@This(), out: *Digest) void {
             @setRuntimeSafety(false);
-            std.debug.assert(Final(out, &this.hasher) == 1);
+            bun.assert(Final(out, &this.hasher) == 1);
         }
     };
 }
@@ -49,30 +49,28 @@ fn NewEVP(
         pub fn init() @This() {
             BoringSSL.load();
 
-            const md = @call(.auto, @field(BoringSSL, MDName), .{});
-            var this: @This() = .{
-                .ctx = undefined,
-            };
+            const md = @field(BoringSSL, MDName)();
+            var this = @This(){};
 
             BoringSSL.EVP_MD_CTX_init(&this.ctx);
 
-            std.debug.assert(BoringSSL.EVP_DigestInit(&this.ctx, md) == 1);
+            bun.assert(BoringSSL.EVP_DigestInit(&this.ctx, md) == 1);
 
             return this;
         }
 
         pub fn hash(bytes: []const u8, out: *Digest, engine: *BoringSSL.ENGINE) void {
-            const md = @call(.auto, @field(BoringSSL, MDName), .{});
+            const md = @field(BoringSSL, MDName)();
 
-            std.debug.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);
+            bun.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);
         }
 
         pub fn update(this: *@This(), data: []const u8) void {
-            std.debug.assert(BoringSSL.EVP_DigestUpdate(&this.ctx, data.ptr, data.len) == 1);
+            bun.assert(BoringSSL.EVP_DigestUpdate(&this.ctx, data.ptr, data.len) == 1);
         }
 
         pub fn final(this: *@This(), out: *Digest) void {
-            std.debug.assert(BoringSSL.EVP_DigestFinal(&this.ctx, out, null) == 1);
+            bun.assert(BoringSSL.EVP_DigestFinal(&this.ctx, out, null) == 1);
         }
 
         pub fn deinit(this: *@This()) void {
@@ -201,9 +199,9 @@ const labels = [_][]const u8{
 };
 pub fn main() anyerror!void {
     var file = try std.fs.cwd().openFileZ(bun.argv()[bun.argv().len - 1], .{});
-    var bytes = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
+    const bytes = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
 
-    var engine = BoringSSL.ENGINE_new().?;
+    const engine = BoringSSL.ENGINE_new().?;
 
     std.debug.print(
         "Hashing {any:3}\n\n",
@@ -222,7 +220,7 @@ pub fn main() anyerror!void {
 
     {
         var clock1 = try std.time.Timer.start();
-        std.mem.doNotOptimizeAway(std.hash.XxHash64.hash(bytes));
+        std.mem.doNotOptimizeAway(std.hash.XxHash64.hash(0, bytes));
         const zig_time = clock1.read();
         std.debug.print(
             "xxhash:\n\n     zig: {any}\n\n",
@@ -247,14 +245,10 @@ pub fn main() anyerror!void {
             .{},
         );
         const DigestType = if (BoringHasher != void) BoringHasher.Digest else [32]u8;
-        var digest1: DigestType = undefined;
-        var digest2: DigestType = undefined;
-        var digest3: DigestType = undefined;
-        var digest4: DigestType = undefined;
-        @memset(@as([*]u8, @ptrCast(&digest1))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest2))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest3))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest4))[0..@sizeOf(DigestType)], 0);
+        var digest1 = std.mem.zeroes(DigestType);
+        var digest2 = std.mem.zeroes(DigestType);
+        var digest3 = std.mem.zeroes(DigestType);
+        var digest4 = std.mem.zeroes(DigestType);
         defer {
             std.mem.doNotOptimizeAway(&digest1);
             std.mem.doNotOptimizeAway(&digest2);

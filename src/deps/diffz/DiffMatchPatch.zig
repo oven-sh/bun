@@ -126,8 +126,8 @@ pub fn diffLines(
     else
         @as(u64, @intCast(std.time.milliTimestamp())) + dmp.diff_timeout;
 
-    var a = try diffLinesToChars(allocator, text1_in, text2_in);
-    var diffs = try dmp.diffInternal(allocator, a.chars_1, a.chars_2, false, deadline);
+    const a = try diffLinesToChars(allocator, text1_in, text2_in);
+    const diffs = try dmp.diffInternal(allocator, a.chars_1, a.chars_2, false, deadline);
     try diffCharsToLines(allocator, diffs.items, a.line_array.items);
 
     return diffs;
@@ -158,7 +158,7 @@ fn diffInternal(
 
     // Trim off common suffix (speedup).
     common_length = diffCommonSuffix(trimmed_before, trimmed_after);
-    var common_suffix = trimmed_before[trimmed_before.len - common_length ..];
+    const common_suffix = trimmed_before[trimmed_before.len - common_length ..];
     trimmed_before = trimmed_before[0 .. trimmed_before.len - common_length];
     trimmed_after = trimmed_after[0 .. trimmed_after.len - common_length];
 
@@ -262,7 +262,7 @@ fn diffCompute(
         // A half-match was found, sort out the return data.
 
         // Send both pairs off for separate processing.
-        var diffs_a = try dmp.diffInternal(
+        const diffs_a = try dmp.diffInternal(
             allocator,
             half_match.prefix_before,
             half_match.prefix_after,
@@ -329,9 +329,9 @@ fn diffHalfMatch(
     }
 
     // First check if the second quarter is the seed for a half-match.
-    var half_match_1 = try dmp.diffHalfMatchInternal(allocator, long_text, short_text, (long_text.len + 3) / 4);
+    const half_match_1 = try dmp.diffHalfMatchInternal(allocator, long_text, short_text, (long_text.len + 3) / 4);
     // Check again based on the third quarter.
-    var half_match_2 = try dmp.diffHalfMatchInternal(allocator, long_text, short_text, (long_text.len + 1) / 2);
+    const half_match_2 = try dmp.diffHalfMatchInternal(allocator, long_text, short_text, (long_text.len + 1) / 2);
 
     var half_match: ?HalfMatchResult = null;
     if (half_match_1 == null and half_match_2 == null) {
@@ -392,8 +392,8 @@ fn diffHalfMatchInternal(
         j = @as(isize, @intCast(std.mem.indexOf(u8, short_text[@as(usize, @intCast(j + 1))..], seed) orelse break :b false)) + j + 1;
         break :b true;
     }) {
-        var prefix_length = diffCommonPrefix(long_text[i..], short_text[@as(usize, @intCast(j))..]);
-        var suffix_length = diffCommonSuffix(long_text[0..i], short_text[0..@as(usize, @intCast(j))]);
+        const prefix_length = diffCommonPrefix(long_text[i..], short_text[@as(usize, @intCast(j))..]);
+        const suffix_length = diffCommonSuffix(long_text[0..i], short_text[0..@as(usize, @intCast(j))]);
         if (best_common.items.len < suffix_length + prefix_length) {
             best_common.items.len = 0;
             try best_common.appendSlice(allocator, short_text[@as(usize, @intCast(j - @as(isize, @intCast(suffix_length)))) .. @as(usize, @intCast(j - @as(isize, @intCast(suffix_length)))) + suffix_length]);
@@ -471,7 +471,7 @@ fn diffBisect(
         // Walk the front path one step.
         var k1 = -d + k1start;
         while (k1 <= d - k1end) : (k1 += 2) {
-            var k1_offset = v_offset + k1;
+            const k1_offset = v_offset + k1;
             var x1: isize = 0;
             if (k1 == -d or (k1 != d and
                 v1.items[@as(usize, @intCast(k1_offset - 1))] < v1.items[@as(usize, @intCast(k1_offset + 1))]))
@@ -495,7 +495,7 @@ fn diffBisect(
                 // Ran off the bottom of the graph.
                 k1start += 2;
             } else if (front) {
-                var k2_offset = v_offset + delta - k1;
+                const k2_offset = v_offset + delta - k1;
                 if (k2_offset >= 0 and k2_offset < v_length and v2.items[@as(usize, @intCast(k2_offset))] != -1) {
                     // Mirror x2 onto top-left coordinate system.
                     const x2 = before_length - v2.items[@as(usize, @intCast(k2_offset))];
@@ -603,10 +603,10 @@ fn diffLineMode(
     deadline: u64,
 ) DiffError!DiffList {
     // Scan the text on a line-by-line basis first.
-    var a = try diffLinesToChars(allocator, text1_in, text2_in);
-    var text1 = a.chars_1;
-    var text2 = a.chars_2;
-    var line_array = a.line_array;
+    const a = try diffLinesToChars(allocator, text1_in, text2_in);
+    const text1 = a.chars_1;
+    const text2 = a.chars_2;
+    const line_array = a.line_array;
 
     var diffs: DiffList = try dmp.diffInternal(allocator, text1, text2, false, deadline);
 
@@ -653,7 +653,7 @@ fn diffLineMode(
                         &.{},
                     );
                     pointer = pointer - count_delete - count_insert;
-                    var sub_diff = try dmp.diffInternal(allocator, text_delete.items, text_insert.items, false, deadline);
+                    const sub_diff = try dmp.diffInternal(allocator, text_delete.items, text_insert.items, false, deadline);
                     // diffs.InsertRange(pointer, sub_diff);
                     try diffs.insertSlice(allocator, pointer, sub_diff.items);
                     pointer = pointer + sub_diff.items.len;
@@ -700,8 +700,8 @@ fn diffLinesToChars(
     try line_array.append(allocator, "");
 
     // Allocate 2/3rds of the space for text1, the rest for text2.
-    var chars1 = try diffLinesToCharsMunge(allocator, text1, &line_array, &line_hash, 170);
-    var chars2 = try diffLinesToCharsMunge(allocator, text2, &line_array, &line_hash, 255);
+    const chars1 = try diffLinesToCharsMunge(allocator, text1, &line_array, &line_hash, 170);
+    const chars2 = try diffLinesToCharsMunge(allocator, text2, &line_array, &line_hash, 255);
     return .{ .chars_1 = chars1, .chars_2 = chars2, .line_array = line_array };
 }
 
@@ -1043,8 +1043,8 @@ fn diffCleanupSemantic(allocator: std.mem.Allocator, diffs: *DiffList) DiffError
         {
             const deletion = diffs.items[@as(usize, @intCast(pointer - 1))].text;
             const insertion = diffs.items[@as(usize, @intCast(pointer))].text;
-            var overlap_length1: usize = diffCommonOverlap(deletion, insertion);
-            var overlap_length2: usize = diffCommonOverlap(insertion, deletion);
+            const overlap_length1: usize = diffCommonOverlap(deletion, insertion);
+            const overlap_length2: usize = diffCommonOverlap(insertion, deletion);
             if (overlap_length1 >= overlap_length2) {
                 if (@as(f32, @floatFromInt(overlap_length1)) >= @as(f32, @floatFromInt(deletion.len)) / 2.0 or
                     @as(f32, @floatFromInt(overlap_length1)) >= @as(f32, @floatFromInt(insertion.len)) / 2.0)
@@ -1360,8 +1360,8 @@ fn diffCommonOverlap(text1_in: []const u8, text2_in: []const u8) usize {
     var text2 = text2_in;
 
     // Cache the text lengths to prevent multiple calls.
-    var text1_length = text1.len;
-    var text2_length = text2.len;
+    const text1_length = text1.len;
+    const text2_length = text2.len;
     // Eliminate the null case.
     if (text1_length == 0 or text2_length == 0) {
         return 0;
@@ -1398,7 +1398,7 @@ fn diffCommonOverlap(text1_in: []const u8, text2_in: []const u8) usize {
 }
 
 // pub fn main() void {
-//     var arena = @import("root").bun.ArenaAllocator.init(std.heap.page_allocator);
+//     var arena = bun.ArenaAllocator.init(std.heap.page_allocator);
 //     defer arena.deinit();
 
 //     var bruh = default.diff(arena.allocator(), "Hello World.", "Goodbye World.", true);
@@ -1406,7 +1406,7 @@ fn diffCommonOverlap(text1_in: []const u8, text2_in: []const u8) usize {
 // }
 
 // test {
-//     var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
+//     var arena = bun.ArenaAllocator.init(testing.allocator);
 //     defer arena.deinit();
 
 //     var bruh = try default.diff(arena.allocator(), "Hello World.", "Goodbye World.", true);
@@ -1455,7 +1455,7 @@ test diffCommonOverlap {
 }
 
 test diffHalfMatch {
-    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
+    var arena = bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     var one_timeout = DiffMatchPatch{};
@@ -1549,7 +1549,7 @@ test diffHalfMatch {
 }
 
 test diffLinesToChars {
-    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
+    var arena = bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     // Convert lines down to characters.
@@ -1611,7 +1611,7 @@ test diffLinesToChars {
 }
 
 test diffCharsToLines {
-    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
+    var arena = bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     try testing.expect((Diff.init(.equal, "a")).eql(Diff.init(.equal, "a")));
@@ -1640,7 +1640,7 @@ test diffCharsToLines {
 }
 
 test diffCleanupMerge {
-    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
+    var arena = bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     // Cleanup a messy diff.
@@ -1828,7 +1828,7 @@ test diffCleanupMerge {
 }
 
 test diffCleanupSemanticLossless {
-    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
+    var arena = bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     var diffs = DiffList{};
@@ -1953,7 +1953,7 @@ fn rebuildtexts(allocator: std.mem.Allocator, diffs: DiffList) ![2][]const u8 {
 }
 
 test diffBisect {
-    var arena = @import("root").bun.ArenaAllocator.init(talloc);
+    var arena = bun.ArenaAllocator.init(talloc);
     defer arena.deinit();
 
     // Normal.
@@ -1987,7 +1987,7 @@ test diffBisect {
 
 const talloc = testing.allocator;
 test diff {
-    var arena = @import("root").bun.ArenaAllocator.init(talloc);
+    var arena = bun.ArenaAllocator.init(talloc);
     defer arena.deinit();
 
     // Perform a trivial diff.
@@ -2094,7 +2094,7 @@ test diff {
 }
 
 test diffCleanupSemantic {
-    var arena = @import("root").bun.ArenaAllocator.init(talloc);
+    var arena = bun.ArenaAllocator.init(talloc);
     defer arena.deinit();
 
     // Cleanup semantically trivial equalities.

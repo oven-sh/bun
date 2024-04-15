@@ -26,9 +26,9 @@ const URI = union(Tag) {
         }
 
         if (@as(Tag, lhs) == .local) {
-            return strings.eql(lhs.local.slice(lhs_buf), rhs.local.slice(rhs_buf));
+            return strings.eqlLong(lhs.local.slice(lhs_buf), rhs.local.slice(rhs_buf), true);
         } else {
-            return strings.eql(lhs.remote.slice(lhs_buf), rhs.remote.slice(rhs_buf));
+            return strings.eqlLong(lhs.remote.slice(lhs_buf), rhs.remote.slice(rhs_buf), true);
         }
     }
 
@@ -241,7 +241,7 @@ pub inline fn isGitHubTarballPath(dependency: string) bool {
     while (parts.next()) |part| {
         n_parts += 1;
         if (n_parts == 3) {
-            return strings.eql(part, "tarball");
+            return strings.eqlComptime(part, "tarball");
         }
     }
 
@@ -252,6 +252,11 @@ pub inline fn isGitHubTarballPath(dependency: string) bool {
 // before I add that.
 pub inline fn isTarball(dependency: string) bool {
     return strings.endsWithComptime(dependency, ".tgz") or strings.endsWithComptime(dependency, ".tar.gz");
+}
+
+/// the input is assumed to be either a remote or local tarball
+pub inline fn isRemoteTarball(dependency: string) bool {
+    return strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://");
 }
 
 pub const Version = struct {
@@ -284,7 +289,7 @@ pub const Version = struct {
     }
 
     pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
-        if (comptime Environment.allow_assert) std.debug.assert(lhs.tag == rhs.tag);
+        if (comptime Environment.allow_assert) bun.assert(lhs.tag == rhs.tag);
         return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
@@ -338,7 +343,7 @@ pub const Version = struct {
         return switch (lhs.tag) {
             // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
             // semver ranges involve a ton of pointer chasing
-            .npm => strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)) or
+            .npm => strings.eqlLong(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf), true) or
                 lhs.value.npm.eql(rhs.value.npm, lhs_buf, rhs_buf),
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
             .git => lhs.value.git.eql(&rhs.value.git, lhs_buf, rhs_buf),
@@ -603,6 +608,11 @@ pub const Version = struct {
                     if (dependency.len == 1) return .npm;
                     if (dependency[1] == '.') return .npm;
                 },
+                'p' => {
+                    // TODO(dylan-conway): apply .patch files on packages. In the future this could
+                    // return `Tag.git` or `Tag.npm`.
+                    if (strings.hasPrefixComptime(dependency, "patch:")) return .npm;
+                },
                 else => {},
             }
 
@@ -720,8 +730,6 @@ pub fn parseWithTag(
     sliced: *const SlicedString,
     log_: ?*logger.Log,
 ) ?Version {
-    alias.assertDefined();
-
     switch (tag) {
         .npm => {
             var input = dependency;
@@ -824,7 +832,7 @@ pub fn parseWithTag(
                 alias;
 
             // name should never be empty
-            if (comptime Environment.allow_assert) std.debug.assert(!actual.isEmpty());
+            if (comptime Environment.allow_assert) bun.assert(!actual.isEmpty());
 
             return .{
                 .literal = sliced.value(),
@@ -892,7 +900,7 @@ pub fn parseWithTag(
                 }
             }
 
-            if (comptime Environment.allow_assert) std.debug.assert(isGitHubRepoPath(input));
+            if (comptime Environment.allow_assert) bun.assert(isGitHubRepoPath(input));
 
             var hash_index: usize = 0;
             var slash_index: usize = 0;
@@ -927,7 +935,7 @@ pub fn parseWithTag(
             };
         },
         .tarball => {
-            if (strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://")) {
+            if (isRemoteTarball(dependency)) {
                 return .{
                     .tag = .tarball,
                     .literal = sliced.value(),
@@ -959,12 +967,18 @@ pub fn parseWithTag(
         .folder => {
             if (strings.indexOfChar(dependency, ':')) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
-                    if (dependency.len <= protocol) {
-                        if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"file\" dependency missing a path", .{}) catch unreachable;
-                        return null;
-                    }
+                    const folder = brk: {
+                        if (dependency.len > protocol + 1 and dependency[protocol + 1] == '/') {
+                            if (dependency.len > protocol + 2 and dependency[protocol + 2] == '/') {
+                                break :brk dependency[protocol + 3 ..];
+                            }
+                            break :brk dependency[protocol + 2 ..];
+                        }
 
-                    return .{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(dependency[protocol + 1 ..]).value() }, .tag = .folder };
+                        break :brk dependency[protocol + 1 ..];
+                    };
+
+                    return .{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(folder).value() }, .tag = .folder };
                 }
 
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;
@@ -1172,10 +1186,10 @@ pub const Behavior = packed struct(u8) {
     }
 
     comptime {
-        std.debug.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
-        std.debug.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
-        std.debug.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
-        std.debug.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
-        std.debug.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
+        bun.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
+        bun.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
+        bun.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
+        bun.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
+        bun.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
     }
 };

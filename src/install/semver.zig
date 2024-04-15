@@ -47,38 +47,20 @@ pub const String = extern struct {
         };
     }
 
-    pub inline fn assertDefined(_: *const String) void {
-        // if (comptime !Environment.allow_assert)
-        //     return;
-
-        // if (this.isUndefined()) {
-        //     @breakpoint();
-        //     @panic("String is undefined");
-        // }
-    }
-
     pub inline fn init(
         buf: string,
         in: string,
     ) String {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             const out = realInit(buf, in);
-            if (out.isInline()) {
-                out.assertDefined();
-            } else {
-                std.debug.assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
+            if (!out.isInline()) {
+                assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
             }
 
             return out;
         } else {
             return realInit(buf, in);
         }
-    }
-
-    pub fn isUndefined(this: *const String) bool {
-        var num: u64 = undefined;
-        var bytes = @as(u64, @bitCast(this.bytes));
-        return @as(u63, @truncate(bytes)) == @as(u63, @truncate(num));
     }
 
     pub const Formatter = struct {
@@ -90,6 +72,16 @@ pub const String = extern struct {
             try writer.writeAll(str.slice(formatter.buf));
         }
     };
+
+    pub fn Sorter(comptime direction: enum { asc, desc }) type {
+        return struct {
+            lhs_buf: []const u8,
+            rhs_buf: []const u8,
+            pub fn lessThan(this: @This(), lhs: String, rhs: String) bool {
+                return lhs.order(&rhs, this.lhs_buf, this.rhs_buf) == if (comptime direction == .asc) .lt else .gt;
+            }
+        };
+    }
 
     pub inline fn order(
         lhs: *const String,
@@ -261,7 +253,9 @@ pub const String = extern struct {
             buf: string,
             in: string,
         ) Pointer {
-            std.debug.assert(bun.isSliceInBuffer(in, buf));
+            if (Environment.allow_assert) {
+                assert(bun.isSliceInBuffer(in, buf));
+            }
 
             return Pointer{
                 .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
@@ -276,8 +270,6 @@ pub const String = extern struct {
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
     pub fn slice(this: *const String, buf: string) string {
-        this.assertDefined();
-
         switch (this.bytes[max_inline_len - 1] & 128) {
             0 => {
                 // Edgecase: string that starts with a 0 byte will be considered empty.
@@ -312,7 +304,7 @@ pub const String = extern struct {
         pub const StringPool = std.HashMap(u64, String, IdentityContext(u64), 80);
 
         pub inline fn stringHash(buf: []const u8) u64 {
-            return bun.Wyhash.hash(0, buf);
+            return bun.Wyhash11.hash(0, buf);
         }
 
         pub inline fn count(this: *Builder, slice_: string) void {
@@ -334,12 +326,12 @@ pub const String = extern struct {
                 &[_]u8{};
         }
         pub fn allocate(this: *Builder, allocator: Allocator) !void {
-            var ptr_ = try allocator.alloc(u8, this.cap);
+            const ptr_ = try allocator.alloc(u8, this.cap);
             this.ptr = ptr_.ptr;
         }
 
         pub fn append(this: *Builder, comptime Type: type, slice_: string) Type {
-            return @call(.always_inline, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
+            return @call(bun.callmod_inline, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
         }
 
         pub fn appendUTF8WithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
@@ -358,15 +350,15 @@ pub const String = extern struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
             bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
             this.len += slice_.len;
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -393,15 +385,15 @@ pub const String = extern struct {
                 }
             }
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
             bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
             this.len += slice_.len;
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -428,11 +420,11 @@ pub const String = extern struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
-            var string_entry = this.string_pool.getOrPut(hash) catch unreachable;
+            const string_entry = this.string_pool.getOrPut(hash) catch unreachable;
             if (!string_entry.found_existing) {
                 bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
                 const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
@@ -441,7 +433,7 @@ pub const String = extern struct {
                 string_entry.value_ptr.* = String.init(this.allocatedSlice(), final_slice);
             }
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -468,7 +460,7 @@ pub const String = extern struct {
 test "String works" {
     {
         var buf: string = "hello world";
-        var world: string = buf[6..];
+        const world: string = buf[6..];
         var str = String.init(
             buf,
             world,
@@ -477,8 +469,8 @@ test "String works" {
     }
 
     {
-        var buf: string = "hello";
-        var world: string = buf;
+        const buf: string = "hello";
+        const world: string = buf;
         var str = String.init(
             buf,
             world,
@@ -488,8 +480,8 @@ test "String works" {
     }
 
     {
-        var buf: string = &[8]u8{ 'h', 'e', 'l', 'l', 'o', 'k', 'k', 129 };
-        var world: string = buf;
+        const buf: string = &[8]u8{ 'h', 'e', 'l', 'l', 'o', 'k', 'k', 129 };
+        const world: string = buf;
         var str = String.init(
             buf,
             world,
@@ -558,7 +550,7 @@ pub const BigExternalString = extern struct {
     }
 
     pub inline fn init(buf: string, in: string, hash: u64) BigExternalString {
-        std.debug.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
+        assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
 
         return BigExternalString{
             .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
@@ -587,15 +579,15 @@ pub const SlicedString = struct {
 
     pub inline fn external(this: SlicedString) ExternalString {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+            assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
         }
 
-        return ExternalString.init(this.buf, this.slice, bun.Wyhash.hash(0, this.slice));
+        return ExternalString.init(this.buf, this.slice, bun.Wyhash11.hash(0, this.slice));
     }
 
     pub inline fn value(this: SlicedString) String {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+            assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
         }
 
         return String.init(this.buf, this.slice);
@@ -666,11 +658,20 @@ pub const Version = extern struct {
         patch: ?u32 = null,
         tag: Tag = .{},
 
-        pub fn fill(this: Partial) Version {
+        pub fn min(this: Partial) Version {
             return .{
                 .major = this.major orelse 0,
                 .minor = this.minor orelse 0,
                 .patch = this.patch orelse 0,
+                .tag = this.tag,
+            };
+        }
+
+        pub fn max(this: Partial) Version {
+            return .{
+                .major = this.major orelse std.math.maxInt(u32),
+                .minor = this.minor orelse std.math.maxInt(u32),
+                .patch = this.patch orelse std.math.maxInt(u32),
                 .tag = this.tag,
             };
         }
@@ -794,8 +795,8 @@ pub const Version = extern struct {
             var rhs_itr = strings.split(rhs_str, ".");
 
             while (true) {
-                var lhs_part = lhs_itr.next();
-                var rhs_part = rhs_itr.next();
+                const lhs_part = lhs_itr.next();
+                const rhs_part = rhs_itr.next();
 
                 if (lhs_part == null and rhs_part == null) return .eq;
 
@@ -808,7 +809,12 @@ pub const Version = extern struct {
                 const lhs_uint: ?u32 = std.fmt.parseUnsigned(u32, lhs_part.?, 10) catch null;
                 const rhs_uint: ?u32 = std.fmt.parseUnsigned(u32, rhs_part.?, 10) catch null;
 
-                if (lhs_uint == null or rhs_uint == null) {
+                // a part that doesn't parse as an integer is greater than a part that does
+                // https://github.com/npm/node-semver/blob/816c7b2cbfcb1986958a290f941eddfd0441139e/internal/identifiers.js#L12
+                if (lhs_uint != null and rhs_uint == null) return .lt;
+                if (lhs_uint == null and rhs_uint != null) return .gt;
+
+                if (lhs_uint == null and rhs_uint == null) {
                     switch (strings.order(lhs_part.?, rhs_part.?)) {
                         .eq => {
                             // continue to the next part
@@ -955,14 +961,14 @@ pub const Version = extern struct {
                             .pre => {
                                 result.tag.pre = sliced_string.sub(input[start..i]).external();
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
+                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
                                 }
                                 state = State.none;
                             },
                             .build => {
                                 result.tag.build = sliced_string.sub(input[start..i]).external();
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
+                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
                                 }
                                 state = State.none;
                             },
@@ -974,9 +980,6 @@ pub const Version = extern struct {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
                         if (state == .pre or state == .none and initial_pre_count > 0) {
                             result.tag.pre = sliced_string.sub(input[start..i]).external();
-                            if (comptime Environment.isDebug) {
-                                std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                            }
                         }
 
                         if (state != .build) {
@@ -1024,7 +1027,7 @@ pub const Version = extern struct {
         wildcard: Query.Token.Wildcard = .none,
         valid: bool = true,
         version: Version.Partial = .{},
-        stopped_at: u32 = 0,
+        len: u32 = 0,
     };
 
     pub fn parse(sliced_string: SlicedString) ParseResult {
@@ -1040,21 +1043,30 @@ pub const Version = extern struct {
             return result;
         }
         var is_done = false;
-        var stopped_at: i32 = 0;
 
         var i: usize = 0;
 
-        i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
-        if (i == input.len) {
-            result.valid = false;
-            return result;
+        for (0..input.len) |c| {
+            switch (input[c]) {
+                // newlines & whitespace
+                ' ',
+                '\t',
+                '\n',
+                '\r',
+                std.ascii.control_code.vt,
+                std.ascii.control_code.ff,
+
+                // version separators
+                'v',
+                '=',
+                => {},
+                else => {
+                    i = c;
+                    break;
+                },
+            }
         }
 
-        if (input[i] == 'v' or input[i] == '=') {
-            i += 1;
-        }
-
-        i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
         if (i == input.len) {
             result.valid = false;
             return result;
@@ -1066,7 +1078,6 @@ pub const Version = extern struct {
                 break;
             }
 
-            stopped_at = @as(i32, @intCast(i));
             switch (input[i]) {
                 ' ' => {
                     is_done = true;
@@ -1074,7 +1085,9 @@ pub const Version = extern struct {
                 },
                 '|', '^', '#', '&', '%', '!' => {
                     is_done = true;
-                    stopped_at -= 1;
+                    if (i > 0) {
+                        i -= 1;
+                    }
                     break;
                 },
                 '0'...'9' => {
@@ -1128,7 +1141,6 @@ pub const Version = extern struct {
                     }
 
                     part_start_i = i;
-                    i += 1;
                     while (i < input.len and switch (input[i]) {
                         ' ' => true,
                         else => false,
@@ -1218,7 +1230,7 @@ pub const Version = extern struct {
             }
         }
 
-        result.stopped_at = @as(u32, @intCast(i));
+        result.len = @as(u32, @intCast(i));
 
         if (comptime RawType != void) {
             result.version.raw = sliced_string.sub(input[0..i]).external();
@@ -1227,19 +1239,19 @@ pub const Version = extern struct {
         return result;
     }
 
-    fn parseVersionNumber(input: string) u32 {
+    fn parseVersionNumber(input: string) ?u32 {
         // max decimal u32 is 4294967295
         var bytes: [10]u8 = undefined;
         var byte_i: u8 = 0;
 
-        std.debug.assert(input[0] != '.');
+        assert(input[0] != '.');
 
         for (input) |char| {
             switch (char) {
-                'X', 'x', '*' => return 0,
+                'X', 'x', '*' => return null,
                 '0'...'9' => {
                     // out of bounds
-                    if (byte_i + 1 > bytes.len) return 0;
+                    if (byte_i + 1 > bytes.len) return null;
                     bytes[byte_i] = char;
                     byte_i += 1;
                 },
@@ -1249,8 +1261,8 @@ pub const Version = extern struct {
             }
         }
 
-        // If there are no numbers, it's 0.
-        if (byte_i == 0) return 0;
+        // If there are no numbers
+        if (byte_i == 0) return null;
 
         if (comptime Environment.isDebug) {
             return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch |err| {
@@ -1383,7 +1395,6 @@ pub const Range = struct {
             version: Version,
             comparator_buf: string,
             version_buf: string,
-            include_pre: bool,
         ) bool {
             const order = version.orderWithoutBuild(comparator.version, version_buf, comparator_buf);
 
@@ -1393,11 +1404,11 @@ pub const Range = struct {
                     else => false,
                 },
                 .gt => switch (comparator.op) {
-                    .gt, .gte => if (!include_pre) false else true,
+                    .gt, .gte => true,
                     else => false,
                 },
                 .lt => switch (comparator.op) {
-                    .lt, .lte => if (!include_pre) false else true,
+                    .lt, .lte => true,
                     else => false,
                 },
             };
@@ -1412,39 +1423,46 @@ pub const Range = struct {
             return true;
         }
 
-        // When the boundaries of a range do not include a pre-release tag on either side,
-        // we should not consider that '7.0.0-rc2' < "7.0.0"
-        // ```
-        // > semver.satisfies("7.0.0-rc2", "<=7.0.0")
-        // false
-        // > semver.satisfies("7.0.0-rc2", ">=7.0.0")
-        // false
-        // > semver.satisfies("7.0.0-rc2", "<=7.0.0-rc2")
-        // true
-        // > semver.satisfies("7.0.0-rc2", ">=7.0.0-rc2")
-        // true
-        // ```
-        //
-        // - https://github.com/npm/node-semver#prerelease-tags
-        // - https://github.com/npm/node-semver/blob/cce61804ba6f997225a1267135c06676fe0524d2/classes/range.js#L505-L539
-        var include_pre = true;
-        if (version.tag.hasPre()) {
-            if (!has_right) {
-                if (!range.left.version.tag.hasPre()) {
-                    include_pre = false;
-                }
-            } else {
-                if (!range.left.version.tag.hasPre() and !range.right.version.tag.hasPre()) {
-                    include_pre = false;
-                }
-            }
-        }
-
-        if (!range.left.satisfies(version, range_buf, version_buf, include_pre)) {
+        if (!range.left.satisfies(version, range_buf, version_buf)) {
             return false;
         }
 
-        if (has_right and !range.right.satisfies(version, range_buf, version_buf, include_pre)) {
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_buf: string, pre_matched: *bool) bool {
+        if (comptime Environment.allow_assert) {
+            assert(version.tag.hasPre());
+        }
+        const has_left = range.hasLeft();
+        const has_right = range.hasRight();
+
+        if (!has_left) {
+            return true;
+        }
+
+        // If left has prerelease check if major,minor,patch matches with left. If
+        // not, check the same with right if right exists and has prerelease.
+        pre_matched.* = pre_matched.* or
+            (range.left.version.tag.hasPre() and
+            version.patch == range.left.version.patch and
+            version.minor == range.left.version.minor and
+            version.major == range.left.version.major) or
+            (has_right and
+            range.right.version.tag.hasPre() and
+            version.patch == range.right.version.patch and
+            version.minor == range.right.version.minor and
+            version.major == range.right.version.major);
+
+        if (!range.left.satisfies(version, range_buf, version_buf)) {
+            return false;
+        }
+
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf)) {
             return false;
         }
 
@@ -1491,11 +1509,34 @@ pub const Query = struct {
             );
         }
 
+        pub fn satisfiesPre(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
+            if (comptime Environment.allow_assert) {
+                assert(version.tag.hasPre());
+            }
+
+            // `version` has a prerelease tag:
+            // - needs to satisfy each comparator in the query (<comparator> AND <comparator> AND ...) like normal comparison
+            // - if it does, also needs to match major, minor, patch with at least one of the other versions
+            //   with a prerelease
+            // https://github.com/npm/node-semver/blob/ac9b35769ab0ddfefd5a3af4a3ecaf3da2012352/classes/range.js#L505
+            var pre_matched = false;
+            return (list.head.satisfiesPre(
+                version,
+                list_buf,
+                version_buf,
+                &pre_matched,
+            ) and pre_matched) or (list.next orelse return false).satisfiesPre(
+                version,
+                list_buf,
+                version_buf,
+            );
+        }
+
         pub fn eql(lhs: *const List, rhs: *const List) bool {
             if (!lhs.head.eql(&rhs.head)) return false;
 
-            var lhs_next = lhs.next orelse return rhs.next == null;
-            var rhs_next = rhs.next orelse return false;
+            const lhs_next = lhs.next orelse return rhs.next == null;
+            const rhs_next = rhs.next orelse return false;
 
             return lhs_next.eql(rhs_next);
         }
@@ -1554,7 +1595,7 @@ pub const Query = struct {
                 !range.hasRight())
             {
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(this.tail == null);
+                    assert(this.tail == null);
                 }
                 return range.left.version;
             }
@@ -1589,7 +1630,7 @@ pub const Query = struct {
         }
 
         pub fn toVersion(this: Group) Version {
-            std.debug.assert(this.isExact() or this.head.head.range.left.op == .unset);
+            assert(this.isExact() or this.head.head.range.left.op == .unset);
             return this.head.head.range.left.version;
         }
 
@@ -1636,7 +1677,10 @@ pub const Query = struct {
             group_buf: string,
             version_buf: string,
         ) bool {
-            return group.head.satisfies(version, group_buf, version_buf);
+            return if (version.tag.hasPre())
+                group.head.satisfiesPre(version, group_buf, version_buf)
+            else
+                group.head.satisfies(version, group_buf, version_buf);
         }
     };
 
@@ -1658,6 +1702,23 @@ pub const Query = struct {
             version,
             query_buf,
             version_buf,
+        );
+    }
+
+    pub fn satisfiesPre(query: *const Query, version: Version, query_buf: string, version_buf: string, pre_matched: *bool) bool {
+        if (comptime Environment.allow_assert) {
+            assert(version.tag.hasPre());
+        }
+        return query.range.satisfiesPre(
+            version,
+            query_buf,
+            version_buf,
+            pre_matched,
+        ) and (query.next orelse return true).satisfiesPre(
+            version,
+            query_buf,
+            version_buf,
+            pre_matched,
         );
     }
 
@@ -1733,17 +1794,17 @@ pub const Query = struct {
                 .none => unreachable,
                 .version => {
                     if (this.wildcard != Wildcard.none) {
-                        return Range.initWildcard(version.fill(), this.wildcard);
+                        return Range.initWildcard(version.min(), this.wildcard);
                     }
 
-                    return .{ .left = .{ .op = .eql, .version = version.fill() } };
+                    return .{ .left = .{ .op = .eql, .version = version.min() } };
                 },
                 else => {},
             }
 
             return switch (this.wildcard) {
                 .major => .{
-                    .left = .{ .op = .gte, .version = version.fill() },
+                    .left = .{ .op = .gte, .version = version.min() },
                     .right = .{
                         .op = .lte,
                         .version = .{
@@ -1852,7 +1913,7 @@ pub const Query = struct {
                             .lte => .lte,
                             else => unreachable,
                         },
-                        .version = version.fill(),
+                        .version = version.min(),
                     },
                 },
             };
@@ -1976,13 +2037,13 @@ pub const Query = struct {
 
             if (!skip_round) {
                 const parse_result = Version.parse(sliced.sub(input[i..]));
-                const version = parse_result.version.fill();
+                const version = parse_result.version.min();
                 if (version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                 if (version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
 
                 token.wildcard = parse_result.wildcard;
 
-                i += parse_result.stopped_at;
+                i += parse_result.len;
                 const rollback = i;
 
                 const maybe_hyphenate = i < input.len and (input[i] == ' ' or input[i] == '-');
@@ -2014,7 +2075,7 @@ pub const Query = struct {
 
                 if (hyphenate) {
                     const second_parsed = Version.parse(sliced.sub(input[i..]));
-                    var second_version = second_parsed.version.fill();
+                    var second_version = second_parsed.version.min();
                     if (second_version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                     if (second_version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
                     const range: Range = brk: {
@@ -2061,7 +2122,7 @@ pub const Query = struct {
                         try list.andRange(range);
                     }
 
-                    i += second_parsed.stopped_at + 1;
+                    i += second_parsed.len + 1;
                 } else if (count == 0 and token.tag == .version) {
                     switch (parse_result.wildcard) {
                         .none => {
@@ -2172,8 +2233,8 @@ pub const SemverObject = struct {
             return .zero;
         }
 
-        const left_version = left_result.version.fill();
-        const right_version = right_result.version.fill();
+        const left_version = left_result.version.max();
+        const right_version = right_result.version.max();
 
         return switch (left_version.orderWithoutBuild(right_version, left.slice(), right.slice())) {
             .eq => JSC.jsNumber(0),
@@ -2216,7 +2277,7 @@ pub const SemverObject = struct {
             return .false;
         }
 
-        const left_version = left_result.version.fill();
+        const left_version = left_result.version.min();
 
         const right_group = Query.parse(
             allocator,
@@ -2238,8 +2299,8 @@ const expect = if (Environment.isTest) struct {
     pub var counter: usize = 0;
     pub fn isRangeMatch(input: string, version_str: string) bool {
         var parsed = Version.parse(SlicedString.init(version_str, version_str));
-        std.debug.assert(parsed.valid);
-        // std.debug.assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
+        assert(parsed.valid);
+        // assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
 
         var list = Query.parse(
             default_allocator,
@@ -2247,7 +2308,7 @@ const expect = if (Environment.isTest) struct {
             SlicedString.init(input, input),
         ) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
 
-        return list.satisfies(parsed.version.fill());
+        return list.satisfies(parsed.version.min());
     }
 
     pub fn range(input: string, version_str: string, src: std.builtin.SourceLocation) void {
@@ -2289,7 +2350,7 @@ const expect = if (Environment.isTest) struct {
         Output.initTest();
         defer counter += 1;
         const result = Version.parse(SlicedString.init(input, input));
-        std.debug.assert(result.valid);
+        assert(result.valid);
 
         if (v[0] != result.version.major or v[1] != result.version.minor or v[2] != result.version.patch) {
             Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
@@ -2313,7 +2374,7 @@ const expect = if (Environment.isTest) struct {
         defer counter += 1;
 
         var result = Version.parse(SlicedString.init(input, input));
-        if (!v.eql(result.version.fill())) {
+        if (!v.eql(result.version.min())) {
             Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
                 input,
                 v.major,
@@ -2612,3 +2673,5 @@ test "Range parsing" {
     expect.range("5.0 || 1.2 - 1.3", "5.0.2", @src());
     expect.range("5.0 || 1.2 - 1.3 || >8", "9.0.2", @src());
 }
+
+const assert = bun.assert;

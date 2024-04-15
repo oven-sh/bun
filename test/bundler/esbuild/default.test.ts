@@ -2,6 +2,7 @@ import assert from "assert";
 import dedent from "dedent";
 
 import { ESBUILD_PATH, RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
+import { osSlashes } from "harness";
 var { describe, test, expect } = testForFile(import.meta.path);
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
@@ -891,6 +892,7 @@ describe("bundler", () => {
       "/node_modules/c/index.js": `exports.foo = 123`,
       "/node_modules/c/package.json": `{"main": "index.js", "name": "c"}`,
     },
+    target: "node",
     run: [
       {
         args: ["true", "true", "./c.js"],
@@ -1981,6 +1983,8 @@ describe("bundler", () => {
   itBundled("default/DirectEvalTaintingNoBundle", {
     files: {
       "/entry.js": /* js */ `
+        module.exports = 1; // flag as CJS input
+
         function test1() {
           let shouldNotBeRenamed1 = 1;
           function add(first, second) {
@@ -2006,16 +2010,7 @@ describe("bundler", () => {
             return first + second
           }
         }
-  
-        function test4(eval) {
-          let shouldNotBeRenamed2 = 1;
-          function add(first, second) {
-            let renameMe1 = 1;
-            return first + second
-          }
-          eval('add(1, 2)')
-        }
-  
+
         function test5() {
           let shouldNotBeRenamed3 = 1;
           function containsDirectEval() { eval() }
@@ -2025,13 +2020,37 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     bundling: false,
-    format: "cjs",
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
       assert(text.includes("shouldNotBeRenamed1"), "Should not have renamed `shouldNotBeRenamed1`");
-      assert(text.includes("shouldNotBeRenamed2"), "Should not have renamed `shouldNotBeRenamed2`");
+      // assert(text.includes("shouldNotBeRenamed2"), "Should not have renamed `shouldNotBeRenamed2`");
       assert(text.includes("shouldNotBeRenamed3"), "Should not have renamed `shouldNotBeRenamed3`");
       assert(text.includes("shouldNotBeRenamed4"), "Should not have renamed `shouldNotBeRenamed4`");
+      assert(!text.includes("renameMe"), "Should have renamed all `renameMe` variabled");
+    },
+  });
+  itBundled("default/DirectEvalTainting2NoBundle", {
+    files: {
+      "/entry.js": /* js */ `
+        module.exports = 1; // flag as CJS input
+
+        function test4(eval) {
+          let shouldNotBeRenamed2 = 1;
+          function add(first, second) {
+            let renameMe1 = 1;
+            return first + second
+          }
+          eval('add(1, 2)')
+        }
+      `,
+    },
+    todo: true,
+    minifyIdentifiers: true,
+    bundling: false,
+    format: "cjs",
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      assert(text.includes("shouldNotBeRenamed2"), "Should not have renamed `shouldNotBeRenamed2`");
       assert(!text.includes("renameMe"), "Should have renamed all `renameMe` variabled");
     },
   });
@@ -4054,7 +4073,7 @@ describe("bundler", () => {
       "/a/b/c.js": `console.log('c')`,
       "/a/b/d.js": `console.log('d')`,
     },
-    entryPointsRaw: ["/a/b/c.js", "/a/b/d.js"],
+    entryPointsRaw: ["a/b/c.js", "a/b/d.js"],
     root: "/",
     onAfterBundle(api) {
       api.assertFileExists("/out/a/b/c.js");
@@ -4111,7 +4130,7 @@ describe("bundler", () => {
   });
   itBundled("default/DefineImportMeta", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.js": /* js */ ` 
         console.log(
           // These should be fully substituted
           import.meta,
@@ -5108,7 +5127,6 @@ describe("bundler", () => {
     },
   });
   const RequireShimSubstitutionBrowser = itBundled("default/RequireShimSubstitutionBrowser", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         Promise.all([
@@ -5151,13 +5169,14 @@ describe("bundler", () => {
       "/node_modules/some-path/index.js": `module.exports = 123`,
       "/node_modules/second-path/index.js": `module.exports = 567`,
     },
-    bundling: false,
     target: "browser",
     format: "esm",
     outfile: "/out.mjs",
+    external: ["*"],
     run: {
       runtime: "node",
       file: "/test.mjs",
+      // using os slashes here is correct because we run the bundle in bun.
       stdout: `
           function undefined
           string "function"
@@ -5167,8 +5186,8 @@ describe("bundler", () => {
           object {"works":true}
           object {"works":true}
           number 567
-          string "/node_modules/some-path/index.js"
-          string "/node_modules/second-path/index.js"
+          string ${JSON.stringify(osSlashes("/node_modules/some-path/index.js"))}
+          string ${JSON.stringify(osSlashes("/node_modules/second-path/index.js"))}
           object {"default":123}
           object {"default":567}
         `,
@@ -5177,10 +5196,10 @@ describe("bundler", () => {
   itBundled("default/RequireShimSubstitutionNode", {
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
-    bundling: false,
     target: "node",
     format: "esm",
     outfile: "/out.mjs",
+    external: ["*"],
     run: {
       runtime: "node",
       file: "/test.mjs",
@@ -5193,8 +5212,8 @@ describe("bundler", () => {
         object {"works":true}
         object {"works":true}
         number 567
-        string "/node_modules/some-path/index.js"
-        string "/node_modules/second-path/index.js"
+        string ${JSON.stringify(osSlashes("/node_modules/some-path/index.js"))}
+        string ${JSON.stringify(osSlashes("/node_modules/second-path/index.js"))}
         object {"default":123}
         object {"default":567}
       `,

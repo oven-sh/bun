@@ -12,6 +12,7 @@ export default [
       message: {
         getter: "getMessage",
         cache: true,
+        writable: true,
       },
       code: {
         getter: "getCode",
@@ -66,6 +67,7 @@ export default [
       message: {
         getter: "getMessage",
         cache: true,
+        writable: true,
       },
       name: {
         value: "BuildMessage",
@@ -78,6 +80,12 @@ export default [
         getter: "getPosition",
         cache: true,
       },
+
+      notes: {
+        getter: "getNotes",
+        cache: true,
+      },
+
       ["@@toPrimitive"]: {
         fn: "toPrimitive",
         length: 1,

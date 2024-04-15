@@ -26,9 +26,9 @@
 
 #include "DOMWrapperWorld.h"
 #include "JSDOMWrapper.h"
-#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/SlotVisitor.h>
-#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakInlines.h>
 #include <variant>
 
 namespace WebCore {
@@ -51,10 +51,6 @@ public:
     void setWeakly(JSC::JSValue);
     JSC::JSValue getValue(JSC::JSValue nullValue = JSC::jsUndefined()) const;
 
-    // FIXME: Remove this once IDBRequest semantic bug is fixed.
-    // https://bugs.webkit.org/show_bug.cgi?id=236278
-    void setWithoutBarrier(JSValueInWrappedObject&);
-
 private:
     // Keep in mind that all of these fields are accessed concurrently without lock from concurrent GC thread.
     JSC::JSValue m_nonCell {};
@@ -62,7 +58,6 @@ private:
 };
 
 JSC::JSValue cachedPropertyValue(JSC::ThrowScope&, JSC::JSGlobalObject&, const JSDOMObject& owner, JSValueInWrappedObject& cacheSlot, const Function<JSC::JSValue(JSC::ThrowScope&)>&);
-JSC::JSValue cachedPropertyValue(JSC::JSGlobalObject&, const JSDOMObject& owner, JSValueInWrappedObject& cacheSlot, const Function<JSC::JSValue()>&);
 
 inline JSValueInWrappedObject::JSValueInWrappedObject(JSC::JSValue value)
 {
@@ -113,14 +108,6 @@ inline void JSValueInWrappedObject::clear()
 {
     m_nonCell = {};
     m_cell.clear();
-}
-
-inline void JSValueInWrappedObject::setWithoutBarrier(JSValueInWrappedObject& other)
-{
-    JSC::Weak weak { other.m_cell.get() };
-    WTF::storeStoreFence(); // Ensure Weak is fully initialized for concurrent access.
-    m_nonCell = other.m_nonCell;
-    m_cell = WTFMove(weak);
 }
 
 inline JSC::JSValue cachedPropertyValue(JSC::JSGlobalObject& lexicalGlobalObject, const JSDOMObject& owner, JSValueInWrappedObject& cachedValue, const Function<JSC::JSValue()>& function)

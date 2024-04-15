@@ -2,8 +2,17 @@
 // "readable-stream" npm package
 // just transpiled and debug logs added.
 
-const EE = $lazy("events");
 const StringDecoder = require("node:string_decoder").StringDecoder;
+
+const {
+  BufferList,
+  ReadableState,
+  maybeReadMore: _maybeReadMore,
+  resume,
+  emitReadable: _emitReadable,
+  // onEofChunk,
+  EE,
+} = $cpp("JSReadableHelper.cpp", "createNodeStreamBinding");
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
@@ -42,7 +51,7 @@ const validateObject = (value, name, options = null) => {
   const nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray(value)) ||
+    (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
@@ -60,8 +69,6 @@ const validateObject = (value, name, options = null) => {
 function validateString(value, name) {
   if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
 }
-
-var ArrayIsArray = Array.isArray;
 
 //------------------------------------------------------------------------------
 // Node error polyfills
@@ -716,14 +723,14 @@ var require_validators = __commonJS({
       const nullable = useDefaultOptions ? false : options.nullable;
       if (
         (!nullable && value === null) ||
-        (!allowArray && ArrayIsArray(value)) ||
+        (!allowArray && $isJSArray(value)) ||
         (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
       ) {
         throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
       }
     });
     var validateArray = hideStackFrames((value, name, minLength = 0) => {
-      if (!ArrayIsArray(value)) {
+      if (!$isJSArray(value)) {
         throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
       }
       if (value.length < minLength) {
@@ -1044,20 +1051,20 @@ var require_utils = __commonJS({
                   : stream.writableErrored) !== null && _ref4 !== void 0
                 ? _ref4
                 : (_stream$_readableStat3 = stream._readableState) === null || _stream$_readableStat3 === void 0
-                ? void 0
-                : _stream$_readableStat3.errorEmitted) !== null && _ref3 !== void 0
+                  ? void 0
+                  : _stream$_readableStat3.errorEmitted) !== null && _ref3 !== void 0
               ? _ref3
               : (_stream$_writableStat3 = stream._writableState) === null || _stream$_writableStat3 === void 0
-              ? void 0
-              : _stream$_writableStat3.errorEmitted) !== null && _ref2 !== void 0
+                ? void 0
+                : _stream$_writableStat3.errorEmitted) !== null && _ref2 !== void 0
             ? _ref2
             : (_stream$_readableStat4 = stream._readableState) === null || _stream$_readableStat4 === void 0
-            ? void 0
-            : _stream$_readableStat4.errored) !== null && _ref !== void 0
+              ? void 0
+              : _stream$_readableStat4.errored) !== null && _ref !== void 0
           ? _ref
           : (_stream$_writableStat4 = stream._writableState) === null || _stream$_writableStat4 === void 0
-          ? void 0
-          : _stream$_writableStat4.errored)
+            ? void 0
+            : _stream$_writableStat4.errored)
       );
     }
     module.exports = {
@@ -1359,8 +1366,8 @@ var require_operators = __commonJS({
         options === null || options === void 0
           ? void 0
           : (_options$signal2 = options.signal) === null || _options$signal2 === void 0
-          ? void 0
-          : _options$signal2.addEventListener("abort", abort);
+            ? void 0
+            : _options$signal2.addEventListener("abort", abort);
         let next;
         let resume;
         let done = false;
@@ -1414,8 +1421,8 @@ var require_operators = __commonJS({
             options === null || options === void 0
               ? void 0
               : (_options$signal3 = options.signal) === null || _options$signal3 === void 0
-              ? void 0
-              : _options$signal3.removeEventListener("abort", abort);
+                ? void 0
+                : _options$signal3.removeEventListener("abort", abort);
           }
         }
         pump();
@@ -2005,6 +2012,7 @@ var require_legacy = __commonJS({
     }
     Stream.prototype = {};
     ObjectSetPrototypeOf(Stream.prototype, EE.prototype);
+    Stream.prototype.constructor = Stream; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Stream, EE);
 
     Stream.prototype.pipe = function (dest, options) {
@@ -2064,7 +2072,7 @@ var require_legacy = __commonJS({
     function prependListener(emitter, event, fn) {
       if (typeof emitter.prependListener === "function") return emitter.prependListener(event, fn);
       if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);
-      else if (ArrayIsArray(emitter._events[event])) emitter._events[event].unshift(fn);
+      else if ($isJSArray(emitter._events[event])) emitter._events[event].unshift(fn);
       else emitter._events[event] = [fn, emitter._events[event]];
     }
     module.exports = {
@@ -2119,34 +2127,38 @@ var require_add_abort_signal = __commonJS({
 });
 
 // node_modules/readable-stream/lib/internal/streams/state.js
-var require_state = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/state.js"(exports, module) {
-    "use strict";
-    var { MathFloor, NumberIsInteger } = require_primordials();
-    var { ERR_INVALID_ARG_VALUE } = require_errors().codes;
-    function highWaterMarkFrom(options, isDuplex, duplexKey) {
-      return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
+var { MathFloor, NumberIsInteger } = require_primordials();
+var { ERR_INVALID_ARG_VALUE } = require_errors().codes;
+function highWaterMarkFrom(options, isDuplex, duplexKey) {
+  return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
+}
+
+let hwm_object = 16;
+let hwm_bytes = 16 * 1024;
+
+function getDefaultHighWaterMark(objectMode) {
+  return objectMode ? hwm_object : hwm_bytes;
+}
+
+function setDefaultHighWaterMark(objectMode, value) {
+  if (objectMode) {
+    hwm_object = value;
+  } else {
+    hwm_bytes = value;
+  }
+}
+
+function getHighWaterMark(state, options, duplexKey, isDuplex) {
+  const hwm = highWaterMarkFrom(options, isDuplex, duplexKey);
+  if (hwm != null) {
+    if (!NumberIsInteger(hwm) || hwm < 0) {
+      const name = isDuplex ? `options.${duplexKey}` : "options.highWaterMark";
+      throw new ERR_INVALID_ARG_VALUE(name, hwm);
     }
-    function getDefaultHighWaterMark(objectMode) {
-      return objectMode ? 16 : 16 * 1024;
-    }
-    function getHighWaterMark(state, options, duplexKey, isDuplex) {
-      const hwm = highWaterMarkFrom(options, isDuplex, duplexKey);
-      if (hwm != null) {
-        if (!NumberIsInteger(hwm) || hwm < 0) {
-          const name = isDuplex ? `options.${duplexKey}` : "options.highWaterMark";
-          throw new ERR_INVALID_ARG_VALUE(name, hwm);
-        }
-        return MathFloor(hwm);
-      }
-      return getDefaultHighWaterMark(state.objectMode);
-    }
-    module.exports = {
-      getHighWaterMark,
-      getDefaultHighWaterMark,
-    };
-  },
-});
+    return MathFloor(hwm);
+  }
+  return getDefaultHighWaterMark(state.objectMode);
+}
 
 // node_modules/readable-stream/lib/internal/streams/from.js
 var require_from = __commonJS({
@@ -2257,10 +2269,8 @@ var require_readable = __commonJS({
       Promise: Promise2,
       SafeSet,
       SymbolAsyncIterator,
-      Symbol: Symbol2,
     } = require_primordials();
 
-    var ReadableState = $lazy("bun:stream").ReadableState;
     var { Stream, prependListener } = require_legacy();
 
     function Readable(options) {
@@ -2284,6 +2294,7 @@ var require_readable = __commonJS({
     }
     Readable.prototype = {};
     ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
+    Readable.prototype.constructor = Readable; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Readable, Stream);
 
     Readable.prototype.on = function (ev, fn) {
@@ -2510,14 +2521,16 @@ var require_readable = __commonJS({
 
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();
-    const { maybeReadMore: _maybeReadMore, resume, emitReadable: _emitReadable, onEofChunk } = $lazy("bun:stream");
     function maybeReadMore(stream, state) {
       process.nextTick(_maybeReadMore, stream, state);
     }
-    // REVERT ME
     function emitReadable(stream, state) {
       $debug("NativeReadable - emitReadable", stream.__id);
-      _emitReadable(stream, state);
+      state.needReadable = false;
+      if (!state.emittedReadable) {
+        state.emittedReadable = true;
+        process.nextTick(_emitReadable, stream, state);
+      }
     }
     var destroyImpl = require_destroy();
     var {
@@ -2625,6 +2638,27 @@ var require_readable = __commonJS({
       }
       $debug("about to maybereadmore");
       maybeReadMore(stream, state);
+    }
+    function onEofChunk(stream, state) {
+      if (state.ended) return;
+
+      const decoder = state.decoder;
+      if (decoder) {
+        const chunk = decoder.end();
+        const chunkLength = chunk?.length;
+        if (chunkLength) {
+          state.buffer.push(chunk);
+          state.length += state.objectMode ? 1 : chunkLength;
+        }
+      }
+      state.ended = true;
+      if (state.sync) {
+        emitReadable(stream, state);
+      } else {
+        state.needReadable = false;
+        state.emittedReadable = true;
+        _emitReadable(stream, state);
+      }
     }
     Readable.prototype.isPaused = function () {
       const state = this._readableState;
@@ -2804,6 +2838,7 @@ var require_readable = __commonJS({
         }
       }
 
+      $debug("length", state.length, state.ended, nOrig, n);
       if (state.length === 0) {
         // If we have nothing in the buffer, then we want to know
         // as soon as we *do* get something into the buffer.
@@ -3363,9 +3398,21 @@ var require_readable = __commonJS({
     };
 
     Readable.fromWeb = function (readableStream, options) {
+      // We cache .stream() calls for file descriptors
+      // This won't create a new ReadableStream each time.
+      let bunStdinStream = Bun.stdin.stream();
+      if (readableStream === bunStdinStream) {
+        return bunStdinStream;
+      }
+
       return webStreamsAdapters.newStreamReadableFromReadableStream(readableStream, options);
     };
     Readable.toWeb = function (streamReadable, options) {
+      // Workaround for https://github.com/oven-sh/bun/issues/9041
+      if (streamReadable === process.stdin) {
+        return Bun.stdin.stream();
+      }
+
       return webStreamsAdapters.newReadableStreamFromStreamReadable(streamReadable, options);
     };
     Readable.wrap = function (src, options) {
@@ -3389,6 +3436,7 @@ var require_readable = __commonJS({
 });
 
 // node_modules/readable-stream/lib/internal/streams/writable.js
+var errorOrDestroy;
 var require_writable = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/writable.js"(exports, module) {
     "use strict";
@@ -3407,7 +3455,6 @@ var require_writable = __commonJS({
     var Stream = require_legacy().Stream;
     var destroyImpl = require_destroy();
     var { addAbortSignal } = require_add_abort_signal();
-    var { getHighWaterMark, getDefaultHighWaterMark } = require_state();
     var {
       ERR_INVALID_ARG_TYPE,
       ERR_METHOD_NOT_IMPLEMENTED,
@@ -3419,7 +3466,7 @@ var require_writable = __commonJS({
       ERR_STREAM_WRITE_AFTER_END,
       ERR_UNKNOWN_ENCODING,
     } = require_errors().codes;
-    var { errorOrDestroy } = destroyImpl;
+    ({ errorOrDestroy } = destroyImpl);
 
     function Writable(options = {}) {
       const isDuplex = this instanceof require_duplex();
@@ -3445,6 +3492,7 @@ var require_writable = __commonJS({
     }
     Writable.prototype = {};
     ObjectSetPrototypeOf(Writable.prototype, Stream.prototype);
+    Writable.prototype.constructor = Writable; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Writable, Stream);
     module.exports = Writable;
 
@@ -3831,7 +3879,7 @@ var require_writable = __commonJS({
       let called = false;
       function onFinish(err) {
         if (called) {
-          errorOrDestroy(stream, err !== null && err !== void 0 ? err : ERR_MULTIPLE_CALLBACK());
+          errorOrDestroy(stream, err !== null && err !== void 0 ? err : new ERR_MULTIPLE_CALLBACK());
           return;
         }
         called = true;
@@ -4047,7 +4095,6 @@ var require_duplexify = __commonJS({
     } = require_errors();
     var { destroyer } = require_destroy();
     var Duplex = require_duplex();
-    var Readable = require_readable();
     var { createDeferredPromise } = require_util();
     var from = require_from();
     var isBlob =
@@ -4383,8 +4430,6 @@ var require_duplex = __commonJS({
     var { ObjectDefineProperties, ObjectGetOwnPropertyDescriptor, ObjectKeys, ObjectSetPrototypeOf } =
       require_primordials();
 
-    var Readable = require_readable();
-
     function Duplex(options) {
       if (!(this instanceof Duplex)) return new Duplex(options);
       Readable.$call(this, options);
@@ -4410,6 +4455,7 @@ var require_duplex = __commonJS({
     Duplex.prototype = {};
     module.exports = Duplex;
     ObjectSetPrototypeOf(Duplex.prototype, Readable.prototype);
+    Duplex.prototype.constructor = Duplex; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Duplex, Readable);
 
     {
@@ -4470,7 +4516,6 @@ var require_transform = __commonJS({
     "use strict";
     var { ObjectSetPrototypeOf, Symbol: Symbol2 } = require_primordials();
     var { ERR_METHOD_NOT_IMPLEMENTED } = require_errors().codes;
-    var Duplex = require_duplex();
     function Transform(options) {
       if (!(this instanceof Transform)) return new Transform(options);
       Duplex.$call(this, options);
@@ -4487,6 +4532,7 @@ var require_transform = __commonJS({
     }
     Transform.prototype = {};
     ObjectSetPrototypeOf(Transform.prototype, Duplex.prototype);
+    Transform.prototype.constructor = Transform; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Transform, Duplex);
 
     module.exports = Transform;
@@ -4575,6 +4621,7 @@ var require_passthrough = __commonJS({
     PassThrough.prototype = {};
 
     ObjectSetPrototypeOf(PassThrough.prototype, Transform.prototype);
+    PassThrough.prototype.constructor = PassThrough; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(PassThrough, Transform);
 
     PassThrough.prototype._transform = function (chunk, encoding, cb) {
@@ -4593,7 +4640,6 @@ var require_pipeline = __commonJS({
     var eos = require_end_of_stream();
     var { once } = require_util();
     var destroyImpl = require_destroy();
-    var Duplex = require_duplex();
     var {
       aggregateTwoErrors,
       codes: { ERR_INVALID_ARG_TYPE, ERR_INVALID_RETURN_VALUE, ERR_MISSING_ARGS, ERR_STREAM_DESTROYED },
@@ -4602,7 +4648,6 @@ var require_pipeline = __commonJS({
     var { validateFunction, validateAbortSignal } = require_validators();
     var { isIterable, isReadable, isReadableNodeStream, isNodeStream } = require_utils();
     var PassThrough;
-    var Readable;
     function destroyer(stream, reading, writing) {
       let finished = false;
       stream.on("close", () => {
@@ -4640,9 +4685,6 @@ var require_pipeline = __commonJS({
       throw new ERR_INVALID_ARG_TYPE("val", ["Readable", "Iterable", "AsyncIterable"], val);
     }
     async function* fromReadable(val) {
-      if (!Readable) {
-        Readable = require_readable();
-      }
       yield* Readable.prototype[SymbolAsyncIterator].$call(val);
     }
     async function pump(iterable, writable, finish, { end }) {
@@ -4705,7 +4747,7 @@ var require_pipeline = __commonJS({
       return pipelineImpl(streams, once(popCallback(streams)));
     }
     function pipelineImpl(streams, callback, opts) {
-      if (streams.length === 1 && ArrayIsArray(streams[0])) {
+      if (streams.length === 1 && $isJSArray(streams[0])) {
         streams = streams[0];
       }
       if (streams.length < 2) {
@@ -5192,18 +5234,19 @@ var require_stream = __commonJS({
     Stream._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk) {
       return new Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
     };
+    Stream.setDefaultHighWaterMark = setDefaultHighWaterMark;
+    Stream.getDefaultHighWaterMark = getDefaultHighWaterMark;
   },
 });
+
+var kEnsureConstructed = Symbol("kEnsureConstructed");
 
 /**
  * Bun native stream wrapper
  *
  * This glue code lets us avoid using ReadableStreams to wrap Bun internal streams
- *
  */
-function createNativeStreamReadable(nativeType, Readable) {
-  var [pull, start, cancel, setClose, deinit, updateRef, drainFn] = $lazy(nativeType);
-
+function createNativeStreamReadable(Readable) {
   var closer = [false];
   var handleNumberResult = function (nativeReadable, result, view, isClosed) {
     if (result > 0) {
@@ -5241,30 +5284,36 @@ function createNativeStreamReadable(nativeType, Readable) {
 
   var DYNAMICALLY_ADJUST_CHUNK_SIZE = process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1";
 
-  const finalizer = new FinalizationRegistry(ptr => ptr && deinit(ptr));
   const MIN_BUFFER_SIZE = 512;
   var NativeReadable = class NativeReadable extends Readable {
-    #bunNativePtr;
-    #refCount = 1;
+    #refCount = 0;
     #constructed = false;
     #remainingChunk = undefined;
     #highWaterMark;
     #pendingRead = false;
     #hasResized = !DYNAMICALLY_ADJUST_CHUNK_SIZE;
-    #unregisterToken;
     constructor(ptr, options = {}) {
       super(options);
+
       if (typeof options.highWaterMark === "number") {
         this.#highWaterMark = options.highWaterMark;
       } else {
         this.#highWaterMark = 256 * 1024;
       }
-      this.#bunNativePtr = ptr;
+      this.$bunNativePtr = ptr;
       this.#constructed = false;
       this.#remainingChunk = undefined;
       this.#pendingRead = false;
-      this.#unregisterToken = {};
-      finalizer.register(this, this.#bunNativePtr, this.#unregisterToken);
+      ptr.onClose = this.#onClose.bind(this);
+      ptr.onDrain = this.#onDrain.bind(this);
+    }
+
+    #onClose() {
+      this.push(null);
+    }
+
+    #onDrain(chunk) {
+      this.push(chunk);
     }
 
     // maxToRead is by default the highWaterMark passed from the Readable.read call to this fn
@@ -5277,9 +5326,9 @@ function createNativeStreamReadable(nativeType, Readable) {
         return;
       }
 
-      var ptr = this.#bunNativePtr;
+      var ptr = this.$bunNativePtr;
       $debug("ptr @ NativeReadable._read", ptr, this.__id);
-      if (ptr === 0) {
+      if (!ptr) {
         this.push(null);
         return;
       }
@@ -5290,28 +5339,14 @@ function createNativeStreamReadable(nativeType, Readable) {
       }
 
       return this.#internalRead(this.#getRemainingChunk(maxToRead), ptr);
-      // const internalReadRes = this.#internalRead(
-      //   this.#getRemainingChunk(),
-      //   ptr,
-      // );
-      // // REVERT ME
-      // const wrap = new Promise((resolve) => {
-      //   if (!this.internalReadRes?.then) {
-      //     debug("internalReadRes not promise");
-      //     resolve(internalReadRes);
-      //     return;
-      //   }
-      //   internalReadRes.then((result) => {
-      //     debug("internalReadRes done");
-      //     resolve(result);
-      //   });
-      // });
-      // return wrap;
     }
 
     #internalConstruct(ptr) {
+      $assert(this.#constructed === false);
       this.#constructed = true;
-      const result = start(ptr, this.#highWaterMark);
+
+      const result = ptr.start(this.#highWaterMark);
+
       $debug("NativeReadable internal `start` result", result, this.__id);
 
       if (typeof result === "number" && result > 1) {
@@ -5321,12 +5356,10 @@ function createNativeStreamReadable(nativeType, Readable) {
         this.#highWaterMark = Math.min(this.#highWaterMark, result);
       }
 
-      if (drainFn) {
-        const drainResult = drainFn(ptr);
-        $debug("NativeReadable drain result", drainResult, this.__id);
-        if ((drainResult?.byteLength ?? 0) > 0) {
-          this.push(drainResult);
-        }
+      const drainResult = ptr.drain();
+      $debug("NativeReadable drain result", drainResult, this.__id);
+      if ((drainResult?.byteLength ?? 0) > 0) {
+        this.push(drainResult);
       }
     }
 
@@ -5343,6 +5376,13 @@ function createNativeStreamReadable(nativeType, Readable) {
       return chunk;
     }
 
+    #adjustHighWaterMark() {
+      this.#highWaterMark = Math.min(this.#highWaterMark * 2, 1024 * 1024 * 2);
+      this.#hasResized = true;
+
+      $debug("Resized", this.__id);
+    }
+
     // push(result, encoding) {
     //   debug("NativeReadable push -- result, encoding", result, encoding, this.__id);
     //   return super.push(...arguments);
@@ -5353,8 +5393,7 @@ function createNativeStreamReadable(nativeType, Readable) {
 
       if (typeof result === "number") {
         if (result >= this.#highWaterMark && !this.#hasResized && !isClosed) {
-          this.#highWaterMark *= 2;
-          this.#hasResized = true;
+          this.#adjustHighWaterMark();
         }
 
         return handleNumberResult(this, result, view, isClosed);
@@ -5363,11 +5402,9 @@ function createNativeStreamReadable(nativeType, Readable) {
           this.push(null);
         });
         return view?.byteLength ?? 0 > 0 ? view : undefined;
-      } else if (ArrayBuffer.isView(result)) {
+      } else if ($isTypedArrayView(result)) {
         if (result.byteLength >= this.#highWaterMark && !this.#hasResized && !isClosed) {
-          this.#highWaterMark *= 2;
-          this.#hasResized = true;
-          $debug("Resized", this.__id);
+          this.#adjustHighWaterMark();
         }
 
         return handleArrayBufferViewResult(this, result, view, isClosed);
@@ -5380,14 +5417,15 @@ function createNativeStreamReadable(nativeType, Readable) {
     #internalRead(view, ptr) {
       $debug("#internalRead()", this.__id);
       closer[0] = false;
-      var result = pull(ptr, view, closer);
+      var result = ptr.pull(view, closer);
       if ($isPromise(result)) {
         this.#pendingRead = true;
         return result.then(
           result => {
             this.#pendingRead = false;
             $debug("pending no longerrrrrrrr (result returned from pull)", this.__id);
-            this.#remainingChunk = this.#handleResult(result, view, closer[0]);
+            const isClosed = closer[0];
+            this.#remainingChunk = this.#handleResult(result, view, isClosed);
           },
           reason => {
             $debug("error from pull", reason, this.__id);
@@ -5400,43 +5438,41 @@ function createNativeStreamReadable(nativeType, Readable) {
     }
 
     _destroy(error, callback) {
-      var ptr = this.#bunNativePtr;
-      if (ptr === 0) {
+      var ptr = this.$bunNativePtr;
+      if (!ptr) {
         callback(error);
         return;
       }
 
-      finalizer.unregister(this.#unregisterToken);
-      this.#bunNativePtr = 0;
-      if (updateRef) {
-        updateRef(ptr, false);
-      }
+      this.$bunNativePtr = undefined;
+      ptr.updateRef(false);
+
       $debug("NativeReadable destroyed", this.__id);
-      cancel(ptr, error);
+      ptr.cancel(error);
       callback(error);
     }
 
     ref() {
-      var ptr = this.#bunNativePtr;
-      if (ptr === 0) return;
+      var ptr = this.$bunNativePtr;
+      if (ptr === undefined) return;
       if (this.#refCount++ === 0) {
-        updateRef(ptr, true);
+        ptr.updateRef(true);
       }
     }
 
     unref() {
-      var ptr = this.#bunNativePtr;
-      if (ptr === 0) return;
+      var ptr = this.$bunNativePtr;
+      if (ptr === undefined) return;
       if (this.#refCount-- === 1) {
-        updateRef(ptr, false);
+        ptr.updateRef(false);
       }
     }
-  };
 
-  if (!updateRef) {
-    NativeReadable.prototype.ref = undefined;
-    NativeReadable.prototype.unref = undefined;
-  }
+    [kEnsureConstructed]() {
+      if (this.#constructed) return;
+      this.#internalConstruct(this.$bunNativePtr);
+    }
+  };
 
   return NativeReadable;
 }
@@ -5449,32 +5485,35 @@ var nativeReadableStreamPrototypes = {
   4: undefined,
   5: undefined,
 };
+
 function getNativeReadableStreamPrototype(nativeType, Readable) {
-  return (nativeReadableStreamPrototypes[nativeType] ||= createNativeStreamReadable(nativeType, Readable));
+  return (nativeReadableStreamPrototypes[nativeType] ??= createNativeStreamReadable(Readable));
 }
 
 function getNativeReadableStream(Readable, stream, options) {
-  if (!(stream && typeof stream === "object" && stream instanceof ReadableStream)) {
-    return undefined;
-  }
-
-  const native = $direct(stream);
-  if (!native) {
+  const ptr = stream.$bunNativePtr;
+  if (!ptr || ptr === -1) {
     $debug("no native readable stream");
     return undefined;
   }
-  const { stream: ptr, data: type } = native;
+  const type = stream.$bunNativeType;
+  $assert(typeof type === "number", "Invalid native type");
+  $assert(typeof ptr === "object", "Invalid native ptr");
 
   const NativeReadable = getNativeReadableStreamPrototype(type, Readable);
-
+  stream.$bunNativePtr = -1;
+  stream.$bunNativeType = 0;
+  stream.$disturbed = true;
   return new NativeReadable(ptr, options);
 }
-/** --- Bun native stream wrapper ---  */
 
+/** --- Bun native stream wrapper ---  */
+var Readable = require_readable();
 var Writable = require_writable();
+var Duplex = require_duplex();
 
 const _pathOrFdOrSink = Symbol("pathOrFdOrSink");
-const _fileSink = Symbol("fileSink");
+const { fileSinkSymbol: _fileSink } = require("internal/shared");
 const _native = Symbol("native");
 
 function NativeWritable(pathOrFdOrSink, options = {}) {
@@ -5483,11 +5522,12 @@ function NativeWritable(pathOrFdOrSink, options = {}) {
   this[_native] = true;
 
   this._construct = NativeWritable_internalConstruct;
-  this._destroy = NativeWritable_internalDestroy;
   this._final = NativeWritable_internalFinal;
+  this._write = NativeWritablePrototypeWrite;
 
   this[_pathOrFdOrSink] = pathOrFdOrSink;
 }
+Object.setPrototypeOf(NativeWritable, Writable);
 NativeWritable.prototype = Object.create(Writable.prototype);
 
 // These are confusingly two different fns for construct which initially were the same thing because
@@ -5496,7 +5536,7 @@ NativeWritable.prototype = Object.create(Writable.prototype);
 function NativeWritable_internalConstruct(cb) {
   this._writableState.constructed = true;
   this.constructed = true;
-  if (typeof cb === "function") cb();
+  if (typeof cb === "function") process.nextTick(cb);
   process.nextTick(() => {
     this.emit("open", this.fd);
     this.emit("ready");
@@ -5517,43 +5557,48 @@ function NativeWritable_lazyConstruct(stream) {
   }
 }
 
-const WritablePrototypeWrite = Writable.prototype.write;
-NativeWritable.prototype.write = function NativeWritablePrototypeWrite(chunk, encoding, cb, native) {
-  if (!(native ?? this[_native])) {
-    this[_native] = false;
-    return WritablePrototypeWrite.$call(this, chunk, encoding, cb);
-  }
-
+function NativeWritablePrototypeWrite(chunk, encoding, cb) {
   var fileSink = this[_fileSink] ?? NativeWritable_lazyConstruct(this);
   var result = fileSink.write(chunk);
+
+  if (typeof encoding === "function") {
+    cb = encoding;
+  }
 
   if ($isPromise(result)) {
     // var writePromises = this.#writePromises;
     // var i = writePromises.length;
     // writePromises[i] = result;
-    result.then(() => {
-      this.emit("drain");
-      fileSink.flush(true);
-      // // We can't naively use i here because we don't know when writes will resolve necessarily
-      // writePromises.splice(writePromises.indexOf(result), 1);
-    });
+    result
+      .then(result => {
+        this.emit("drain");
+        if (cb) {
+          cb(null, result);
+        }
+      })
+      .catch(
+        cb
+          ? err => {
+              cb(err);
+            }
+          : err => {
+              this.emit("error", err);
+            },
+      );
     return false;
   }
-  fileSink.flush(true);
 
-  if (typeof encoding === "function") {
-    cb = encoding;
-  }
   // TODO: Should we just have a calculation based on encoding and length of chunk?
   if (cb) cb(null, chunk.byteLength);
   return true;
-};
+}
+
 const WritablePrototypeEnd = Writable.prototype.end;
 NativeWritable.prototype.end = function end(chunk, encoding, cb, native) {
   return WritablePrototypeEnd.$call(this, chunk, encoding, cb, native ?? this[_native]);
 };
 
-function NativeWritable_internalDestroy(error, cb) {
+NativeWritable.prototype._destroy = function (error, cb) {
   const w = this._writableState;
   const r = this._readableState;
 
@@ -5571,26 +5616,31 @@ function NativeWritable_internalDestroy(error, cb) {
   if (w?.closeEmitted || r?.closeEmitted) {
     this.emit("close");
   }
-}
+};
 
 function NativeWritable_internalFinal(cb) {
   var sink = this[_fileSink];
   if (sink) {
-    sink.end();
+    const end = sink.end(true);
+    if ($isPromise(end) && cb) {
+      end.then(() => {
+        if (cb) cb();
+      }, cb);
+    }
   }
   if (cb) cb();
 }
 
 NativeWritable.prototype.ref = function ref() {
-  var sink = this[_fileSink];
-  if (!sink) {
-    this.NativeWritable_lazyConstruct();
-  }
+  const sink = (this[_fileSink] ||= NativeWritable_lazyConstruct(this));
   sink.ref();
+  return this;
 };
 
 NativeWritable.prototype.unref = function unref() {
-  this[_fileSink]?.unref();
+  const sink = (this[_fileSink] ||= NativeWritable_lazyConstruct(this));
+  sink.unref();
+  return this;
 };
 
 const exports = require_stream();
@@ -5605,7 +5655,7 @@ Object.defineProperty(exports, "promises", {
   },
 });
 
-exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici };
+exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici, kEnsureConstructed };
 exports.eos = require_end_of_stream();
 exports.EventEmitter = EE;
 

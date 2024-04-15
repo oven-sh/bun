@@ -413,7 +413,6 @@ JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);
 JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
                          (JSGlobalObject * globalObject, CallFrame *)) {
   MarkedArgumentBuffer list;
-  size_t result = 0;
   globalObject->vm().heap.forEachProtectedCell(
       [&](JSCell *cell) { list.append(cell); });
   RELEASE_ASSERT(!list.hasOverflowed());
@@ -466,9 +465,6 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject,
   String timeZoneName = callFrame->argument(0).toWTFString(globalObject);
   RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-  double time = callFrame->argument(1).toNumber(globalObject);
-  RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
   if (!WTF::setTimeZoneOverride(timeZoneName)) {
     throwTypeError(globalObject, scope,
                    makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));
@@ -477,7 +473,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject,
   vm.dateCache.resetIfNecessarySlow();
   WTF::Vector<UChar, 32> buffer;
   WTF::getTimeZoneOverride(buffer);
-  WTF::String timeZoneString(buffer.data(), buffer.size());
+  WTF::String timeZoneString({buffer.data(), buffer.size()});
   return JSValue::encode(jsString(vm, timeZoneString));
 }
 

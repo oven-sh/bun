@@ -40,7 +40,7 @@ pub const ResolveMessage = struct {
                     };
                 };
 
-                var atom = bun.String.createAtom(label);
+                var atom = bun.String.createAtomASCII(label);
                 defer atom.deref();
                 return atom.toJS(globalObject);
             },
@@ -51,6 +51,9 @@ pub const ResolveMessage = struct {
     pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
         switch (err) {
             error.ModuleNotFound => {
+                if (strings.eqlComptime(referrer, "bun:main")) {
+                    return try std.fmt.allocPrint(allocator, "Module not found \"{s}\"", .{specifier});
+                }
                 if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
                     return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
                 } else {
@@ -71,7 +74,7 @@ pub const ResolveMessage = struct {
     }
 
     pub fn toStringFn(this: *ResolveMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        var text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
+        const text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
             globalThis.throwOutOfMemory();
             return .zero;
         };

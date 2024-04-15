@@ -33,7 +33,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test", "bad.test.js"],
       cwd: test_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env: bunEnv,
@@ -161,6 +161,18 @@ test("testing Bun.deepEquals() using isEqual()", () => {
   expect(Infinity).toEqual(1 / 0);
   expect(-Infinity).toEqual(-Infinity);
   expect(-Infinity).toEqual(-1 / 0);
+
+  expect(Error("foo")).toEqual(Error("foo"));
+  expect(Error("foo")).not.toEqual(Error("bar"));
+  expect(Error("foo")).not.toEqual("foo");
+
+  class CustomError extends Error {
+    constructor(message) {
+      super(message);
+    }
+  }
+  expect(new CustomError("foo")).not.toEqual(new CustomError("bar"));
+  expect(new CustomError("foo")).toEqual(new CustomError("foo"));
 });
 
 try {
@@ -283,7 +295,7 @@ it("should return non-zero exit code for invalid syntax", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test", "bad.test.js"],
       cwd: test_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env: bunEnv,
@@ -312,7 +324,7 @@ it("invalid syntax counts towards bail", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test", "--bail=3"],
       cwd: test_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env: bunEnv,
@@ -625,7 +637,7 @@ describe("empty", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test", "empty.test.js"],
       cwd: test_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env: bunEnv,

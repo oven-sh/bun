@@ -22,7 +22,7 @@ pub const Reader = struct {
             return error.EOF;
         }
 
-        var slice = this.remain[0..read_count];
+        const slice = this.remain[0..read_count];
 
         this.remain = this.remain[read_count..];
 
@@ -30,7 +30,7 @@ pub const Reader = struct {
     }
 
     pub inline fn readAs(this: *Self, comptime T: type) !T {
-        if (!std.meta.trait.hasUniqueRepresentation(T)) {
+        if (!std.meta.hasUniqueRepresentation(T)) {
             @compileError(@typeName(T) ++ " must have unique representation.");
         }
 
@@ -72,11 +72,8 @@ pub const Reader = struct {
                 return std.mem.readIntSliceNative(T, this.read(length * @sizeOf(T)));
             },
             [:0]const u8, []const u8 => {
-                var i: u32 = 0;
-                var array = try this.allocator.alloc(T, length);
-                while (i < length) : (i += 1) {
-                    array[i] = try this.readArray(u8);
-                }
+                const array = try this.allocator.alloc(T, length);
+                for (array) |*a| a.* = try this.readArray(u8);
                 return array;
             },
             else => {
@@ -85,7 +82,7 @@ pub const Reader = struct {
                         switch (Struct.layout) {
                             .Packed => {
                                 const sizeof = @sizeOf(T);
-                                var slice = try this.read(sizeof * length);
+                                const slice = try this.read(sizeof * length);
                                 return std.mem.bytesAsSlice(T, slice);
                             },
                             else => {},
@@ -98,12 +95,8 @@ pub const Reader = struct {
                     else => {},
                 }
 
-                var i: u32 = 0;
-                var array = try this.allocator.alloc(T, length);
-                while (i < length) : (i += 1) {
-                    array[i] = try this.readValue(T);
-                }
-
+                const array = try this.allocator.alloc(T, length);
+                for (array) |*v| v.* = try this.readValue(T);
                 return array;
             },
         }
@@ -119,7 +112,7 @@ pub const Reader = struct {
     }
 
     pub inline fn readInt(this: *Self, comptime T: type) !T {
-        var slice = try this.read(@sizeOf(T));
+        const slice = try this.read(@sizeOf(T));
 
         return std.mem.readIntSliceNative(T, slice);
     }
@@ -332,44 +325,20 @@ pub const FileWriter = Writer(std.fs.File);
 pub const Api = struct {
     pub const Loader = enum(u8) {
         _none,
-        /// jsx
         jsx,
-
-        /// js
         js,
-
-        /// ts
         ts,
-
-        /// tsx
         tsx,
-
-        /// css
         css,
-
-        /// file
         file,
-
-        /// json
         json,
-
-        /// toml
         toml,
-
-        /// wasm
         wasm,
-
-        /// napi
         napi,
-
-        /// base64
         base64,
-
-        /// dataurl
         dataurl,
-
-        /// text
         text,
+        sqlite,
 
         _,
 
@@ -1244,6 +1213,9 @@ pub const Api = struct {
         /// load_all
         load_all,
 
+        /// load_all_without_inlining
+        load_all_without_inlining,
+
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -1756,6 +1728,9 @@ pub const Api = struct {
         /// source_map
         source_map: ?SourceMapMode = null,
 
+        /// conditions
+        conditions: []const []const u8,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 
@@ -1839,6 +1814,9 @@ pub const Api = struct {
                     },
                     25 => {
                         this.source_map = try reader.readValue(SourceMapMode);
+                    },
+                    26 => {
+                        this.conditions = try reader.readArray([]const u8);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1949,6 +1927,12 @@ pub const Api = struct {
                 try writer.writeFieldID(25);
                 try writer.writeEnum(source_map);
             }
+
+            if (this.conditions) |conditions| {
+                try writer.writeFieldID(26);
+                try writer.writeArray([]const u8, conditions);
+            }
+
             try writer.endMessage();
         }
     };
@@ -2892,6 +2876,9 @@ pub const Api = struct {
         /// exact
         exact: ?bool = null,
 
+        /// concurrent_scripts
+        concurrent_scripts: ?u32 = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -2960,6 +2947,9 @@ pub const Api = struct {
                     },
                     20 => {
                         this.exact = try reader.readValue(bool);
+                    },
+                    21 => {
+                        this.concurrent_scripts = try reader.readValue(u32);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -3049,6 +3039,10 @@ pub const Api = struct {
             if (this.exact) |exact| {
                 try writer.writeFieldID(20);
                 try writer.writeInt(@as(u8, @intFromBool(exact)));
+            }
+            if (this.concurrent_scripts) |concurrent_scripts| {
+                try writer.writeFieldID(21);
+                try writer.writeInt(concurrent_scripts);
             }
             try writer.endMessage();
         }

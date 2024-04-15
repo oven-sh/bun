@@ -17,13 +17,12 @@ $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
 $ curl -fsSL https://bun.sh/install | bash -s "bun-v1.0.0"
 ```
 
-```bash#NPM
+```bash#npm
 $ npm install -g bun # the last `npm` command you'll ever need
 ```
 
 ```bash#Homebrew
-$ brew tap oven-sh/bun # for macOS and Linux
-$ brew install bun
+$ brew install oven-sh/bun/bun # for macOS and Linux
 ```
 
 ```bash#Docker
@@ -39,17 +38,29 @@ $ proto install bun
 
 ### Windows
 
-Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
+{% callout %}
+Bun requires a minimum of Windows 10 version 1809
+{% /callout %}
 
-- `bun <file>`
-- `bun run <file>`
+To install, paste this into a terminal:
 
-The test runner, package manager, and bundler are still under development. The following commands have been disabled.
+{% codetabs %}
 
-- `bun test`
-- `bun install/add/remove`
-- `bun link/unlink`
-- `bun build`
+```powershell#PowerShell/cmd.exe
+> powershell -c "irm bun.sh/install.ps1|iex"
+```
+
+```powershell#npm
+> npm install -g bun # the last `npm` command you'll ever need
+```
+
+```powershell#Scoop
+> scoop install bun
+```
+
+{% /codetabs %}
+
+For support and discussion, please join the [#windows channel on our Discord](http://bun.sh/discord).
 
 ## Docker
 
@@ -132,6 +143,8 @@ $ bun upgrade
 
 {% callout %}
 **Homebrew users** — To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
+
+**Scoop users** — To avoid conflicts with Scoop, use `scoop upgrade bun` instead.
 
 **proto users** - Use `proto install bun --pin` instead.
 {% /callout %}
@@ -220,7 +233,15 @@ If you need to remove Bun from your system, use the following commands.
 $ rm -rf ~/.bun # for macOS, Linux, and WSL
 ```
 
-```bash#NPM
+```powershell#Windows
+> powershell -c ~\.bun\uninstall.ps1
+```
+
+```powershell#Scoop
+> scoop uninstall bun
+```
+
+```bash#npm
 $ npm uninstall -g bun
 ```
 

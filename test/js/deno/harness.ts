@@ -1,5 +1,6 @@
 import type { Server } from "bun";
 import { serve, deepEquals, concatArrayBuffers } from "bun";
+import { join } from "path";
 import { hideFromStackTrace } from "harness";
 import resources from "./resources.json";
 
@@ -28,7 +29,7 @@ export function createDenoTest(path: string) {
 
   beforeAll(() => {
     server = serve({
-      port: 4545,
+      port: 0,
       fetch(request: Request): Response {
         const { url } = request;
         const { pathname, search } = new URL(url);
@@ -39,6 +40,7 @@ export function createDenoTest(path: string) {
         return Response.redirect(target.toString());
       },
     });
+    globalThis.PORT = server.port;
   });
 
   afterAll(() => {
@@ -75,6 +77,16 @@ export function createDenoTest(path: string) {
       test.skip(arg1.name, arg1);
     } else {
       unimplemented(`test.ignore(${typeof arg0}, ${typeof arg1})`);
+    }
+  };
+
+  denoTest.todo = (arg0: Fn | Options, arg1?: Fn) => {
+    if (typeof arg0 === "function") {
+      test.todo(arg0.name, arg0);
+    } else if (typeof arg1 === "function") {
+      test.todo(arg1.name, arg1);
+    } else {
+      unimplemented(`test.todo(${typeof arg0}, ${typeof arg1})`);
     }
   };
 
@@ -267,12 +279,7 @@ export function createDenoTest(path: string) {
   // https://deno.land/api@v1.31.1?s=Deno.readTextFile
 
   const readTextFile = async (path: string): Promise<string> => {
-    const url = new URL(path, resources.baseUrl);
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`${response.status}: ${response.url}`);
-    }
-    return response.text();
+    return await Bun.file(join(import.meta.dir, 'fixtures', path)).text();
   };
 
   // Globals

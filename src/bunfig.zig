@@ -11,13 +11,14 @@ const default_allocator = bun.default_allocator;
 const URL = @import("./url.zig").URL;
 const C = bun.C;
 const options = @import("./options.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
 const Defines = @import("./defines.zig");
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 const Api = @import("./api/schema.zig").Api;
 const Npm = @import("./install/npm.zig");
+const PackageManager = @import("./install/install.zig").PackageManager;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const resolver = @import("./resolver/resolver.zig");
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
@@ -48,7 +49,7 @@ pub const Bunfig = struct {
         log: *logger.Log,
         allocator: std.mem.Allocator,
         bunfig: *Api.TransformOptions,
-        ctx: *Command.Context,
+        ctx: Command.Context,
 
         fn addError(this: *Parser, loc: logger.Loc, comptime text: string) !void {
             this.log.addError(this.source, loc, text) catch unreachable;
@@ -80,25 +81,25 @@ pub const Bunfig = struct {
             var registry = std.mem.zeroes(Api.NpmRegistry);
 
             if (obj.get("url")) |url| {
-                try this.expect(url, .e_string);
-                const href = url.data.e_string.data;
+                try this.expectString(url);
+                const href = url.asString(this.allocator).?;
                 // Do not include a trailing slash. There might be parameters at the end.
                 registry.url = href;
             }
 
             if (obj.get("username")) |username| {
-                try this.expect(username, .e_string);
-                registry.username = username.data.e_string.data;
+                try this.expectString(username);
+                registry.username = username.asString(this.allocator).?;
             }
 
             if (obj.get("password")) |password| {
-                try this.expect(password, .e_string);
-                registry.password = password.data.e_string.data;
+                try this.expectString(password);
+                registry.password = password.asString(this.allocator).?;
             }
 
             if (obj.get("token")) |token| {
-                try this.expect(token, .e_string);
-                registry.token = token.data.e_string.data;
+                try this.expectString(token);
+                registry.token = token.asString(this.allocator).?;
             }
 
             return registry;
@@ -120,7 +121,7 @@ pub const Bunfig = struct {
         }
 
         fn loadLogLevel(this: *Parser, expr: js_ast.Expr) !void {
-            try this.expect(expr, .e_string);
+            try this.expectString(expr);
             const Matcher = strings.ExactSizeMatcher(8);
 
             this.bunfig.log_level = switch (Matcher.match(expr.asString(this.allocator).?)) {
@@ -145,7 +146,7 @@ pub const Bunfig = struct {
                 var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
                 errdefer preloads.deinit();
                 while (array.next()) |item| {
-                    try this.expect(item, .e_string);
+                    try this.expectString(item);
                     if (item.data.e_string.len() > 0)
                         preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
                 }
@@ -162,6 +163,8 @@ pub const Bunfig = struct {
         }
 
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
+            Analytics.Features.bunfig += 1;
+
             const json = this.json;
             var allocator = this.allocator;
 
@@ -198,7 +201,7 @@ pub const Bunfig = struct {
             }
 
             if (json.get("origin")) |expr| {
-                try this.expect(expr, .e_string);
+                try this.expectString(expr);
                 this.bunfig.origin = try expr.data.e_string.string(allocator);
             }
 
@@ -295,13 +298,13 @@ pub const Bunfig = struct {
             if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("install")) |_bun| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
-                        var install_ = try this.allocator.create(Api.BunInstall);
+                        const install_ = try this.allocator.create(Api.BunInstall);
                         install_.* = std.mem.zeroes(Api.BunInstall);
                         this.ctx.install = install_;
                         break :brk install_;
                     };
 
-                    if (json.get("auto")) |auto_install_expr| {
+                    if (_bun.get("auto")) |auto_install_expr| {
                         if (auto_install_expr.data == .e_string) {
                             this.ctx.debug.global_cache = options.GlobalCache.Map.get(auto_install_expr.asString(this.allocator) orelse "") orelse {
                                 try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
@@ -318,16 +321,14 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (json.get("exact")) |exact_install_expr| {
-                        try this.expect(exact_install_expr, .e_boolean);
-
-                        if (exact_install_expr.asBool().?) {
-                            install.exact = true;
+                    if (_bun.get("exact")) |exact| {
+                        if (exact.asBool()) |value| {
+                            install.exact = value;
                         }
                     }
 
-                    if (json.get("prefer")) |prefer_expr| {
-                        try this.expect(prefer_expr, .e_string);
+                    if (_bun.get("prefer")) |prefer_expr| {
+                        try this.expectString(prefer_expr);
 
                         if (Prefer.get(prefer_expr.asString(bun.default_allocator) orelse "")) |setting| {
                             this.ctx.debug.offline_mode_setting = setting;
@@ -395,9 +396,16 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (_bun.get("concurrentScripts")) |jobs| {
+                        if (jobs.data == .e_number) {
+                            install.concurrent_scripts = jobs.data.e_number.toU32();
+                            if (install.concurrent_scripts.? == 0) install.concurrent_scripts = null;
+                        }
+                    }
+
                     if (_bun.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
-                            try this.expect(lockfile, .e_string);
+                            try this.expectString(lockfile);
                             if (lockfile.asString(this.allocator)) |value| {
                                 if (!(strings.eqlComptime(value, "bun"))) {
                                     if (!strings.eqlComptime(value, "yarn")) {
@@ -500,12 +508,44 @@ pub const Bunfig = struct {
                         }
                     }
                 }
+
+                if (json.get("run")) |run_expr| {
+                    if (run_expr.get("silent")) |silent| {
+                        if (silent.asBool()) |value| {
+                            this.ctx.debug.silent = value;
+                        } else {
+                            try this.addError(silent.loc, "Expected boolean");
+                        }
+                    }
+
+                    if (run_expr.get("shell")) |shell| {
+                        if (shell.asString(allocator)) |value| {
+                            if (strings.eqlComptime(value, "bun")) {
+                                this.ctx.debug.use_system_shell = false;
+                            } else if (strings.eqlComptime(value, "system")) {
+                                this.ctx.debug.use_system_shell = true;
+                            } else {
+                                try this.addError(shell.loc, "Invalid shell, only 'bun' and 'system' are supported");
+                            }
+                        } else {
+                            try this.addError(shell.loc, "Expected string");
+                        }
+                    }
+
+                    if (run_expr.get("bun")) |bun_flag| {
+                        if (bun_flag.asBool()) |value| {
+                            this.ctx.debug.run_in_bun = value;
+                        } else {
+                            try this.addError(bun_flag.loc, "Expected boolean");
+                        }
+                    }
+                }
             }
 
             if (json.get("bundle")) |_bun| {
                 if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("outdir")) |dir| {
-                        try this.expect(dir, .e_string);
+                        try this.expectString(dir);
                         this.bunfig.output_dir = try dir.data.e_string.string(allocator);
                     }
                 }
@@ -520,7 +560,7 @@ pub const Bunfig = struct {
                         const items = entryPoints.data.e_array.items.slice();
                         var names = try this.allocator.alloc(string, items.len);
                         for (items, 0..) |item, i| {
-                            try this.expect(item, .e_string);
+                            try this.expectString(item);
                             names[i] = try item.data.e_string.string(allocator);
                         }
                         this.bunfig.entry_points = names;
@@ -529,7 +569,6 @@ pub const Bunfig = struct {
                     if (_bun.get("packages")) |expr| {
                         try this.expect(expr, .e_object);
                         var valid_count: usize = 0;
-                        Analytics.Features.always_bundle = true;
 
                         const object = expr.data.e_object;
                         const properties = object.properties.slice();
@@ -602,9 +641,9 @@ pub const Bunfig = struct {
 
             if (this.bunfig.jsx == null) {
                 this.bunfig.jsx = Api.Jsx{
-                    .factory = bun.constStrToU8(jsx_factory),
-                    .fragment = bun.constStrToU8(jsx_fragment),
-                    .import_source = bun.constStrToU8(jsx_import_source),
+                    .factory = @constCast(jsx_factory),
+                    .fragment = @constCast(jsx_fragment),
+                    .import_source = @constCast(jsx_import_source),
                     .runtime = jsx_runtime,
                     .development = jsx_dev,
                     .react_fast_refresh = false,
@@ -612,13 +651,13 @@ pub const Bunfig = struct {
             } else {
                 var jsx: *Api.Jsx = &this.bunfig.jsx.?;
                 if (jsx_factory.len > 0) {
-                    jsx.factory = bun.constStrToU8(jsx_factory);
+                    jsx.factory = jsx_factory;
                 }
                 if (jsx_fragment.len > 0) {
-                    jsx.fragment = bun.constStrToU8(jsx_fragment);
+                    jsx.fragment = jsx_fragment;
                 }
                 if (jsx_import_source.len > 0) {
-                    jsx.import_source = bun.constStrToU8(jsx_import_source);
+                    jsx.import_source = jsx_import_source;
                 }
                 jsx.runtime = jsx_runtime;
                 jsx.development = jsx_dev;
@@ -627,7 +666,7 @@ pub const Bunfig = struct {
             switch (comptime cmd) {
                 .AutoCommand, .BuildCommand => {
                     if (json.get("publicDir")) |public_dir| {
-                        try this.expect(public_dir, .e_string);
+                        try this.expectString(public_dir);
                         this.bunfig.router = Api.RouteConfig{
                             .extensions = &.{},
                             .dir = &.{},
@@ -654,7 +693,7 @@ pub const Bunfig = struct {
                 } else {
                     this.ctx.debug.macros = .{ .map = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source) };
                 }
-                Analytics.Features.macros = true;
+                Analytics.Features.macros += 1;
             }
 
             if (json.get("external")) |expr| {
@@ -668,7 +707,7 @@ pub const Bunfig = struct {
                         var externals = try allocator.alloc(string, array.items.len);
 
                         for (array.items.slice(), 0..) |item, i| {
-                            try this.expect(item, .e_string);
+                            try this.expectString(item);
                             externals[i] = try item.data.e_string.string(allocator);
                         }
 
@@ -679,7 +718,7 @@ pub const Bunfig = struct {
             }
 
             if (json.get("framework")) |expr| {
-                try this.expect(expr, .e_string);
+                try this.expectString(expr);
                 this.bunfig.framework = Api.FrameworkConfig{
                     .package = expr.asString(allocator).?,
                 };
@@ -692,13 +731,13 @@ pub const Bunfig = struct {
                 var loader_values = try this.allocator.alloc(Api.Loader, properties.len);
 
                 for (properties, 0..) |item, i| {
-                    var key = item.key.?.asString(allocator).?;
+                    const key = item.key.?.asString(allocator).?;
                     if (key.len == 0) continue;
                     if (key[0] != '.') {
                         try this.addError(item.key.?.loc, "file extension for loader must start with a '.'");
                     }
                     var value = item.value.?;
-                    try this.expect(value, .e_string);
+                    try this.expectString(value);
 
                     const loader = options.Loader.fromString(value.asString(allocator).?) orelse {
                         try this.addError(value.loc, "Invalid loader");
@@ -713,8 +752,18 @@ pub const Bunfig = struct {
                     .loaders = loader_values,
                 };
             }
+        }
 
-            Analytics.Features.bunfig = true;
+        pub fn expectString(this: *Parser, expr: js_ast.Expr) !void {
+            switch (expr.data) {
+                .e_string, .e_utf8_string => {},
+                else => {
+                    this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
+                        @as(js_ast.Expr.Tag, expr.data),
+                    }) catch unreachable;
+                    return error.@"Invalid Bunfig";
+                },
+            }
         }
 
         pub fn expect(this: *Parser, expr: js_ast.Expr, token: js_ast.Expr.Tag) !void {
@@ -728,10 +777,10 @@ pub const Bunfig = struct {
         }
     };
 
-    pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
-        var expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {
+        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
             }

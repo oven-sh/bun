@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 
 const weirdInternalSpecifiers = [
   "_http_agent",
@@ -93,3 +93,8 @@ for (let specifier of specifiers) {
     }
   });
 }
+
+test("you can import bun:test", async () => {
+  const bunTest1 = await import("bun:test" + String(""));
+  const bunTest2 = require("bun:test" + String(""));
+});

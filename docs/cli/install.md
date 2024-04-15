@@ -60,6 +60,12 @@ To tell Bun to allow lifecycle scripts for a particular package, add the package
 
 Then re-install the package. Bun will read this field and run lifecycle scripts for `my-trusted-package`.
 
+Lifecycle scripts will run in parallel during installation. To adjust the maximum number of concurrent scripts, use the `--concurrent-scripts` flag. The default is two times the reported cpu count or GOMAXPROCS.
+
+```bash
+$ bun install --concurrent-scripts 5
+```
+
 ## Workspaces
 
 Bun supports `"workspaces"` in package.json. For complete documentation refer to [Package manager > Workspaces](/docs/install/workspaces).
@@ -172,6 +178,9 @@ frozenLockfile = false
 
 # equivalent to `--dry-run` flag
 dryRun = false
+
+# equivalent to `--concurrent-scripts` flag
+concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 ```
 
 ## CI/CD
@@ -186,7 +195,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install bun
         uses: oven-sh/setup-bun@v1
       - name: Install dependencies

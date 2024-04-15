@@ -5,12 +5,12 @@ import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
 import { gzipSync } from "zlib";
 import { join } from "path";
-import { gc, withoutAggressiveGC, gcTick } from "harness";
+import { gc, withoutAggressiveGC, gcTick, isWindows } from "harness";
 import net from "net";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
 
-const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8");
+const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 
 let server: Server;
 function startServer({ fetch, ...options }: ServeOptions) {
@@ -219,10 +219,7 @@ describe("AbortSignal", () => {
         await sleep(1);
         controller.abort();
       }
-      await Promise.all([
-        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
-        manualAbort(),
-      ]);
+      await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
     }).toThrow(new DOMException("The operation was aborted."));
   });
 
@@ -245,10 +242,7 @@ describe("AbortSignal", () => {
         await sleep(10);
         controller.abort(new Error("My Reason"));
       }
-      await Promise.all([
-        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
-        manualAbort(),
-      ]);
+      await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
     }).toThrow("My Reason");
   });
 
@@ -268,10 +262,7 @@ describe("AbortSignal", () => {
         await sleep(10);
         controller.abort();
       }
-      await Promise.all([
-        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
-        manualAbort(),
-      ]);
+      await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
     }).toThrow(new DOMException("The operation was aborted."));
   });
 
@@ -296,11 +287,21 @@ describe("AbortSignal", () => {
   it("TimeoutError", async () => {
     const signal = AbortSignal.timeout(10);
 
+    let server: Server | null = null;
     try {
-      await fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text());
-      expect(() => {}).toThrow();
+      server = Bun.serve({
+        port: 0,
+        async fetch() {
+          await Bun.sleep(100);
+          return new Response("Hello");
+        },
+      });
+      await fetch(server.url, { signal: signal }).then(res => res.text());
+      expect.unreachable();
     } catch (ex: any) {
       expect(ex.name).toBe("TimeoutError");
+    } finally {
+      server?.stop(true);
     }
   });
 
@@ -313,7 +314,7 @@ describe("AbortSignal", () => {
     }
 
     try {
-      const request = new Request(`http://127.0.0.1:${server.port}`, { signal });
+      const request = new Request(server.url, { signal });
       await Promise.all([fetch(request).then(res => res.text()), manualAbort()]);
       expect(() => {}).toThrow();
     } catch (ex: any) {
@@ -546,6 +547,45 @@ describe("fetch", () => {
       expect(response).toBeUndefined();
     } catch (err: any) {
       expect(err.code).toBe("UnexpectedRedirect");
+    }
+  });
+
+  it("should properly redirect to another port #7793", async () => {
+    var server: Server | null = null;
+    var socket: net.Server | null = null;
+    try {
+      server = Bun.serve({
+        port: 0,
+        tls: {
+          "cert":
+            "-----BEGIN CERTIFICATE-----\nMIIDrzCCApegAwIBAgIUHaenuNcUAu0tjDZGpc7fK4EX78gwDQYJKoZIhvcNAQEL\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nbmNpc2NvMQ0wCwYDVQQKDARPdmVuMREwDwYDVQQLDAhUZWFtIEJ1bjETMBEGA1UE\nAwwKc2VydmVyLWJ1bjAeFw0yMzA5MDYyMzI3MzRaFw0yNTA5MDUyMzI3MzRaMGkx\nCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTEWMBQGA1UEBwwNU2FuIEZyYW5jaXNj\nbzENMAsGA1UECgwET3ZlbjERMA8GA1UECwwIVGVhbSBCdW4xEzARBgNVBAMMCnNl\ncnZlci1idW4wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC+7odzr3yI\nYewRNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MB\nKw3rl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwP\ndwVUeR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn\n0oH9HbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOF\nzDpcp1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FU\nIDHtnUsoHX3RAgMBAAGjTzBNMCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQ\nAAAAAAAAAAAAAAAAAAAAATAdBgNVHQ4EFgQUF3y/su4J/8ScpK+rM2LwTct6EQow\nDQYJKoZIhvcNAQELBQADggEBAGWGWp59Bmrk3Gt0bidFLEbvlOgGPWCT9ZrJUjgc\nhY44E+/t4gIBdoKOSwxo1tjtz7WsC2IYReLTXh1vTsgEitk0Bf4y7P40+pBwwZwK\naeIF9+PC6ZoAkXGFRoyEalaPVQDBg/DPOMRG9OH0lKfen9OGkZxmmjRLJzbyfAhU\noI/hExIjV8vehcvaJXmkfybJDYOYkN4BCNqPQHNf87ZNdFCb9Zgxwp/Ou+47J5k4\n5plQ+K7trfKXG3ABMbOJXNt1b0sH8jnpAsyHY4DLEQqxKYADbXsr3YX/yy6c0eOo\nX2bHGD1+zGsb7lGyNyoZrCZ0233glrEM4UxmvldBcWwOWfk=\n-----END CERTIFICATE-----\n",
+          "key":
+            "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC+7odzr3yIYewR\nNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MBKw3r\nl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwPdwVU\neR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn0oH9\nHbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOFzDpc\np1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FUIDHt\nnUsoHX3RAgMBAAECggEAAckMqkn+ER3c7YMsKRLc5bUE9ELe+ftUwfA6G+oXVorn\nE+uWCXGdNqI+TOZkQpurQBWn9IzTwv19QY+H740cxo0ozZVSPE4v4czIilv9XlVw\n3YCNa2uMxeqp76WMbz1xEhaFEgn6ASTVf3hxYJYKM0ljhPX8Vb8wWwlLONxr4w4X\nOnQAB5QE7i7LVRsQIpWKnGsALePeQjzhzUZDhz0UnTyGU6GfC+V+hN3RkC34A8oK\njR3/Wsjahev0Rpb+9Pbu3SgTrZTtQ+srlRrEsDG0wVqxkIk9ueSMOHlEtQ7zYZsk\nlX59Bb8LHNGQD5o+H1EDaC6OCsgzUAAJtDRZsPiZEQKBgQDs+YtVsc9RDMoC0x2y\nlVnP6IUDXt+2UXndZfJI3YS+wsfxiEkgK7G3AhjgB+C+DKEJzptVxP+212hHnXgr\n1gfW/x4g7OWBu4IxFmZ2J/Ojor+prhHJdCvD0VqnMzauzqLTe92aexiexXQGm+WW\nwRl3YZLmkft3rzs3ZPhc1G2X9QKBgQDOQq3rrxcvxSYaDZAb+6B/H7ZE4natMCiz\nLx/cWT8n+/CrJI2v3kDfdPl9yyXIOGrsqFgR3uhiUJnz+oeZFFHfYpslb8KvimHx\nKI+qcVDcprmYyXj2Lrf3fvj4pKorc+8TgOBDUpXIFhFDyM+0DmHLfq+7UqvjU9Hs\nkjER7baQ7QKBgQDTh508jU/FxWi9RL4Jnw9gaunwrEt9bxUc79dp+3J25V+c1k6Q\nDPDBr3mM4PtYKeXF30sBMKwiBf3rj0CpwI+W9ntqYIwtVbdNIfWsGtV8h9YWHG98\nJ9q5HLOS9EAnogPuS27walj7wL1k+NvjydJ1of+DGWQi3aQ6OkMIegap0QKBgBlR\nzCHLa5A8plG6an9U4z3Xubs5BZJ6//QHC+Uzu3IAFmob4Zy+Lr5/kITlpCyw6EdG\n3xDKiUJQXKW7kluzR92hMCRnVMHRvfYpoYEtydxcRxo/WS73SzQBjTSQmicdYzLE\ntkLtZ1+ZfeMRSpXy0gR198KKAnm0d2eQBqAJy0h9AoGBAM80zkd+LehBKq87Zoh7\ndtREVWslRD1C5HvFcAxYxBybcKzVpL89jIRGKB8SoZkF7edzhqvVzAMP0FFsEgCh\naClYGtO+uo+B91+5v2CCqowRJUGfbFOtCuSPR7+B3LDK8pkjK2SQ0mFPUfRA5z0z\nNVWtC0EYNBTRkqhYtqr3ZpUc\n-----END PRIVATE KEY-----\n",
+        },
+        fetch() {
+          return new Response("Hello, world!");
+        },
+      });
+
+      socket = net.createServer(socket => {
+        socket.on("data", () => {
+          // we redirect and close the connection here
+          socket.end(`HTTP/1.1 301 Moved Permanently\r\nLocation: ${server?.url}\r\nConnection: close\r\n\r\n`);
+        });
+      });
+
+      const { promise, resolve, reject } = Promise.withResolvers();
+      socket.on("error", reject);
+      socket.listen(0, "localhost", async () => {
+        await fetch(`http://localhost:${socket?.address()?.port}/`, { tls: { rejectUnauthorized: false } });
+        const response = await fetch(server?.url, { tls: { rejectUnauthorized: false } }).then(res => res.text());
+        resolve(response);
+      });
+
+      expect(await promise).toBe("Hello, world!");
+    } finally {
+      server?.stop(true);
+      socket?.close();
     }
   });
 
@@ -789,7 +829,8 @@ describe("Bun.file", () => {
     return file;
   });
 
-  it("size is Infinity on a fifo", () => {
+  // this test uses libc.so or dylib so we skip on windows
+  it.skipIf(isWindows)("size is Infinity on a fifo", () => {
     const path = join(tmp_dir, "test-fifo");
     mkfifo(path);
     const { size } = Bun.file(path);
@@ -803,27 +844,22 @@ describe("Bun.file", () => {
     }
   }
 
-  describe("bad permissions throws", () => {
+  // on Windows the creator of the file will be able to read from it so this test is disabled on it
+  describe.skipIf(isWindows)("bad permissions throws", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");
-      chmodSync(path, 0o000);
+      chmodSync(path, 0x000);
     });
 
-    forEachMethod(
-      m => () => {
-        const file = Bun.file(path);
-        expect(async () => await file[m]()).toThrow("Permission denied");
-      },
-      () => {
-        try {
-          readFileSync(path);
-        } catch {
-          return false;
-        }
-        return true;
-      },
-    );
+    forEachMethod(m => () => {
+      const file = Bun.file(path);
+      expect(async () => await file[m]()).toThrow("Permission denied");
+    });
+
+    afterAll(() => {
+      rmSync(path, { force: true });
+    });
   });
 
   describe("non-existent file throws", () => {
@@ -1198,10 +1234,10 @@ describe("Response", () => {
       }).toThrow("Body already used");
     });
     it("with Bun.file() streams", async () => {
-      var stream = Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
+      var stream = Bun.file(join(import.meta.dir, "fixtures/file.txt")).stream();
       expect(stream instanceof ReadableStream).toBe(true);
       var input = new Response((await new Response(stream).blob()).stream()).arrayBuffer();
-      var output = Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer();
+      var output = Bun.file(join(import.meta.dir, "/fixtures/file.txt")).arrayBuffer();
       expect(await input).toEqual(await output);
     });
     it("with Bun.file() with request/response", async () => {
@@ -1215,13 +1251,13 @@ describe("Response", () => {
         },
       });
 
-      var response = await fetch(`http://127.0.0.1:${server.port}`, {
+      var response = await fetch(server.url, {
         method: "POST",
         body: await Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer(),
       });
       var input = await response.arrayBuffer();
       var output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
-      expect(input).toEqual((await output.getReader().read()).value?.buffer);
+      expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
     });
   });
 
@@ -1704,7 +1740,8 @@ describe("should handle relative location in the redirect, issue#5635", () => {
   });
 });
 
-it("should throw RedirectURLTooLong when location is too long", async () => {
+it("should allow very long redirect URLS", async () => {
+  const Location = "/" + "B".repeat(7 * 1024);
   const server = Bun.serve({
     port: 0,
     async fetch(request: Request) {
@@ -1713,7 +1750,7 @@ it("should throw RedirectURLTooLong when location is too long", async () => {
       if (url.pathname == "/redirect") {
         return new Response("redirecting", {
           headers: {
-            "Location": "B".repeat(8193),
+            Location,
           },
           status: 302,
         });
@@ -1723,18 +1760,12 @@ it("should throw RedirectURLTooLong when location is too long", async () => {
       });
     },
   });
-
-  let err = undefined;
-  try {
-    gc();
-    const resp = await fetch(`http://${server.hostname}:${server.port}/redirect`);
-  } catch (error) {
-    gc();
-    err = error;
+  // run it more times to check Malformed_HTTP_Response errors
+  for (let i = 0; i < 100; i++) {
+    const { url, status } = await fetch(`${server.url.origin}/redirect`);
+    expect(url).toBe(`${server.url.origin}${Location}`);
+    expect(status).toBe(404);
   }
-  expect(err).not.toBeUndefined();
-  expect(err).toBeInstanceOf(Error);
-  expect(err.code).toStrictEqual("RedirectURLTooLong");
   server.stop(true);
 });
 

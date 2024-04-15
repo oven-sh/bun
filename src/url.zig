@@ -101,8 +101,8 @@ pub const URL = struct {
         return "localhost";
     }
 
-    pub fn displayHost(this: *const URL) strings.HostFormatter {
-        return strings.HostFormatter{
+    pub fn displayHost(this: *const URL) bun.fmt.HostFormatter {
+        return bun.fmt.HostFormatter{
             .host = if (this.host.len > 0) this.host else this.displayHostname(),
             .port = if (this.port.len > 0) this.getPort() else null,
             .is_https = this.isHTTPS(),
@@ -322,9 +322,8 @@ pub const URL = struct {
     }
 
     pub fn parseProtocol(url: *URL, str: string) ?u31 {
-        var i: u31 = 0;
         if (str.len < "://".len) return null;
-        while (i < str.len) : (i += 1) {
+        for (0..str.len) |i| {
             switch (str[i]) {
                 '/', '?', '%' => {
                     return null;
@@ -332,7 +331,7 @@ pub const URL = struct {
                 ':' => {
                     if (i + 3 <= str.len and str[i + 1] == '/' and str[i + 2] == '/') {
                         url.protocol = str[0..i];
-                        return i + 3;
+                        return @intCast(i + 3);
                     }
                 },
                 else => {},
@@ -343,19 +342,16 @@ pub const URL = struct {
     }
 
     pub fn parseUsername(url: *URL, str: string) ?u31 {
-        var i: u31 = 0;
-
         // reset it
         url.username = "";
 
         if (str.len < "@".len) return null;
-
-        while (i < str.len) : (i += 1) {
+        for (0..str.len) |i| {
             switch (str[i]) {
                 ':', '@' => {
                     // we found a username, everything before this point in the slice is a username
                     url.username = str[0..i];
-                    return i + 1;
+                    return @intCast(i + 1);
                 },
                 // if we reach a slash or "?", there's no username
                 '?', '/' => {
@@ -368,20 +364,17 @@ pub const URL = struct {
     }
 
     pub fn parsePassword(url: *URL, str: string) ?u31 {
-        var i: u31 = 0;
-
         // reset it
         url.password = "";
 
         if (str.len < "@".len) return null;
-
-        while (i < str.len) : (i += 1) {
+        for (0..str.len) |i| {
             switch (str[i]) {
                 '@' => {
                     // we found a password, everything before this point in the slice is a password
                     url.password = str[0..i];
-                    if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readInt(u16, str[i..][0..2], .little) != std.mem.readInt(u16, "//", .little));
-                    return i + 1;
+                    if (Environment.allow_assert) bun.assert(str[i..].len < 2 or std.mem.readInt(u16, str[i..][0..2], .little) != std.mem.readInt(u16, "//", .little));
+                    return @intCast(i + 1);
                 },
                 // if we reach a slash or "?", there's no password
                 '?', '/' => {
@@ -513,7 +506,7 @@ pub const QueryStringMap = struct {
             var slice = this.map.list.slice();
             const hash = slice.items(.name_hash)[this.i];
             const name_slice = slice.items(.name)[this.i];
-            std.debug.assert(name_slice.length > 0);
+            bun.assert(name_slice.length > 0);
             var result = Result{ .name = this.map.str(name_slice), .values = target[0..1] };
             target[0] = this.map.str(slice.items(.value)[this.i]);
 
@@ -521,7 +514,7 @@ pub const QueryStringMap = struct {
             this.i += 1;
 
             var remainder_hashes = slice.items(.name_hash)[this.i..];
-            var remainder_values = slice.items(.value)[this.i..];
+            const remainder_values = slice.items(.value)[this.i..];
 
             var target_i: usize = 1;
             var current_i: usize = 0;
@@ -529,7 +522,7 @@ pub const QueryStringMap = struct {
             while (std.mem.indexOfScalar(u64, remainder_hashes[current_i..], hash)) |next_index| {
                 const real_i = current_i + next_index + this.i;
                 if (comptime Environment.isDebug) {
-                    std.debug.assert(!this.visited.isSet(real_i));
+                    bun.assert(!this.visited.isSet(real_i));
                 }
 
                 this.visited.set(real_i);
@@ -569,7 +562,7 @@ pub const QueryStringMap = struct {
     pub fn getAll(this: *const QueryStringMap, input: string, target: []string) usize {
         const hash = bun.hash(input);
         const _slice = this.list.slice();
-        return @call(.always_inline, getAllWithHashFromOffset, .{ this, target, hash, 0, _slice });
+        return @call(bun.callmod_inline, getAllWithHashFromOffset, .{ this, target, hash, 0, _slice });
     }
 
     pub fn getAllWithHashFromOffset(this: *const QueryStringMap, target: []string, hash: u64, offset: usize, _slice: Param.List.Slice) usize {
@@ -615,7 +608,7 @@ pub const QueryStringMap = struct {
         }
 
         if (Environment.allow_assert)
-            std.debug.assert(count > 0); // We should not call initWithScanner when there are no path params
+            bun.assert(count > 0); // We should not call initWithScanner when there are no path params
 
         while (scanner.query.next()) |result| {
             if (result.name_needs_decoding or result.value_needs_decoding) {
@@ -647,7 +640,7 @@ pub const QueryStringMap = struct {
             try writer.writeAll(name_slice);
             buf_writer_pos += @as(u32, @truncate(name_slice.len));
 
-            var name_hash: u64 = bun.hash(name_slice);
+            const name_hash: u64 = bun.hash(name_slice);
 
             value.length = PercentEncoding.decode(Writer, writer, result.rawValue(scanner.pathname.pathname)) catch continue;
             value.offset = buf_writer_pos;
@@ -730,11 +723,11 @@ pub const QueryStringMap = struct {
         if (nothing_needs_decoding) {
             scanner = Scanner.init(query_string);
             while (scanner.next()) |result| {
-                if (Environment.allow_assert) std.debug.assert(!result.name_needs_decoding);
-                if (Environment.allow_assert) std.debug.assert(!result.value_needs_decoding);
+                if (Environment.allow_assert) bun.assert(!result.name_needs_decoding);
+                if (Environment.allow_assert) bun.assert(!result.value_needs_decoding);
 
-                var name = result.name;
-                var value = result.value;
+                const name = result.name;
+                const value = result.value;
                 const name_hash: u64 = bun.hash(result.rawName(query_string));
                 list.appendAssumeCapacity(Param{ .name = name, .value = value, .name_hash = name_hash });
             }
@@ -748,7 +741,7 @@ pub const QueryStringMap = struct {
         }
 
         var buf = try std.ArrayList(u8).initCapacity(allocator, estimated_str_len);
-        var writer = buf.writer();
+        const writer = buf.writer();
         var buf_writer_pos: u32 = 0;
 
         var list_slice = list.slice();
@@ -802,7 +795,7 @@ pub const QueryStringMap = struct {
 
 pub const PercentEncoding = struct {
     pub fn decode(comptime Writer: type, writer: Writer, input: string) !u32 {
-        return @call(.always_inline, decodeFaultTolerant, .{ Writer, writer, input, null, false });
+        return @call(bun.callmod_inline, decodeFaultTolerant, .{ Writer, writer, input, null, false });
     }
 
     pub fn decodeFaultTolerant(
@@ -896,7 +889,7 @@ pub const FormData = struct {
         allocator: std.mem.Allocator,
 
         pub fn init(allocator: std.mem.Allocator, encoding: Encoding) !*AsyncFormData {
-            var this = try allocator.create(AsyncFormData);
+            const this = try allocator.create(AsyncFormData);
             this.* = AsyncFormData{
                 .encoding = switch (encoding) {
                     .Multipart => .{
@@ -973,7 +966,7 @@ pub const FormData = struct {
     pub fn toJS(globalThis: *JSC.JSGlobalObject, input: []const u8, encoding: Encoding) !JSC.JSValue {
         switch (encoding) {
             .URLEncoded => {
-                var str = JSC.ZigString.fromUTF8(input);
+                var str = JSC.ZigString.fromUTF8(strings.withoutUTF8BOM(input));
                 return JSC.DOMFormData.createFromURLQuery(globalThis, &str);
             },
             .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
@@ -1052,7 +1045,7 @@ pub const FormData = struct {
     ) !JSC.JSValue {
         const form_data_value = JSC.DOMFormData.create(globalThis);
         form_data_value.ensureStillAlive();
-        var form = JSC.DOMFormData.fromJS(form_data_value) orelse {
+        const form = JSC.DOMFormData.fromJS(form_data_value) orelse {
             log("failed to create DOMFormData.fromJS", .{});
             return error.@"failed to parse multipart data";
         };
@@ -1061,11 +1054,11 @@ pub const FormData = struct {
             form: *JSC.DOMFormData,
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
-                var value_str = field.value.slice(buf);
+                const value_str = field.value.slice(buf);
                 var key = JSC.ZigString.initUTF8(name.slice(buf));
 
                 if (field.is_file) {
-                    var filename_str = field.filename.slice(buf);
+                    const filename_str = field.filename.slice(buf);
 
                     var blob = JSC.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
                     defer blob.detach();
@@ -1077,13 +1070,13 @@ pub const FormData = struct {
                         if (filename_str.len > 0) {
                             const extension = std.fs.path.extension(filename_str);
                             if (extension.len > 0) {
-                                if (bun.HTTP.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
+                                if (bun.http.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
                                     break :brk mime.value;
                                 }
                             }
                         }
 
-                        if (bun.HTTP.MimeType.sniff(value_str)) |mime| {
+                        if (bun.http.MimeType.sniff(value_str)) |mime| {
                             break :brk mime.value;
                         }
 
@@ -1104,7 +1097,16 @@ pub const FormData = struct {
 
                     wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);
                 } else {
-                    var value = JSC.ZigString.initUTF8(value_str);
+                    var value = JSC.ZigString.initUTF8(
+                        // > Each part whose `Content-Disposition` header does not
+                        // > contain a `filename` parameter must be parsed into an
+                        // > entry whose value is the UTF-8 decoded without BOM
+                        // > content of the part. This is done regardless of the
+                        // > presence or the value of a `Content-Type` header and
+                        // > regardless of the presence or the value of a
+                        // > `charset` parameter.
+                        strings.withoutUTF8BOM(value_str),
+                    );
                     wrap.form.append(&key, &value);
                 }
             }
@@ -1280,7 +1282,7 @@ fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
     } else {
         if (strings.indexOf(parent, in)) |i| {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(strings.eqlLong(parent[i..][0..in.len], in, false));
+                bun.assert(strings.eqlLong(parent[i..][0..in.len], in, false));
             }
 
             return Api.StringPointer{
@@ -1376,7 +1378,7 @@ pub const Scanner = struct {
         loop: while (true) {
             if (this.i >= this.query_string.len) return null;
 
-            var slice = this.query_string[this.i..];
+            const slice = this.query_string[this.i..];
             relative_i = 0;
             var name = Api.StringPointer{ .offset = @as(u32, @truncate(this.i)), .length = 0 };
             var value = Api.StringPointer{ .offset = 0, .length = 0 };
@@ -1514,7 +1516,7 @@ test "PercentEncoding.decode" {
     @memset(&buffer, 0);
 
     var stream = std.io.fixedBufferStream(&buffer);
-    var writer = stream.writer();
+    const writer = stream.writer();
     const Writer = @TypeOf(writer);
 
     {
@@ -1649,7 +1651,7 @@ test "QueryStringMap Iterator" {
     var map = (try QueryStringMap.init(std.testing.allocator, url)) orelse return try std.testing.expect(false);
     defer map.deinit();
     var buf_: [48]string = undefined;
-    var buf = buf_[0..48];
+    const buf = buf_[0..48];
     var iter = map.iter();
 
     var result: QueryStringMap.Iterator.Result = iter.next(buf) orelse return try expect(false);

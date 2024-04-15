@@ -1,6 +1,6 @@
 const std = @import("std");
-const JSC = @import("root").bun.JSC;
-const strings = @import("root").bun.strings;
+const JSC = bun.JSC;
+const strings = bun.strings;
 const bun = @import("root").bun;
 const Lock = @import("../lock.zig").Lock;
 const JSValue = JSC.JSValue;
@@ -32,7 +32,7 @@ pub const Ref = opaque {
     pub fn create(globalThis: *JSC.JSGlobalObject, value: JSValue) *Ref {
         JSC.markBinding(@src());
         var ref: *Ref = undefined;
-        std.debug.assert(
+        bun.assert(
             napi_create_reference(
                 globalThis,
                 value,
@@ -41,7 +41,7 @@ pub const Ref = opaque {
             ) == .ok,
         );
         if (comptime bun.Environment.isDebug) {
-            std.debug.assert(ref.get() == value);
+            bun.assert(ref.get() == value);
         }
         return ref;
     }
@@ -168,6 +168,8 @@ pub const napi_status = enum(c_uint) {
     would_deadlock = 21,
 };
 pub const napi_callback = ?*const fn (napi_env, napi_callback_info) callconv(.C) napi_value;
+
+/// expects `napi_env`, `callback_data`, `context`
 pub const napi_finalize = ?*const fn (napi_env, ?*anyopaque, ?*anyopaque) callconv(.C) void;
 pub const napi_property_descriptor = extern struct {
     utf8name: [*c]const u8,
@@ -247,11 +249,7 @@ pub export fn napi_create_array_with_length(env: napi_env, length: usize, result
     result.* = array;
     return .ok;
 }
-pub export fn napi_create_double(_: napi_env, value: f64, result: *napi_value) napi_status {
-    log("napi_create_double", .{});
-    result.* = JSValue.jsNumber(value);
-    return .ok;
-}
+pub extern fn napi_create_double(_: napi_env, value: f64, result: *napi_value) napi_status;
 pub export fn napi_create_int32(_: napi_env, value: i32, result: *napi_value) napi_status {
     log("napi_create_int32", .{});
     result.* = JSValue.jsNumber(value);
@@ -271,37 +269,98 @@ inline fn setNapiValue(result: *napi_value, value: JSValue) void {
     value.ensureStillAlive();
     result.* = value;
 }
-pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
-    log("napi_create_string_latin1", .{});
-    const slice = if (NAPI_AUTO_LENGTH == length)
-        bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0)
-    else
-        str[0..length];
+pub export fn napi_create_string_latin1(env: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
+    const result: *napi_value = result_ orelse {
+        return invalidArg();
+    };
 
-    setNapiValue(result, JSC.ZigString.init(slice).toValueGC(env));
+    const slice: []const u8 = brk: {
+        if (NAPI_AUTO_LENGTH == length) {
+            break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
+        } else if (length > std.math.maxInt(u32)) {
+            return invalidArg();
+        }
+
+        if (str) |ptr|
+            break :brk ptr[0..length];
+
+        return invalidArg();
+    };
+
+    log("napi_create_string_latin1: {s}", .{slice});
+
+    if (slice.len == 0) {
+        setNapiValue(result, bun.String.empty.toJS(env));
+        return .ok;
+    }
+
+    var string, const bytes = bun.String.createUninitialized(.latin1, slice.len);
+    defer string.deref();
+
+    @memcpy(bytes, slice);
+
+    setNapiValue(result, string.toJS(env));
     return .ok;
 }
-pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
-    const slice = if (NAPI_AUTO_LENGTH == length)
-        bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0)
-    else
-        str[0..length];
+pub export fn napi_create_string_utf8(env: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
+    const result: *napi_value = result_ orelse {
+        return invalidArg();
+    };
+    const slice: []const u8 = brk: {
+        if (NAPI_AUTO_LENGTH == length) {
+            break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
+        } else if (length > std.math.maxInt(u32)) {
+            return invalidArg();
+        }
+
+        if (str) |ptr|
+            break :brk ptr[0..length];
+
+        return invalidArg();
+    };
 
     log("napi_create_string_utf8: {s}", .{slice});
 
-    var string = bun.String.create(slice);
+    var string = bun.String.createUTF8(slice);
+    if (string.tag == .Dead) {
+        return .generic_failure;
+    }
+
     defer string.deref();
     setNapiValue(result, string.toJS(env));
     return .ok;
 }
-pub export fn napi_create_string_utf16(env: napi_env, str: [*]const char16_t, length: usize, result: *napi_value) napi_status {
-    log("napi_create_string_utf16", .{});
-    const slice = if (NAPI_AUTO_LENGTH == length)
-        bun.sliceTo(@as([*:0]const char16_t, @ptrCast(str)), 0)
-    else
-        str[0..length];
+pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, length: usize, result_: ?*napi_value) napi_status {
+    const result: *napi_value = result_ orelse {
+        return invalidArg();
+    };
 
-    setNapiValue(result, JSC.ZigString.from16(slice.ptr, length).toValueGC(env));
+    const slice: []const u16 = brk: {
+        if (NAPI_AUTO_LENGTH == length) {
+            break :brk bun.sliceTo(@as([*:0]const u16, @ptrCast(str)), 0);
+        } else if (length > std.math.maxInt(u32)) {
+            return invalidArg();
+        }
+
+        if (str) |ptr|
+            break :brk ptr[0..length];
+
+        return invalidArg();
+    };
+
+    if (comptime bun.Environment.allow_assert)
+        log("napi_create_string_utf16: {d} {any}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
+
+    if (slice.len == 0) {
+        setNapiValue(result, bun.String.empty.toJS(env));
+    }
+
+    var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
+    defer string.deref();
+
+    @memcpy(chars, slice);
+
+    setNapiValue(result, string.toJS(env));
     return .ok;
 }
 pub extern fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status;
@@ -309,14 +368,7 @@ pub extern fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
-pub export fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status {
-    log("napi_get_value_double", .{});
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.coerceToDouble(env);
-    return .ok;
-}
+pub extern fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status;
 pub export fn napi_get_value_int32(_: napi_env, value: napi_value, result: *i32) napi_status {
     log("napi_get_value_int32", .{});
     if (!value.isNumber()) {
@@ -355,9 +407,11 @@ inline fn maybeAppendNull(ptr: anytype, doit: bool) void {
 pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf_ptr_: ?[*:0]c_char, bufsize: usize, result_ptr: ?*usize) napi_status {
     log("napi_get_value_string_latin1", .{});
     defer value.ensureStillAlive();
-    var buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
+    const buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
 
     const str = value.toBunString(env);
+    defer str.deref();
+
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
             result.* = str.latin1ByteLength();
@@ -411,6 +465,8 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
     log("napi_get_value_string_utf16", .{});
     defer value.ensureStillAlive();
     const str = value.toBunString(env);
+    defer str.deref();
+
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
             result.* = str.utf16ByteLength();
@@ -506,6 +562,7 @@ pub export fn napi_has_element(env: napi_env, object: napi_value, index: c_uint,
     return .ok;
 }
 pub extern fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
+pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
 pub export fn napi_is_array(_: napi_env, value: napi_value, result: *bool) napi_status {
     log("napi_is_array", .{});
@@ -558,7 +615,7 @@ pub export fn napi_new_instance(env: napi_env, constructor: napi_value, argc: us
 pub export fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result: *bool) napi_status {
     log("napi_instanceof", .{});
     // TODO: does this throw object_expected in node?
-    result.* = object.isCell() and object.isInstanceOf(env, constructor);
+    result.* = object.isObject() and object.isInstanceOf(env, constructor);
     return .ok;
 }
 pub extern fn napi_get_cb_info(env: napi_env, cbinfo: napi_callback_info, argc: [*c]usize, argv: *napi_value, this_arg: *napi_value, data: [*]*anyopaque) napi_status;
@@ -710,22 +767,14 @@ pub export fn napi_is_arraybuffer(_: napi_env, value: napi_value, result: *bool)
     result.* = !value.isNumber() and value.jsTypeLoose() == .ArrayBuffer;
     return .ok;
 }
-pub export fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]const u8, result: *napi_value) napi_status {
-    log("napi_create_arraybuffer", .{});
-    var typed_array = JSC.C.JSObjectMakeTypedArray(env.ref(), .kJSTypedArrayTypeArrayBuffer, byte_length, TODO_EXCEPTION);
-    var array_buffer = JSValue.c(typed_array).asArrayBuffer(env) orelse return genericFailure();
-    const len = @min(array_buffer.len, @as(u32, @truncate(byte_length)));
-    @memcpy(array_buffer.ptr[0..len], data[0..len]);
-    result.* = JSValue.c(typed_array);
-    return .ok;
-}
+pub extern fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]const u8, result: *napi_value) napi_status;
 
 pub extern fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 
 pub export fn napi_get_arraybuffer_info(env: napi_env, arraybuffer: napi_value, data: ?*[*]u8, byte_length: ?*usize) napi_status {
     log("napi_get_arraybuffer_info", .{});
     const array_buffer = arraybuffer.asArrayBuffer(env) orelse return .arraybuffer_expected;
-    var slice = array_buffer.slice();
+    const slice = array_buffer.slice();
     if (data) |dat|
         dat.* = slice.ptr;
     if (byte_length) |len|
@@ -792,7 +841,7 @@ pub export fn napi_is_dataview(_: napi_env, value: napi_value, result: *bool) na
 }
 pub export fn napi_get_dataview_info(env: napi_env, dataview: napi_value, bytelength: *usize, data: *?[*]u8, arraybuffer: *napi_value, byte_offset: *usize) napi_status {
     log("napi_get_dataview_info", .{});
-    var array_buffer = dataview.asArrayBuffer(env) orelse return .object_expected;
+    const array_buffer = dataview.asArrayBuffer(env) orelse return .object_expected;
     bytelength.* = array_buffer.byte_len;
     data.* = array_buffer.ptr;
 
@@ -841,7 +890,7 @@ pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool)
 pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status {
     log("napi_run_script", .{});
     // TODO: don't copy
-    var ref = JSC.C.JSValueToStringCopy(env.ref(), script.asObjectRef(), TODO_EXCEPTION);
+    const ref = JSC.C.JSValueToStringCopy(env.ref(), script.asObjectRef(), TODO_EXCEPTION);
     defer JSC.C.JSStringRelease(ref);
 
     var exception = [_]JSC.C.JSValueRef{null};
@@ -922,7 +971,7 @@ pub const napi_async_work = struct {
     execute: napi_async_execute_callback = null,
     complete: napi_async_complete_callback = null,
     ctx: ?*anyopaque = null,
-    status: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+    status: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     can_deinit: bool = false,
     wait_for_deinit: bool = false,
     scheduled: bool = false,
@@ -935,7 +984,7 @@ pub const napi_async_work = struct {
     };
 
     pub fn create(global: napi_env, execute: napi_async_execute_callback, complete: napi_async_complete_callback, ctx: ?*anyopaque) !*napi_async_work {
-        var work = try bun.default_allocator.create(napi_async_work);
+        const work = try bun.default_allocator.create(napi_async_work);
         work.* = .{
             .global = global,
             .execute = execute,
@@ -952,7 +1001,7 @@ pub const napi_async_work = struct {
         this.run();
     }
     pub fn run(this: *napi_async_work) void {
-        if (this.status.compareAndSwap(@intFromEnum(Status.pending), @intFromEnum(Status.started), .SeqCst, .SeqCst)) |state| {
+        if (this.status.cmpxchgStrong(@intFromEnum(Status.pending), @intFromEnum(Status.started), .SeqCst, .SeqCst)) |state| {
             if (state == @intFromEnum(Status.cancelled)) {
                 if (this.wait_for_deinit) {
                     // this might cause a segfault due to Task using a linked list!
@@ -976,7 +1025,7 @@ pub const napi_async_work = struct {
 
     pub fn cancel(this: *napi_async_work) bool {
         this.ref.unref(this.global.bunVM());
-        return this.status.compareAndSwap(@intFromEnum(Status.cancelled), @intFromEnum(Status.pending), .SeqCst, .SeqCst) != null;
+        return this.status.cmpxchgStrong(@intFromEnum(Status.cancelled), @intFromEnum(Status.pending), .SeqCst, .SeqCst) != null;
     }
 
     pub fn deinit(this: *napi_async_work) void {
@@ -1096,15 +1145,19 @@ pub export fn napi_is_buffer(env: napi_env, value: napi_value, result: *bool) na
     result.* = value.isBuffer(env);
     return .ok;
 }
-pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *[*]u8, length: *usize) napi_status {
+pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: ?*[*]u8, length: ?*usize) napi_status {
     log("napi_get_buffer_info", .{});
     const array_buf = value.asArrayBuffer(env) orelse {
         // TODO: is invalid_arg what to return here?
         return .arraybuffer_expected;
     };
 
-    data.* = array_buf.ptr;
-    length.* = array_buf.byte_len;
+    if (data) |dat|
+        dat.* = array_buf.ptr;
+
+    if (length) |len|
+        len.* = array_buf.byte_len;
+
     return .ok;
 }
 
@@ -1131,19 +1184,19 @@ pub export fn napi_create_async_work(
 }
 pub export fn napi_delete_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_delete_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     work.deinit();
     return .ok;
 }
 pub export fn napi_queue_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_queue_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     work.schedule();
     return .ok;
 }
 pub export fn napi_cancel_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_cancel_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     if (work.cancel()) {
         return .ok;
     }
@@ -1157,8 +1210,12 @@ pub export fn napi_get_node_version(_: napi_env, version: **const napi_node_vers
 }
 pub export fn napi_get_uv_event_loop(env: napi_env, loop: **JSC.EventLoop) napi_status {
     log("napi_get_uv_event_loop", .{});
-    // lol
-    loop.* = env.bunVM().eventLoop();
+    if (bun.Environment.isWindows) {
+        loop.* = @ptrCast(@alignCast(env.bunVM().uvLoop()));
+    } else {
+        // there is no uv event loop on posix, we use our event loop handle.
+        loop.* = env.bunVM().eventLoop();
+    }
     return .ok;
 }
 pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;
@@ -1204,7 +1261,7 @@ pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*any
 
 pub const Finalizer = struct {
     fun: napi_finalize,
-    ctx: ?*anyopaque = null,
+    data: ?*anyopaque = null,
 };
 
 // TODO: generate comptime version of this instead of runtime checking
@@ -1228,14 +1285,14 @@ pub const ThreadSafeFunction = struct {
     /// prevent it from being destroyed.
     poll_ref: Async.KeepAlive,
 
-    owning_threads: std.AutoArrayHashMapUnmanaged(u64, void) = .{},
+    thread_count: usize = 0,
     owning_thread_lock: Lock = Lock.init(),
     event_loop: *JSC.EventLoop,
 
     env: napi_env,
 
     finalizer_task: JSC.AnyTask = undefined,
-    finalizer: Finalizer = Finalizer{ .fun = null, .ctx = null },
+    finalizer: Finalizer = Finalizer{ .fun = null, .data = null },
     channel: Queue,
 
     ctx: ?*anyopaque = null,
@@ -1273,7 +1330,7 @@ pub const ThreadSafeFunction = struct {
                     };
                 },
                 else => {
-                    var slice = allocator.alloc(?*anyopaque, size) catch unreachable;
+                    const slice = allocator.alloc(?*anyopaque, size) catch unreachable;
                     return .{
                         .sized = Channel(?*anyopaque, .Slice).init(slice),
                     };
@@ -1311,7 +1368,7 @@ pub const ThreadSafeFunction = struct {
     };
 
     pub fn call(this: *ThreadSafeFunction) void {
-        var task = this.channel.tryReadItem() catch null orelse return;
+        const task = this.channel.tryReadItem() catch null orelse return;
         switch (this.callback) {
             .js => |js_function| {
                 if (js_function.isEmptyOrUndefinedOrNull()) {
@@ -1343,7 +1400,7 @@ pub const ThreadSafeFunction = struct {
     pub fn finalize(opaq: *anyopaque) void {
         var this = bun.cast(*ThreadSafeFunction, opaq);
         if (this.finalizer.fun) |fun| {
-            fun(this.event_loop.global, opaq, this.finalizer.ctx);
+            fun(this.event_loop.global, this.finalizer.data, this.ctx);
         }
 
         if (this.callback == .js) {
@@ -1371,24 +1428,33 @@ pub const ThreadSafeFunction = struct {
         defer this.owning_thread_lock.unlock();
         if (this.channel.isClosed())
             return error.Closed;
-        _ = this.owning_threads.getOrPut(bun.default_allocator, std.Thread.getCurrentId()) catch unreachable;
+        this.thread_count += 1;
     }
 
-    pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode) void {
+    pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode) napi_status {
         this.owning_thread_lock.lock();
         defer this.owning_thread_lock.unlock();
-        if (!this.owning_threads.swapRemove(std.Thread.getCurrentId()))
-            return;
+
+        if (this.thread_count == 0) {
+            return invalidArg();
+        }
+
+        this.thread_count -= 1;
+
+        if (this.channel.isClosed()) {
+            return .ok;
+        }
 
         if (mode == .abort) {
             this.channel.close();
         }
 
-        if (this.owning_threads.count() == 0) {
+        if (mode == .abort or this.thread_count == 0) {
             this.finalizer_task = JSC.AnyTask{ .ctx = this, .callback = finalize };
             this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, finalize));
-            return;
         }
+
+        return .ok;
     }
 };
 
@@ -1428,11 +1494,11 @@ pub export fn napi_create_threadsafe_function(
         },
         .ctx = context,
         .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
-        .owning_threads = .{},
+        .thread_count = initial_thread_count,
         .poll_ref = Async.KeepAlive.init(),
     };
-    function.owning_threads.ensureTotalCapacity(bun.default_allocator, initial_thread_count) catch return genericFailure();
-    function.finalizer = .{ .ctx = thread_finalize_data, .fun = thread_finalize_cb };
+
+    function.finalizer = .{ .data = thread_finalize_data, .fun = thread_finalize_cb };
     result.* = function;
     return .ok;
 }
@@ -1461,19 +1527,18 @@ pub export fn napi_acquire_threadsafe_function(func: napi_threadsafe_function) n
 }
 pub export fn napi_release_threadsafe_function(func: napi_threadsafe_function, mode: napi_threadsafe_function_release_mode) napi_status {
     log("napi_release_threadsafe_function", .{});
-    func.release(mode);
-    return .ok;
+    return func.release(mode);
 }
 pub export fn napi_unref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_unref_threadsafe_function", .{});
-    std.debug.assert(func.event_loop.global == env);
+    bun.assert(func.event_loop.global == env);
 
     func.unref();
     return .ok;
 }
 pub export fn napi_ref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_ref_threadsafe_function", .{});
-    std.debug.assert(func.event_loop.global == env);
+    bun.assert(func.event_loop.global == env);
 
     func.ref();
     return .ok;
@@ -1496,144 +1561,44 @@ pub const NAPI_AUTO_LENGTH = std.math.maxInt(usize);
 pub const SRC_NODE_API_TYPES_H_ = "";
 pub const NAPI_MODULE_VERSION = @as(c_int, 1);
 
+/// v8:: C++ symbols defined in v8.cpp
+///
+/// Do not call these at runtime, as they do not contain type and callconv info. They are simply
+/// used for DCE suppression and asserting that the symbols exist at link-time.
+///
+// TODO: write a script to generate this struct. ideally it wouldn't even need to be committed to source.
+const V8API = if (!bun.Environment.isWindows) struct {
+    pub extern fn _ZN2v87Isolate10GetCurrentEv() *anyopaque;
+    pub extern fn _ZN2v87Isolate13TryGetCurrentEv() *anyopaque;
+    pub extern fn _ZN2v87Isolate17GetCurrentContextEv() *anyopaque;
+    pub extern fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+    pub extern fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+} else struct {
+    // MSVC name mangling is different than it is on unix.
+    // To make this easier to deal with, I have provided a script to generate the list of functions.
+    //
+    // dumpbin .\build\CMakeFiles\bun-debug.dir\src\bun.js\bindings\v8.cpp.obj /symbols | where-object { $_.Contains(' node::') -or $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
+    //
+    // Bug @paperdave if you get stuck here
+    pub extern fn @"?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
+    pub extern fn @"?GetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
+    pub extern fn @"?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VJSGlobalObject@JSC@@@2@XZ"() *anyopaque;
+    pub extern fn @"?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
+    pub extern fn @"?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
+};
+
 pub fn fixDeadCodeElimination() void {
     JSC.markBinding(@src());
 
-    std.mem.doNotOptimizeAway(&napi_acquire_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_add_async_cleanup_hook);
-    std.mem.doNotOptimizeAway(&napi_add_env_cleanup_hook);
-    std.mem.doNotOptimizeAway(&napi_add_finalizer);
-    std.mem.doNotOptimizeAway(&napi_adjust_external_memory);
-    std.mem.doNotOptimizeAway(&napi_async_destroy);
-    std.mem.doNotOptimizeAway(&napi_async_init);
-    std.mem.doNotOptimizeAway(&napi_call_function);
-    std.mem.doNotOptimizeAway(&napi_call_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_cancel_async_work);
-    std.mem.doNotOptimizeAway(&napi_check_object_type_tag);
-    std.mem.doNotOptimizeAway(&napi_close_callback_scope);
-    std.mem.doNotOptimizeAway(&napi_close_escapable_handle_scope);
-    std.mem.doNotOptimizeAway(&napi_close_handle_scope);
-    std.mem.doNotOptimizeAway(&napi_coerce_to_bool);
-    std.mem.doNotOptimizeAway(&napi_coerce_to_number);
-    std.mem.doNotOptimizeAway(&napi_coerce_to_object);
-    std.mem.doNotOptimizeAway(&napi_create_array);
-    std.mem.doNotOptimizeAway(&napi_create_array_with_length);
-    std.mem.doNotOptimizeAway(&napi_create_arraybuffer);
-    std.mem.doNotOptimizeAway(&napi_create_async_work);
-    std.mem.doNotOptimizeAway(&napi_create_bigint_int64);
-    std.mem.doNotOptimizeAway(&napi_create_bigint_uint64);
-    std.mem.doNotOptimizeAway(&napi_create_bigint_words);
-    std.mem.doNotOptimizeAway(&napi_create_buffer);
-    std.mem.doNotOptimizeAway(&napi_create_buffer_copy);
-    std.mem.doNotOptimizeAway(&napi_create_dataview);
-    std.mem.doNotOptimizeAway(&napi_create_date);
-    std.mem.doNotOptimizeAway(&napi_create_double);
-    std.mem.doNotOptimizeAway(&napi_create_error);
-    std.mem.doNotOptimizeAway(&napi_create_external);
-    std.mem.doNotOptimizeAway(&napi_create_external_arraybuffer);
-    std.mem.doNotOptimizeAway(&napi_create_external_buffer);
-    std.mem.doNotOptimizeAway(&napi_create_int32);
-    std.mem.doNotOptimizeAway(&napi_create_int64);
-    std.mem.doNotOptimizeAway(&napi_create_object);
-    std.mem.doNotOptimizeAway(&napi_create_promise);
-    std.mem.doNotOptimizeAway(&napi_create_range_error);
-    std.mem.doNotOptimizeAway(&napi_create_reference);
-    std.mem.doNotOptimizeAway(&napi_create_string_latin1);
-    std.mem.doNotOptimizeAway(&napi_create_string_utf16);
-    std.mem.doNotOptimizeAway(&napi_create_string_utf8);
-    std.mem.doNotOptimizeAway(&napi_create_symbol);
-    std.mem.doNotOptimizeAway(&napi_create_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_create_type_error);
-    std.mem.doNotOptimizeAway(&napi_create_typedarray);
-    std.mem.doNotOptimizeAway(&napi_create_uint32);
-    std.mem.doNotOptimizeAway(&napi_define_class);
-    std.mem.doNotOptimizeAway(&napi_define_properties);
-    std.mem.doNotOptimizeAway(&napi_delete_async_work);
-    std.mem.doNotOptimizeAway(&napi_delete_reference);
-    std.mem.doNotOptimizeAway(&napi_detach_arraybuffer);
-    std.mem.doNotOptimizeAway(&napi_escape_handle);
-    std.mem.doNotOptimizeAway(&napi_fatal_error);
-    std.mem.doNotOptimizeAway(&napi_fatal_exception);
-    std.mem.doNotOptimizeAway(&napi_get_all_property_names);
-    std.mem.doNotOptimizeAway(&napi_get_and_clear_last_exception);
-    std.mem.doNotOptimizeAway(&napi_get_array_length);
-    std.mem.doNotOptimizeAway(&napi_get_arraybuffer_info);
-    std.mem.doNotOptimizeAway(&napi_get_boolean);
-    std.mem.doNotOptimizeAway(&napi_get_buffer_info);
-    std.mem.doNotOptimizeAway(&napi_get_cb_info);
-    std.mem.doNotOptimizeAway(&napi_get_dataview_info);
-    std.mem.doNotOptimizeAway(&napi_get_date_value);
-    std.mem.doNotOptimizeAway(&napi_get_element);
-    std.mem.doNotOptimizeAway(&napi_get_global);
-    std.mem.doNotOptimizeAway(&napi_get_instance_data);
-    std.mem.doNotOptimizeAway(&napi_get_last_error_info);
-    std.mem.doNotOptimizeAway(&napi_get_new_target);
-    std.mem.doNotOptimizeAway(&napi_get_node_version);
-    std.mem.doNotOptimizeAway(&napi_get_null);
-    std.mem.doNotOptimizeAway(&napi_get_prototype);
-    std.mem.doNotOptimizeAway(&napi_get_reference_value);
-    std.mem.doNotOptimizeAway(&napi_get_reference_value_internal);
-    std.mem.doNotOptimizeAway(&napi_get_threadsafe_function_context);
-    std.mem.doNotOptimizeAway(&napi_get_typedarray_info);
-    std.mem.doNotOptimizeAway(&napi_get_undefined);
-    std.mem.doNotOptimizeAway(&napi_get_uv_event_loop);
-    std.mem.doNotOptimizeAway(&napi_get_value_bigint_int64);
-    std.mem.doNotOptimizeAway(&napi_get_value_bigint_uint64);
-    std.mem.doNotOptimizeAway(&napi_get_value_bigint_words);
-    std.mem.doNotOptimizeAway(&napi_get_value_bool);
-    std.mem.doNotOptimizeAway(&napi_get_value_double);
-    std.mem.doNotOptimizeAway(&napi_get_value_external);
-    std.mem.doNotOptimizeAway(&napi_get_value_int32);
-    std.mem.doNotOptimizeAway(&napi_get_value_int64);
-    std.mem.doNotOptimizeAway(&napi_get_value_string_latin1);
-    std.mem.doNotOptimizeAway(&napi_get_value_string_utf16);
-    std.mem.doNotOptimizeAway(&napi_get_value_string_utf8);
-    std.mem.doNotOptimizeAway(&napi_get_value_uint32);
-    std.mem.doNotOptimizeAway(&napi_get_version);
-    std.mem.doNotOptimizeAway(&napi_has_element);
-    std.mem.doNotOptimizeAway(&napi_instanceof);
-    std.mem.doNotOptimizeAway(&napi_is_array);
-    std.mem.doNotOptimizeAway(&napi_is_arraybuffer);
-    std.mem.doNotOptimizeAway(&napi_is_buffer);
-    std.mem.doNotOptimizeAway(&napi_is_dataview);
-    std.mem.doNotOptimizeAway(&napi_is_date);
-    std.mem.doNotOptimizeAway(&napi_is_detached_arraybuffer);
-    std.mem.doNotOptimizeAway(&napi_is_error);
-    std.mem.doNotOptimizeAway(&napi_is_exception_pending);
-    std.mem.doNotOptimizeAway(&napi_is_promise);
-    std.mem.doNotOptimizeAway(&napi_is_typedarray);
-    std.mem.doNotOptimizeAway(&napi_make_callback);
-    std.mem.doNotOptimizeAway(&napi_new_instance);
-    std.mem.doNotOptimizeAway(&napi_open_callback_scope);
-    std.mem.doNotOptimizeAway(&napi_open_escapable_handle_scope);
-    std.mem.doNotOptimizeAway(&napi_open_handle_scope);
-    std.mem.doNotOptimizeAway(&napi_queue_async_work);
-    std.mem.doNotOptimizeAway(&napi_ref_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_reference_ref);
-    std.mem.doNotOptimizeAway(&napi_reference_unref);
-    std.mem.doNotOptimizeAway(&napi_reject_deferred);
-    std.mem.doNotOptimizeAway(&napi_release_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_remove_async_cleanup_hook);
-    std.mem.doNotOptimizeAway(&napi_remove_env_cleanup_hook);
-    std.mem.doNotOptimizeAway(&napi_remove_wrap);
-    std.mem.doNotOptimizeAway(&napi_resolve_deferred);
-    std.mem.doNotOptimizeAway(&napi_run_script);
-    std.mem.doNotOptimizeAway(&napi_set_element);
-    std.mem.doNotOptimizeAway(&napi_set_instance_data);
-    std.mem.doNotOptimizeAway(&napi_strict_equals);
-    std.mem.doNotOptimizeAway(&napi_throw);
-    std.mem.doNotOptimizeAway(&napi_throw_error);
-    std.mem.doNotOptimizeAway(&napi_throw_range_error);
-    std.mem.doNotOptimizeAway(&napi_throw_type_error);
-    std.mem.doNotOptimizeAway(&napi_type_tag_object);
-    std.mem.doNotOptimizeAway(&napi_typeof);
-    std.mem.doNotOptimizeAway(&napi_unref_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_unwrap);
-    std.mem.doNotOptimizeAway(&napi_wrap);
-    std.mem.doNotOptimizeAway(&node_api_create_syntax_error);
-    std.mem.doNotOptimizeAway(&node_api_symbol_for);
-    std.mem.doNotOptimizeAway(&node_api_throw_syntax_error);
-    std.mem.doNotOptimizeAway(&node_api_create_external_string_latin1);
-    std.mem.doNotOptimizeAway(&node_api_create_external_string_utf16);
+    inline for (comptime std.meta.declarations(@This())) |decl| {
+        if (std.mem.startsWith(u8, decl.name, "node_api_") or std.mem.startsWith(u8, decl.name, "napi_")) {
+            std.mem.doNotOptimizeAway(&@field(@This(), decl.name));
+        }
+    }
+
+    inline for (comptime std.meta.declarations(V8API)) |decl| {
+        std.mem.doNotOptimizeAway(&@field(V8API, decl.name));
+    }
+
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }

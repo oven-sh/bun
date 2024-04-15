@@ -54,8 +54,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
 
     auto* filterObject = callframe->uncheckedArgument(0).toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
     JSC::RegExpObject* filter = nullptr;
     if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s))) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
@@ -143,24 +141,8 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, jsCast<JSC::JSObject*>(functionValue) });
 
-    JSMap* esmRegistry;
-
-    if (auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s))) {
-        if (auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s))) {
-            esmRegistry = jsCast<JSC::JSMap*>(registryValue);
-        }
-    }
-
     global->requireMap()->remove(globalObject, moduleIdValue);
-    if (esmRegistry)
-        esmRegistry->remove(globalObject, moduleIdValue);
-
-    // bool hasBeenRequired = global->requireMap()->has(globalObject, moduleIdValue);
-    // bool hasBeenImported = esmRegistry && esmRegistry->has(globalObject, moduleIdValue);
-    // if (hasBeenRequired || hasBeenImported) {
-    //     // callAndReplaceModule(global, moduleIdValue, functionValue, global->requireMap(), esmRegistry, hasBeenRequired, hasBeenImported);
-    //     // RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    // }
+    global->esmRegistryMap()->remove(globalObject, moduleIdValue);
 
     return JSValue::encode(jsUndefined());
 }
@@ -177,8 +159,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
 
     auto* filterObject = callframe->uncheckedArgument(0).toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
     JSC::RegExpObject* filter = nullptr;
     if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s))) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
@@ -287,7 +267,6 @@ extern "C" JSC::EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* glo
 extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
     JSC::VM& vm = globalObject->vm();
-    auto clientData = WebCore::clientData(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callframe->argumentCount() < 1) {
         JSC::throwTypeError(globalObject, throwScope, "plugin needs at least one argument (an object)"_s);
@@ -322,7 +301,6 @@ extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject,
         }
     }
 
-    JSFunction* setupFunction = jsCast<JSFunction*>(setupFunctionValue);
     JSObject* builderObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
     builderObject->putDirect(vm, Identifier::fromString(vm, "target"_s), jsString(vm, String("bun"_s)), 0);
@@ -373,7 +351,6 @@ extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject,
 
 extern "C" JSC::EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
-    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     return setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
 }
 
@@ -516,6 +493,7 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     return object;
 }
 
+extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSource(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 extern "C" EncodedJSValue JSMock__jsModuleMock(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe)
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
@@ -541,18 +519,58 @@ extern "C" EncodedJSValue JSMock__jsModuleMock(JSC::JSGlobalObject* lexicalGloba
         return {};
     }
 
-    if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier == "."_s) {
+    auto resolveSpecifier = [&]() -> void {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
         const URL& url = sourceOrigin.url();
-        if (url.protocolIsFile()) {
-            URL joinedURL = URL(url, specifier);
-            specifier = joinedURL.fileSystemPath();
-            specifierString = jsString(vm, specifier);
-        } else {
-            scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) cannot mock relative paths in non-files"_s));
-            return {};
+
+        if (specifier.startsWith("file:"_s)) {
+            URL fileURL = URL(url, specifier);
+            if (fileURL.isValid()) {
+                specifier = fileURL.fileSystemPath();
+                specifierString = jsString(vm, specifier);
+                globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+                return;
+            } else {
+                scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Invalid \"file:\" URL"_s));
+                return;
+            }
         }
-    }
+
+        if (url.isValid() && url.protocolIsFile()) {
+            auto fromString = url.fileSystemPath();
+            BunString from = Bun::toString(fromString);
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true));
+            if (catchScope.exception()) {
+                catchScope.clearException();
+            }
+
+            if (result && result.isString()) {
+                auto* specifierStr = result.toString(globalObject);
+                if (specifierStr->length() > 0) {
+                    specifierString = specifierStr;
+                    specifier = specifierString->value(globalObject);
+                }
+            } else if (specifier.startsWith("./"_s) || specifier.startsWith(".."_s)) {
+                // If module resolution fails, we try to resolve it relative to the current file
+                auto relativeURL = URL(url, specifier);
+
+                if (relativeURL.isValid()) {
+                    globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+
+                    if (relativeURL.protocolIsFile())
+                        specifier = relativeURL.fileSystemPath();
+                    else
+                        specifier = relativeURL.string();
+
+                    specifierString = jsString(vm, specifier);
+                }
+            }
+        }
+    };
+
+    resolveSpecifier();
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSValue callbackValue = callframe->argument(1);
     if (!callbackValue.isCell() || !callbackValue.isCallable()) {
@@ -699,10 +717,9 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     JSC::VM& vm = globalObject->vm();
 
     JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
+    const auto& builtinNames = WebCore::builtinNames(vm);
     paramsObject->putDirect(
-        vm, clientData->builtinNames().pathPublicName(),
+        vm, builtinNames.pathPublicName(),
         jsString(vm, pathString));
     arguments.append(paramsObject);
 
@@ -738,6 +755,25 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
+std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path, const String& from)
+{
+    ASSERT(virtualModules);
+
+    if (this->mustDoExpensiveRelativeLookup) {
+        String joinedPath = path;
+
+        if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
+            auto url = WTF::URL::fileURLWithFileSystemPath(from);
+            ASSERT(url.isValid());
+            joinedPath = URL(url, path).fileSystemPath();
+        }
+
+        return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;
+    }
+
+    return virtualModules->contains(path) ? std::optional<String> { path } : std::nullopt;
+}
+
 EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer)
 {
     Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
@@ -767,13 +803,12 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
         JSC::VM& vm = globalObject->vm();
 
         JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-        auto clientData = WebCore::clientData(vm);
-        auto& builtinNames = clientData->builtinNames();
+        const auto& builtinNames = WebCore::builtinNames(vm);
         paramsObject->putDirect(
-            vm, clientData->builtinNames().pathPublicName(),
+            vm, builtinNames.pathPublicName(),
             Bun::toJS(globalObject, *path));
         paramsObject->putDirect(
-            vm, clientData->builtinNames().importerPublicName(),
+            vm, builtinNames.importerPublicName(),
             Bun::toJS(globalObject, *importer));
         arguments.append(paramsObject);
 
@@ -848,7 +883,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         return JSValue::decode(Bun__runVirtualModule(globalObject, specifier));
     };
 
-    if (!globalObject->onLoadPlugins.virtualModules) {
+    if (!globalObject->onLoadPlugins.hasVirtualModules()) {
         return fallback();
     }
     auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
@@ -900,4 +935,4 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     return fallback();
 }
 
-}
+} // namespace Bun

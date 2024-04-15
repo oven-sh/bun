@@ -18,7 +18,7 @@ const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 const errno = os.errno;
-const mode_t = C.mode_t;
+const mode_t = bun.Mode;
 // TODO: this is wrong on Windows
 const libc_stat = bun.Stat;
 
@@ -27,7 +27,6 @@ pub const darwin = @import("./darwin_c.zig");
 pub const linux = @import("./linux_c.zig");
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
 pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;
-pub extern "c" fn umask(mode_t) mode_t;
 pub extern "c" fn fchmodat(c_int, [*c]const u8, mode_t, c_int) c_int;
 pub extern "c" fn fchown(std.c.fd_t, std.c.uid_t, std.c.gid_t) c_int;
 pub extern "c" fn lchown(path: [*:0]const u8, std.c.uid_t, std.c.gid_t) c_int;
@@ -55,7 +54,7 @@ pub extern "c" fn strchr(str: [*]const u8, char: u8) ?[*]const u8;
 
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
-        @compileError("Not implemented yet");
+        @compileError("Not implemented yet, conside using bun.sys.lstat()");
     }
 
     var st = zeroes(libc_stat);
@@ -105,108 +104,98 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
 
 // renameatZ fails when renaming across mount points
 // we assume that this is relatively uncommon
-pub fn moveFileZ(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    std.os.renameatZ(from_dir, filename, to_dir, destination) catch |err| {
-        switch (err) {
-            error.RenameAcrossMountPoints => {
+// TODO: change types to use `bun.FileDescriptor`
+pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+        .err => |err| {
+            // allow over-writing an empty directory
+            if (err.getErrno() == .ISDIR) {
+                _ = bun.sys.rmdirat(to_dir, destination.ptr);
+                try bun.sys.renameat(from_dir, filename, to_dir, destination).unwrap();
+                return;
+            }
+
+            if (err.getErrno() == .XDEV) {
                 try moveFileZSlow(from_dir, filename, to_dir, destination);
-            },
-            else => {
-                return err;
-            },
-        }
-    };
+            } else {
+                return bun.errnoToZigErr(err.errno);
+            }
+        },
+        .result => {},
+    }
 }
 
-pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    std.os.renameatZ(from_dir, filename, to_dir, destination) catch |err| {
-        switch (err) {
-            error.RenameAcrossMountPoints => {
+pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+        .err => |err| {
+            // allow over-writing an empty directory
+            if (err.getErrno() == .ISDIR) {
+                _ = bun.sys.rmdirat(to_dir, destination.ptr);
+
+                try (bun.sys.renameat(from_dir, filename, to_dir, destination).unwrap());
+                return;
+            }
+
+            if (err.getErrno() == .XDEV) {
                 try copyFileZSlowWithHandle(from_handle, to_dir, destination);
-                std.os.unlinkatZ(from_dir, filename, 0) catch {};
-            },
-            else => {
-                return err;
-            },
-        }
-    };
+                _ = bun.sys.unlinkat(from_dir, filename);
+            }
+
+            return bun.errnoToZigErr(err.errno);
+        },
+        .result => {},
+    }
 }
 
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
-pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o600);
-    defer std.os.close(in_handle);
+pub fn moveFileZSlow(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    const in_handle = try bun.sys.openat(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
+    defer _ = bun.sys.close(in_handle);
+    _ = bun.sys.unlinkat(from_dir, filename);
     try copyFileZSlowWithHandle(in_handle, to_dir, destination);
-    std.os.unlinkatZ(from_dir, filename, 0) catch {};
 }
 
-pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle) else void{};
-    const size = brk: {
-        if (comptime Environment.isPosix) {
-            break :brk stat_.size;
-        }
+pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    if (comptime Environment.isWindows) {
+        @panic("TODO windows");
+    }
 
-        break :brk try std.os.windows.GetFileSizeEx(in_handle);
-    };
+    const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle.cast()) else void{};
 
-    // delete if exists, don't care if it fails. it may fail due to the file not existing
-    // delete here because we run into weird truncation issues if we do not
-    // ftruncate() instead didn't work.
-    // this is technically racy because it could end up deleting the file without saving
-    std.os.unlinkatZ(to_dir, destination, 0) catch {};
-    const out_handle = try std.os.openatZ(
+    // Attempt to delete incase it already existed.
+    // This fixes ETXTBUSY on Linux
+    _ = bun.sys.unlinkat(to_dir, destination);
+
+    const out_handle = try bun.sys.openat(
         to_dir,
         destination,
-        std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC,
-        if (comptime Environment.isPosix) 0o022 else 0,
-    );
-    defer std.os.close(out_handle);
-    if (comptime Environment.isLinux) {
-        _ = std.os.system.fallocate(out_handle, 0, 0, @as(i64, @intCast(size)));
-        _ = try std.os.sendfile(out_handle, in_handle, 0, @as(usize, @intCast(size)), &[_]std.os.iovec_const{}, &[_]std.os.iovec_const{}, 0);
-    } else {
-        if (comptime Environment.isMac) {
-            // if this fails, it doesn't matter
-            // we only really care about read & write succeeding
-            PlatformSpecific.preallocate_file(
-                out_handle,
-                @as(std.os.off_t, @intCast(0)),
-                @as(std.os.off_t, @intCast(size)),
-            ) catch {};
-        }
+        std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC | std.os.O.TRUNC,
+        if (comptime Environment.isPosix) 0o644 else 0,
+    ).unwrap();
+    defer _ = bun.sys.close(out_handle);
 
-        var buf: [8092 * 2]u8 = undefined;
-        var total_read: usize = 0;
-        while (true) {
-            const read = try std.os.pread(in_handle, &buf, total_read);
-            total_read += read;
-            if (read == 0) break;
-            const bytes = buf[0..read];
-            const written = try std.os.write(out_handle, bytes);
-            if (written == 0) break;
-        }
+    if (comptime Environment.isLinux) {
+        _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
     }
 
+    try bun.copyFile(in_handle.cast(), out_handle.cast());
+
     if (comptime Environment.isPosix) {
-        _ = fchmod(out_handle, stat_.mode);
-        _ = fchown(out_handle, stat_.uid, stat_.gid);
+        _ = fchmod(out_handle.cast(), stat_.mode);
+        _ = fchown(out_handle.cast(), stat_.uid, stat_.gid);
     }
 }
 
-pub fn kindFromMode(mode: os.mode_t) std.fs.File.Kind {
-    if (comptime Environment.isWindows) {
-        return bun.todo(@src(), std.fs.File.Kind.unknown);
-    }
-    return switch (mode & os.S.IFMT) {
-        os.S.IFBLK => std.fs.File.Kind.block_device,
-        os.S.IFCHR => std.fs.File.Kind.character_device,
-        os.S.IFDIR => std.fs.File.Kind.directory,
-        os.S.IFIFO => std.fs.File.Kind.named_pipe,
-        os.S.IFLNK => std.fs.File.Kind.sym_link,
-        os.S.IFREG => std.fs.File.Kind.file,
-        os.S.IFSOCK => std.fs.File.Kind.unix_domain_socket,
+pub fn kindFromMode(mode: mode_t) std.fs.File.Kind {
+    return switch (mode & bun.S.IFMT) {
+        bun.S.IFBLK => std.fs.File.Kind.block_device,
+        bun.S.IFCHR => std.fs.File.Kind.character_device,
+        bun.S.IFDIR => std.fs.File.Kind.directory,
+        bun.S.IFIFO => std.fs.File.Kind.named_pipe,
+        bun.S.IFLNK => std.fs.File.Kind.sym_link,
+        bun.S.IFREG => std.fs.File.Kind.file,
+        bun.S.IFSOCK => std.fs.File.Kind.unix_domain_socket,
         else => .unknown,
     };
 }
@@ -252,8 +241,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                 allocator.free(slice);
             }
             const img_count = std.c._dyld_image_count();
-            var i: u32 = 0;
-            while (i < img_count) : (i += 1) {
+            for (0..img_count) |i| {
                 const name = std.c._dyld_get_image_name(i);
                 const item = try allocator.dupeZ(u8, mem.sliceTo(name, 0));
                 errdefer allocator.free(item);
@@ -272,7 +260,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                 allocator.free(slice);
             }
 
-            var b = "/boot/system/runtime_loader";
+            const b = "/boot/system/runtime_loader";
             const item = try allocator.dupeZ(u8, mem.sliceTo(b, 0));
             errdefer allocator.free(item);
             try paths.append(item);
@@ -365,7 +353,14 @@ pub fn getVersion(buf: []u8) []const u8 {
     } else if (comptime Environment.isMac) {
         return darwin.get_version(buf);
     } else {
-        return bun.todo(@src(), "unknown");
+        var info: bun.windows.libuv.uv_utsname_s = undefined;
+        const err = bun.windows.libuv.uv_os_uname(&info);
+        if (err != 0) {
+            return "unknown";
+        }
+        const slice = bun.sliceTo(&info.version, 0);
+        @memcpy(buf[0..slice.len], slice);
+        return buf[0..slice.len];
     }
 }
 
@@ -375,7 +370,14 @@ pub fn getRelease(buf: []u8) []const u8 {
     } else if (comptime Environment.isMac) {
         return darwin.get_release(buf);
     } else {
-        return bun.todo(@src(), "unknown");
+        var info: bun.windows.libuv.uv_utsname_s = undefined;
+        const err = bun.windows.libuv.uv_os_uname(&info);
+        if (err != 0) {
+            return "unknown";
+        }
+        const release = bun.sliceTo(&info.release, 0);
+        @memcpy(buf[0..release.len], release);
+        return buf[0..release.len];
     }
 }
 
@@ -388,14 +390,14 @@ const LazyStatus = enum {
     failed,
 };
 
-fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
+pub fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
     if (comptime Environment.isWindows) {
         return bun.windows.GetProcAddressA(handle, name);
     } else if (comptime Environment.isMac or Environment.isLinux) {
         return std.c.dlsym(handle, name.ptr);
     }
 
-    return bun.todo(@src(), null);
+    @compileError("dlsym unimplemented for this target");
 }
 
 pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptime handle_getter: fn () ?*anyopaque) ?Type {
@@ -409,7 +411,7 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
     };
 
     if (Wrapper.loaded == .pending) {
-        const result = _dlsym(@call(.always_inline, handle_getter, .{}), name);
+        const result = _dlsym(@call(bun.callmod_inline, handle_getter, .{}), name);
 
         if (result) |ptr| {
             Wrapper.function = bun.cast(Type, ptr);
@@ -460,3 +462,9 @@ pub fn dlopen(filename: [:0]const u8, flags: i32) ?*anyopaque {
 
     return std.c.dlopen(filename, flags);
 }
+
+pub extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+
+pub extern "C" fn bun_initialize_process() void;
+pub extern "C" fn bun_restore_stdio() void;
+pub extern "C" fn open_as_nonblocking_tty(i32, i32) i32;

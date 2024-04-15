@@ -1,13 +1,10 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const RequestContext = @import("../../bun_dev_http_server.zig").RequestContext;
-const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
+const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.HTTP;
-const NetworkThread = HTTPClient.NetworkThread;
-const AsyncIO = NetworkThread.AsyncIO;
-const JSC = @import("root").bun.JSC;
+const HTTPClient = bun.http;
+const JSC = bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
@@ -15,12 +12,12 @@ const FetchHeaders = JSC.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
@@ -40,9 +37,9 @@ const NullableAllocator = @import("../../nullable_allocator.zig").NullableAlloca
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 const InlineBlob = JSC.WebCore.InlineBlob;
 const AnyBlob = JSC.WebCore.AnyBlob;
@@ -74,7 +71,7 @@ pub const Request = struct {
     upgrader: ?*anyopaque = null,
 
     // We must report a consistent value for this
-    reported_estimated_size: ?u63 = null,
+    reported_estimated_size: usize = 0,
 
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
@@ -131,10 +128,16 @@ pub const Request = struct {
     }
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
-        return this.reported_estimated_size orelse brk: {
-            this.reported_estimated_size = @as(u63, @truncate(this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request)));
-            break :brk this.reported_estimated_size.?;
-        };
+        return this.reported_estimated_size;
+    }
+
+    pub fn calculateEstimatedByteSize(this: *Request) void {
+        this.reported_estimated_size = this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    }
+
+    pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
+        this.calculateEstimatedByteSize();
+        return Request.toJSUnchecked(globalObject, this);
     }
 
     pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
@@ -177,7 +180,7 @@ pub const Request = struct {
                     try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
-                if (this.body.value.Locked.readable) |stream| {
+                if (this.body.value.Locked.readable.get()) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
                     formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
@@ -187,17 +190,6 @@ pub const Request = struct {
         try writer.writeAll("\n");
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll("}");
-    }
-
-    pub fn fromRequestContext(ctx: *RequestContext) !Request {
-        if (comptime Environment.isWindows) unreachable;
-        var req = Request{
-            .url = bun.String.create(ctx.full_url),
-            .body = try InitRequestBodyValue(.{ .Null = {} }),
-            .method = ctx.method,
-            .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
-        };
-        return req;
     }
 
     pub fn mimeType(this: *const Request) string {
@@ -267,7 +259,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return bun.String.static(@tagName(this.method)).toJSConst(globalThis);
+        return bun.String.static(@tagName(this.method)).toJS(globalThis);
     }
 
     pub fn getMode(
@@ -342,7 +334,7 @@ pub const Request = struct {
             const req_url = req.url();
             if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
-                    const fmt = strings.HostFormatter{
+                    const fmt = bun.fmt.HostFormatter{
                         .is_https = this.https,
                         .host = host,
                     };
@@ -369,7 +361,7 @@ pub const Request = struct {
             const req_url = req.url();
             if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
-                    const fmt = strings.HostFormatter{
+                    const fmt = bun.fmt.HostFormatter{
                         .is_https = this.https,
                         .host = host,
                     };
@@ -380,7 +372,7 @@ pub const Request = struct {
                     });
 
                     if (comptime Environment.allow_assert) {
-                        std.debug.assert(this.sizeOfURL() == url_bytelength);
+                        bun.assert(this.sizeOfURL() == url_bytelength);
                     }
 
                     if (url_bytelength < 128) {
@@ -392,7 +384,7 @@ pub const Request = struct {
                         }) catch @panic("Unexpected error while printing URL");
 
                         if (comptime Environment.allow_assert) {
-                            std.debug.assert(this.sizeOfURL() == url.len);
+                            bun.assert(this.sizeOfURL() == url.len);
                         }
 
                         var href = bun.JSC.URL.hrefFromString(bun.String.fromBytes(url));
@@ -405,29 +397,30 @@ pub const Request = struct {
                             }
                         } else {
                             // TODO: what is the right thing to do for invalid URLS?
-                            this.url = bun.String.create(url);
+                            this.url = bun.String.createUTF8(url);
                         }
 
                         return;
                     }
 
                     if (strings.isAllASCII(host) and strings.isAllASCII(req_url)) {
-                        this.url = bun.String.createUninitializedLatin1(url_bytelength);
-                        var bytes = @constCast(this.url.byteSlice());
+                        this.url, const bytes = bun.String.createUninitialized(.latin1, url_bytelength);
                         _ = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
                             req_url,
-                        }) catch @panic("Unexpected error while printing URL");
+                        }) catch |err| switch (err) {
+                            error.NoSpaceLeft => unreachable, // exact space should have been counted
+                        };
                     } else {
                         // slow path
-                        var temp_url = std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                        const temp_url = std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
                             req_url,
-                        }) catch unreachable;
+                        }) catch bun.outOfMemory();
                         defer bun.default_allocator.free(temp_url);
-                        this.url = bun.String.create(temp_url);
+                        this.url = bun.String.createUTF8(temp_url);
                     }
 
                     const href = bun.JSC.URL.hrefFromString(this.url);
@@ -441,9 +434,9 @@ pub const Request = struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.sizeOfURL() == req_url.len);
+                bun.assert(this.sizeOfURL() == req_url.len);
             }
-            this.url = bun.String.create(req_url);
+            this.url = bun.String.createUTF8(req_url);
         }
     }
 
@@ -500,7 +493,7 @@ pub const Request = struct {
                 _ = req.body.unref();
                 return null;
             };
-            req.url = str.dupeRef();
+            req.url = str;
 
             if (!req.url.isEmpty())
                 fields.insert(.url);
@@ -601,7 +594,7 @@ pub const Request = struct {
 
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
-                    req.url = bun.String.fromJS(url, globalThis).dupeRef();
+                    req.url = bun.String.fromJS(url, globalThis);
                     if (!req.url.isEmpty())
                         fields.insert(.url);
 
@@ -614,7 +607,7 @@ pub const Request = struct {
                         _ = req.body.unref();
                         return null;
                     };
-                    req.url = str.dupeRef();
+                    req.url = str;
                     if (!req.url.isEmpty())
                         fields.insert(.url);
                 }
@@ -693,6 +686,8 @@ pub const Request = struct {
             req.headers.?.put("content-type", req.body.value.Blob.content_type, globalThis);
         }
 
+        req.calculateEstimatedByteSize();
+
         return req;
     }
     pub fn constructor(
@@ -702,10 +697,10 @@ pub const Request = struct {
         const arguments_ = callframe.arguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
-        var request = constructInto(globalThis, arguments) orelse {
+        const request = constructInto(globalThis, arguments) orelse {
             return null;
         };
-        var request_ = getAllocator(globalThis).create(Request) catch {
+        const request_ = getAllocator(globalThis).create(Request) catch {
             return null;
         };
         request_.* = request;
@@ -783,11 +778,11 @@ pub const Request = struct {
         _ = allocator;
         this.ensureURL() catch {};
 
-        var body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
+        const body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
             globalThis.throw("Failed to clone request", .{});
             return;
         };
-        var original_url = req.url;
+        const original_url = req.url;
 
         req.* = Request{
             .body = body,
@@ -802,7 +797,7 @@ pub const Request = struct {
     }
 
     pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Request {
-        var req = allocator.create(Request) catch unreachable;
+        const req = allocator.create(Request) catch unreachable;
         this.cloneInto(req, allocator, globalThis, false);
         return req;
     }

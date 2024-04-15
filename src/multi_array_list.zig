@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const assert = std.debug.assert;
+const assert = @import("root").bun.assert;
 const meta = std.meta;
 const mem = std.mem;
 const Allocator = mem.Allocator;
@@ -86,7 +86,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 const e = switch (@typeInfo(T)) {
                     .Struct => elem,
                     .Union => Elem.fromT(elem),
-                    else => unreachable,
+                    else => @compileError("unreachable"),
                 };
                 inline for (fields, 0..) |field_info, i| {
                     self.items(@as(Field, @enumFromInt(i)))[index] = @field(e, field_info.name);
@@ -101,7 +101,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 return switch (@typeInfo(T)) {
                     .Struct => result,
                     .Union => Elem.toT(result.tags, result.data),
-                    else => unreachable,
+                    else => @compileError("unreachable"),
                 };
             }
 
@@ -293,7 +293,7 @@ pub fn MultiArrayList(comptime T: type) type {
             const entry = switch (@typeInfo(T)) {
                 .Struct => elem,
                 .Union => Elem.fromT(elem),
-                else => unreachable,
+                else => @compileError("unreachable"),
             };
             const slices = self.slice();
             inline for (fields, 0..) |field_info, field_index| {
@@ -653,8 +653,7 @@ test "basic usage" {
     try testing.expectEqualStrings("fizzbuzz", list.items(.b)[2]);
 
     // Add 6 more things to force a capacity increase.
-    var i: usize = 0;
-    while (i < 6) : (i += 1) {
+    for (0..6) |i| {
         try list.append(ally, .{
             .a = @as(u32, @intCast(4 + i)),
             .b = "whatever",
@@ -906,7 +905,7 @@ test "sorting a span" {
         }
     }{ .chars = sliced.items(.chr) });
 
-    var i: u32 = undefined;
+    var i: u32 = 0;
     var j: u32 = 6;
     var c: u8 = 'a';
 

@@ -25,9 +25,25 @@ Or programmatically by assigning a property to `process.env`.
 process.env.FOO = "hello";
 ```
 
+### Manually specifying `.env` files
+
+Bun supports `--env-file` to override which specific `.env` file to load. You can use `--env-file` when running scripts in bun's runtime, or when running package.json scripts.
+
+```sh
+bun --env-file=.env.1 src/index.ts
+
+bun --env-file=.env.abc --env-file=.env.def run build
+```
+
 ### Quotation marks
 
-Bun supports double quotes, single quotes, and
+Bun supports double quotes, single quotes, and template literal backticks:
+
+```txt#.env
+FOO='hello'
+FOO="hello"
+FOO=`hello`
+```
 
 ### Expansion
 
@@ -75,16 +91,17 @@ The current environment variables can be accessed via `process.env`.
 process.env.API_TOKEN; // => "secret"
 ```
 
-Bun also exposes these variables via `Bun.env`, which is a simple alias of `process.env`.
+Bun also exposes these variables via `Bun.env` and `import.meta.env`, which is a simple alias of `process.env`.
 
 ```ts
 Bun.env.API_TOKEN; // => "secret"
+import.meta.env.API_TOKEN; // => "secret"
 ```
 
-To print all currently-set environment variables to the command line, run `bun run env`. This is useful for debugging.
+To print all currently-set environment variables to the command line, run `bun --print process.env`. This is useful for debugging.
 
 ```sh
-$ bun run env
+$ bun --print process.env
 BAZ=stuff
 FOOBAR=aaaaaa
 <lots more lines>
@@ -126,6 +143,11 @@ These environment variables are read by Bun and configure aspects of its behavio
 
 ---
 
+- `BUN_RUNTIME_TRANSPILER_CACHE_PATH`
+- The runtime transpiler caches the transpiled output of source files larger than 50 kb. This makes CLIs using Bun load faster. If `BUN_RUNTIME_TRANSPILER_CACHE_PATH` is set, then the runtime transpiler will cache transpiled output to the specified directory. If `BUN_RUNTIME_TRANSPILER_CACHE_PATH` is set to an empty string or the string `"0"`, then the runtime transpiler will not cache transpiled output. If `BUN_RUNTIME_TRANSPILER_CACHE_PATH` is unset, then the runtime transpiler will cache transpiled output to the platform-specific cache directory.
+
+---
+
 - `TMPDIR`
 - Bun occasionally requires a directory to store intermediate assets during bundling or other operations. If unset, defaults to the platform-specific temporary directory: `/tmp` on Linux, `/private/tmp` on macOS.
 
@@ -141,7 +163,42 @@ These environment variables are read by Bun and configure aspects of its behavio
 
 ---
 
+- `BUN_CONFIG_MAX_HTTP_REQUESTS`
+- Control the maximum number of concurrent HTTP requests sent by fetch and `bun install`. Defaults to `256`. If you are running into rate limits or connection issues, you can reduce this number.
+
+---
+
+- `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD`
+- If `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD=1`, then `bun --watch` will not clear the console on reload
+
+---
+
 - `DO_NOT_TRACK`
-- If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. Equivalent of `telemetry=false` in bunfig.
+- Telemetry is not sent yet as of November 28th, 2023, but we are planning to add telemetry in the coming months. If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. Equivalent of `telemetry=false` in bunfig.
 
 {% /table %}
+
+## Runtime transpiler caching
+
+For files larger than 50 KB, Bun caches transpiled output into `$BUN_RUNTIME_TRANSPILER_CACHE_PATH` or the platform-specific cache directory. This makes CLIs using Bun load faster.
+
+This transpiler cache is global and shared across all projects. It is safe to delete the cache at any time. It is a content-addressable cache, so it will never contain duplicate entries. It is also safe to delete the cache while a Bun process is running.
+
+It is recommended to disable this cache when using ephemeral filesystems like Docker. Bun's Docker images automatically disable this cache.
+
+### Disable the runtime transpiler cache
+
+To disable the runtime transpiler cache, set `BUN_RUNTIME_TRANSPILER_CACHE_PATH` to an empty string or the string `"0"`.
+
+```sh
+BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 bun run dev
+```
+
+### What does it cache?
+
+It caches:
+
+- The transpiled output of source files larger than 50 KB.
+- The sourcemap for the transpiled output of the file
+
+The file extension `.pile` is used for these cached files.

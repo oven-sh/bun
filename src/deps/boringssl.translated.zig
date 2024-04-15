@@ -1,6 +1,7 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const C = @import("std").zig.c_builtins;
-const pthread_rwlock_t = if (@import("root").bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
+const pthread_rwlock_t = if (bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
 const time_t = C.time_t;
 const va_list = C.va_list;
 const struct_timeval = C.struct_timeval;
@@ -691,114 +692,114 @@ pub const sk_void_free_func = ?*const fn (?*anyopaque) callconv(.C) void;
 pub const sk_void_copy_func = ?*const fn (?*anyopaque) callconv(.C) ?*anyopaque;
 pub const sk_void_cmp_func = ?*const fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int;
 pub fn sk_void_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_void_free_func, @ptrCast(@alignCast(free_func))).?(ptr);
 }
 pub fn sk_void_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(sk_void_copy_func, @ptrCast(@alignCast(copy_func))).?(ptr);
 }
 pub fn sk_void_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const anyopaque = a.*;
     var b_ptr: ?*const anyopaque = b.*;
     return @as(sk_void_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_void_new(arg_comp: sk_void_cmp_func) callconv(.C) ?*struct_stack_st_void {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_void, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_void_new_null() callconv(.C) ?*struct_stack_st_void {
     return @as(?*struct_stack_st_void, @ptrCast(sk_new_null()));
 }
 pub fn sk_void_num(arg_sk: ?*const struct_stack_st_void) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_void_zero(arg_sk: ?*struct_stack_st_void) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_void_value(arg_sk: ?*const struct_stack_st_void, arg_i: usize) callconv(.C) ?*anyopaque {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @alignCast(@ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_void_set(arg_sk: ?*struct_stack_st_void, arg_i: usize, arg_p: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, p);
 }
 pub fn sk_void_free(arg_sk: ?*struct_stack_st_void) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_void_pop_free(arg_sk: ?*struct_stack_st_void, arg_free_func: sk_void_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_void_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_void_insert(arg_sk: ?*struct_stack_st_void, arg_p: ?*anyopaque, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), p, where);
 }
 pub fn sk_void_delete(arg_sk: ?*struct_stack_st_void, arg_where: usize) callconv(.C) ?*anyopaque {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where);
 }
 pub fn sk_void_delete_ptr(arg_sk: ?*struct_stack_st_void, arg_p: ?*const anyopaque) callconv(.C) ?*anyopaque {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), p);
 }
 pub fn sk_void_find(arg_sk: ?*const struct_stack_st_void, arg_out_index: [*c]usize, arg_p: ?*const anyopaque) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, p, &sk_void_call_cmp_func);
 }
 pub fn sk_void_shift(arg_sk: ?*struct_stack_st_void) callconv(.C) ?*anyopaque {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_void_push(arg_sk: ?*struct_stack_st_void, arg_p: ?*anyopaque) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), p);
 }
 pub fn sk_void_pop(arg_sk: ?*struct_stack_st_void) callconv(.C) ?*anyopaque {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_void_dup(arg_sk: ?*const struct_stack_st_void) callconv(.C) ?*struct_stack_st_void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_void, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_void_sort(arg_sk: ?*struct_stack_st_void) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_void_call_cmp_func);
 }
 pub fn sk_void_is_sorted(arg_sk: ?*const struct_stack_st_void) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_void_set_cmp_func(arg_sk: ?*struct_stack_st_void, arg_comp: sk_void_cmp_func) callconv(.C) sk_void_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_void_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_void_deep_copy(arg_sk: ?*const struct_stack_st_void, arg_copy_func: sk_void_copy_func, arg_free_func: sk_void_free_func) callconv(.C) ?*struct_stack_st_void {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_void, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_void_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_void_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const struct_stack_st_OPENSSL_STRING = opaque {};
@@ -806,114 +807,114 @@ pub const sk_OPENSSL_STRING_free_func = ?*const fn ([*c]u8) callconv(.C) void;
 pub const sk_OPENSSL_STRING_copy_func = ?*const fn ([*c]u8) callconv(.C) [*c]u8;
 pub const sk_OPENSSL_STRING_cmp_func = ?*const fn ([*c][*c]const u8, [*c][*c]const u8) callconv(.C) c_int;
 pub fn sk_OPENSSL_STRING_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_OPENSSL_STRING_free_func, @ptrCast(@alignCast(free_func))).?(@as([*c]u8, @ptrCast(@alignCast(ptr))));
 }
 pub fn sk_OPENSSL_STRING_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_OPENSSL_STRING_copy_func, @ptrCast(@alignCast(copy_func))).?(@as([*c]u8, @ptrCast(@alignCast(ptr))))));
 }
 pub fn sk_OPENSSL_STRING_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: [*c]const u8 = @as([*c]const u8, @ptrCast(@alignCast(a.*)));
     var b_ptr: [*c]const u8 = @as([*c]const u8, @ptrCast(@alignCast(b.*)));
     return @as(sk_OPENSSL_STRING_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_OPENSSL_STRING_new(arg_comp: sk_OPENSSL_STRING_cmp_func) callconv(.C) ?*struct_stack_st_OPENSSL_STRING {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_OPENSSL_STRING, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_OPENSSL_STRING_new_null() callconv(.C) ?*struct_stack_st_OPENSSL_STRING {
     return @as(?*struct_stack_st_OPENSSL_STRING, @ptrCast(sk_new_null()));
 }
 pub fn sk_OPENSSL_STRING_num(arg_sk: ?*const struct_stack_st_OPENSSL_STRING) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_OPENSSL_STRING_zero(arg_sk: ?*struct_stack_st_OPENSSL_STRING) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_OPENSSL_STRING_value(arg_sk: ?*const struct_stack_st_OPENSSL_STRING, arg_i: usize) callconv(.C) [*c]u8 {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as([*c]u8, @ptrCast(@alignCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i))));
 }
 pub fn sk_OPENSSL_STRING_set(arg_sk: ?*struct_stack_st_OPENSSL_STRING, arg_i: usize, arg_p: [*c]u8) callconv(.C) [*c]u8 {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as([*c]u8, @ptrCast(@alignCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p))))));
 }
 pub fn sk_OPENSSL_STRING_free(arg_sk: ?*struct_stack_st_OPENSSL_STRING) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_OPENSSL_STRING_pop_free(arg_sk: ?*struct_stack_st_OPENSSL_STRING, arg_free_func: sk_OPENSSL_STRING_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_OPENSSL_STRING_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_OPENSSL_STRING_insert(arg_sk: ?*struct_stack_st_OPENSSL_STRING, arg_p: [*c]u8, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_OPENSSL_STRING_delete(arg_sk: ?*struct_stack_st_OPENSSL_STRING, arg_where: usize) callconv(.C) [*c]u8 {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as([*c]u8, @ptrCast(@alignCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where))));
 }
 pub fn sk_OPENSSL_STRING_delete_ptr(arg_sk: ?*struct_stack_st_OPENSSL_STRING, arg_p: [*c]const u8) callconv(.C) [*c]u8 {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as([*c]u8, @ptrCast(@alignCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p))))));
 }
 pub fn sk_OPENSSL_STRING_find(arg_sk: ?*const struct_stack_st_OPENSSL_STRING, arg_out_index: [*c]usize, arg_p: [*c]const u8) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_OPENSSL_STRING_call_cmp_func);
 }
 pub fn sk_OPENSSL_STRING_shift(arg_sk: ?*struct_stack_st_OPENSSL_STRING) callconv(.C) [*c]u8 {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]u8, @ptrCast(@alignCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_OPENSSL_STRING_push(arg_sk: ?*struct_stack_st_OPENSSL_STRING, arg_p: [*c]u8) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_OPENSSL_STRING_pop(arg_sk: ?*struct_stack_st_OPENSSL_STRING) callconv(.C) [*c]u8 {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]u8, @ptrCast(@alignCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_OPENSSL_STRING_dup(arg_sk: ?*const struct_stack_st_OPENSSL_STRING) callconv(.C) ?*struct_stack_st_OPENSSL_STRING {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_OPENSSL_STRING, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_OPENSSL_STRING_sort(arg_sk: ?*struct_stack_st_OPENSSL_STRING) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_OPENSSL_STRING_call_cmp_func);
 }
 pub fn sk_OPENSSL_STRING_is_sorted(arg_sk: ?*const struct_stack_st_OPENSSL_STRING) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_OPENSSL_STRING_set_cmp_func(arg_sk: ?*struct_stack_st_OPENSSL_STRING, arg_comp: sk_OPENSSL_STRING_cmp_func) callconv(.C) sk_OPENSSL_STRING_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_OPENSSL_STRING_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_OPENSSL_STRING_deep_copy(arg_sk: ?*const struct_stack_st_OPENSSL_STRING, arg_copy_func: sk_OPENSSL_STRING_copy_func, arg_free_func: sk_OPENSSL_STRING_free_func) callconv(.C) ?*struct_stack_st_OPENSSL_STRING {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_OPENSSL_STRING, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_OPENSSL_STRING_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_OPENSSL_STRING_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const CRYPTO_EX_free = fn (?*anyopaque, ?*anyopaque, [*c]CRYPTO_EX_DATA, c_int, c_long, ?*anyopaque) callconv(.C) void;
@@ -946,114 +947,114 @@ pub const sk_BIO_free_func = ?*const fn ([*c]BIO) callconv(.C) void;
 pub const sk_BIO_copy_func = ?*const fn ([*c]BIO) callconv(.C) [*c]BIO;
 pub const sk_BIO_cmp_func = ?*const fn ([*c][*c]const BIO, [*c][*c]const BIO) callconv(.C) c_int;
 pub fn sk_BIO_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_BIO_free_func, @ptrCast(@alignCast(free_func))).?(@as([*c]BIO, @ptrCast(@alignCast(ptr))));
 }
 pub fn sk_BIO_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_BIO_copy_func, @ptrCast(@alignCast(copy_func))).?(@as([*c]BIO, @ptrCast(@alignCast(ptr))))));
 }
 pub fn sk_BIO_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: [*c]const BIO = @as([*c]const BIO, @ptrCast(@alignCast(a.*)));
     var b_ptr: [*c]const BIO = @as([*c]const BIO, @ptrCast(@alignCast(b.*)));
     return @as(sk_BIO_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_BIO_new(arg_comp: sk_BIO_cmp_func) callconv(.C) ?*struct_stack_st_BIO {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_BIO, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_BIO_new_null() callconv(.C) ?*struct_stack_st_BIO {
     return @as(?*struct_stack_st_BIO, @ptrCast(sk_new_null()));
 }
 pub fn sk_BIO_num(arg_sk: ?*const struct_stack_st_BIO) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_BIO_zero(arg_sk: ?*struct_stack_st_BIO) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_BIO_value(arg_sk: ?*const struct_stack_st_BIO, arg_i: usize) callconv(.C) [*c]BIO {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as([*c]BIO, @ptrCast(@alignCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i))));
 }
 pub fn sk_BIO_set(arg_sk: ?*struct_stack_st_BIO, arg_i: usize, arg_p: [*c]BIO) callconv(.C) [*c]BIO {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as([*c]BIO, @ptrCast(@alignCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p))))));
 }
 pub fn sk_BIO_free(arg_sk: ?*struct_stack_st_BIO) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_BIO_pop_free(arg_sk: ?*struct_stack_st_BIO, arg_free_func: sk_BIO_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_BIO_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_BIO_insert(arg_sk: ?*struct_stack_st_BIO, arg_p: [*c]BIO, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_BIO_delete(arg_sk: ?*struct_stack_st_BIO, arg_where: usize) callconv(.C) [*c]BIO {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as([*c]BIO, @ptrCast(@alignCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where))));
 }
 pub fn sk_BIO_delete_ptr(arg_sk: ?*struct_stack_st_BIO, arg_p: [*c]const BIO) callconv(.C) [*c]BIO {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as([*c]BIO, @ptrCast(@alignCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p))))));
 }
 pub fn sk_BIO_find(arg_sk: ?*const struct_stack_st_BIO, arg_out_index: [*c]usize, arg_p: [*c]const BIO) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_BIO_call_cmp_func);
 }
 pub fn sk_BIO_shift(arg_sk: ?*struct_stack_st_BIO) callconv(.C) [*c]BIO {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]BIO, @ptrCast(@alignCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_BIO_push(arg_sk: ?*struct_stack_st_BIO, arg_p: [*c]BIO) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_BIO_pop(arg_sk: ?*struct_stack_st_BIO) callconv(.C) [*c]BIO {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]BIO, @ptrCast(@alignCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_BIO_dup(arg_sk: ?*const struct_stack_st_BIO) callconv(.C) ?*struct_stack_st_BIO {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_BIO, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_BIO_sort(arg_sk: ?*struct_stack_st_BIO) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_BIO_call_cmp_func);
 }
 pub fn sk_BIO_is_sorted(arg_sk: ?*const struct_stack_st_BIO) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_BIO_set_cmp_func(arg_sk: ?*struct_stack_st_BIO, arg_comp: sk_BIO_cmp_func) callconv(.C) sk_BIO_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_BIO_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_BIO_deep_copy(arg_sk: ?*const struct_stack_st_BIO, arg_copy_func: sk_BIO_copy_func, arg_free_func: sk_BIO_free_func) callconv(.C) ?*struct_stack_st_BIO {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_BIO, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_BIO_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_BIO_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern fn BIO_new(method: [*c]const BIO_METHOD) ?*BIO;
@@ -1726,114 +1727,114 @@ pub const sk_ASN1_INTEGER_free_func = ?*const fn ([*c]ASN1_INTEGER) callconv(.C)
 pub const sk_ASN1_INTEGER_copy_func = ?*const fn ([*c]ASN1_INTEGER) callconv(.C) [*c]ASN1_INTEGER;
 pub const sk_ASN1_INTEGER_cmp_func = ?*const fn ([*c][*c]const ASN1_INTEGER, [*c][*c]const ASN1_INTEGER) callconv(.C) c_int;
 pub fn sk_ASN1_INTEGER_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_ASN1_INTEGER_free_func, @ptrCast(@alignCast(free_func))).?(@as([*c]ASN1_INTEGER, @ptrCast(@alignCast(ptr))));
 }
 pub fn sk_ASN1_INTEGER_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_ASN1_INTEGER_copy_func, @ptrCast(@alignCast(copy_func))).?(@as([*c]ASN1_INTEGER, @ptrCast(@alignCast(ptr))))));
 }
 pub fn sk_ASN1_INTEGER_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: [*c]const ASN1_INTEGER = @as([*c]const ASN1_INTEGER, @ptrCast(@alignCast(a.*)));
     var b_ptr: [*c]const ASN1_INTEGER = @as([*c]const ASN1_INTEGER, @ptrCast(@alignCast(b.*)));
     return @as(sk_ASN1_INTEGER_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_ASN1_INTEGER_new(arg_comp: sk_ASN1_INTEGER_cmp_func) callconv(.C) ?*struct_stack_st_ASN1_INTEGER {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_ASN1_INTEGER, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_ASN1_INTEGER_new_null() callconv(.C) ?*struct_stack_st_ASN1_INTEGER {
     return @as(?*struct_stack_st_ASN1_INTEGER, @ptrCast(sk_new_null()));
 }
 pub fn sk_ASN1_INTEGER_num(arg_sk: ?*const struct_stack_st_ASN1_INTEGER) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_INTEGER_zero(arg_sk: ?*struct_stack_st_ASN1_INTEGER) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_INTEGER_value(arg_sk: ?*const struct_stack_st_ASN1_INTEGER, arg_i: usize) callconv(.C) [*c]ASN1_INTEGER {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as([*c]ASN1_INTEGER, @ptrCast(@alignCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i))));
 }
 pub fn sk_ASN1_INTEGER_set(arg_sk: ?*struct_stack_st_ASN1_INTEGER, arg_i: usize, arg_p: [*c]ASN1_INTEGER) callconv(.C) [*c]ASN1_INTEGER {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as([*c]ASN1_INTEGER, @ptrCast(@alignCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p))))));
 }
 pub fn sk_ASN1_INTEGER_free(arg_sk: ?*struct_stack_st_ASN1_INTEGER) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_INTEGER_pop_free(arg_sk: ?*struct_stack_st_ASN1_INTEGER, arg_free_func: sk_ASN1_INTEGER_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_ASN1_INTEGER_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_ASN1_INTEGER_insert(arg_sk: ?*struct_stack_st_ASN1_INTEGER, arg_p: [*c]ASN1_INTEGER, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_ASN1_INTEGER_delete(arg_sk: ?*struct_stack_st_ASN1_INTEGER, arg_where: usize) callconv(.C) [*c]ASN1_INTEGER {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as([*c]ASN1_INTEGER, @ptrCast(@alignCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where))));
 }
 pub fn sk_ASN1_INTEGER_delete_ptr(arg_sk: ?*struct_stack_st_ASN1_INTEGER, arg_p: [*c]const ASN1_INTEGER) callconv(.C) [*c]ASN1_INTEGER {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as([*c]ASN1_INTEGER, @ptrCast(@alignCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p))))));
 }
 pub fn sk_ASN1_INTEGER_find(arg_sk: ?*const struct_stack_st_ASN1_INTEGER, arg_out_index: [*c]usize, arg_p: [*c]const ASN1_INTEGER) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_ASN1_INTEGER_call_cmp_func);
 }
 pub fn sk_ASN1_INTEGER_shift(arg_sk: ?*struct_stack_st_ASN1_INTEGER) callconv(.C) [*c]ASN1_INTEGER {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]ASN1_INTEGER, @ptrCast(@alignCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_ASN1_INTEGER_push(arg_sk: ?*struct_stack_st_ASN1_INTEGER, arg_p: [*c]ASN1_INTEGER) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_ASN1_INTEGER_pop(arg_sk: ?*struct_stack_st_ASN1_INTEGER) callconv(.C) [*c]ASN1_INTEGER {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]ASN1_INTEGER, @ptrCast(@alignCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_ASN1_INTEGER_dup(arg_sk: ?*const struct_stack_st_ASN1_INTEGER) callconv(.C) ?*struct_stack_st_ASN1_INTEGER {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_ASN1_INTEGER, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_ASN1_INTEGER_sort(arg_sk: ?*struct_stack_st_ASN1_INTEGER) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_ASN1_INTEGER_call_cmp_func);
 }
 pub fn sk_ASN1_INTEGER_is_sorted(arg_sk: ?*const struct_stack_st_ASN1_INTEGER) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_INTEGER_set_cmp_func(arg_sk: ?*struct_stack_st_ASN1_INTEGER, arg_comp: sk_ASN1_INTEGER_cmp_func) callconv(.C) sk_ASN1_INTEGER_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_ASN1_INTEGER_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_ASN1_INTEGER_deep_copy(arg_sk: ?*const struct_stack_st_ASN1_INTEGER, arg_copy_func: sk_ASN1_INTEGER_copy_func, arg_free_func: sk_ASN1_INTEGER_free_func) callconv(.C) ?*struct_stack_st_ASN1_INTEGER {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_ASN1_INTEGER, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_ASN1_INTEGER_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_ASN1_INTEGER_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern fn ASN1_INTEGER_new() [*c]ASN1_INTEGER;
@@ -1904,114 +1905,114 @@ pub const sk_ASN1_OBJECT_free_func = ?*const fn (?*ASN1_OBJECT) callconv(.C) voi
 pub const sk_ASN1_OBJECT_copy_func = ?*const fn (?*ASN1_OBJECT) callconv(.C) ?*ASN1_OBJECT;
 pub const sk_ASN1_OBJECT_cmp_func = ?*const fn ([*c]?*const ASN1_OBJECT, [*c]?*const ASN1_OBJECT) callconv(.C) c_int;
 pub fn sk_ASN1_OBJECT_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_ASN1_OBJECT_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*ASN1_OBJECT, @ptrCast(ptr)));
 }
 pub fn sk_ASN1_OBJECT_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_ASN1_OBJECT_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*ASN1_OBJECT, @ptrCast(ptr)))));
 }
 pub fn sk_ASN1_OBJECT_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const ASN1_OBJECT = @as(?*const ASN1_OBJECT, @ptrCast(a.*));
     var b_ptr: ?*const ASN1_OBJECT = @as(?*const ASN1_OBJECT, @ptrCast(b.*));
     return @as(sk_ASN1_OBJECT_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_ASN1_OBJECT_new(arg_comp: sk_ASN1_OBJECT_cmp_func) callconv(.C) ?*struct_stack_st_ASN1_OBJECT {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_ASN1_OBJECT, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_ASN1_OBJECT_new_null() callconv(.C) ?*struct_stack_st_ASN1_OBJECT {
     return @as(?*struct_stack_st_ASN1_OBJECT, @ptrCast(sk_new_null()));
 }
 pub fn sk_ASN1_OBJECT_num(arg_sk: ?*const struct_stack_st_ASN1_OBJECT) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_OBJECT_zero(arg_sk: ?*struct_stack_st_ASN1_OBJECT) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_OBJECT_value(arg_sk: ?*const struct_stack_st_ASN1_OBJECT, arg_i: usize) callconv(.C) ?*ASN1_OBJECT {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*ASN1_OBJECT, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_ASN1_OBJECT_set(arg_sk: ?*struct_stack_st_ASN1_OBJECT, arg_i: usize, arg_p: ?*ASN1_OBJECT) callconv(.C) ?*ASN1_OBJECT {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*ASN1_OBJECT, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_ASN1_OBJECT_free(arg_sk: ?*struct_stack_st_ASN1_OBJECT) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_OBJECT_pop_free(arg_sk: ?*struct_stack_st_ASN1_OBJECT, arg_free_func: sk_ASN1_OBJECT_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_ASN1_OBJECT_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_ASN1_OBJECT_insert(arg_sk: ?*struct_stack_st_ASN1_OBJECT, arg_p: ?*ASN1_OBJECT, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_ASN1_OBJECT_delete(arg_sk: ?*struct_stack_st_ASN1_OBJECT, arg_where: usize) callconv(.C) ?*ASN1_OBJECT {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*ASN1_OBJECT, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_ASN1_OBJECT_delete_ptr(arg_sk: ?*struct_stack_st_ASN1_OBJECT, arg_p: ?*const ASN1_OBJECT) callconv(.C) ?*ASN1_OBJECT {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*ASN1_OBJECT, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_ASN1_OBJECT_find(arg_sk: ?*const struct_stack_st_ASN1_OBJECT, arg_out_index: [*c]usize, arg_p: ?*const ASN1_OBJECT) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_ASN1_OBJECT_call_cmp_func);
 }
 pub fn sk_ASN1_OBJECT_shift(arg_sk: ?*struct_stack_st_ASN1_OBJECT) callconv(.C) ?*ASN1_OBJECT {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*ASN1_OBJECT, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_ASN1_OBJECT_push(arg_sk: ?*struct_stack_st_ASN1_OBJECT, arg_p: ?*ASN1_OBJECT) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_ASN1_OBJECT_pop(arg_sk: ?*struct_stack_st_ASN1_OBJECT) callconv(.C) ?*ASN1_OBJECT {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*ASN1_OBJECT, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_ASN1_OBJECT_dup(arg_sk: ?*const struct_stack_st_ASN1_OBJECT) callconv(.C) ?*struct_stack_st_ASN1_OBJECT {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_ASN1_OBJECT, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_ASN1_OBJECT_sort(arg_sk: ?*struct_stack_st_ASN1_OBJECT) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_ASN1_OBJECT_call_cmp_func);
 }
 pub fn sk_ASN1_OBJECT_is_sorted(arg_sk: ?*const struct_stack_st_ASN1_OBJECT) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_OBJECT_set_cmp_func(arg_sk: ?*struct_stack_st_ASN1_OBJECT, arg_comp: sk_ASN1_OBJECT_cmp_func) callconv(.C) sk_ASN1_OBJECT_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_ASN1_OBJECT_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_ASN1_OBJECT_deep_copy(arg_sk: ?*const struct_stack_st_ASN1_OBJECT, arg_copy_func: sk_ASN1_OBJECT_copy_func, arg_free_func: sk_ASN1_OBJECT_free_func) callconv(.C) ?*struct_stack_st_ASN1_OBJECT {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_ASN1_OBJECT, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_ASN1_OBJECT_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_ASN1_OBJECT_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern fn ASN1_OBJECT_create(nid: c_int, data: [*c]const u8, len: c_int, sn: [*c]const u8, ln: [*c]const u8) ?*ASN1_OBJECT;
@@ -2025,114 +2026,114 @@ pub const sk_ASN1_TYPE_free_func = ?*const fn ([*c]ASN1_TYPE) callconv(.C) void;
 pub const sk_ASN1_TYPE_copy_func = ?*const fn ([*c]ASN1_TYPE) callconv(.C) [*c]ASN1_TYPE;
 pub const sk_ASN1_TYPE_cmp_func = ?*const fn ([*c][*c]const ASN1_TYPE, [*c][*c]const ASN1_TYPE) callconv(.C) c_int;
 pub fn sk_ASN1_TYPE_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_ASN1_TYPE_free_func, @ptrCast(@alignCast(free_func))).?(@as([*c]ASN1_TYPE, @ptrCast(@alignCast(ptr))));
 }
 pub fn sk_ASN1_TYPE_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_ASN1_TYPE_copy_func, @ptrCast(@alignCast(copy_func))).?(@as([*c]ASN1_TYPE, @ptrCast(@alignCast(ptr))))));
 }
 pub fn sk_ASN1_TYPE_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: [*c]const ASN1_TYPE = @as([*c]const ASN1_TYPE, @ptrCast(@alignCast(a.*)));
     var b_ptr: [*c]const ASN1_TYPE = @as([*c]const ASN1_TYPE, @ptrCast(@alignCast(b.*)));
     return @as(sk_ASN1_TYPE_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_ASN1_TYPE_new(arg_comp: sk_ASN1_TYPE_cmp_func) callconv(.C) ?*struct_stack_st_ASN1_TYPE {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_ASN1_TYPE, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_ASN1_TYPE_new_null() callconv(.C) ?*struct_stack_st_ASN1_TYPE {
     return @as(?*struct_stack_st_ASN1_TYPE, @ptrCast(sk_new_null()));
 }
 pub fn sk_ASN1_TYPE_num(arg_sk: ?*const struct_stack_st_ASN1_TYPE) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_TYPE_zero(arg_sk: ?*struct_stack_st_ASN1_TYPE) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_TYPE_value(arg_sk: ?*const struct_stack_st_ASN1_TYPE, arg_i: usize) callconv(.C) [*c]ASN1_TYPE {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as([*c]ASN1_TYPE, @ptrCast(@alignCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i))));
 }
 pub fn sk_ASN1_TYPE_set(arg_sk: ?*struct_stack_st_ASN1_TYPE, arg_i: usize, arg_p: [*c]ASN1_TYPE) callconv(.C) [*c]ASN1_TYPE {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as([*c]ASN1_TYPE, @ptrCast(@alignCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p))))));
 }
 pub fn sk_ASN1_TYPE_free(arg_sk: ?*struct_stack_st_ASN1_TYPE) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_TYPE_pop_free(arg_sk: ?*struct_stack_st_ASN1_TYPE, arg_free_func: sk_ASN1_TYPE_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_ASN1_TYPE_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_ASN1_TYPE_insert(arg_sk: ?*struct_stack_st_ASN1_TYPE, arg_p: [*c]ASN1_TYPE, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_ASN1_TYPE_delete(arg_sk: ?*struct_stack_st_ASN1_TYPE, arg_where: usize) callconv(.C) [*c]ASN1_TYPE {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as([*c]ASN1_TYPE, @ptrCast(@alignCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where))));
 }
 pub fn sk_ASN1_TYPE_delete_ptr(arg_sk: ?*struct_stack_st_ASN1_TYPE, arg_p: [*c]const ASN1_TYPE) callconv(.C) [*c]ASN1_TYPE {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as([*c]ASN1_TYPE, @ptrCast(@alignCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p))))));
 }
 pub fn sk_ASN1_TYPE_find(arg_sk: ?*const struct_stack_st_ASN1_TYPE, arg_out_index: [*c]usize, arg_p: [*c]const ASN1_TYPE) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_ASN1_TYPE_call_cmp_func);
 }
 pub fn sk_ASN1_TYPE_shift(arg_sk: ?*struct_stack_st_ASN1_TYPE) callconv(.C) [*c]ASN1_TYPE {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]ASN1_TYPE, @ptrCast(@alignCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_ASN1_TYPE_push(arg_sk: ?*struct_stack_st_ASN1_TYPE, arg_p: [*c]ASN1_TYPE) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_ASN1_TYPE_pop(arg_sk: ?*struct_stack_st_ASN1_TYPE) callconv(.C) [*c]ASN1_TYPE {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]ASN1_TYPE, @ptrCast(@alignCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_ASN1_TYPE_dup(arg_sk: ?*const struct_stack_st_ASN1_TYPE) callconv(.C) ?*struct_stack_st_ASN1_TYPE {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_ASN1_TYPE, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_ASN1_TYPE_sort(arg_sk: ?*struct_stack_st_ASN1_TYPE) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_ASN1_TYPE_call_cmp_func);
 }
 pub fn sk_ASN1_TYPE_is_sorted(arg_sk: ?*const struct_stack_st_ASN1_TYPE) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_ASN1_TYPE_set_cmp_func(arg_sk: ?*struct_stack_st_ASN1_TYPE, arg_comp: sk_ASN1_TYPE_cmp_func) callconv(.C) sk_ASN1_TYPE_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_ASN1_TYPE_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_ASN1_TYPE_deep_copy(arg_sk: ?*const struct_stack_st_ASN1_TYPE, arg_copy_func: sk_ASN1_TYPE_copy_func, arg_free_func: sk_ASN1_TYPE_free_func) callconv(.C) ?*struct_stack_st_ASN1_TYPE {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_ASN1_TYPE, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_ASN1_TYPE_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_ASN1_TYPE_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern fn ASN1_TYPE_new() [*c]ASN1_TYPE;
@@ -2496,114 +2497,114 @@ pub const sk_CRYPTO_BUFFER_free_func = ?*const fn (?*CRYPTO_BUFFER) callconv(.C)
 pub const sk_CRYPTO_BUFFER_copy_func = ?*const fn (?*CRYPTO_BUFFER) callconv(.C) ?*CRYPTO_BUFFER;
 pub const sk_CRYPTO_BUFFER_cmp_func = ?*const fn ([*c]?*const CRYPTO_BUFFER, [*c]?*const CRYPTO_BUFFER) callconv(.C) c_int;
 pub fn sk_CRYPTO_BUFFER_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_CRYPTO_BUFFER_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*CRYPTO_BUFFER, @ptrCast(ptr)));
 }
 pub fn sk_CRYPTO_BUFFER_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_CRYPTO_BUFFER_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*CRYPTO_BUFFER, @ptrCast(ptr)))));
 }
 pub fn sk_CRYPTO_BUFFER_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const CRYPTO_BUFFER = @as(?*const CRYPTO_BUFFER, @ptrCast(a.*));
     var b_ptr: ?*const CRYPTO_BUFFER = @as(?*const CRYPTO_BUFFER, @ptrCast(b.*));
     return @as(sk_CRYPTO_BUFFER_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_CRYPTO_BUFFER_new(arg_comp: sk_CRYPTO_BUFFER_cmp_func) callconv(.C) ?*struct_stack_st_CRYPTO_BUFFER {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_CRYPTO_BUFFER, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_CRYPTO_BUFFER_new_null() callconv(.C) ?*struct_stack_st_CRYPTO_BUFFER {
     return @as(?*struct_stack_st_CRYPTO_BUFFER, @ptrCast(sk_new_null()));
 }
 pub fn sk_CRYPTO_BUFFER_num(arg_sk: ?*const struct_stack_st_CRYPTO_BUFFER) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_CRYPTO_BUFFER_zero(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_CRYPTO_BUFFER_value(arg_sk: ?*const struct_stack_st_CRYPTO_BUFFER, arg_i: usize) callconv(.C) ?*CRYPTO_BUFFER {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*CRYPTO_BUFFER, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_CRYPTO_BUFFER_set(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER, arg_i: usize, arg_p: ?*CRYPTO_BUFFER) callconv(.C) ?*CRYPTO_BUFFER {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*CRYPTO_BUFFER, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_CRYPTO_BUFFER_free(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_CRYPTO_BUFFER_pop_free(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER, arg_free_func: sk_CRYPTO_BUFFER_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_CRYPTO_BUFFER_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_CRYPTO_BUFFER_insert(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER, arg_p: ?*CRYPTO_BUFFER, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_CRYPTO_BUFFER_delete(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER, arg_where: usize) callconv(.C) ?*CRYPTO_BUFFER {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*CRYPTO_BUFFER, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_CRYPTO_BUFFER_delete_ptr(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER, arg_p: ?*const CRYPTO_BUFFER) callconv(.C) ?*CRYPTO_BUFFER {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*CRYPTO_BUFFER, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_CRYPTO_BUFFER_find(arg_sk: ?*const struct_stack_st_CRYPTO_BUFFER, arg_out_index: [*c]usize, arg_p: ?*const CRYPTO_BUFFER) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_CRYPTO_BUFFER_call_cmp_func);
 }
 pub fn sk_CRYPTO_BUFFER_shift(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER) callconv(.C) ?*CRYPTO_BUFFER {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*CRYPTO_BUFFER, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_CRYPTO_BUFFER_push(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER, arg_p: ?*CRYPTO_BUFFER) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_CRYPTO_BUFFER_pop(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER) callconv(.C) ?*CRYPTO_BUFFER {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*CRYPTO_BUFFER, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_CRYPTO_BUFFER_dup(arg_sk: ?*const struct_stack_st_CRYPTO_BUFFER) callconv(.C) ?*struct_stack_st_CRYPTO_BUFFER {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_CRYPTO_BUFFER, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_CRYPTO_BUFFER_sort(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_CRYPTO_BUFFER_call_cmp_func);
 }
 pub fn sk_CRYPTO_BUFFER_is_sorted(arg_sk: ?*const struct_stack_st_CRYPTO_BUFFER) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_CRYPTO_BUFFER_set_cmp_func(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER, arg_comp: sk_CRYPTO_BUFFER_cmp_func) callconv(.C) sk_CRYPTO_BUFFER_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_CRYPTO_BUFFER_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_CRYPTO_BUFFER_deep_copy(arg_sk: ?*const struct_stack_st_CRYPTO_BUFFER, arg_copy_func: sk_CRYPTO_BUFFER_copy_func, arg_free_func: sk_CRYPTO_BUFFER_free_func) callconv(.C) ?*struct_stack_st_CRYPTO_BUFFER {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_CRYPTO_BUFFER, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_CRYPTO_BUFFER_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_CRYPTO_BUFFER_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern fn CRYPTO_BUFFER_POOL_new() ?*CRYPTO_BUFFER_POOL;
@@ -2716,114 +2717,114 @@ pub const sk_X509_free_func = ?*const fn (?*X509) callconv(.C) void;
 pub const sk_X509_copy_func = ?*const fn (?*X509) callconv(.C) ?*X509;
 pub const sk_X509_cmp_func = ?*const fn ([*c]?*const X509, [*c]?*const X509) callconv(.C) c_int;
 pub fn sk_X509_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509, @ptrCast(ptr)));
 }
 pub fn sk_X509_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509, @ptrCast(ptr)))));
 }
 pub fn sk_X509_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const X509 = @as(?*const X509, @ptrCast(a.*));
     var b_ptr: ?*const X509 = @as(?*const X509, @ptrCast(b.*));
     return @as(sk_X509_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_new(arg_comp: sk_X509_cmp_func) callconv(.C) ?*struct_stack_st_X509 {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_new_null() callconv(.C) ?*struct_stack_st_X509 {
     return @as(?*struct_stack_st_X509, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_num(arg_sk: ?*const struct_stack_st_X509) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_zero(arg_sk: ?*struct_stack_st_X509) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_value(arg_sk: ?*const struct_stack_st_X509, arg_i: usize) callconv(.C) ?*X509 {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*X509, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_X509_set(arg_sk: ?*struct_stack_st_X509, arg_i: usize, arg_p: ?*X509) callconv(.C) ?*X509 {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*X509, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_free(arg_sk: ?*struct_stack_st_X509) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_pop_free(arg_sk: ?*struct_stack_st_X509, arg_free_func: sk_X509_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_insert(arg_sk: ?*struct_stack_st_X509, arg_p: ?*X509, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_delete(arg_sk: ?*struct_stack_st_X509, arg_where: usize) callconv(.C) ?*X509 {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*X509, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_X509_delete_ptr(arg_sk: ?*struct_stack_st_X509, arg_p: ?*const X509) callconv(.C) ?*X509 {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*X509, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_find(arg_sk: ?*const struct_stack_st_X509, arg_out_index: [*c]usize, arg_p: ?*const X509) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_call_cmp_func);
 }
 pub fn sk_X509_shift(arg_sk: ?*struct_stack_st_X509) callconv(.C) ?*X509 {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_push(arg_sk: ?*struct_stack_st_X509, arg_p: ?*X509) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_pop(arg_sk: ?*struct_stack_st_X509) callconv(.C) ?*X509 {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_dup(arg_sk: ?*const struct_stack_st_X509) callconv(.C) ?*struct_stack_st_X509 {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_sort(arg_sk: ?*struct_stack_st_X509) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_call_cmp_func);
 }
 pub fn sk_X509_is_sorted(arg_sk: ?*const struct_stack_st_X509) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_set_cmp_func(arg_sk: ?*struct_stack_st_X509, arg_comp: sk_X509_cmp_func) callconv(.C) sk_X509_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_deep_copy(arg_sk: ?*const struct_stack_st_X509, arg_copy_func: sk_X509_copy_func, arg_free_func: sk_X509_free_func) callconv(.C) ?*struct_stack_st_X509 {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const stack_free_func = ?*const fn (?*anyopaque) callconv(.C) void;
@@ -2885,8 +2886,8 @@ pub const sk_X509_CRL_free_func = ?*const fn (?*X509_CRL) callconv(.C) void;
 pub const sk_X509_CRL_copy_func = ?*const fn (?*X509_CRL) callconv(.C) ?*X509_CRL;
 pub const sk_X509_CRL_cmp_func = ?*const fn ([*c]?*const X509_CRL, [*c]?*const X509_CRL) callconv(.C) c_int;
 pub fn sk_X509_CRL_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_CRL_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_CRL, @ptrCast(ptr)));
 }
 pub extern fn X509V3_EXT_d2i(ex: ?*X509_EXTENSION) ?*anyopaque;
@@ -2894,9 +2895,9 @@ pub extern fn X509V3_EXT_get(ex: ?*X509_EXTENSION) ?*X509V3_EXT_METHOD;
 pub const X509V3_EXT_METHOD = opaque {};
 pub extern fn X509V3_EXT_get_nid(ndi: c_int) ?*X509V3_EXT_METHOD;
 pub fn sk_X509_CRL_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const X509_CRL = @as(?*const X509_CRL, @ptrCast(a.*));
     var b_ptr: ?*const X509_CRL = @as(?*const X509_CRL, @ptrCast(b.*));
     return @as(sk_X509_CRL_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
@@ -2951,55 +2952,55 @@ pub const ACCESS_DESCRIPTION = extern struct {
 };
 
 pub fn sk_GENERAL_NAME_num(arg_sk: ?*const struct_stack_st_GENERAL_NAME) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @alignCast(@ptrCast(sk))));
 }
 pub fn sk_GENERAL_NAME_free(arg_sk: ?*struct_stack_st_GENERAL_NAME) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @alignCast(@ptrCast(sk))));
 }
 pub const stack_GENERAL_NAME_free_func = ?*const fn (?*struct_stack_st_GENERAL_NAME) callconv(.C) void;
 
 pub fn sk_GENERAL_NAME_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(stack_GENERAL_NAME_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*struct_stack_st_GENERAL_NAME, @ptrCast(ptr)));
 }
 pub fn sk_GENERAL_NAME_pop_free(arg_sk: ?*struct_stack_st_GENERAL_NAME, arg_free_func: stack_GENERAL_NAME_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @alignCast(@ptrCast(sk))), sk_GENERAL_NAME_call_free_func, @as(stack_free_func, @ptrCast(free_func)));
 }
 pub fn sk_GENERAL_NAME_value(arg_sk: ?*const struct_stack_st_GENERAL_NAME, arg_i: usize) callconv(.C) ?*GENERAL_NAME {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @alignCast(@ptrCast(sk_value(@as([*c]const _STACK, @alignCast(@ptrCast(sk))), i)));
 }
 
 pub fn sk_ACCESS_DESCRIPTION_num(arg_sk: ?*const AUTHORITY_INFO_ACCESS) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @alignCast(@ptrCast(sk))));
 }
 pub fn sk_ACCESS_DESCRIPTION_free(arg_sk: ?*AUTHORITY_INFO_ACCESS) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub const stack_ACCESS_DESCRIPTION_free_func = ?*const fn (?*AUTHORITY_INFO_ACCESS) callconv(.C) void;
 
 pub fn sk_ACCESS_DESCRIPTION_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(stack_ACCESS_DESCRIPTION_free_func, @ptrCast(free_func)).?(@as(?*AUTHORITY_INFO_ACCESS, @ptrCast(ptr)));
 }
 pub fn sk_ACCESS_DESCRIPTION_pop_free(arg_sk: ?*AUTHORITY_INFO_ACCESS, arg_free_func: stack_ACCESS_DESCRIPTION_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @alignCast(@ptrCast(sk))), sk_ACCESS_DESCRIPTION_call_free_func, @as(stack_free_func, @ptrCast(free_func)));
 }
 pub extern fn X509_get_serialNumber(x509: ?*X509) [*c]ASN1_INTEGER;
 pub fn sk_ACCESS_DESCRIPTION_value(arg_sk: ?*const AUTHORITY_INFO_ACCESS, arg_i: usize) callconv(.C) ?*ACCESS_DESCRIPTION {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @alignCast(@ptrCast(sk_value(@as([*c]const _STACK, @alignCast(@ptrCast(sk))), i)));
 }
 pub const NID_id_on_SmtpUTF8Mailbox = @as(c_int, 1208);
@@ -3011,101 +3012,101 @@ pub const stack_X509_CRL_free_func = ?*const fn (?*X509_CRL) callconv(.C) void;
 pub const stack_X509_CRL_copy_func = ?*const fn (?*X509_CRL) callconv(.C) ?*X509_CRL;
 pub const stack_X509_CRL_cmp_func = ?*const fn ([*c]?*const X509_CRL, [*c]?*const X509_CRL) callconv(.C) c_int;
 pub fn sk_X509_CRL_call_copy_func(arg_copy_func: stack_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(stack_X509_CRL_copy_func, @ptrCast(copy_func)).?(@as(?*X509_CRL, @ptrCast(ptr)))));
 }
 pub fn sk_X509_CRL_new(arg_comp: stack_X509_CRL_cmp_func) callconv(.C) ?*struct_stack_st_X509_CRL {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_CRL, @ptrCast(sk_new(@as(stack_cmp_func, @ptrCast(comp)))));
 }
 pub fn sk_X509_CRL_new_null() callconv(.C) ?*struct_stack_st_X509_CRL {
     return @as(?*struct_stack_st_X509_CRL, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_CRL_num(arg_sk: ?*const struct_stack_st_X509_CRL) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_CRL_zero(arg_sk: ?*struct_stack_st_X509_CRL) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_CRL_value(arg_sk: ?*const struct_stack_st_X509_CRL, arg_i: usize) callconv(.C) ?*X509_CRL {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*X509_CRL, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_X509_CRL_set(arg_sk: ?*struct_stack_st_X509_CRL, arg_i: usize, arg_p: ?*X509_CRL) callconv(.C) ?*X509_CRL {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*X509_CRL, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_CRL_free(arg_sk: ?*struct_stack_st_X509_CRL) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_CRL_pop_free(arg_sk: ?*struct_stack_st_X509_CRL, arg_free_func: sk_X509_CRL_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_CRL_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_CRL_insert(arg_sk: ?*struct_stack_st_X509_CRL, arg_p: ?*X509_CRL, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_CRL_delete(arg_sk: ?*struct_stack_st_X509_CRL, arg_where: usize) callconv(.C) ?*X509_CRL {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*X509_CRL, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_X509_CRL_delete_ptr(arg_sk: ?*struct_stack_st_X509_CRL, arg_p: ?*const X509_CRL) callconv(.C) ?*X509_CRL {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*X509_CRL, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_CRL_find(arg_sk: ?*const struct_stack_st_X509_CRL, arg_out_index: [*c]usize, arg_p: ?*const X509_CRL) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_CRL_call_cmp_func);
 }
 pub fn sk_X509_CRL_shift(arg_sk: ?*struct_stack_st_X509_CRL) callconv(.C) ?*X509_CRL {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_CRL, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_CRL_push(arg_sk: ?*struct_stack_st_X509_CRL, arg_p: ?*X509_CRL) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_CRL_pop(arg_sk: ?*struct_stack_st_X509_CRL) callconv(.C) ?*X509_CRL {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_CRL, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_CRL_dup(arg_sk: ?*const struct_stack_st_X509_CRL) callconv(.C) ?*struct_stack_st_X509_CRL {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_CRL, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_CRL_sort(arg_sk: ?*struct_stack_st_X509_CRL) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_CRL_call_cmp_func);
 }
 pub fn sk_X509_CRL_is_sorted(arg_sk: ?*const struct_stack_st_X509_CRL) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_CRL_set_cmp_func(arg_sk: ?*struct_stack_st_X509_CRL, arg_comp: sk_X509_CRL_cmp_func) callconv(.C) sk_X509_CRL_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_CRL_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_CRL_deep_copy(arg_sk: ?*const struct_stack_st_X509_CRL, arg_copy_func: sk_X509_CRL_copy_func, arg_free_func: sk_X509_CRL_free_func) callconv(.C) ?*struct_stack_st_X509_CRL {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_CRL, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_CRL_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_CRL_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern const X509_CRL_it: ASN1_ITEM;
@@ -3164,114 +3165,114 @@ pub const sk_X509_NAME_ENTRY_free_func = ?*const fn (?*X509_NAME_ENTRY) callconv
 pub const sk_X509_NAME_ENTRY_copy_func = ?*const fn (?*X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY;
 pub const sk_X509_NAME_ENTRY_cmp_func = ?*const fn ([*c]?*const X509_NAME_ENTRY, [*c]?*const X509_NAME_ENTRY) callconv(.C) c_int;
 pub fn sk_X509_NAME_ENTRY_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_NAME_ENTRY_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_NAME_ENTRY, @ptrCast(ptr)));
 }
 pub fn sk_X509_NAME_ENTRY_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_NAME_ENTRY_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509_NAME_ENTRY, @ptrCast(ptr)))));
 }
 pub fn sk_X509_NAME_ENTRY_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const X509_NAME_ENTRY = @as(?*const X509_NAME_ENTRY, @ptrCast(a.*));
     var b_ptr: ?*const X509_NAME_ENTRY = @as(?*const X509_NAME_ENTRY, @ptrCast(b.*));
     return @as(sk_X509_NAME_ENTRY_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_NAME_ENTRY_new(arg_comp: sk_X509_NAME_ENTRY_cmp_func) callconv(.C) ?*struct_stack_st_X509_NAME_ENTRY {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_NAME_ENTRY, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_NAME_ENTRY_new_null() callconv(.C) ?*struct_stack_st_X509_NAME_ENTRY {
     return @as(?*struct_stack_st_X509_NAME_ENTRY, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_NAME_ENTRY_num(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_NAME_ENTRY_zero(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_NAME_ENTRY_value(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY, arg_i: usize) callconv(.C) ?*X509_NAME_ENTRY {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*X509_NAME_ENTRY, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_X509_NAME_ENTRY_set(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_i: usize, arg_p: ?*X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*X509_NAME_ENTRY, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_NAME_ENTRY_free(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_NAME_ENTRY_pop_free(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_free_func: sk_X509_NAME_ENTRY_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_NAME_ENTRY_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_NAME_ENTRY_insert(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_p: ?*X509_NAME_ENTRY, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_NAME_ENTRY_delete(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_where: usize) callconv(.C) ?*X509_NAME_ENTRY {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*X509_NAME_ENTRY, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_X509_NAME_ENTRY_delete_ptr(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_p: ?*const X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*X509_NAME_ENTRY, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_NAME_ENTRY_find(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY, arg_out_index: [*c]usize, arg_p: ?*const X509_NAME_ENTRY) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_NAME_ENTRY_call_cmp_func);
 }
 pub fn sk_X509_NAME_ENTRY_shift(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_NAME_ENTRY, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_NAME_ENTRY_push(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_p: ?*X509_NAME_ENTRY) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_NAME_ENTRY_pop(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_NAME_ENTRY, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_NAME_ENTRY_dup(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY) callconv(.C) ?*struct_stack_st_X509_NAME_ENTRY {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_NAME_ENTRY, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_NAME_ENTRY_sort(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_NAME_ENTRY_call_cmp_func);
 }
 pub fn sk_X509_NAME_ENTRY_is_sorted(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_NAME_ENTRY_set_cmp_func(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_comp: sk_X509_NAME_ENTRY_cmp_func) callconv(.C) sk_X509_NAME_ENTRY_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_NAME_ENTRY_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_NAME_ENTRY_deep_copy(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY, arg_copy_func: sk_X509_NAME_ENTRY_copy_func, arg_free_func: sk_X509_NAME_ENTRY_free_func) callconv(.C) ?*struct_stack_st_X509_NAME_ENTRY {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_NAME_ENTRY, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_NAME_ENTRY_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_NAME_ENTRY_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const struct_stack_st_X509_NAME = opaque {};
@@ -3279,114 +3280,114 @@ pub const sk_X509_NAME_free_func = ?*const fn (?*X509_NAME) callconv(.C) void;
 pub const sk_X509_NAME_copy_func = ?*const fn (?*X509_NAME) callconv(.C) ?*X509_NAME;
 pub const sk_X509_NAME_cmp_func = ?*const fn ([*c]?*const X509_NAME, [*c]?*const X509_NAME) callconv(.C) c_int;
 pub fn sk_X509_NAME_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_NAME_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_NAME, @ptrCast(ptr)));
 }
 pub fn sk_X509_NAME_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_NAME_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509_NAME, @ptrCast(ptr)))));
 }
 pub fn sk_X509_NAME_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const X509_NAME = @as(?*const X509_NAME, @ptrCast(a.*));
     var b_ptr: ?*const X509_NAME = @as(?*const X509_NAME, @ptrCast(b.*));
     return @as(sk_X509_NAME_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_NAME_new(arg_comp: sk_X509_NAME_cmp_func) callconv(.C) ?*struct_stack_st_X509_NAME {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_NAME, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_NAME_new_null() callconv(.C) ?*struct_stack_st_X509_NAME {
     return @as(?*struct_stack_st_X509_NAME, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_NAME_num(arg_sk: ?*const struct_stack_st_X509_NAME) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_NAME_zero(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_NAME_value(arg_sk: ?*const struct_stack_st_X509_NAME, arg_i: usize) callconv(.C) ?*X509_NAME {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*X509_NAME, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_X509_NAME_set(arg_sk: ?*struct_stack_st_X509_NAME, arg_i: usize, arg_p: ?*X509_NAME) callconv(.C) ?*X509_NAME {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*X509_NAME, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_NAME_free(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_NAME_pop_free(arg_sk: ?*struct_stack_st_X509_NAME, arg_free_func: sk_X509_NAME_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_NAME_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_NAME_insert(arg_sk: ?*struct_stack_st_X509_NAME, arg_p: ?*X509_NAME, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_NAME_delete(arg_sk: ?*struct_stack_st_X509_NAME, arg_where: usize) callconv(.C) ?*X509_NAME {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*X509_NAME, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_X509_NAME_delete_ptr(arg_sk: ?*struct_stack_st_X509_NAME, arg_p: ?*const X509_NAME) callconv(.C) ?*X509_NAME {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*X509_NAME, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_NAME_find(arg_sk: ?*const struct_stack_st_X509_NAME, arg_out_index: [*c]usize, arg_p: ?*const X509_NAME) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_NAME_call_cmp_func);
 }
 pub fn sk_X509_NAME_shift(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) ?*X509_NAME {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_NAME, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_NAME_push(arg_sk: ?*struct_stack_st_X509_NAME, arg_p: ?*X509_NAME) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_NAME_pop(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) ?*X509_NAME {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_NAME, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_NAME_dup(arg_sk: ?*const struct_stack_st_X509_NAME) callconv(.C) ?*struct_stack_st_X509_NAME {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_NAME, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_NAME_sort(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_NAME_call_cmp_func);
 }
 pub fn sk_X509_NAME_is_sorted(arg_sk: ?*const struct_stack_st_X509_NAME) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_NAME_set_cmp_func(arg_sk: ?*struct_stack_st_X509_NAME, arg_comp: sk_X509_NAME_cmp_func) callconv(.C) sk_X509_NAME_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_NAME_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_NAME_deep_copy(arg_sk: ?*const struct_stack_st_X509_NAME, arg_copy_func: sk_X509_NAME_copy_func, arg_free_func: sk_X509_NAME_free_func) callconv(.C) ?*struct_stack_st_X509_NAME {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_NAME, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_NAME_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_NAME_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern const X509_NAME_it: ASN1_ITEM;
@@ -3438,114 +3439,114 @@ pub const sk_X509_EXTENSION_free_func = ?*const fn (?*X509_EXTENSION) callconv(.
 pub const sk_X509_EXTENSION_copy_func = ?*const fn (?*X509_EXTENSION) callconv(.C) ?*X509_EXTENSION;
 pub const sk_X509_EXTENSION_cmp_func = ?*const fn ([*c]?*const X509_EXTENSION, [*c]?*const X509_EXTENSION) callconv(.C) c_int;
 pub fn sk_X509_EXTENSION_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_EXTENSION_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_EXTENSION, @ptrCast(ptr)));
 }
 pub fn sk_X509_EXTENSION_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_EXTENSION_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509_EXTENSION, @ptrCast(ptr)))));
 }
 pub fn sk_X509_EXTENSION_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const X509_EXTENSION = @as(?*const X509_EXTENSION, @ptrCast(a.*));
     var b_ptr: ?*const X509_EXTENSION = @as(?*const X509_EXTENSION, @ptrCast(b.*));
     return @as(sk_X509_EXTENSION_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_EXTENSION_new(arg_comp: sk_X509_EXTENSION_cmp_func) callconv(.C) ?*struct_stack_st_X509_EXTENSION {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_EXTENSION, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_EXTENSION_new_null() callconv(.C) ?*struct_stack_st_X509_EXTENSION {
     return @as(?*struct_stack_st_X509_EXTENSION, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_EXTENSION_num(arg_sk: ?*const struct_stack_st_X509_EXTENSION) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_EXTENSION_zero(arg_sk: ?*struct_stack_st_X509_EXTENSION) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_EXTENSION_value(arg_sk: ?*const struct_stack_st_X509_EXTENSION, arg_i: usize) callconv(.C) ?*X509_EXTENSION {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*X509_EXTENSION, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_X509_EXTENSION_set(arg_sk: ?*struct_stack_st_X509_EXTENSION, arg_i: usize, arg_p: ?*X509_EXTENSION) callconv(.C) ?*X509_EXTENSION {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*X509_EXTENSION, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_EXTENSION_free(arg_sk: ?*struct_stack_st_X509_EXTENSION) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_EXTENSION_pop_free(arg_sk: ?*struct_stack_st_X509_EXTENSION, arg_free_func: sk_X509_EXTENSION_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_EXTENSION_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_EXTENSION_insert(arg_sk: ?*struct_stack_st_X509_EXTENSION, arg_p: ?*X509_EXTENSION, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_EXTENSION_delete(arg_sk: ?*struct_stack_st_X509_EXTENSION, arg_where: usize) callconv(.C) ?*X509_EXTENSION {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*X509_EXTENSION, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_X509_EXTENSION_delete_ptr(arg_sk: ?*struct_stack_st_X509_EXTENSION, arg_p: ?*const X509_EXTENSION) callconv(.C) ?*X509_EXTENSION {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*X509_EXTENSION, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_EXTENSION_find(arg_sk: ?*const struct_stack_st_X509_EXTENSION, arg_out_index: [*c]usize, arg_p: ?*const X509_EXTENSION) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_EXTENSION_call_cmp_func);
 }
 pub fn sk_X509_EXTENSION_shift(arg_sk: ?*struct_stack_st_X509_EXTENSION) callconv(.C) ?*X509_EXTENSION {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_EXTENSION, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_EXTENSION_push(arg_sk: ?*struct_stack_st_X509_EXTENSION, arg_p: ?*X509_EXTENSION) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_EXTENSION_pop(arg_sk: ?*struct_stack_st_X509_EXTENSION) callconv(.C) ?*X509_EXTENSION {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_EXTENSION, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_EXTENSION_dup(arg_sk: ?*const struct_stack_st_X509_EXTENSION) callconv(.C) ?*struct_stack_st_X509_EXTENSION {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_EXTENSION, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_EXTENSION_sort(arg_sk: ?*struct_stack_st_X509_EXTENSION) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_EXTENSION_call_cmp_func);
 }
 pub fn sk_X509_EXTENSION_is_sorted(arg_sk: ?*const struct_stack_st_X509_EXTENSION) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_EXTENSION_set_cmp_func(arg_sk: ?*struct_stack_st_X509_EXTENSION, arg_comp: sk_X509_EXTENSION_cmp_func) callconv(.C) sk_X509_EXTENSION_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_EXTENSION_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_EXTENSION_deep_copy(arg_sk: ?*const struct_stack_st_X509_EXTENSION, arg_copy_func: sk_X509_EXTENSION_copy_func, arg_free_func: sk_X509_EXTENSION_free_func) callconv(.C) ?*struct_stack_st_X509_EXTENSION {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_EXTENSION, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_EXTENSION_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_EXTENSION_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const X509_EXTENSIONS = struct_stack_st_X509_EXTENSION;
@@ -3564,114 +3565,114 @@ pub const sk_X509_ALGOR_free_func = ?*const fn ([*c]X509_ALGOR) callconv(.C) voi
 pub const sk_X509_ALGOR_copy_func = ?*const fn ([*c]X509_ALGOR) callconv(.C) [*c]X509_ALGOR;
 pub const sk_X509_ALGOR_cmp_func = ?*const fn ([*c][*c]const X509_ALGOR, [*c][*c]const X509_ALGOR) callconv(.C) c_int;
 pub fn sk_X509_ALGOR_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_ALGOR_free_func, @ptrCast(@alignCast(free_func))).?(@as([*c]X509_ALGOR, @ptrCast(@alignCast(ptr))));
 }
 pub fn sk_X509_ALGOR_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_ALGOR_copy_func, @ptrCast(@alignCast(copy_func))).?(@as([*c]X509_ALGOR, @ptrCast(@alignCast(ptr))))));
 }
 pub fn sk_X509_ALGOR_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: [*c]const X509_ALGOR = @as([*c]const X509_ALGOR, @ptrCast(@alignCast(a.*)));
     var b_ptr: [*c]const X509_ALGOR = @as([*c]const X509_ALGOR, @ptrCast(@alignCast(b.*)));
     return @as(sk_X509_ALGOR_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_ALGOR_new(arg_comp: sk_X509_ALGOR_cmp_func) callconv(.C) ?*struct_stack_st_X509_ALGOR {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_ALGOR, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_ALGOR_new_null() callconv(.C) ?*struct_stack_st_X509_ALGOR {
     return @as(?*struct_stack_st_X509_ALGOR, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_ALGOR_num(arg_sk: ?*const struct_stack_st_X509_ALGOR) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_ALGOR_zero(arg_sk: ?*struct_stack_st_X509_ALGOR) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_ALGOR_value(arg_sk: ?*const struct_stack_st_X509_ALGOR, arg_i: usize) callconv(.C) [*c]X509_ALGOR {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as([*c]X509_ALGOR, @ptrCast(@alignCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i))));
 }
 pub fn sk_X509_ALGOR_set(arg_sk: ?*struct_stack_st_X509_ALGOR, arg_i: usize, arg_p: [*c]X509_ALGOR) callconv(.C) [*c]X509_ALGOR {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as([*c]X509_ALGOR, @ptrCast(@alignCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p))))));
 }
 pub fn sk_X509_ALGOR_free(arg_sk: ?*struct_stack_st_X509_ALGOR) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_ALGOR_pop_free(arg_sk: ?*struct_stack_st_X509_ALGOR, arg_free_func: sk_X509_ALGOR_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_ALGOR_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_ALGOR_insert(arg_sk: ?*struct_stack_st_X509_ALGOR, arg_p: [*c]X509_ALGOR, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_ALGOR_delete(arg_sk: ?*struct_stack_st_X509_ALGOR, arg_where: usize) callconv(.C) [*c]X509_ALGOR {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as([*c]X509_ALGOR, @ptrCast(@alignCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where))));
 }
 pub fn sk_X509_ALGOR_delete_ptr(arg_sk: ?*struct_stack_st_X509_ALGOR, arg_p: [*c]const X509_ALGOR) callconv(.C) [*c]X509_ALGOR {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as([*c]X509_ALGOR, @ptrCast(@alignCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p))))));
 }
 pub fn sk_X509_ALGOR_find(arg_sk: ?*const struct_stack_st_X509_ALGOR, arg_out_index: [*c]usize, arg_p: [*c]const X509_ALGOR) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_ALGOR_call_cmp_func);
 }
 pub fn sk_X509_ALGOR_shift(arg_sk: ?*struct_stack_st_X509_ALGOR) callconv(.C) [*c]X509_ALGOR {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]X509_ALGOR, @ptrCast(@alignCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_X509_ALGOR_push(arg_sk: ?*struct_stack_st_X509_ALGOR, arg_p: [*c]X509_ALGOR) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_ALGOR_pop(arg_sk: ?*struct_stack_st_X509_ALGOR) callconv(.C) [*c]X509_ALGOR {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]X509_ALGOR, @ptrCast(@alignCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_X509_ALGOR_dup(arg_sk: ?*const struct_stack_st_X509_ALGOR) callconv(.C) ?*struct_stack_st_X509_ALGOR {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_ALGOR, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_ALGOR_sort(arg_sk: ?*struct_stack_st_X509_ALGOR) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_ALGOR_call_cmp_func);
 }
 pub fn sk_X509_ALGOR_is_sorted(arg_sk: ?*const struct_stack_st_X509_ALGOR) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_ALGOR_set_cmp_func(arg_sk: ?*struct_stack_st_X509_ALGOR, arg_comp: sk_X509_ALGOR_cmp_func) callconv(.C) sk_X509_ALGOR_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_ALGOR_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_ALGOR_deep_copy(arg_sk: ?*const struct_stack_st_X509_ALGOR, arg_copy_func: sk_X509_ALGOR_copy_func, arg_free_func: sk_X509_ALGOR_free_func) callconv(.C) ?*struct_stack_st_X509_ALGOR {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_ALGOR, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_ALGOR_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_ALGOR_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern const X509_ALGOR_it: ASN1_ITEM;
@@ -3758,114 +3759,114 @@ pub const sk_X509_ATTRIBUTE_free_func = ?*const fn (?*X509_ATTRIBUTE) callconv(.
 pub const sk_X509_ATTRIBUTE_copy_func = ?*const fn (?*X509_ATTRIBUTE) callconv(.C) ?*X509_ATTRIBUTE;
 pub const sk_X509_ATTRIBUTE_cmp_func = ?*const fn ([*c]?*const X509_ATTRIBUTE, [*c]?*const X509_ATTRIBUTE) callconv(.C) c_int;
 pub fn sk_X509_ATTRIBUTE_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_ATTRIBUTE_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_ATTRIBUTE, @ptrCast(ptr)));
 }
 pub fn sk_X509_ATTRIBUTE_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_ATTRIBUTE_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509_ATTRIBUTE, @ptrCast(ptr)))));
 }
 pub fn sk_X509_ATTRIBUTE_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const X509_ATTRIBUTE = @as(?*const X509_ATTRIBUTE, @ptrCast(a.*));
     var b_ptr: ?*const X509_ATTRIBUTE = @as(?*const X509_ATTRIBUTE, @ptrCast(b.*));
     return @as(sk_X509_ATTRIBUTE_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_ATTRIBUTE_new(arg_comp: sk_X509_ATTRIBUTE_cmp_func) callconv(.C) ?*struct_stack_st_X509_ATTRIBUTE {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_ATTRIBUTE, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_ATTRIBUTE_new_null() callconv(.C) ?*struct_stack_st_X509_ATTRIBUTE {
     return @as(?*struct_stack_st_X509_ATTRIBUTE, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_ATTRIBUTE_num(arg_sk: ?*const struct_stack_st_X509_ATTRIBUTE) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_ATTRIBUTE_zero(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_ATTRIBUTE_value(arg_sk: ?*const struct_stack_st_X509_ATTRIBUTE, arg_i: usize) callconv(.C) ?*X509_ATTRIBUTE {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*X509_ATTRIBUTE, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_X509_ATTRIBUTE_set(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE, arg_i: usize, arg_p: ?*X509_ATTRIBUTE) callconv(.C) ?*X509_ATTRIBUTE {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*X509_ATTRIBUTE, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_ATTRIBUTE_free(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_ATTRIBUTE_pop_free(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE, arg_free_func: sk_X509_ATTRIBUTE_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_ATTRIBUTE_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_ATTRIBUTE_insert(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE, arg_p: ?*X509_ATTRIBUTE, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_ATTRIBUTE_delete(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE, arg_where: usize) callconv(.C) ?*X509_ATTRIBUTE {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*X509_ATTRIBUTE, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_X509_ATTRIBUTE_delete_ptr(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE, arg_p: ?*const X509_ATTRIBUTE) callconv(.C) ?*X509_ATTRIBUTE {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*X509_ATTRIBUTE, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_ATTRIBUTE_find(arg_sk: ?*const struct_stack_st_X509_ATTRIBUTE, arg_out_index: [*c]usize, arg_p: ?*const X509_ATTRIBUTE) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_ATTRIBUTE_call_cmp_func);
 }
 pub fn sk_X509_ATTRIBUTE_shift(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE) callconv(.C) ?*X509_ATTRIBUTE {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_ATTRIBUTE, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_ATTRIBUTE_push(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE, arg_p: ?*X509_ATTRIBUTE) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_ATTRIBUTE_pop(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE) callconv(.C) ?*X509_ATTRIBUTE {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_ATTRIBUTE, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_ATTRIBUTE_dup(arg_sk: ?*const struct_stack_st_X509_ATTRIBUTE) callconv(.C) ?*struct_stack_st_X509_ATTRIBUTE {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_ATTRIBUTE, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_ATTRIBUTE_sort(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_ATTRIBUTE_call_cmp_func);
 }
 pub fn sk_X509_ATTRIBUTE_is_sorted(arg_sk: ?*const struct_stack_st_X509_ATTRIBUTE) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_ATTRIBUTE_set_cmp_func(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE, arg_comp: sk_X509_ATTRIBUTE_cmp_func) callconv(.C) sk_X509_ATTRIBUTE_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_ATTRIBUTE_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_ATTRIBUTE_deep_copy(arg_sk: ?*const struct_stack_st_X509_ATTRIBUTE, arg_copy_func: sk_X509_ATTRIBUTE_copy_func, arg_free_func: sk_X509_ATTRIBUTE_free_func) callconv(.C) ?*struct_stack_st_X509_ATTRIBUTE {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_ATTRIBUTE, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_ATTRIBUTE_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_ATTRIBUTE_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const struct_stack_st_DIST_POINT = opaque {};
@@ -3875,228 +3876,228 @@ pub const sk_X509_TRUST_free_func = ?*const fn ([*c]X509_TRUST) callconv(.C) voi
 pub const sk_X509_TRUST_copy_func = ?*const fn ([*c]X509_TRUST) callconv(.C) [*c]X509_TRUST;
 pub const sk_X509_TRUST_cmp_func = ?*const fn ([*c][*c]const X509_TRUST, [*c][*c]const X509_TRUST) callconv(.C) c_int;
 pub fn sk_X509_TRUST_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_TRUST_free_func, @ptrCast(@alignCast(free_func))).?(@as([*c]X509_TRUST, @ptrCast(@alignCast(ptr))));
 }
 pub fn sk_X509_TRUST_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_TRUST_copy_func, @ptrCast(@alignCast(copy_func))).?(@as([*c]X509_TRUST, @ptrCast(@alignCast(ptr))))));
 }
 pub fn sk_X509_TRUST_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: [*c]const X509_TRUST = @as([*c]const X509_TRUST, @ptrCast(@alignCast(a.*)));
     var b_ptr: [*c]const X509_TRUST = @as([*c]const X509_TRUST, @ptrCast(@alignCast(b.*)));
     return @as(sk_X509_TRUST_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_TRUST_new(arg_comp: sk_X509_TRUST_cmp_func) callconv(.C) ?*struct_stack_st_X509_TRUST {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_TRUST, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_TRUST_new_null() callconv(.C) ?*struct_stack_st_X509_TRUST {
     return @as(?*struct_stack_st_X509_TRUST, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_TRUST_num(arg_sk: ?*const struct_stack_st_X509_TRUST) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_TRUST_zero(arg_sk: ?*struct_stack_st_X509_TRUST) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_TRUST_value(arg_sk: ?*const struct_stack_st_X509_TRUST, arg_i: usize) callconv(.C) [*c]X509_TRUST {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as([*c]X509_TRUST, @ptrCast(@alignCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i))));
 }
 pub fn sk_X509_TRUST_set(arg_sk: ?*struct_stack_st_X509_TRUST, arg_i: usize, arg_p: [*c]X509_TRUST) callconv(.C) [*c]X509_TRUST {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as([*c]X509_TRUST, @ptrCast(@alignCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p))))));
 }
 pub fn sk_X509_TRUST_free(arg_sk: ?*struct_stack_st_X509_TRUST) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_TRUST_pop_free(arg_sk: ?*struct_stack_st_X509_TRUST, arg_free_func: sk_X509_TRUST_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_TRUST_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_TRUST_insert(arg_sk: ?*struct_stack_st_X509_TRUST, arg_p: [*c]X509_TRUST, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_TRUST_delete(arg_sk: ?*struct_stack_st_X509_TRUST, arg_where: usize) callconv(.C) [*c]X509_TRUST {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as([*c]X509_TRUST, @ptrCast(@alignCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where))));
 }
 pub fn sk_X509_TRUST_delete_ptr(arg_sk: ?*struct_stack_st_X509_TRUST, arg_p: [*c]const X509_TRUST) callconv(.C) [*c]X509_TRUST {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as([*c]X509_TRUST, @ptrCast(@alignCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p))))));
 }
 pub fn sk_X509_TRUST_find(arg_sk: ?*const struct_stack_st_X509_TRUST, arg_out_index: [*c]usize, arg_p: [*c]const X509_TRUST) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_TRUST_call_cmp_func);
 }
 pub fn sk_X509_TRUST_shift(arg_sk: ?*struct_stack_st_X509_TRUST) callconv(.C) [*c]X509_TRUST {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]X509_TRUST, @ptrCast(@alignCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_X509_TRUST_push(arg_sk: ?*struct_stack_st_X509_TRUST, arg_p: [*c]X509_TRUST) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_TRUST_pop(arg_sk: ?*struct_stack_st_X509_TRUST) callconv(.C) [*c]X509_TRUST {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]X509_TRUST, @ptrCast(@alignCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_X509_TRUST_dup(arg_sk: ?*const struct_stack_st_X509_TRUST) callconv(.C) ?*struct_stack_st_X509_TRUST {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_TRUST, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_TRUST_sort(arg_sk: ?*struct_stack_st_X509_TRUST) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_TRUST_call_cmp_func);
 }
 pub fn sk_X509_TRUST_is_sorted(arg_sk: ?*const struct_stack_st_X509_TRUST) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_TRUST_set_cmp_func(arg_sk: ?*struct_stack_st_X509_TRUST, arg_comp: sk_X509_TRUST_cmp_func) callconv(.C) sk_X509_TRUST_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_TRUST_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_TRUST_deep_copy(arg_sk: ?*const struct_stack_st_X509_TRUST, arg_copy_func: sk_X509_TRUST_copy_func, arg_free_func: sk_X509_TRUST_free_func) callconv(.C) ?*struct_stack_st_X509_TRUST {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_TRUST, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_TRUST_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_TRUST_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const sk_X509_REVOKED_free_func = ?*const fn (?*X509_REVOKED) callconv(.C) void;
 pub const sk_X509_REVOKED_copy_func = ?*const fn (?*X509_REVOKED) callconv(.C) ?*X509_REVOKED;
 pub const sk_X509_REVOKED_cmp_func = ?*const fn ([*c]?*const X509_REVOKED, [*c]?*const X509_REVOKED) callconv(.C) c_int;
 pub fn sk_X509_REVOKED_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_REVOKED_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_REVOKED, @ptrCast(ptr)));
 }
 pub fn sk_X509_REVOKED_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_REVOKED_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509_REVOKED, @ptrCast(ptr)))));
 }
 pub fn sk_X509_REVOKED_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const X509_REVOKED = @as(?*const X509_REVOKED, @ptrCast(a.*));
     var b_ptr: ?*const X509_REVOKED = @as(?*const X509_REVOKED, @ptrCast(b.*));
     return @as(sk_X509_REVOKED_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_REVOKED_new(arg_comp: sk_X509_REVOKED_cmp_func) callconv(.C) ?*struct_stack_st_X509_REVOKED {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_REVOKED, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_REVOKED_new_null() callconv(.C) ?*struct_stack_st_X509_REVOKED {
     return @as(?*struct_stack_st_X509_REVOKED, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_REVOKED_num(arg_sk: ?*const struct_stack_st_X509_REVOKED) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_REVOKED_zero(arg_sk: ?*struct_stack_st_X509_REVOKED) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_REVOKED_value(arg_sk: ?*const struct_stack_st_X509_REVOKED, arg_i: usize) callconv(.C) ?*X509_REVOKED {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*X509_REVOKED, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_X509_REVOKED_set(arg_sk: ?*struct_stack_st_X509_REVOKED, arg_i: usize, arg_p: ?*X509_REVOKED) callconv(.C) ?*X509_REVOKED {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*X509_REVOKED, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_REVOKED_free(arg_sk: ?*struct_stack_st_X509_REVOKED) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_REVOKED_pop_free(arg_sk: ?*struct_stack_st_X509_REVOKED, arg_free_func: sk_X509_REVOKED_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_REVOKED_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_REVOKED_insert(arg_sk: ?*struct_stack_st_X509_REVOKED, arg_p: ?*X509_REVOKED, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_REVOKED_delete(arg_sk: ?*struct_stack_st_X509_REVOKED, arg_where: usize) callconv(.C) ?*X509_REVOKED {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*X509_REVOKED, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_X509_REVOKED_delete_ptr(arg_sk: ?*struct_stack_st_X509_REVOKED, arg_p: ?*const X509_REVOKED) callconv(.C) ?*X509_REVOKED {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*X509_REVOKED, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_REVOKED_find(arg_sk: ?*const struct_stack_st_X509_REVOKED, arg_out_index: [*c]usize, arg_p: ?*const X509_REVOKED) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_REVOKED_call_cmp_func);
 }
 pub fn sk_X509_REVOKED_shift(arg_sk: ?*struct_stack_st_X509_REVOKED) callconv(.C) ?*X509_REVOKED {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_REVOKED, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_REVOKED_push(arg_sk: ?*struct_stack_st_X509_REVOKED, arg_p: ?*X509_REVOKED) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_REVOKED_pop(arg_sk: ?*struct_stack_st_X509_REVOKED) callconv(.C) ?*X509_REVOKED {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_REVOKED, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_REVOKED_dup(arg_sk: ?*const struct_stack_st_X509_REVOKED) callconv(.C) ?*struct_stack_st_X509_REVOKED {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_REVOKED, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_REVOKED_sort(arg_sk: ?*struct_stack_st_X509_REVOKED) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_REVOKED_call_cmp_func);
 }
 pub fn sk_X509_REVOKED_is_sorted(arg_sk: ?*const struct_stack_st_X509_REVOKED) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_REVOKED_set_cmp_func(arg_sk: ?*struct_stack_st_X509_REVOKED, arg_comp: sk_X509_REVOKED_cmp_func) callconv(.C) sk_X509_REVOKED_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_REVOKED_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_REVOKED_deep_copy(arg_sk: ?*const struct_stack_st_X509_REVOKED, arg_copy_func: sk_X509_REVOKED_copy_func, arg_free_func: sk_X509_REVOKED_free_func) callconv(.C) ?*struct_stack_st_X509_REVOKED {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_REVOKED, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_REVOKED_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_REVOKED_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const struct_stack_st_X509_INFO = opaque {};
@@ -4104,114 +4105,114 @@ pub const sk_X509_INFO_free_func = ?*const fn ([*c]X509_INFO) callconv(.C) void;
 pub const sk_X509_INFO_copy_func = ?*const fn ([*c]X509_INFO) callconv(.C) [*c]X509_INFO;
 pub const sk_X509_INFO_cmp_func = ?*const fn ([*c][*c]const X509_INFO, [*c][*c]const X509_INFO) callconv(.C) c_int;
 pub fn sk_X509_INFO_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_INFO_free_func, @ptrCast(@alignCast(free_func))).?(@as([*c]X509_INFO, @ptrCast(@alignCast(ptr))));
 }
 pub fn sk_X509_INFO_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_INFO_copy_func, @ptrCast(@alignCast(copy_func))).?(@as([*c]X509_INFO, @ptrCast(@alignCast(ptr))))));
 }
 pub fn sk_X509_INFO_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: [*c]const X509_INFO = @as([*c]const X509_INFO, @ptrCast(@alignCast(a.*)));
     var b_ptr: [*c]const X509_INFO = @as([*c]const X509_INFO, @ptrCast(@alignCast(b.*)));
     return @as(sk_X509_INFO_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_INFO_new(arg_comp: sk_X509_INFO_cmp_func) callconv(.C) ?*struct_stack_st_X509_INFO {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_INFO, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_INFO_new_null() callconv(.C) ?*struct_stack_st_X509_INFO {
     return @as(?*struct_stack_st_X509_INFO, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_INFO_num(arg_sk: ?*const struct_stack_st_X509_INFO) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_INFO_zero(arg_sk: ?*struct_stack_st_X509_INFO) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_INFO_value(arg_sk: ?*const struct_stack_st_X509_INFO, arg_i: usize) callconv(.C) [*c]X509_INFO {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as([*c]X509_INFO, @ptrCast(@alignCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i))));
 }
 pub fn sk_X509_INFO_set(arg_sk: ?*struct_stack_st_X509_INFO, arg_i: usize, arg_p: [*c]X509_INFO) callconv(.C) [*c]X509_INFO {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as([*c]X509_INFO, @ptrCast(@alignCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p))))));
 }
 pub fn sk_X509_INFO_free(arg_sk: ?*struct_stack_st_X509_INFO) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_INFO_pop_free(arg_sk: ?*struct_stack_st_X509_INFO, arg_free_func: sk_X509_INFO_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_INFO_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_INFO_insert(arg_sk: ?*struct_stack_st_X509_INFO, arg_p: [*c]X509_INFO, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_INFO_delete(arg_sk: ?*struct_stack_st_X509_INFO, arg_where: usize) callconv(.C) [*c]X509_INFO {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as([*c]X509_INFO, @ptrCast(@alignCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where))));
 }
 pub fn sk_X509_INFO_delete_ptr(arg_sk: ?*struct_stack_st_X509_INFO, arg_p: [*c]const X509_INFO) callconv(.C) [*c]X509_INFO {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as([*c]X509_INFO, @ptrCast(@alignCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p))))));
 }
 pub fn sk_X509_INFO_find(arg_sk: ?*const struct_stack_st_X509_INFO, arg_out_index: [*c]usize, arg_p: [*c]const X509_INFO) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_INFO_call_cmp_func);
 }
 pub fn sk_X509_INFO_shift(arg_sk: ?*struct_stack_st_X509_INFO) callconv(.C) [*c]X509_INFO {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]X509_INFO, @ptrCast(@alignCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_X509_INFO_push(arg_sk: ?*struct_stack_st_X509_INFO, arg_p: [*c]X509_INFO) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_INFO_pop(arg_sk: ?*struct_stack_st_X509_INFO) callconv(.C) [*c]X509_INFO {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]X509_INFO, @ptrCast(@alignCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_X509_INFO_dup(arg_sk: ?*const struct_stack_st_X509_INFO) callconv(.C) ?*struct_stack_st_X509_INFO {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_INFO, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_INFO_sort(arg_sk: ?*struct_stack_st_X509_INFO) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_INFO_call_cmp_func);
 }
 pub fn sk_X509_INFO_is_sorted(arg_sk: ?*const struct_stack_st_X509_INFO) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_INFO_set_cmp_func(arg_sk: ?*struct_stack_st_X509_INFO, arg_comp: sk_X509_INFO_cmp_func) callconv(.C) sk_X509_INFO_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_INFO_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_INFO_deep_copy(arg_sk: ?*const struct_stack_st_X509_INFO, arg_copy_func: sk_X509_INFO_copy_func, arg_free_func: sk_X509_INFO_free_func) callconv(.C) ?*struct_stack_st_X509_INFO {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_INFO, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_INFO_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_INFO_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern fn X509_get_notBefore(x509: ?*const X509) [*c]ASN1_TIME;
@@ -4402,114 +4403,114 @@ pub const sk_X509_LOOKUP_free_func = ?*const fn (?*X509_LOOKUP) callconv(.C) voi
 pub const sk_X509_LOOKUP_copy_func = ?*const fn (?*X509_LOOKUP) callconv(.C) ?*X509_LOOKUP;
 pub const sk_X509_LOOKUP_cmp_func = ?*const fn ([*c]?*const X509_LOOKUP, [*c]?*const X509_LOOKUP) callconv(.C) c_int;
 pub fn sk_X509_LOOKUP_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_LOOKUP_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_LOOKUP, @ptrCast(ptr)));
 }
 pub fn sk_X509_LOOKUP_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_LOOKUP_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509_LOOKUP, @ptrCast(ptr)))));
 }
 pub fn sk_X509_LOOKUP_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const X509_LOOKUP = @as(?*const X509_LOOKUP, @ptrCast(a.*));
     var b_ptr: ?*const X509_LOOKUP = @as(?*const X509_LOOKUP, @ptrCast(b.*));
     return @as(sk_X509_LOOKUP_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_LOOKUP_new(arg_comp: sk_X509_LOOKUP_cmp_func) callconv(.C) ?*struct_stack_st_X509_LOOKUP {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_LOOKUP, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_LOOKUP_new_null() callconv(.C) ?*struct_stack_st_X509_LOOKUP {
     return @as(?*struct_stack_st_X509_LOOKUP, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_LOOKUP_num(arg_sk: ?*const struct_stack_st_X509_LOOKUP) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_LOOKUP_zero(arg_sk: ?*struct_stack_st_X509_LOOKUP) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_LOOKUP_value(arg_sk: ?*const struct_stack_st_X509_LOOKUP, arg_i: usize) callconv(.C) ?*X509_LOOKUP {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*X509_LOOKUP, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_X509_LOOKUP_set(arg_sk: ?*struct_stack_st_X509_LOOKUP, arg_i: usize, arg_p: ?*X509_LOOKUP) callconv(.C) ?*X509_LOOKUP {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*X509_LOOKUP, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_LOOKUP_free(arg_sk: ?*struct_stack_st_X509_LOOKUP) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_LOOKUP_pop_free(arg_sk: ?*struct_stack_st_X509_LOOKUP, arg_free_func: sk_X509_LOOKUP_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_LOOKUP_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_LOOKUP_insert(arg_sk: ?*struct_stack_st_X509_LOOKUP, arg_p: ?*X509_LOOKUP, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_LOOKUP_delete(arg_sk: ?*struct_stack_st_X509_LOOKUP, arg_where: usize) callconv(.C) ?*X509_LOOKUP {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*X509_LOOKUP, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_X509_LOOKUP_delete_ptr(arg_sk: ?*struct_stack_st_X509_LOOKUP, arg_p: ?*const X509_LOOKUP) callconv(.C) ?*X509_LOOKUP {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*X509_LOOKUP, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_LOOKUP_find(arg_sk: ?*const struct_stack_st_X509_LOOKUP, arg_out_index: [*c]usize, arg_p: ?*const X509_LOOKUP) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_LOOKUP_call_cmp_func);
 }
 pub fn sk_X509_LOOKUP_shift(arg_sk: ?*struct_stack_st_X509_LOOKUP) callconv(.C) ?*X509_LOOKUP {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_LOOKUP, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_LOOKUP_push(arg_sk: ?*struct_stack_st_X509_LOOKUP, arg_p: ?*X509_LOOKUP) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_LOOKUP_pop(arg_sk: ?*struct_stack_st_X509_LOOKUP) callconv(.C) ?*X509_LOOKUP {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_LOOKUP, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_LOOKUP_dup(arg_sk: ?*const struct_stack_st_X509_LOOKUP) callconv(.C) ?*struct_stack_st_X509_LOOKUP {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_LOOKUP, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_LOOKUP_sort(arg_sk: ?*struct_stack_st_X509_LOOKUP) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_LOOKUP_call_cmp_func);
 }
 pub fn sk_X509_LOOKUP_is_sorted(arg_sk: ?*const struct_stack_st_X509_LOOKUP) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_LOOKUP_set_cmp_func(arg_sk: ?*struct_stack_st_X509_LOOKUP, arg_comp: sk_X509_LOOKUP_cmp_func) callconv(.C) sk_X509_LOOKUP_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_LOOKUP_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_LOOKUP_deep_copy(arg_sk: ?*const struct_stack_st_X509_LOOKUP, arg_copy_func: sk_X509_LOOKUP_copy_func, arg_free_func: sk_X509_LOOKUP_free_func) callconv(.C) ?*struct_stack_st_X509_LOOKUP {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_LOOKUP, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_LOOKUP_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_LOOKUP_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const struct_stack_st_X509_OBJECT = opaque {};
@@ -4517,114 +4518,114 @@ pub const sk_X509_OBJECT_free_func = ?*const fn (?*X509_OBJECT) callconv(.C) voi
 pub const sk_X509_OBJECT_copy_func = ?*const fn (?*X509_OBJECT) callconv(.C) ?*X509_OBJECT;
 pub const sk_X509_OBJECT_cmp_func = ?*const fn ([*c]?*const X509_OBJECT, [*c]?*const X509_OBJECT) callconv(.C) c_int;
 pub fn sk_X509_OBJECT_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_OBJECT_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_OBJECT, @ptrCast(ptr)));
 }
 pub fn sk_X509_OBJECT_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_OBJECT_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509_OBJECT, @ptrCast(ptr)))));
 }
 pub fn sk_X509_OBJECT_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const X509_OBJECT = @as(?*const X509_OBJECT, @ptrCast(a.*));
     var b_ptr: ?*const X509_OBJECT = @as(?*const X509_OBJECT, @ptrCast(b.*));
     return @as(sk_X509_OBJECT_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_OBJECT_new(arg_comp: sk_X509_OBJECT_cmp_func) callconv(.C) ?*struct_stack_st_X509_OBJECT {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_OBJECT, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_OBJECT_new_null() callconv(.C) ?*struct_stack_st_X509_OBJECT {
     return @as(?*struct_stack_st_X509_OBJECT, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_OBJECT_num(arg_sk: ?*const struct_stack_st_X509_OBJECT) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_OBJECT_zero(arg_sk: ?*struct_stack_st_X509_OBJECT) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_OBJECT_value(arg_sk: ?*const struct_stack_st_X509_OBJECT, arg_i: usize) callconv(.C) ?*X509_OBJECT {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*X509_OBJECT, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_X509_OBJECT_set(arg_sk: ?*struct_stack_st_X509_OBJECT, arg_i: usize, arg_p: ?*X509_OBJECT) callconv(.C) ?*X509_OBJECT {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*X509_OBJECT, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_OBJECT_free(arg_sk: ?*struct_stack_st_X509_OBJECT) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_OBJECT_pop_free(arg_sk: ?*struct_stack_st_X509_OBJECT, arg_free_func: sk_X509_OBJECT_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_OBJECT_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_OBJECT_insert(arg_sk: ?*struct_stack_st_X509_OBJECT, arg_p: ?*X509_OBJECT, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_OBJECT_delete(arg_sk: ?*struct_stack_st_X509_OBJECT, arg_where: usize) callconv(.C) ?*X509_OBJECT {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*X509_OBJECT, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_X509_OBJECT_delete_ptr(arg_sk: ?*struct_stack_st_X509_OBJECT, arg_p: ?*const X509_OBJECT) callconv(.C) ?*X509_OBJECT {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*X509_OBJECT, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_OBJECT_find(arg_sk: ?*const struct_stack_st_X509_OBJECT, arg_out_index: [*c]usize, arg_p: ?*const X509_OBJECT) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_OBJECT_call_cmp_func);
 }
 pub fn sk_X509_OBJECT_shift(arg_sk: ?*struct_stack_st_X509_OBJECT) callconv(.C) ?*X509_OBJECT {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_OBJECT, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_OBJECT_push(arg_sk: ?*struct_stack_st_X509_OBJECT, arg_p: ?*X509_OBJECT) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_OBJECT_pop(arg_sk: ?*struct_stack_st_X509_OBJECT) callconv(.C) ?*X509_OBJECT {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_OBJECT, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_OBJECT_dup(arg_sk: ?*const struct_stack_st_X509_OBJECT) callconv(.C) ?*struct_stack_st_X509_OBJECT {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_OBJECT, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_OBJECT_sort(arg_sk: ?*struct_stack_st_X509_OBJECT) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_OBJECT_call_cmp_func);
 }
 pub fn sk_X509_OBJECT_is_sorted(arg_sk: ?*const struct_stack_st_X509_OBJECT) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_OBJECT_set_cmp_func(arg_sk: ?*struct_stack_st_X509_OBJECT, arg_comp: sk_X509_OBJECT_cmp_func) callconv(.C) sk_X509_OBJECT_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_OBJECT_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_OBJECT_deep_copy(arg_sk: ?*const struct_stack_st_X509_OBJECT, arg_copy_func: sk_X509_OBJECT_copy_func, arg_free_func: sk_X509_OBJECT_free_func) callconv(.C) ?*struct_stack_st_X509_OBJECT {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_OBJECT, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_OBJECT_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_OBJECT_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const struct_stack_st_X509_VERIFY_PARAM = opaque {};
@@ -4632,114 +4633,114 @@ pub const sk_X509_VERIFY_PARAM_free_func = ?*const fn (?*X509_VERIFY_PARAM) call
 pub const sk_X509_VERIFY_PARAM_copy_func = ?*const fn (?*X509_VERIFY_PARAM) callconv(.C) ?*X509_VERIFY_PARAM;
 pub const sk_X509_VERIFY_PARAM_cmp_func = ?*const fn ([*c]?*const X509_VERIFY_PARAM, [*c]?*const X509_VERIFY_PARAM) callconv(.C) c_int;
 pub fn sk_X509_VERIFY_PARAM_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_X509_VERIFY_PARAM_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_VERIFY_PARAM, @ptrCast(ptr)));
 }
 pub fn sk_X509_VERIFY_PARAM_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_X509_VERIFY_PARAM_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509_VERIFY_PARAM, @ptrCast(ptr)))));
 }
 pub fn sk_X509_VERIFY_PARAM_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const X509_VERIFY_PARAM = @as(?*const X509_VERIFY_PARAM, @ptrCast(a.*));
     var b_ptr: ?*const X509_VERIFY_PARAM = @as(?*const X509_VERIFY_PARAM, @ptrCast(b.*));
     return @as(sk_X509_VERIFY_PARAM_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_VERIFY_PARAM_new(arg_comp: sk_X509_VERIFY_PARAM_cmp_func) callconv(.C) ?*struct_stack_st_X509_VERIFY_PARAM {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_X509_VERIFY_PARAM, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_X509_VERIFY_PARAM_new_null() callconv(.C) ?*struct_stack_st_X509_VERIFY_PARAM {
     return @as(?*struct_stack_st_X509_VERIFY_PARAM, @ptrCast(sk_new_null()));
 }
 pub fn sk_X509_VERIFY_PARAM_num(arg_sk: ?*const struct_stack_st_X509_VERIFY_PARAM) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_VERIFY_PARAM_zero(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_VERIFY_PARAM_value(arg_sk: ?*const struct_stack_st_X509_VERIFY_PARAM, arg_i: usize) callconv(.C) ?*X509_VERIFY_PARAM {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*X509_VERIFY_PARAM, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_X509_VERIFY_PARAM_set(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM, arg_i: usize, arg_p: ?*X509_VERIFY_PARAM) callconv(.C) ?*X509_VERIFY_PARAM {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*X509_VERIFY_PARAM, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_VERIFY_PARAM_free(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_VERIFY_PARAM_pop_free(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM, arg_free_func: sk_X509_VERIFY_PARAM_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_VERIFY_PARAM_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_X509_VERIFY_PARAM_insert(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM, arg_p: ?*X509_VERIFY_PARAM, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_X509_VERIFY_PARAM_delete(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM, arg_where: usize) callconv(.C) ?*X509_VERIFY_PARAM {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*X509_VERIFY_PARAM, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_X509_VERIFY_PARAM_delete_ptr(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM, arg_p: ?*const X509_VERIFY_PARAM) callconv(.C) ?*X509_VERIFY_PARAM {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*X509_VERIFY_PARAM, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_VERIFY_PARAM_find(arg_sk: ?*const struct_stack_st_X509_VERIFY_PARAM, arg_out_index: [*c]usize, arg_p: ?*const X509_VERIFY_PARAM) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_VERIFY_PARAM_call_cmp_func);
 }
 pub fn sk_X509_VERIFY_PARAM_shift(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM) callconv(.C) ?*X509_VERIFY_PARAM {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_VERIFY_PARAM, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_VERIFY_PARAM_push(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM, arg_p: ?*X509_VERIFY_PARAM) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_X509_VERIFY_PARAM_pop(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM) callconv(.C) ?*X509_VERIFY_PARAM {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*X509_VERIFY_PARAM, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_VERIFY_PARAM_dup(arg_sk: ?*const struct_stack_st_X509_VERIFY_PARAM) callconv(.C) ?*struct_stack_st_X509_VERIFY_PARAM {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_X509_VERIFY_PARAM, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_VERIFY_PARAM_sort(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_VERIFY_PARAM_call_cmp_func);
 }
 pub fn sk_X509_VERIFY_PARAM_is_sorted(arg_sk: ?*const struct_stack_st_X509_VERIFY_PARAM) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_X509_VERIFY_PARAM_set_cmp_func(arg_sk: ?*struct_stack_st_X509_VERIFY_PARAM, arg_comp: sk_X509_VERIFY_PARAM_cmp_func) callconv(.C) sk_X509_VERIFY_PARAM_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_X509_VERIFY_PARAM_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_X509_VERIFY_PARAM_deep_copy(arg_sk: ?*const struct_stack_st_X509_VERIFY_PARAM, arg_copy_func: sk_X509_VERIFY_PARAM_copy_func, arg_free_func: sk_X509_VERIFY_PARAM_free_func) callconv(.C) ?*struct_stack_st_X509_VERIFY_PARAM {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_VERIFY_PARAM, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_VERIFY_PARAM_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_VERIFY_PARAM_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern fn X509_check_ca(x: ?*X509) c_int;
@@ -5186,114 +5187,114 @@ pub const sk_SSL_CIPHER_free_func = ?*const fn (?*const SSL_CIPHER) callconv(.C)
 pub const sk_SSL_CIPHER_copy_func = ?*const fn (?*const SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER;
 pub const sk_SSL_CIPHER_cmp_func = ?*const fn ([*c]?*const SSL_CIPHER, [*c]?*const SSL_CIPHER) callconv(.C) c_int;
 pub fn sk_SSL_CIPHER_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_SSL_CIPHER_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*const SSL_CIPHER, @ptrCast(ptr)));
 }
 pub fn sk_SSL_CIPHER_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@volatileCast(@constCast(@as(sk_SSL_CIPHER_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*const SSL_CIPHER, @ptrCast(ptr)))))));
 }
 pub fn sk_SSL_CIPHER_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: ?*const SSL_CIPHER = @as(?*const SSL_CIPHER, @ptrCast(a.*));
     var b_ptr: ?*const SSL_CIPHER = @as(?*const SSL_CIPHER, @ptrCast(b.*));
     return @as(sk_SSL_CIPHER_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_SSL_CIPHER_new(arg_comp: sk_SSL_CIPHER_cmp_func) callconv(.C) ?*struct_stack_st_SSL_CIPHER {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_SSL_CIPHER, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_SSL_CIPHER_new_null() callconv(.C) ?*struct_stack_st_SSL_CIPHER {
     return @as(?*struct_stack_st_SSL_CIPHER, @ptrCast(sk_new_null()));
 }
 pub fn sk_SSL_CIPHER_num(arg_sk: ?*const struct_stack_st_SSL_CIPHER) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SSL_CIPHER_zero(arg_sk: ?*struct_stack_st_SSL_CIPHER) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SSL_CIPHER_value(arg_sk: ?*const struct_stack_st_SSL_CIPHER, arg_i: usize) callconv(.C) ?*const SSL_CIPHER {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as(?*const SSL_CIPHER, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
 pub fn sk_SSL_CIPHER_set(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_i: usize, arg_p: ?*const SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as(?*const SSL_CIPHER, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(@volatileCast(@constCast(p)))))));
 }
 pub fn sk_SSL_CIPHER_free(arg_sk: ?*struct_stack_st_SSL_CIPHER) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SSL_CIPHER_pop_free(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_free_func: sk_SSL_CIPHER_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_SSL_CIPHER_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_SSL_CIPHER_insert(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_p: ?*const SSL_CIPHER, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(@volatileCast(@constCast(p)))), where);
 }
 pub fn sk_SSL_CIPHER_delete(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_where: usize) callconv(.C) ?*const SSL_CIPHER {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as(?*const SSL_CIPHER, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
 pub fn sk_SSL_CIPHER_delete_ptr(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_p: ?*const SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as(?*const SSL_CIPHER, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
 pub fn sk_SSL_CIPHER_find(arg_sk: ?*const struct_stack_st_SSL_CIPHER, arg_out_index: [*c]usize, arg_p: ?*const SSL_CIPHER) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_SSL_CIPHER_call_cmp_func);
 }
 pub fn sk_SSL_CIPHER_shift(arg_sk: ?*struct_stack_st_SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*const SSL_CIPHER, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_SSL_CIPHER_push(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_p: ?*const SSL_CIPHER) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(@volatileCast(@constCast(p)))));
 }
 pub fn sk_SSL_CIPHER_pop(arg_sk: ?*struct_stack_st_SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*const SSL_CIPHER, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_SSL_CIPHER_dup(arg_sk: ?*const struct_stack_st_SSL_CIPHER) callconv(.C) ?*struct_stack_st_SSL_CIPHER {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_SSL_CIPHER, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_SSL_CIPHER_sort(arg_sk: ?*struct_stack_st_SSL_CIPHER) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_SSL_CIPHER_call_cmp_func);
 }
 pub fn sk_SSL_CIPHER_is_sorted(arg_sk: ?*const struct_stack_st_SSL_CIPHER) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SSL_CIPHER_set_cmp_func(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_comp: sk_SSL_CIPHER_cmp_func) callconv(.C) sk_SSL_CIPHER_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_SSL_CIPHER_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_SSL_CIPHER_deep_copy(arg_sk: ?*const struct_stack_st_SSL_CIPHER, arg_copy_func: sk_SSL_CIPHER_copy_func, arg_free_func: sk_SSL_CIPHER_free_func) callconv(.C) ?*struct_stack_st_SSL_CIPHER {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_SSL_CIPHER, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_SSL_CIPHER_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_SSL_CIPHER_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern fn SSL_get_cipher_by_value(value: u16) ?*const SSL_CIPHER;
@@ -5494,114 +5495,114 @@ pub const sk_SRTP_PROTECTION_PROFILE_free_func = ?*const fn ([*c]const SRTP_PROT
 pub const sk_SRTP_PROTECTION_PROFILE_copy_func = ?*const fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE;
 pub const sk_SRTP_PROTECTION_PROFILE_cmp_func = ?*const fn ([*c][*c]const SRTP_PROTECTION_PROFILE, [*c][*c]const SRTP_PROTECTION_PROFILE) callconv(.C) c_int;
 pub fn sk_SRTP_PROTECTION_PROFILE_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_SRTP_PROTECTION_PROFILE_free_func, @ptrCast(@alignCast(free_func))).?(@as([*c]const SRTP_PROTECTION_PROFILE, @ptrCast(@alignCast(ptr))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@volatileCast(@constCast(@as(sk_SRTP_PROTECTION_PROFILE_copy_func, @ptrCast(@alignCast(copy_func))).?(@as([*c]const SRTP_PROTECTION_PROFILE, @ptrCast(@alignCast(ptr))))))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: [*c]const SRTP_PROTECTION_PROFILE = @as([*c]const SRTP_PROTECTION_PROFILE, @ptrCast(@alignCast(a.*)));
     var b_ptr: [*c]const SRTP_PROTECTION_PROFILE = @as([*c]const SRTP_PROTECTION_PROFILE, @ptrCast(@alignCast(b.*)));
     return @as(sk_SRTP_PROTECTION_PROFILE_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_new(arg_comp: sk_SRTP_PROTECTION_PROFILE_cmp_func) callconv(.C) ?*struct_stack_st_SRTP_PROTECTION_PROFILE {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_SRTP_PROTECTION_PROFILE, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_new_null() callconv(.C) ?*struct_stack_st_SRTP_PROTECTION_PROFILE {
     return @as(?*struct_stack_st_SRTP_PROTECTION_PROFILE, @ptrCast(sk_new_null()));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_num(arg_sk: ?*const struct_stack_st_SRTP_PROTECTION_PROFILE) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_zero(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_value(arg_sk: ?*const struct_stack_st_SRTP_PROTECTION_PROFILE, arg_i: usize) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as([*c]const SRTP_PROTECTION_PROFILE, @ptrCast(@alignCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_set(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE, arg_i: usize, arg_p: [*c]const SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as([*c]const SRTP_PROTECTION_PROFILE, @ptrCast(@alignCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(@volatileCast(@constCast(p))))))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_free(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_pop_free(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE, arg_free_func: sk_SRTP_PROTECTION_PROFILE_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_SRTP_PROTECTION_PROFILE_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_insert(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE, arg_p: [*c]const SRTP_PROTECTION_PROFILE, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(@volatileCast(@constCast(p)))), where);
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_delete(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE, arg_where: usize) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as([*c]const SRTP_PROTECTION_PROFILE, @ptrCast(@alignCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_delete_ptr(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE, arg_p: [*c]const SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as([*c]const SRTP_PROTECTION_PROFILE, @ptrCast(@alignCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p))))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_find(arg_sk: ?*const struct_stack_st_SRTP_PROTECTION_PROFILE, arg_out_index: [*c]usize, arg_p: [*c]const SRTP_PROTECTION_PROFILE) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_SRTP_PROTECTION_PROFILE_call_cmp_func);
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_shift(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]const SRTP_PROTECTION_PROFILE, @ptrCast(@alignCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_push(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE, arg_p: [*c]const SRTP_PROTECTION_PROFILE) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(@volatileCast(@constCast(p)))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_pop(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]const SRTP_PROTECTION_PROFILE, @ptrCast(@alignCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_dup(arg_sk: ?*const struct_stack_st_SRTP_PROTECTION_PROFILE) callconv(.C) ?*struct_stack_st_SRTP_PROTECTION_PROFILE {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_SRTP_PROTECTION_PROFILE, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_sort(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_SRTP_PROTECTION_PROFILE_call_cmp_func);
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_is_sorted(arg_sk: ?*const struct_stack_st_SRTP_PROTECTION_PROFILE) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_set_cmp_func(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE, arg_comp: sk_SRTP_PROTECTION_PROFILE_cmp_func) callconv(.C) sk_SRTP_PROTECTION_PROFILE_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_SRTP_PROTECTION_PROFILE_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_deep_copy(arg_sk: ?*const struct_stack_st_SRTP_PROTECTION_PROFILE, arg_copy_func: sk_SRTP_PROTECTION_PROFILE_copy_func, arg_free_func: sk_SRTP_PROTECTION_PROFILE_free_func) callconv(.C) ?*struct_stack_st_SRTP_PROTECTION_PROFILE {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_SRTP_PROTECTION_PROFILE, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_SRTP_PROTECTION_PROFILE_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_SRTP_PROTECTION_PROFILE_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 // pub extern fn SSL_CTX_set_srtp_profiles(ctx: ?*SSL_CTX, profiles: [*c]const u8) c_int;
@@ -5833,114 +5834,114 @@ pub const sk_SSL_COMP_free_func = ?*const fn ([*c]SSL_COMP) callconv(.C) void;
 pub const sk_SSL_COMP_copy_func = ?*const fn ([*c]SSL_COMP) callconv(.C) [*c]SSL_COMP;
 pub const sk_SSL_COMP_cmp_func = ?*const fn ([*c][*c]const SSL_COMP, [*c][*c]const SSL_COMP) callconv(.C) c_int;
 pub fn sk_SSL_COMP_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
-    var free_func = arg_free_func;
-    var ptr = arg_ptr;
+    const free_func = arg_free_func;
+    const ptr = arg_ptr;
     @as(sk_SSL_COMP_free_func, @ptrCast(@alignCast(free_func))).?(@as([*c]SSL_COMP, @ptrCast(@alignCast(ptr))));
 }
 pub fn sk_SSL_COMP_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
-    var copy_func = arg_copy_func;
-    var ptr = arg_ptr;
+    const copy_func = arg_copy_func;
+    const ptr = arg_ptr;
     return @as(?*anyopaque, @ptrCast(@as(sk_SSL_COMP_copy_func, @ptrCast(@alignCast(copy_func))).?(@as([*c]SSL_COMP, @ptrCast(@alignCast(ptr))))));
 }
 pub fn sk_SSL_COMP_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
-    var cmp_func = arg_cmp_func;
-    var a = arg_a;
-    var b = arg_b;
+    const cmp_func = arg_cmp_func;
+    const a = arg_a;
+    const b = arg_b;
     var a_ptr: [*c]const SSL_COMP = @as([*c]const SSL_COMP, @ptrCast(@alignCast(a.*)));
     var b_ptr: [*c]const SSL_COMP = @as([*c]const SSL_COMP, @ptrCast(@alignCast(b.*)));
     return @as(sk_SSL_COMP_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_SSL_COMP_new(arg_comp: sk_SSL_COMP_cmp_func) callconv(.C) ?*struct_stack_st_SSL_COMP {
-    var comp = arg_comp;
+    const comp = arg_comp;
     return @as(?*struct_stack_st_SSL_COMP, @ptrCast(sk_new(@as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp))))));
 }
 pub fn sk_SSL_COMP_new_null() callconv(.C) ?*struct_stack_st_SSL_COMP {
     return @as(?*struct_stack_st_SSL_COMP, @ptrCast(sk_new_null()));
 }
 pub fn sk_SSL_COMP_num(arg_sk: ?*const struct_stack_st_SSL_COMP) callconv(.C) usize {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_num(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SSL_COMP_zero(arg_sk: ?*struct_stack_st_SSL_COMP) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SSL_COMP_value(arg_sk: ?*const struct_stack_st_SSL_COMP, arg_i: usize) callconv(.C) [*c]SSL_COMP {
-    var sk = arg_sk;
-    var i = arg_i;
+    const sk = arg_sk;
+    const i = arg_i;
     return @as([*c]SSL_COMP, @ptrCast(@alignCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i))));
 }
 pub fn sk_SSL_COMP_set(arg_sk: ?*struct_stack_st_SSL_COMP, arg_i: usize, arg_p: [*c]SSL_COMP) callconv(.C) [*c]SSL_COMP {
-    var sk = arg_sk;
-    var i = arg_i;
-    var p = arg_p;
+    const sk = arg_sk;
+    const i = arg_i;
+    const p = arg_p;
     return @as([*c]SSL_COMP, @ptrCast(@alignCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p))))));
 }
 pub fn sk_SSL_COMP_free(arg_sk: ?*struct_stack_st_SSL_COMP) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SSL_COMP_pop_free(arg_sk: ?*struct_stack_st_SSL_COMP, arg_free_func: sk_SSL_COMP_free_func) callconv(.C) void {
-    var sk = arg_sk;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_SSL_COMP_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
 pub fn sk_SSL_COMP_insert(arg_sk: ?*struct_stack_st_SSL_COMP, arg_p: [*c]SSL_COMP, arg_where: usize) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
-    var where = arg_where;
+    const sk = arg_sk;
+    const p = arg_p;
+    const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
 pub fn sk_SSL_COMP_delete(arg_sk: ?*struct_stack_st_SSL_COMP, arg_where: usize) callconv(.C) [*c]SSL_COMP {
-    var sk = arg_sk;
-    var where = arg_where;
+    const sk = arg_sk;
+    const where = arg_where;
     return @as([*c]SSL_COMP, @ptrCast(@alignCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where))));
 }
 pub fn sk_SSL_COMP_delete_ptr(arg_sk: ?*struct_stack_st_SSL_COMP, arg_p: [*c]const SSL_COMP) callconv(.C) [*c]SSL_COMP {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return @as([*c]SSL_COMP, @ptrCast(@alignCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p))))));
 }
 pub fn sk_SSL_COMP_find(arg_sk: ?*const struct_stack_st_SSL_COMP, arg_out_index: [*c]usize, arg_p: [*c]const SSL_COMP) callconv(.C) c_int {
-    var sk = arg_sk;
-    var out_index = arg_out_index;
-    var p = arg_p;
+    const sk = arg_sk;
+    const out_index = arg_out_index;
+    const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_SSL_COMP_call_cmp_func);
 }
 pub fn sk_SSL_COMP_shift(arg_sk: ?*struct_stack_st_SSL_COMP) callconv(.C) [*c]SSL_COMP {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]SSL_COMP, @ptrCast(@alignCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_SSL_COMP_push(arg_sk: ?*struct_stack_st_SSL_COMP, arg_p: [*c]SSL_COMP) callconv(.C) usize {
-    var sk = arg_sk;
-    var p = arg_p;
+    const sk = arg_sk;
+    const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
 pub fn sk_SSL_COMP_pop(arg_sk: ?*struct_stack_st_SSL_COMP) callconv(.C) [*c]SSL_COMP {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as([*c]SSL_COMP, @ptrCast(@alignCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk)))))));
 }
 pub fn sk_SSL_COMP_dup(arg_sk: ?*const struct_stack_st_SSL_COMP) callconv(.C) ?*struct_stack_st_SSL_COMP {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return @as(?*struct_stack_st_SSL_COMP, @ptrCast(sk_dup(@as([*c]const _STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_SSL_COMP_sort(arg_sk: ?*struct_stack_st_SSL_COMP) callconv(.C) void {
-    var sk = arg_sk;
+    const sk = arg_sk;
     sk_sort(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_SSL_COMP_call_cmp_func);
 }
 pub fn sk_SSL_COMP_is_sorted(arg_sk: ?*const struct_stack_st_SSL_COMP) callconv(.C) c_int {
-    var sk = arg_sk;
+    const sk = arg_sk;
     return sk_is_sorted(@as([*c]const _STACK, @ptrCast(@alignCast(sk))));
 }
 pub fn sk_SSL_COMP_set_cmp_func(arg_sk: ?*struct_stack_st_SSL_COMP, arg_comp: sk_SSL_COMP_cmp_func) callconv(.C) sk_SSL_COMP_cmp_func {
-    var sk = arg_sk;
-    var comp = arg_comp;
+    const sk = arg_sk;
+    const comp = arg_comp;
     return @as(sk_SSL_COMP_cmp_func, @ptrCast(@alignCast(sk_set_cmp_func(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(OPENSSL_sk_cmp_func, @ptrCast(@alignCast(comp)))))));
 }
 pub fn sk_SSL_COMP_deep_copy(arg_sk: ?*const struct_stack_st_SSL_COMP, arg_copy_func: sk_SSL_COMP_copy_func, arg_free_func: sk_SSL_COMP_free_func) callconv(.C) ?*struct_stack_st_SSL_COMP {
-    var sk = arg_sk;
-    var copy_func = arg_copy_func;
-    var free_func = arg_free_func;
+    const sk = arg_sk;
+    const copy_func = arg_copy_func;
+    const free_func = arg_free_func;
     return @as(?*struct_stack_st_SSL_COMP, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_SSL_COMP_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_SSL_COMP_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern fn SSL_cache_hit(ssl: ?*SSL) c_int;
@@ -6033,7 +6034,7 @@ pub const OPENSSL_APPLE = "";
 pub const OPENSSL_MACOS = "";
 pub const OPENSSL_THREADS = "";
 pub const OPENSSL_IS_BORINGSSL = "";
-pub const OPENSSL_VERSION_NUMBER = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x1010107f, .hexadecimal);
+pub const OPENSSL_VERSION_NUMBER = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x1010107f, .hex);
 pub const SSLEAY_VERSION_NUMBER = OPENSSL_VERSION_NUMBER;
 pub const BORINGSSL_API_VERSION = @as(c_int, 18);
 pub const OPENSSL_EXPORT = "";
@@ -6067,7 +6068,7 @@ pub const __SNPT = @as(c_int, 0x0800);
 pub const __SOFF = @as(c_int, 0x1000);
 pub const __SMOD = @as(c_int, 0x2000);
 pub const __SALC = @as(c_int, 0x4000);
-pub const __SIGN = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8000, .hexadecimal);
+pub const __SIGN = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8000, .hex);
 pub const _IOFBF = @as(c_int, 0);
 pub const _IOLBF = @as(c_int, 1);
 pub const _IONBF = @as(c_int, 2);
@@ -16739,8 +16740,8 @@ pub const B_ASN1_BMPSTRING = @as(c_int, 0x0800);
 pub const B_ASN1_UNKNOWN = @as(c_int, 0x1000);
 pub const B_ASN1_UTF8STRING = @as(c_int, 0x2000);
 pub const B_ASN1_UTCTIME = @as(c_int, 0x4000);
-pub const B_ASN1_GENERALIZEDTIME = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8000, .hexadecimal);
-pub const B_ASN1_SEQUENCE = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x10000, .hexadecimal);
+pub const B_ASN1_GENERALIZEDTIME = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8000, .hex);
+pub const B_ASN1_SEQUENCE = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x10000, .hex);
 pub inline fn ASN1_ITEM_ptr(iptr: anytype) @TypeOf(iptr) {
     return iptr;
 }
@@ -17138,7 +17139,7 @@ pub const RSA_FLAG_OPAQUE = @as(c_int, 1);
 pub const RSA_FLAG_NO_BLINDING = @as(c_int, 8);
 pub const RSA_FLAG_EXT_PKEY = @as(c_int, 0x20);
 pub const RSA_3 = @as(c_int, 0x3);
-pub const RSA_F4 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x10001, .hexadecimal);
+pub const RSA_F4 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x10001, .hex);
 pub const RSA_METHOD_FLAG_NO_CHECK = RSA_FLAG_OPAQUE;
 pub const RSA_R_BAD_ENCODING = @as(c_int, 100);
 pub const RSA_R_BAD_E_VALUE = @as(c_int, 101);
@@ -17229,8 +17230,8 @@ pub const X509v3_KU_KEY_AGREEMENT = @as(c_int, 0x0008);
 pub const X509v3_KU_KEY_CERT_SIGN = @as(c_int, 0x0004);
 pub const X509v3_KU_CRL_SIGN = @as(c_int, 0x0002);
 pub const X509v3_KU_ENCIPHER_ONLY = @as(c_int, 0x0001);
-pub const X509v3_KU_DECIPHER_ONLY = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8000, .hexadecimal);
-pub const X509v3_KU_UNDEF = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffff, .hexadecimal);
+pub const X509v3_KU_DECIPHER_ONLY = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8000, .hex);
+pub const X509v3_KU_UNDEF = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffff, .hex);
 pub const X509_TRUST_DEFAULT = -@as(c_int, 1);
 pub const X509_TRUST_COMPAT = @as(c_int, 1);
 pub const X509_TRUST_SSL_CLIENT = @as(c_int, 2);
@@ -17374,10 +17375,10 @@ pub const X509_V_FLAG_NOTIFY_POLICY = @as(c_int, 0x800);
 pub const X509_V_FLAG_EXTENDED_CRL_SUPPORT = @as(c_int, 0x1000);
 pub const X509_V_FLAG_USE_DELTAS = @as(c_int, 0x2000);
 pub const X509_V_FLAG_CHECK_SS_SIGNATURE = @as(c_int, 0x4000);
-pub const X509_V_FLAG_TRUSTED_FIRST = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8000, .hexadecimal);
-pub const X509_V_FLAG_PARTIAL_CHAIN = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000, .hexadecimal);
-pub const X509_V_FLAG_NO_ALT_CHAINS = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x100000, .hexadecimal);
-pub const X509_V_FLAG_NO_CHECK_TIME = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x200000, .hexadecimal);
+pub const X509_V_FLAG_TRUSTED_FIRST = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8000, .hex);
+pub const X509_V_FLAG_PARTIAL_CHAIN = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000, .hex);
+pub const X509_V_FLAG_NO_ALT_CHAINS = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x100000, .hex);
+pub const X509_V_FLAG_NO_CHECK_TIME = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x200000, .hex);
 pub const X509_VP_FLAG_DEFAULT = @as(c_int, 0x1);
 pub const X509_VP_FLAG_OVERWRITE = @as(c_int, 0x2);
 pub const X509_VP_FLAG_RESET_FLAGS = @as(c_int, 0x4);
@@ -17505,35 +17506,35 @@ pub const PEM_R_UNSUPPORTED_ENCRYPTION = @as(c_int, 114);
 pub const OPENSSL_HEADER_SSL3_H = "";
 pub const SSL2_MT_CLIENT_HELLO = @as(c_int, 1);
 pub const SSL2_VERSION = @as(c_int, 0x0002);
-pub const SSL3_CK_SCSV = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000FF, .hexadecimal);
-pub const SSL3_CK_FALLBACK_SCSV = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03005600, .hexadecimal);
-pub const SSL3_CK_RSA_NULL_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000001, .hexadecimal);
-pub const SSL3_CK_RSA_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000002, .hexadecimal);
-pub const SSL3_CK_RSA_RC4_40_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000003, .hexadecimal);
-pub const SSL3_CK_RSA_RC4_128_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000004, .hexadecimal);
-pub const SSL3_CK_RSA_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000005, .hexadecimal);
-pub const SSL3_CK_RSA_RC2_40_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000006, .hexadecimal);
-pub const SSL3_CK_RSA_IDEA_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000007, .hexadecimal);
-pub const SSL3_CK_RSA_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000008, .hexadecimal);
-pub const SSL3_CK_RSA_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000009, .hexadecimal);
-pub const SSL3_CK_RSA_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000A, .hexadecimal);
-pub const SSL3_CK_DH_DSS_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000B, .hexadecimal);
-pub const SSL3_CK_DH_DSS_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000C, .hexadecimal);
-pub const SSL3_CK_DH_DSS_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000D, .hexadecimal);
-pub const SSL3_CK_DH_RSA_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000E, .hexadecimal);
-pub const SSL3_CK_DH_RSA_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000F, .hexadecimal);
-pub const SSL3_CK_DH_RSA_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000010, .hexadecimal);
-pub const SSL3_CK_EDH_DSS_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000011, .hexadecimal);
-pub const SSL3_CK_EDH_DSS_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000012, .hexadecimal);
-pub const SSL3_CK_EDH_DSS_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000013, .hexadecimal);
-pub const SSL3_CK_EDH_RSA_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000014, .hexadecimal);
-pub const SSL3_CK_EDH_RSA_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000015, .hexadecimal);
-pub const SSL3_CK_EDH_RSA_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000016, .hexadecimal);
-pub const SSL3_CK_ADH_RC4_40_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000017, .hexadecimal);
-pub const SSL3_CK_ADH_RC4_128_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000018, .hexadecimal);
-pub const SSL3_CK_ADH_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000019, .hexadecimal);
-pub const SSL3_CK_ADH_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300001A, .hexadecimal);
-pub const SSL3_CK_ADH_DES_192_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300001B, .hexadecimal);
+pub const SSL3_CK_SCSV = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000FF, .hex);
+pub const SSL3_CK_FALLBACK_SCSV = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03005600, .hex);
+pub const SSL3_CK_RSA_NULL_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000001, .hex);
+pub const SSL3_CK_RSA_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000002, .hex);
+pub const SSL3_CK_RSA_RC4_40_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000003, .hex);
+pub const SSL3_CK_RSA_RC4_128_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000004, .hex);
+pub const SSL3_CK_RSA_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000005, .hex);
+pub const SSL3_CK_RSA_RC2_40_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000006, .hex);
+pub const SSL3_CK_RSA_IDEA_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000007, .hex);
+pub const SSL3_CK_RSA_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000008, .hex);
+pub const SSL3_CK_RSA_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000009, .hex);
+pub const SSL3_CK_RSA_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000A, .hex);
+pub const SSL3_CK_DH_DSS_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000B, .hex);
+pub const SSL3_CK_DH_DSS_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000C, .hex);
+pub const SSL3_CK_DH_DSS_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000D, .hex);
+pub const SSL3_CK_DH_RSA_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000E, .hex);
+pub const SSL3_CK_DH_RSA_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300000F, .hex);
+pub const SSL3_CK_DH_RSA_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000010, .hex);
+pub const SSL3_CK_EDH_DSS_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000011, .hex);
+pub const SSL3_CK_EDH_DSS_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000012, .hex);
+pub const SSL3_CK_EDH_DSS_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000013, .hex);
+pub const SSL3_CK_EDH_RSA_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000014, .hex);
+pub const SSL3_CK_EDH_RSA_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000015, .hex);
+pub const SSL3_CK_EDH_RSA_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000016, .hex);
+pub const SSL3_CK_ADH_RC4_40_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000017, .hex);
+pub const SSL3_CK_ADH_RC4_128_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000018, .hex);
+pub const SSL3_CK_ADH_DES_40_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000019, .hex);
+pub const SSL3_CK_ADH_DES_64_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300001A, .hex);
+pub const SSL3_CK_ADH_DES_192_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300001B, .hex);
 pub const SSL3_TXT_RSA_NULL_MD5 = "NULL-MD5";
 pub const SSL3_TXT_RSA_NULL_SHA = "NULL-SHA";
 pub const SSL3_TXT_RSA_RC4_40_MD5 = "EXP-RC4-MD5";
@@ -17658,7 +17659,7 @@ pub const TLSEXT_TYPE_srtp = @as(c_int, 14);
 pub const TLSEXT_TYPE_application_layer_protocol_negotiation = @as(c_int, 16);
 pub const TLSEXT_TYPE_padding = @as(c_int, 21);
 pub const TLSEXT_TYPE_extended_master_secret = @as(c_int, 23);
-pub const TLSEXT_TYPE_quic_transport_parameters_legacy = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffa5, .hexadecimal);
+pub const TLSEXT_TYPE_quic_transport_parameters_legacy = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffa5, .hex);
 pub const TLSEXT_TYPE_quic_transport_parameters = @as(c_int, 57);
 pub const TLSEXT_TYPE_quic_transport_parameters_standard = TLSEXT_TYPE_quic_transport_parameters;
 pub const TLSEXT_TYPE_cert_compression = @as(c_int, 27);
@@ -17672,11 +17673,11 @@ pub const TLSEXT_TYPE_psk_key_exchange_modes = @as(c_int, 45);
 pub const TLSEXT_TYPE_certificate_authorities = @as(c_int, 47);
 pub const TLSEXT_TYPE_signature_algorithms_cert = @as(c_int, 50);
 pub const TLSEXT_TYPE_key_share = @as(c_int, 51);
-pub const TLSEXT_TYPE_renegotiate = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xff01, .hexadecimal);
+pub const TLSEXT_TYPE_renegotiate = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xff01, .hex);
 pub const TLSEXT_TYPE_delegated_credential = @as(c_int, 0x22);
 pub const TLSEXT_TYPE_application_settings = @as(c_int, 17513);
-pub const TLSEXT_TYPE_encrypted_client_hello = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xfe0d, .hexadecimal);
-pub const TLSEXT_TYPE_ech_outer_extensions = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xfd00, .hexadecimal);
+pub const TLSEXT_TYPE_encrypted_client_hello = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xfe0d, .hex);
+pub const TLSEXT_TYPE_ech_outer_extensions = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xfd00, .hex);
 pub const TLSEXT_TYPE_certificate_timestamp = @as(c_int, 18);
 pub const TLSEXT_TYPE_next_proto_neg = @as(c_int, 13172);
 pub const TLSEXT_TYPE_channel_id = @as(c_int, 30032);
@@ -17698,130 +17699,130 @@ pub const TLSEXT_hash_sha512 = @as(c_int, 6);
 pub const TLSEXT_cert_compression_zlib = @as(c_int, 1);
 pub const TLSEXT_cert_compression_brotli = @as(c_int, 2);
 pub const TLSEXT_MAXLEN_host_name = @as(c_int, 255);
-pub const TLS1_CK_PSK_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300008A, .hexadecimal);
-pub const TLS1_CK_PSK_WITH_3DES_EDE_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300008B, .hexadecimal);
-pub const TLS1_CK_PSK_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300008C, .hexadecimal);
-pub const TLS1_CK_PSK_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300008D, .hexadecimal);
-pub const TLS1_CK_ECDHE_PSK_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C035, .hexadecimal);
-pub const TLS1_CK_ECDHE_PSK_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C036, .hexadecimal);
-pub const TLS1_CK_RSA_EXPORT1024_WITH_RC4_56_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000060, .hexadecimal);
-pub const TLS1_CK_RSA_EXPORT1024_WITH_RC2_CBC_56_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000061, .hexadecimal);
-pub const TLS1_CK_RSA_EXPORT1024_WITH_DES_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000062, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_EXPORT1024_WITH_DES_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000063, .hexadecimal);
-pub const TLS1_CK_RSA_EXPORT1024_WITH_RC4_56_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000064, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_EXPORT1024_WITH_RC4_56_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000065, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000066, .hexadecimal);
-pub const TLS1_CK_RSA_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300002F, .hexadecimal);
-pub const TLS1_CK_DH_DSS_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000030, .hexadecimal);
-pub const TLS1_CK_DH_RSA_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000031, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000032, .hexadecimal);
-pub const TLS1_CK_DHE_RSA_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000033, .hexadecimal);
-pub const TLS1_CK_ADH_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000034, .hexadecimal);
-pub const TLS1_CK_RSA_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000035, .hexadecimal);
-pub const TLS1_CK_DH_DSS_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000036, .hexadecimal);
-pub const TLS1_CK_DH_RSA_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000037, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000038, .hexadecimal);
-pub const TLS1_CK_DHE_RSA_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000039, .hexadecimal);
-pub const TLS1_CK_ADH_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003A, .hexadecimal);
-pub const TLS1_CK_RSA_WITH_NULL_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003B, .hexadecimal);
-pub const TLS1_CK_RSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003C, .hexadecimal);
-pub const TLS1_CK_RSA_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003D, .hexadecimal);
-pub const TLS1_CK_DH_DSS_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003E, .hexadecimal);
-pub const TLS1_CK_DH_RSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003F, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000040, .hexadecimal);
-pub const TLS1_CK_RSA_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000041, .hexadecimal);
-pub const TLS1_CK_DH_DSS_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000042, .hexadecimal);
-pub const TLS1_CK_DH_RSA_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000043, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000044, .hexadecimal);
-pub const TLS1_CK_DHE_RSA_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000045, .hexadecimal);
-pub const TLS1_CK_ADH_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000046, .hexadecimal);
-pub const TLS1_CK_DHE_RSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000067, .hexadecimal);
-pub const TLS1_CK_DH_DSS_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000068, .hexadecimal);
-pub const TLS1_CK_DH_RSA_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000069, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300006A, .hexadecimal);
-pub const TLS1_CK_DHE_RSA_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300006B, .hexadecimal);
-pub const TLS1_CK_ADH_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300006C, .hexadecimal);
-pub const TLS1_CK_ADH_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300006D, .hexadecimal);
-pub const TLS1_CK_RSA_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000084, .hexadecimal);
-pub const TLS1_CK_DH_DSS_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000085, .hexadecimal);
-pub const TLS1_CK_DH_RSA_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000086, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000087, .hexadecimal);
-pub const TLS1_CK_DHE_RSA_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000088, .hexadecimal);
-pub const TLS1_CK_ADH_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000089, .hexadecimal);
-pub const TLS1_CK_RSA_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000096, .hexadecimal);
-pub const TLS1_CK_DH_DSS_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000097, .hexadecimal);
-pub const TLS1_CK_DH_RSA_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000098, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000099, .hexadecimal);
-pub const TLS1_CK_DHE_RSA_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009A, .hexadecimal);
-pub const TLS1_CK_ADH_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009B, .hexadecimal);
-pub const TLS1_CK_RSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009C, .hexadecimal);
-pub const TLS1_CK_RSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009D, .hexadecimal);
-pub const TLS1_CK_DHE_RSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009E, .hexadecimal);
-pub const TLS1_CK_DHE_RSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009F, .hexadecimal);
-pub const TLS1_CK_DH_RSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A0, .hexadecimal);
-pub const TLS1_CK_DH_RSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A1, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A2, .hexadecimal);
-pub const TLS1_CK_DHE_DSS_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A3, .hexadecimal);
-pub const TLS1_CK_DH_DSS_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A4, .hexadecimal);
-pub const TLS1_CK_DH_DSS_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A5, .hexadecimal);
-pub const TLS1_CK_ADH_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A6, .hexadecimal);
-pub const TLS1_CK_ADH_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A7, .hexadecimal);
-pub const TLS1_CK_ECDH_ECDSA_WITH_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C001, .hexadecimal);
-pub const TLS1_CK_ECDH_ECDSA_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C002, .hexadecimal);
-pub const TLS1_CK_ECDH_ECDSA_WITH_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C003, .hexadecimal);
-pub const TLS1_CK_ECDH_ECDSA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C004, .hexadecimal);
-pub const TLS1_CK_ECDH_ECDSA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C005, .hexadecimal);
-pub const TLS1_CK_ECDHE_ECDSA_WITH_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C006, .hexadecimal);
-pub const TLS1_CK_ECDHE_ECDSA_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C007, .hexadecimal);
-pub const TLS1_CK_ECDHE_ECDSA_WITH_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C008, .hexadecimal);
-pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C009, .hexadecimal);
-pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00A, .hexadecimal);
-pub const TLS1_CK_ECDH_RSA_WITH_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00B, .hexadecimal);
-pub const TLS1_CK_ECDH_RSA_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00C, .hexadecimal);
-pub const TLS1_CK_ECDH_RSA_WITH_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00D, .hexadecimal);
-pub const TLS1_CK_ECDH_RSA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00E, .hexadecimal);
-pub const TLS1_CK_ECDH_RSA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00F, .hexadecimal);
-pub const TLS1_CK_ECDHE_RSA_WITH_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C010, .hexadecimal);
-pub const TLS1_CK_ECDHE_RSA_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C011, .hexadecimal);
-pub const TLS1_CK_ECDHE_RSA_WITH_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C012, .hexadecimal);
-pub const TLS1_CK_ECDHE_RSA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C013, .hexadecimal);
-pub const TLS1_CK_ECDHE_RSA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C014, .hexadecimal);
-pub const TLS1_CK_ECDH_anon_WITH_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C015, .hexadecimal);
-pub const TLS1_CK_ECDH_anon_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C016, .hexadecimal);
-pub const TLS1_CK_ECDH_anon_WITH_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C017, .hexadecimal);
-pub const TLS1_CK_ECDH_anon_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C018, .hexadecimal);
-pub const TLS1_CK_ECDH_anon_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C019, .hexadecimal);
-pub const TLS1_CK_SRP_SHA_WITH_3DES_EDE_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01A, .hexadecimal);
-pub const TLS1_CK_SRP_SHA_RSA_WITH_3DES_EDE_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01B, .hexadecimal);
-pub const TLS1_CK_SRP_SHA_DSS_WITH_3DES_EDE_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01C, .hexadecimal);
-pub const TLS1_CK_SRP_SHA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01D, .hexadecimal);
-pub const TLS1_CK_SRP_SHA_RSA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01E, .hexadecimal);
-pub const TLS1_CK_SRP_SHA_DSS_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01F, .hexadecimal);
-pub const TLS1_CK_SRP_SHA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C020, .hexadecimal);
-pub const TLS1_CK_SRP_SHA_RSA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C021, .hexadecimal);
-pub const TLS1_CK_SRP_SHA_DSS_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C022, .hexadecimal);
-pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C023, .hexadecimal);
-pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_256_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C024, .hexadecimal);
-pub const TLS1_CK_ECDH_ECDSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C025, .hexadecimal);
-pub const TLS1_CK_ECDH_ECDSA_WITH_AES_256_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C026, .hexadecimal);
-pub const TLS1_CK_ECDHE_RSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C027, .hexadecimal);
-pub const TLS1_CK_ECDHE_RSA_WITH_AES_256_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C028, .hexadecimal);
-pub const TLS1_CK_ECDH_RSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C029, .hexadecimal);
-pub const TLS1_CK_ECDH_RSA_WITH_AES_256_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02A, .hexadecimal);
-pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02B, .hexadecimal);
-pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02C, .hexadecimal);
-pub const TLS1_CK_ECDH_ECDSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02D, .hexadecimal);
-pub const TLS1_CK_ECDH_ECDSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02E, .hexadecimal);
-pub const TLS1_CK_ECDHE_RSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02F, .hexadecimal);
-pub const TLS1_CK_ECDHE_RSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C030, .hexadecimal);
-pub const TLS1_CK_ECDH_RSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C031, .hexadecimal);
-pub const TLS1_CK_ECDH_RSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C032, .hexadecimal);
-pub const TLS1_CK_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300CCA8, .hexadecimal);
-pub const TLS1_CK_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300CCA9, .hexadecimal);
-pub const TLS1_CK_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300CCAC, .hexadecimal);
-pub const TLS1_3_CK_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03001301, .hexadecimal);
-pub const TLS1_3_CK_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03001302, .hexadecimal);
-pub const TLS1_3_CK_CHACHA20_POLY1305_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03001303, .hexadecimal);
+pub const TLS1_CK_PSK_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300008A, .hex);
+pub const TLS1_CK_PSK_WITH_3DES_EDE_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300008B, .hex);
+pub const TLS1_CK_PSK_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300008C, .hex);
+pub const TLS1_CK_PSK_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300008D, .hex);
+pub const TLS1_CK_ECDHE_PSK_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C035, .hex);
+pub const TLS1_CK_ECDHE_PSK_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C036, .hex);
+pub const TLS1_CK_RSA_EXPORT1024_WITH_RC4_56_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000060, .hex);
+pub const TLS1_CK_RSA_EXPORT1024_WITH_RC2_CBC_56_MD5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000061, .hex);
+pub const TLS1_CK_RSA_EXPORT1024_WITH_DES_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000062, .hex);
+pub const TLS1_CK_DHE_DSS_EXPORT1024_WITH_DES_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000063, .hex);
+pub const TLS1_CK_RSA_EXPORT1024_WITH_RC4_56_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000064, .hex);
+pub const TLS1_CK_DHE_DSS_EXPORT1024_WITH_RC4_56_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000065, .hex);
+pub const TLS1_CK_DHE_DSS_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000066, .hex);
+pub const TLS1_CK_RSA_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300002F, .hex);
+pub const TLS1_CK_DH_DSS_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000030, .hex);
+pub const TLS1_CK_DH_RSA_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000031, .hex);
+pub const TLS1_CK_DHE_DSS_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000032, .hex);
+pub const TLS1_CK_DHE_RSA_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000033, .hex);
+pub const TLS1_CK_ADH_WITH_AES_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000034, .hex);
+pub const TLS1_CK_RSA_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000035, .hex);
+pub const TLS1_CK_DH_DSS_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000036, .hex);
+pub const TLS1_CK_DH_RSA_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000037, .hex);
+pub const TLS1_CK_DHE_DSS_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000038, .hex);
+pub const TLS1_CK_DHE_RSA_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000039, .hex);
+pub const TLS1_CK_ADH_WITH_AES_256_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003A, .hex);
+pub const TLS1_CK_RSA_WITH_NULL_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003B, .hex);
+pub const TLS1_CK_RSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003C, .hex);
+pub const TLS1_CK_RSA_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003D, .hex);
+pub const TLS1_CK_DH_DSS_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003E, .hex);
+pub const TLS1_CK_DH_RSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300003F, .hex);
+pub const TLS1_CK_DHE_DSS_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000040, .hex);
+pub const TLS1_CK_RSA_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000041, .hex);
+pub const TLS1_CK_DH_DSS_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000042, .hex);
+pub const TLS1_CK_DH_RSA_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000043, .hex);
+pub const TLS1_CK_DHE_DSS_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000044, .hex);
+pub const TLS1_CK_DHE_RSA_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000045, .hex);
+pub const TLS1_CK_ADH_WITH_CAMELLIA_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000046, .hex);
+pub const TLS1_CK_DHE_RSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000067, .hex);
+pub const TLS1_CK_DH_DSS_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000068, .hex);
+pub const TLS1_CK_DH_RSA_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000069, .hex);
+pub const TLS1_CK_DHE_DSS_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300006A, .hex);
+pub const TLS1_CK_DHE_RSA_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300006B, .hex);
+pub const TLS1_CK_ADH_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300006C, .hex);
+pub const TLS1_CK_ADH_WITH_AES_256_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300006D, .hex);
+pub const TLS1_CK_RSA_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000084, .hex);
+pub const TLS1_CK_DH_DSS_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000085, .hex);
+pub const TLS1_CK_DH_RSA_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000086, .hex);
+pub const TLS1_CK_DHE_DSS_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000087, .hex);
+pub const TLS1_CK_DHE_RSA_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000088, .hex);
+pub const TLS1_CK_ADH_WITH_CAMELLIA_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000089, .hex);
+pub const TLS1_CK_RSA_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000096, .hex);
+pub const TLS1_CK_DH_DSS_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000097, .hex);
+pub const TLS1_CK_DH_RSA_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000098, .hex);
+pub const TLS1_CK_DHE_DSS_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03000099, .hex);
+pub const TLS1_CK_DHE_RSA_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009A, .hex);
+pub const TLS1_CK_ADH_WITH_SEED_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009B, .hex);
+pub const TLS1_CK_RSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009C, .hex);
+pub const TLS1_CK_RSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009D, .hex);
+pub const TLS1_CK_DHE_RSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009E, .hex);
+pub const TLS1_CK_DHE_RSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300009F, .hex);
+pub const TLS1_CK_DH_RSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A0, .hex);
+pub const TLS1_CK_DH_RSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A1, .hex);
+pub const TLS1_CK_DHE_DSS_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A2, .hex);
+pub const TLS1_CK_DHE_DSS_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A3, .hex);
+pub const TLS1_CK_DH_DSS_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A4, .hex);
+pub const TLS1_CK_DH_DSS_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A5, .hex);
+pub const TLS1_CK_ADH_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A6, .hex);
+pub const TLS1_CK_ADH_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x030000A7, .hex);
+pub const TLS1_CK_ECDH_ECDSA_WITH_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C001, .hex);
+pub const TLS1_CK_ECDH_ECDSA_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C002, .hex);
+pub const TLS1_CK_ECDH_ECDSA_WITH_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C003, .hex);
+pub const TLS1_CK_ECDH_ECDSA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C004, .hex);
+pub const TLS1_CK_ECDH_ECDSA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C005, .hex);
+pub const TLS1_CK_ECDHE_ECDSA_WITH_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C006, .hex);
+pub const TLS1_CK_ECDHE_ECDSA_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C007, .hex);
+pub const TLS1_CK_ECDHE_ECDSA_WITH_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C008, .hex);
+pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C009, .hex);
+pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00A, .hex);
+pub const TLS1_CK_ECDH_RSA_WITH_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00B, .hex);
+pub const TLS1_CK_ECDH_RSA_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00C, .hex);
+pub const TLS1_CK_ECDH_RSA_WITH_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00D, .hex);
+pub const TLS1_CK_ECDH_RSA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00E, .hex);
+pub const TLS1_CK_ECDH_RSA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C00F, .hex);
+pub const TLS1_CK_ECDHE_RSA_WITH_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C010, .hex);
+pub const TLS1_CK_ECDHE_RSA_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C011, .hex);
+pub const TLS1_CK_ECDHE_RSA_WITH_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C012, .hex);
+pub const TLS1_CK_ECDHE_RSA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C013, .hex);
+pub const TLS1_CK_ECDHE_RSA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C014, .hex);
+pub const TLS1_CK_ECDH_anon_WITH_NULL_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C015, .hex);
+pub const TLS1_CK_ECDH_anon_WITH_RC4_128_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C016, .hex);
+pub const TLS1_CK_ECDH_anon_WITH_DES_192_CBC3_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C017, .hex);
+pub const TLS1_CK_ECDH_anon_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C018, .hex);
+pub const TLS1_CK_ECDH_anon_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C019, .hex);
+pub const TLS1_CK_SRP_SHA_WITH_3DES_EDE_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01A, .hex);
+pub const TLS1_CK_SRP_SHA_RSA_WITH_3DES_EDE_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01B, .hex);
+pub const TLS1_CK_SRP_SHA_DSS_WITH_3DES_EDE_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01C, .hex);
+pub const TLS1_CK_SRP_SHA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01D, .hex);
+pub const TLS1_CK_SRP_SHA_RSA_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01E, .hex);
+pub const TLS1_CK_SRP_SHA_DSS_WITH_AES_128_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C01F, .hex);
+pub const TLS1_CK_SRP_SHA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C020, .hex);
+pub const TLS1_CK_SRP_SHA_RSA_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C021, .hex);
+pub const TLS1_CK_SRP_SHA_DSS_WITH_AES_256_CBC_SHA = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C022, .hex);
+pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C023, .hex);
+pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_256_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C024, .hex);
+pub const TLS1_CK_ECDH_ECDSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C025, .hex);
+pub const TLS1_CK_ECDH_ECDSA_WITH_AES_256_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C026, .hex);
+pub const TLS1_CK_ECDHE_RSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C027, .hex);
+pub const TLS1_CK_ECDHE_RSA_WITH_AES_256_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C028, .hex);
+pub const TLS1_CK_ECDH_RSA_WITH_AES_128_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C029, .hex);
+pub const TLS1_CK_ECDH_RSA_WITH_AES_256_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02A, .hex);
+pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02B, .hex);
+pub const TLS1_CK_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02C, .hex);
+pub const TLS1_CK_ECDH_ECDSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02D, .hex);
+pub const TLS1_CK_ECDH_ECDSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02E, .hex);
+pub const TLS1_CK_ECDHE_RSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C02F, .hex);
+pub const TLS1_CK_ECDHE_RSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C030, .hex);
+pub const TLS1_CK_ECDH_RSA_WITH_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C031, .hex);
+pub const TLS1_CK_ECDH_RSA_WITH_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300C032, .hex);
+pub const TLS1_CK_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300CCA8, .hex);
+pub const TLS1_CK_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300CCA9, .hex);
+pub const TLS1_CK_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0300CCAC, .hex);
+pub const TLS1_3_CK_AES_128_GCM_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03001301, .hex);
+pub const TLS1_3_CK_AES_256_GCM_SHA384 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03001302, .hex);
+pub const TLS1_3_CK_CHACHA20_POLY1305_SHA256 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x03001303, .hex);
 pub const TLS1_CK_AES_128_GCM_SHA256 = TLS1_3_CK_AES_128_GCM_SHA256;
 pub const TLS1_CK_AES_256_GCM_SHA384 = TLS1_3_CK_AES_256_GCM_SHA384;
 pub const TLS1_CK_CHACHA20_POLY1305_SHA256 = TLS1_3_CK_CHACHA20_POLY1305_SHA256;
@@ -18009,8 +18010,8 @@ pub const TLS1_VERSION = @as(c_int, 0x0301);
 pub const TLS1_1_VERSION = @as(c_int, 0x0302);
 pub const TLS1_2_VERSION = @as(c_int, 0x0303);
 pub const TLS1_3_VERSION = @as(c_int, 0x0304);
-pub const DTLS1_VERSION = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xfeff, .hexadecimal);
-pub const DTLS1_2_VERSION = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xfefd, .hexadecimal);
+pub const DTLS1_VERSION = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xfeff, .hex);
+pub const DTLS1_2_VERSION = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xfefd, .hex);
 pub const SSL_OP_NO_QUERY_MTU = @as(c_long, 0x00001000);
 pub const SSL_OP_NO_TICKET = @as(c_long, 0x00004000);
 pub const SSL_OP_CIPHER_SERVER_PREFERENCE = @as(c_long, 0x00400000);
@@ -18039,7 +18040,7 @@ pub const SSL_SIGN_RSA_PSS_RSAE_SHA256 = @as(c_int, 0x0804);
 pub const SSL_SIGN_RSA_PSS_RSAE_SHA384 = @as(c_int, 0x0805);
 pub const SSL_SIGN_RSA_PSS_RSAE_SHA512 = @as(c_int, 0x0806);
 pub const SSL_SIGN_ED25519 = @as(c_int, 0x0807);
-pub const SSL_SIGN_RSA_PKCS1_MD5_SHA1 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xff01, .hexadecimal);
+pub const SSL_SIGN_RSA_PKCS1_MD5_SHA1 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xff01, .hex);
 pub const SSL_FILETYPE_PEM = @as(c_int, 1);
 pub const SSL_FILETYPE_ASN1 = @as(c_int, 2);
 pub const SSL_DEFAULT_CIPHER_LIST = "ALL";
@@ -18781,7 +18782,7 @@ pub const struct_bio_st = extern struct {
 
     pub fn slice(this: *struct_bio_st) []u8 {
         var buf_mem: ?*BUF_MEM = null;
-        std.debug.assert(BIO_get_mem_ptr(this, &buf_mem) > -1);
+        bun.assert(BIO_get_mem_ptr(this, &buf_mem) > -1);
         if (buf_mem) |buf| {
             if (buf.data == null) return &[_]u8{};
 
@@ -19031,13 +19032,13 @@ pub const SSL = opaque {
         _ = SSL_set_mode(ssl, mode);
         _ = SSL_clear_mode(ssl, mode);
 
-        var alpns = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-        std.debug.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
+        const alpns = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        bun.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
 
         SSL_enable_signed_cert_timestamps(ssl);
         SSL_enable_ocsp_stapling(ssl);
 
-        // std.debug.assert(SSL_set_strict_cipher_list(ssl, SSL_DEFAULT_CIPHER_LIST) == 0);
+        // bun.assert(SSL_set_strict_cipher_list(ssl, SSL_DEFAULT_CIPHER_LIST) == 0);
 
         SSL_set_enable_ech_grease(ssl, 1);
     }
@@ -19068,8 +19069,8 @@ pub const SSL = opaque {
         };
     }
 
-    const Output = @import("root").bun.Output;
-    const Environment = @import("root").bun.Environment;
+    const Output = bun.Output;
+    const Environment = bun.Environment;
 
     pub fn read(this: *SSL, buf: []u8) Error!usize {
         const rc = SSL_read(this, buf.ptr, @as(c_int, @intCast(buf.len)));
@@ -19202,24 +19203,24 @@ pub const BIOMethod = struct {
         comptime gets__: ?gets,
         comptime ctrl__: ?ctrl,
     ) *BIO_METHOD {
-        var method = BIO_meth_new(BIO_get_new_index() | BIO_TYPE_SOURCE_SINK, name);
+        const method = BIO_meth_new(BIO_get_new_index() | BIO_TYPE_SOURCE_SINK, name);
         if (comptime create__) |create_| {
-            std.debug.assert(BIO_meth_set_create(method, create_) > 0);
+            bun.assert(BIO_meth_set_create(method, create_) > 0);
         }
         if (comptime destroy__) |destroy_| {
-            std.debug.assert(BIO_meth_set_destroy(method, destroy_) > 0);
+            bun.assert(BIO_meth_set_destroy(method, destroy_) > 0);
         }
         if (comptime write__) |write_| {
-            std.debug.assert(BIO_meth_set_write(method, write_) > 0);
+            bun.assert(BIO_meth_set_write(method, write_) > 0);
         }
         if (comptime read__) |read_| {
-            std.debug.assert(BIO_meth_set_read(method, read_) > 0);
+            bun.assert(BIO_meth_set_read(method, read_) > 0);
         }
         if (comptime gets__) |gets_| {
-            std.debug.assert(BIO_meth_set_gets(method, gets_) > 0);
+            bun.assert(BIO_meth_set_gets(method, gets_) > 0);
         }
         if (comptime ctrl__) |ctrl_| {
-            std.debug.assert(BIO_meth_set_ctrl(method, ctrl_) > 0);
+            bun.assert(BIO_meth_set_ctrl(method, ctrl_) > 0);
         }
 
         return method;

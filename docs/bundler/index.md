@@ -43,7 +43,7 @@ Let's build our first bundle. You have the following two files, which implement 
 import * as ReactDOM from 'react-dom/client';
 import {Component} from "./Component"
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
+const root = ReactDOM.createRoot(document.getElementById('root')!);
 root.render(<Component message="Sup!" />)
 ```
 
@@ -155,8 +155,8 @@ Like the Bun runtime, the bundler supports an array of file types out of the box
 
 ---
 
-- `.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx`
-- Uses Bun's built-in transpiler to parse the file and transpile TypeScript/JSX syntax to vanilla JavaScript. The bundler executes a set of default transforms, including dead code elimination, tree shaking, and environment variable inlining. At the moment Bun does not attempt to down-convert syntax; if you use recently ECMAScript syntax, that will be reflected in the bundled code.
+- `.js` `.jsx`, `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx`
+- Uses Bun's built-in transpiler to parse the file and transpile TypeScript/JSX syntax to vanilla JavaScript. The bundler executes a set of default transforms including dead code elimination and tree shaking. At the moment Bun does not attempt to down-convert syntax; if you use recently ECMAScript syntax, that will be reflected in the bundled code.
 
 ---
 
@@ -276,15 +276,15 @@ const result = await Bun.build({
   entrypoints: ["./index.ts"],
 });
 
-for (const result of result.outputs) {
+for (const res of result.outputs) {
   // Can be consumed as blobs
-  await result.text();
+  await res.text();
 
   // Bun will set Content-Type and Etag headers
-  new Response(result);
+  new Response(res);
 
   // Can be written manually, but you should use `outdir` in this case.
-  Bun.write(path.join("out", result.path), result);
+  Bun.write(path.join("out", res.path), res);
 }
 ```
 
@@ -336,10 +336,6 @@ Depending on the target, Bun will apply different module resolution rules and op
 - For generating bundles that are intended to be run by Node.js. Prioritizes the `"node"` export condition when resolving imports, and outputs `.mjs`. In the future, this will automatically polyfill the `Bun` global and other built-in `bun:*` modules, though this is not yet implemented.
 
 {% /table %}
-
-{% callout %}
-
-{% /callout %}
 
 ### `format`
 
@@ -972,8 +968,6 @@ By specifying `.` as `root`, the generated file structure will look like this:
 
 A prefix to be appended to any import paths in bundled code.
 
-<!-- $ bun build ./index.tsx --outdir ./out --public-path https://cdn.example.com -->
-
 In many cases, generated bundles will contain no `import` statements. After all, the goal of bundling is to combine all of the code into a single file. However there are a number of cases with the generated bundles will contain `import` statements.
 
 - **Asset imports** — When importing an unrecognized file type like `*.svg`, the bundler defers to the [`file` loader](/docs/bundler/loaders#file), which copies the file into `outdir` as is. The import is converted into a variable
@@ -1011,7 +1005,7 @@ await Bun.build({
 ```
 
 ```bash#CLI
-n/a
+$ bun build ./index.tsx --outdir ./out --public-path https://cdn.example.com/
 ```
 
 {% /codetabs %}

@@ -266,3 +266,14 @@ test("isGeneratorFunction", () => {
     expect(types.isGeneratorFunction(fn)).toBeFalse();
   }
 });
+
+test("isKeyObject", () => {
+  const { generateKeyPairSync } = require("crypto");
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+
+  expect(types.isKeyObject(privateKey)).toBeTrue();
+  expect(types.isKeyObject(publicKey)).toBeTrue();
+  expect(types.isKeyObject({})).toBeFalse();
+  expect(types.isKeyObject(null)).toBeFalse();
+  expect(types.isKeyObject(undefined)).toBeFalse();
+});

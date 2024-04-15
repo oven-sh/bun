@@ -539,11 +539,11 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 12. added support for agent cluster ID.
  * Version 13. added support for ErrorInstance objects.
  */
-static constexpr unsigned CurrentVersion = 13;
-static constexpr unsigned TerminatorTag = 0xFFFFFFFF;
-static constexpr unsigned StringPoolTag = 0xFFFFFFFE;
-static constexpr unsigned NonIndexPropertiesTag = 0xFFFFFFFD;
-static constexpr uint32_t ImageDataPoolTag = 0xFFFFFFFE;
+[[maybe_unused]] static constexpr unsigned CurrentVersion = 13;
+[[maybe_unused]] static constexpr unsigned TerminatorTag = 0xFFFFFFFF;
+[[maybe_unused]] static constexpr unsigned StringPoolTag = 0xFFFFFFFE;
+[[maybe_unused]] static constexpr unsigned NonIndexPropertiesTag = 0xFFFFFFFD;
+[[maybe_unused]] static constexpr uint32_t ImageDataPoolTag = 0xFFFFFFFE;
 
 // The high bit of a StringData's length determines the character size.
 static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
@@ -769,7 +769,7 @@ static bool unwrapCryptoKey(JSGlobalObject* lexicalGlobalObject, const Vector<ui
 #if ASSUME_LITTLE_ENDIAN
 template<typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T value)
 {
-    buffer.append(reinterpret_cast<uint8_t*>(&value), sizeof(value));
+    buffer.append(std::span { reinterpret_cast<uint8_t*>(&value), sizeof(value) });
 }
 #else
 template<typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T value)
@@ -792,7 +792,7 @@ template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, cons
         return false;
 
 #if ASSUME_LITTLE_ENDIAN
-    buffer.append(reinterpret_cast<const uint8_t*>(values), length * sizeof(T));
+    buffer.append(std::span { reinterpret_cast<const uint8_t*>(values), length * sizeof(T) });
 #else
     for (unsigned i = 0; i < length; i++) {
         T value = values[i];
@@ -807,7 +807,7 @@ template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, cons
 
 template<> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, const uint8_t* values, uint32_t length)
 {
-    buffer.append(values, length);
+    buffer.append(std::span { values, length });
     return true;
 }
 
@@ -2928,7 +2928,7 @@ private:
         : CloneBase(lexicalGlobalObject)
         , m_globalObject(globalObject)
         , m_isDOMGlobalObject(globalObject->inherits<JSDOMGlobalObject>())
-        , m_canCreateDOMObject(m_isDOMGlobalObject)
+        // , m_canCreateDOMObject(m_isDOMGlobalObject)
         , m_ptr(buffer.data())
         , m_end(buffer.data() + buffer.size())
         , m_version(0xFFFFFFFF)
@@ -3035,7 +3035,7 @@ private:
         : CloneBase(lexicalGlobalObject)
         , m_globalObject(globalObject)
         , m_isDOMGlobalObject(globalObject->inherits<JSDOMGlobalObject>())
-        , m_canCreateDOMObject(m_isDOMGlobalObject)
+        // , m_canCreateDOMObject(m_isDOMGlobalObject)
         , m_ptr(buffer.data())
         , m_end(buffer.data() + buffer.size())
         , m_version(0xFFFFFFFF)
@@ -3195,7 +3195,7 @@ private:
         if (is8Bit) {
             if ((end - ptr) < static_cast<int>(length))
                 return false;
-            str = String { ptr, length };
+            str = String { std::span { ptr, length } };
             ptr += length;
             return true;
         }
@@ -3205,7 +3205,7 @@ private:
             return false;
 
 #if ASSUME_LITTLE_ENDIAN
-        str = String(reinterpret_cast<const UChar*>(ptr), length);
+        str = String({ reinterpret_cast<const UChar*>(ptr), length });
         ptr += length * sizeof(UChar);
 #else
         UChar* characters;
@@ -3531,7 +3531,7 @@ private:
             return false;
         if (m_ptr + size > m_end)
             return false;
-        result.append(m_ptr, size);
+        result.append(std::span { m_ptr, size });
         m_ptr += size;
         return true;
     }
@@ -4254,7 +4254,7 @@ private:
             CachedStringRef value;
             if (!readStringData(value))
                 return JSValue();
-            fingerprints.uncheckedAppend(RTCCertificate::DtlsFingerprint { algorithm->string(), value->string() });
+            fingerprints.unsafeAppendWithoutCapacityCheck(RTCCertificate::DtlsFingerprint { algorithm->string(), value->string() });
         }
 
         if (!m_canCreateDOMObject)
@@ -4690,7 +4690,7 @@ private:
                 fail();
                 return JSValue();
             }
-            return ErrorInstance::create(m_lexicalGlobalObject, WTFMove(message), toErrorType(serializedErrorType), line, column, WTFMove(sourceURL), WTFMove(stackString));
+            return ErrorInstance::create(m_lexicalGlobalObject, WTFMove(message), toErrorType(serializedErrorType), { line, column }, WTFMove(sourceURL), WTFMove(stackString));
         }
         case ObjectReferenceTag: {
             auto index = readConstantPoolIndex(m_gcBuffer);
@@ -4929,7 +4929,7 @@ private:
 
     JSGlobalObject* const m_globalObject;
     const bool m_isDOMGlobalObject;
-    const bool m_canCreateDOMObject;
+    // const bool m_canCreateDOMObject;
     const uint8_t* m_ptr;
     const uint8_t* const m_end;
     unsigned m_version;

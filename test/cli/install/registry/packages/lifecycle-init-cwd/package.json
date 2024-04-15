@@ -1,0 +1,41 @@
+{
+	"name": "lifecycle-init-cwd",
+	"versions": {
+		"1.0.0": {
+			"name": "lifecycle-init-cwd",
+			"version": "1.0.0",
+			"scripts": {
+				"install": "bun install.js"
+			},
+			"_id": "lifecycle-init-cwd@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-LAjH9xiO6AysHZGPxGOHhVO0lp+QPUkw5xI/xEa0JKd2/9iY7sDcrF17qgQkH8CYavSSAYUAQ2oyRZW5UKhfZA==",
+				"shasum": "4dfc9b5cd21981188a33ab26d9bf0edf3a4eba8f",
+				"tarball": "http://localhost:4873/lifecycle-init-cwd/-/lifecycle-init-cwd-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-15T02:46:44.528Z",
+		"created": "2023-11-15T02:46:44.528Z",
+		"1.0.0": "2023-11-15T02:46:44.528Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"lifecycle-init-cwd-1.0.0.tgz": {
+			"shasum": "4dfc9b5cd21981188a33ab26d9bf0edf3a4eba8f",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "lifecycle-init-cwd",
+	"readme": "ERROR: No README data found!"
+}

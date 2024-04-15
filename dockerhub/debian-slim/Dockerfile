@@ -57,6 +57,15 @@ RUN apt-get update -qq \
 
 FROM debian:bullseye-slim
 
+# Disable the runtime transpiler cache by default inside Docker containers.
+# On ephemeral containers, the cache is not useful
+ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
+
+# Ensure `bun install -g` works
+ARG BUN_INSTALL_BIN=/usr/local/bin
+ENV BUN_INSTALL_BIN=${BUN_INSTALL_BIN}
+
 COPY docker-entrypoint.sh /usr/local/bin
 COPY --from=build /usr/local/bin/bun /usr/local/bin/bun
 

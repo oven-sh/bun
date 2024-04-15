@@ -369,10 +369,10 @@ export namespace Prisma {
   type CheckSelect<T, S, U> = T extends SelectAndInclude
     ? "Please either choose `select` or `include`"
     : T extends HasSelect
-    ? U
-    : T extends HasInclude
-    ? U
-    : S;
+      ? U
+      : T extends HasInclude
+        ? U
+        : S;
 
   /**
    * Get the type of the value, that the Promise holds.
@@ -439,17 +439,18 @@ export namespace Prisma {
   /**
    * Is T a Record?
    */
-  type IsObject<T extends any> = T extends Array<any>
-    ? False
-    : T extends Date
-    ? False
-    : T extends Uint8Array
-    ? False
-    : T extends BigInt
-    ? False
-    : T extends object
-    ? True
-    : False;
+  type IsObject<T extends any> =
+    T extends Array<any>
+      ? False
+      : T extends Date
+        ? False
+        : T extends Uint8Array
+          ? False
+          : T extends BigInt
+            ? False
+            : T extends object
+              ? True
+              : False;
 
   /**
    * If it's T[], return T
@@ -566,8 +567,8 @@ export namespace Prisma {
   export type Extends<A1 extends any, A2 extends any> = [A1] extends [never]
     ? 0 // anything `never` is false
     : A1 extends A2
-    ? 1
-    : 0;
+      ? 1
+      : 0;
 
   export type Has<U extends Union, U1 extends Union> = Not<Extends<Exclude<U1, U>, U1>>;
 
@@ -611,8 +612,8 @@ export namespace Prisma {
         ? GetHavingFields<UnEnumerate<TK> extends object ? Merge<UnEnumerate<TK>> : never>
         : never
       : {} extends FieldPaths<T[K]>
-      ? never
-      : K;
+        ? never
+        : K;
   }[keyof T];
 
   /**
@@ -660,16 +661,16 @@ export namespace Prisma {
   > = LocalRejectSettings extends RejectOnNotFound
     ? IsReject<LocalRejectSettings>
     : GlobalRejectSettings extends RejectPerOperation
-    ? Action extends keyof GlobalRejectSettings
-      ? GlobalRejectSettings[Action] extends RejectOnNotFound
-        ? IsReject<GlobalRejectSettings[Action]>
-        : GlobalRejectSettings[Action] extends RejectPerModel
-        ? Model extends keyof GlobalRejectSettings[Action]
-          ? IsReject<GlobalRejectSettings[Action][Model]>
-          : False
+      ? Action extends keyof GlobalRejectSettings
+        ? GlobalRejectSettings[Action] extends RejectOnNotFound
+          ? IsReject<GlobalRejectSettings[Action]>
+          : GlobalRejectSettings[Action] extends RejectPerModel
+            ? Model extends keyof GlobalRejectSettings[Action]
+              ? IsReject<GlobalRejectSettings[Action][Model]>
+              : False
+            : False
         : False
-      : False
-    : IsReject<GlobalRejectSettings>;
+      : IsReject<GlobalRejectSettings>;
   export type ErrorFormat = "pretty" | "colorless" | "minimal";
 
   export interface PrismaClientOptions {
@@ -728,9 +729,10 @@ export namespace Prisma {
       ? T["level"]
       : never
     : never;
-  export type GetEvents<T extends any> = T extends Array<LogLevel | LogDefinition>
-    ? GetLogType<T[0]> | GetLogType<T[1]> | GetLogType<T[2]> | GetLogType<T[3]>
-    : never;
+  export type GetEvents<T extends any> =
+    T extends Array<LogLevel | LogDefinition>
+      ? GetLogType<T[0]> | GetLogType<T[1]> | GetLogType<T[2]> | GetLogType<T[3]>
+      : never;
 
   export type QueryEvent = {
     timestamp: Date;
@@ -819,16 +821,16 @@ export namespace Prisma {
     S extends { select: any; include: any }
       ? "Please either choose `select` or `include`"
       : S extends true
-      ? UserCountOutputType
-      : S extends undefined
-      ? never
-      : S extends { include: any } & UserCountOutputTypeArgs
-      ? UserCountOutputType
-      : S extends { select: any } & UserCountOutputTypeArgs
-      ? {
-          [P in TruthyKeys<S["select"]>]: P extends keyof UserCountOutputType ? UserCountOutputType[P] : never;
-        }
-      : UserCountOutputType;
+        ? UserCountOutputType
+        : S extends undefined
+          ? never
+          : S extends { include: any } & UserCountOutputTypeArgs
+            ? UserCountOutputType
+            : S extends { select: any } & UserCountOutputTypeArgs
+              ? {
+                  [P in TruthyKeys<S["select"]>]: P extends keyof UserCountOutputType ? UserCountOutputType[P] : never;
+                }
+              : UserCountOutputType;
 
   // Custom InputTypes
 
@@ -1046,28 +1048,28 @@ export namespace Prisma {
   export type UserGetPayload<S extends boolean | null | undefined | UserArgs> = S extends { select: any; include: any }
     ? "Please either choose `select` or `include`"
     : S extends true
-    ? User
-    : S extends undefined
-    ? never
-    : S extends { include: any } & (UserArgs | UserFindManyArgs)
-    ? User & {
-        [P in TruthyKeys<S["include"]>]: P extends "posts"
-          ? Array<PostGetPayload<S["include"][P]>>
-          : P extends "_count"
-          ? UserCountOutputTypeGetPayload<S["include"][P]>
-          : never;
-      }
-    : S extends { select: any } & (UserArgs | UserFindManyArgs)
-    ? {
-        [P in TruthyKeys<S["select"]>]: P extends "posts"
-          ? Array<PostGetPayload<S["select"][P]>>
-          : P extends "_count"
-          ? UserCountOutputTypeGetPayload<S["select"][P]>
-          : P extends keyof User
-          ? User[P]
-          : never;
-      }
-    : User;
+      ? User
+      : S extends undefined
+        ? never
+        : S extends { include: any } & (UserArgs | UserFindManyArgs)
+          ? User & {
+              [P in TruthyKeys<S["include"]>]: P extends "posts"
+                ? Array<PostGetPayload<S["include"][P]>>
+                : P extends "_count"
+                  ? UserCountOutputTypeGetPayload<S["include"][P]>
+                  : never;
+            }
+          : S extends { select: any } & (UserArgs | UserFindManyArgs)
+            ? {
+                [P in TruthyKeys<S["select"]>]: P extends "posts"
+                  ? Array<PostGetPayload<S["select"][P]>>
+                  : P extends "_count"
+                    ? UserCountOutputTypeGetPayload<S["select"][P]>
+                    : P extends keyof User
+                      ? User[P]
+                      : never;
+              }
+            : User;
 
   type UserCountArgs = Omit<UserFindManyArgs, "select" | "include"> & {
     select?: UserCountAggregateInputType | true;
@@ -1357,40 +1359,40 @@ export namespace Prisma {
       InputErrors extends ByEmpty extends True
         ? `Error: "by" must not be empty.`
         : HavingValid extends False
-        ? {
-            [P in HavingFields]: P extends ByFields
-              ? never
-              : P extends string
-              ? `Error: Field "${P}" used in "having" needs to be provided in "by".`
-              : [Error, "Field ", P, ` in "having" needs to be provided in "by"`];
-          }[HavingFields]
-        : "take" extends Keys<T>
-        ? "orderBy" extends Keys<T>
-          ? ByValid extends True
-            ? {}
-            : {
-                [P in OrderFields]: P extends ByFields
-                  ? never
-                  : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
-              }[OrderFields]
-          : 'Error: If you provide "take", you also need to provide "orderBy"'
-        : "skip" extends Keys<T>
-        ? "orderBy" extends Keys<T>
-          ? ByValid extends True
-            ? {}
-            : {
-                [P in OrderFields]: P extends ByFields
-                  ? never
-                  : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
-              }[OrderFields]
-          : 'Error: If you provide "skip", you also need to provide "orderBy"'
-        : ByValid extends True
-        ? {}
-        : {
-            [P in OrderFields]: P extends ByFields
-              ? never
-              : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
-          }[OrderFields],
+          ? {
+              [P in HavingFields]: P extends ByFields
+                ? never
+                : P extends string
+                  ? `Error: Field "${P}" used in "having" needs to be provided in "by".`
+                  : [Error, "Field ", P, ` in "having" needs to be provided in "by"`];
+            }[HavingFields]
+          : "take" extends Keys<T>
+            ? "orderBy" extends Keys<T>
+              ? ByValid extends True
+                ? {}
+                : {
+                    [P in OrderFields]: P extends ByFields
+                      ? never
+                      : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
+                  }[OrderFields]
+              : 'Error: If you provide "take", you also need to provide "orderBy"'
+            : "skip" extends Keys<T>
+              ? "orderBy" extends Keys<T>
+                ? ByValid extends True
+                  ? {}
+                  : {
+                      [P in OrderFields]: P extends ByFields
+                        ? never
+                        : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
+                    }[OrderFields]
+                : 'Error: If you provide "skip", you also need to provide "orderBy"'
+              : ByValid extends True
+                ? {}
+                : {
+                    [P in OrderFields]: P extends ByFields
+                      ? never
+                      : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
+                  }[OrderFields],
     >(
       args: SubsetIntersection<T, UserGroupByArgs, OrderByArg> & InputErrors,
     ): {} extends InputErrors ? GetUserGroupByPayload<T> : Prisma.PrismaPromise<InputErrors>;
@@ -2018,22 +2020,22 @@ export namespace Prisma {
   export type PostGetPayload<S extends boolean | null | undefined | PostArgs> = S extends { select: any; include: any }
     ? "Please either choose `select` or `include`"
     : S extends true
-    ? Post
-    : S extends undefined
-    ? never
-    : S extends { include: any } & (PostArgs | PostFindManyArgs)
-    ? Post & {
-        [P in TruthyKeys<S["include"]>]: P extends "author" ? UserGetPayload<S["include"][P]> : never;
-      }
-    : S extends { select: any } & (PostArgs | PostFindManyArgs)
-    ? {
-        [P in TruthyKeys<S["select"]>]: P extends "author"
-          ? UserGetPayload<S["select"][P]>
-          : P extends keyof Post
-          ? Post[P]
-          : never;
-      }
-    : Post;
+      ? Post
+      : S extends undefined
+        ? never
+        : S extends { include: any } & (PostArgs | PostFindManyArgs)
+          ? Post & {
+              [P in TruthyKeys<S["include"]>]: P extends "author" ? UserGetPayload<S["include"][P]> : never;
+            }
+          : S extends { select: any } & (PostArgs | PostFindManyArgs)
+            ? {
+                [P in TruthyKeys<S["select"]>]: P extends "author"
+                  ? UserGetPayload<S["select"][P]>
+                  : P extends keyof Post
+                    ? Post[P]
+                    : never;
+              }
+            : Post;
 
   type PostCountArgs = Omit<PostFindManyArgs, "select" | "include"> & {
     select?: PostCountAggregateInputType | true;
@@ -2323,40 +2325,40 @@ export namespace Prisma {
       InputErrors extends ByEmpty extends True
         ? `Error: "by" must not be empty.`
         : HavingValid extends False
-        ? {
-            [P in HavingFields]: P extends ByFields
-              ? never
-              : P extends string
-              ? `Error: Field "${P}" used in "having" needs to be provided in "by".`
-              : [Error, "Field ", P, ` in "having" needs to be provided in "by"`];
-          }[HavingFields]
-        : "take" extends Keys<T>
-        ? "orderBy" extends Keys<T>
-          ? ByValid extends True
-            ? {}
-            : {
-                [P in OrderFields]: P extends ByFields
-                  ? never
-                  : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
-              }[OrderFields]
-          : 'Error: If you provide "take", you also need to provide "orderBy"'
-        : "skip" extends Keys<T>
-        ? "orderBy" extends Keys<T>
-          ? ByValid extends True
-            ? {}
-            : {
-                [P in OrderFields]: P extends ByFields
-                  ? never
-                  : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
-              }[OrderFields]
-          : 'Error: If you provide "skip", you also need to provide "orderBy"'
-        : ByValid extends True
-        ? {}
-        : {
-            [P in OrderFields]: P extends ByFields
-              ? never
-              : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
-          }[OrderFields],
+          ? {
+              [P in HavingFields]: P extends ByFields
+                ? never
+                : P extends string
+                  ? `Error: Field "${P}" used in "having" needs to be provided in "by".`
+                  : [Error, "Field ", P, ` in "having" needs to be provided in "by"`];
+            }[HavingFields]
+          : "take" extends Keys<T>
+            ? "orderBy" extends Keys<T>
+              ? ByValid extends True
+                ? {}
+                : {
+                    [P in OrderFields]: P extends ByFields
+                      ? never
+                      : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
+                  }[OrderFields]
+              : 'Error: If you provide "take", you also need to provide "orderBy"'
+            : "skip" extends Keys<T>
+              ? "orderBy" extends Keys<T>
+                ? ByValid extends True
+                  ? {}
+                  : {
+                      [P in OrderFields]: P extends ByFields
+                        ? never
+                        : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
+                    }[OrderFields]
+                : 'Error: If you provide "skip", you also need to provide "orderBy"'
+              : ByValid extends True
+                ? {}
+                : {
+                    [P in OrderFields]: P extends ByFields
+                      ? never
+                      : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`;
+                  }[OrderFields],
     >(
       args: SubsetIntersection<T, PostGroupByArgs, OrderByArg> & InputErrors,
     ): {} extends InputErrors ? GetPostGroupByPayload<T> : Prisma.PrismaPromise<InputErrors>;

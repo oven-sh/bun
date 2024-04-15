@@ -20,8 +20,6 @@
 
 #pragma once
 
-#if ENABLE(CHANNEL_MESSAGING)
-
 #include "JSDOMWrapper.h"
 #include "MessageChannel.h"
 #include <wtf/NeverDestroyed.h>
@@ -98,5 +96,3 @@ template<> struct JSDOMWrapperConverterTraits<MessageChannel> {
 };
 
 } // namespace WebCore
-
-#endif // ENABLE(CHANNEL_MESSAGING)

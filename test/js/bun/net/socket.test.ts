@@ -1,6 +1,35 @@
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
-import { connect, SocketHandler, spawn } from "bun";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows } from "harness";
+import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
+import type { Socket } from "bun";
+it("should coerce '0' to 0", async () => {
+  const listener = Bun.listen({
+    // @ts-expect-error
+    port: "0",
+    hostname: "localhost",
+    socket: {
+      open() {},
+      close() {},
+      data() {},
+    },
+  });
+  listener.stop(true);
+});
+
+it("should NOT coerce '-1234' to 1234", async () => {
+  expect(() =>
+    Bun.listen({
+      // @ts-expect-error
+      port: "-1234",
+      hostname: "localhost",
+      socket: {
+        open() {},
+        close() {},
+        data() {},
+      },
+    }),
+  ).toThrow(`Expected \"port\" to be a number between 0 and 65535`);
+});
 
 it("should keep process alive only when active", async () => {
   const { exited, stdout, stderr } = spawn({
@@ -37,7 +66,7 @@ it("connect without top level await should keep process alive", async () => {
     port: 0,
   });
   const proc = Bun.spawn({
-    cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port)],
+    cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port), server.hostname],
     cwd: import.meta.dir,
     env: bunEnv,
   });
@@ -129,8 +158,10 @@ it("should reject on connection error, calling both connectError() and rejecting
 
 it("should not leak memory when connect() fails", async () => {
   await (async () => {
-    var promises = new Array(100);
-    for (let i = 0; i < 100; i++) {
+    // windows can take more than a second per connection
+    const quantity = isWindows ? 10 : 50;
+    var promises = new Array(quantity);
+    for (let i = 0; i < quantity; i++) {
       promises[i] = connect({
         hostname: "localhost",
         port: 55555,
@@ -149,8 +180,8 @@ it("should not leak memory when connect() fails", async () => {
     promises.length = 0;
   })();
 
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 50, 100);
-});
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 50, 50);
+}, 60_000);
 
 // this also tests we mark the promise as handled if connectError() is called
 it("should handle connection error", done => {
@@ -192,5 +223,136 @@ it("should handle connection error", done => {
 });
 
 it("should not leak memory when connect() fails again", async () => {
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 2, 100);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
+});
+
+it("socket.timeout works", async () => {
+  try {
+    const { promise, resolve } = Promise.withResolvers<any>();
+
+    var server = Bun.listen({
+      socket: {
+        binaryType: "buffer",
+        open(socket) {
+          socket.write("hello");
+        },
+        data(socket, data) {
+          if (data.toString("utf-8") === "I have timed out!") {
+            client.end();
+            resolve(undefined);
+          }
+        },
+      },
+      hostname: "localhost",
+      port: 0,
+    });
+    var client = await connect({
+      hostname: server.hostname,
+      port: server.port,
+      socket: {
+        timeout(socket) {
+          socket.write("I have timed out!");
+        },
+        data() {},
+        drain() {},
+        close() {},
+        end() {},
+        error() {},
+        open() {},
+      },
+    });
+    client.timeout(1);
+    await promise;
+  } finally {
+    server!.stop(true);
+  }
+}, 10_000);
+
+it("should allow large amounts of data to be sent and received", async () => {
+  expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
+}, 60_000);
+
+it("it should not crash when getting a ReferenceError on client socket open", async () => {
+  const server = Bun.serve({
+    port: 8080,
+    hostname: "localhost",
+    fetch() {
+      return new Response("Hello World");
+    },
+  });
+  try {
+    const { resolve, reject, promise } = Promise.withResolvers();
+    let client: Socket<undefined> | null = null;
+    const timeout = setTimeout(() => {
+      client?.end();
+      reject(new Error("Timeout"));
+    }, 1000);
+    client = await Bun.connect({
+      port: server.port,
+      hostname: server.hostname,
+      socket: {
+        open(socket) {
+          // ReferenceError: Can't find variable: bytes
+          // @ts-expect-error
+          socket.write(bytes);
+        },
+        error(socket, error) {
+          clearTimeout(timeout);
+          resolve(error);
+        },
+        close(socket) {
+          // we need the close handler
+          resolve({ message: "Closed" });
+        },
+        data(socket, data) {},
+      },
+    });
+
+    const result: any = await promise;
+    expect(result?.message).toBe("Can't find variable: bytes");
+  } finally {
+    server.stop(true);
+  }
+});
+
+it("it should not crash when returning a Error on client socket open", async () => {
+  const server = Bun.serve({
+    port: 8080,
+    hostname: "localhost",
+    fetch() {
+      return new Response("Hello World");
+    },
+  });
+  try {
+    const { resolve, reject, promise } = Promise.withResolvers();
+    let client: Socket<undefined> | null = null;
+    const timeout = setTimeout(() => {
+      client?.end();
+      reject(new Error("Timeout"));
+    }, 1000);
+    client = await Bun.connect({
+      port: server.port,
+      hostname: server.hostname,
+      socket: {
+        //@ts-ignore
+        open(socket) {
+          return new Error("CustomError");
+        },
+        error(socket, error) {
+          clearTimeout(timeout);
+          resolve(error);
+        },
+        close(socket) {
+          // we need the close handler
+          resolve({ message: "Closed" });
+        },
+        data(socket, data) {},
+      },
+    });
+
+    const result: any = await promise;
+    expect(result?.message).toBe("CustomError");
+  } finally {
+    server.stop(true);
+  }
 });

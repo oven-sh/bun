@@ -7,7 +7,7 @@ const string = bun.string;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const ZigConsoleClient = JSC.ZigConsoleClient;
+const ConsoleObject = JSC.ConsoleObject;
 const DiffMatchPatch = @import("../../deps/diffz/DiffMatchPatch.zig");
 
 pub const DiffFormatter = struct {
@@ -91,17 +91,18 @@ pub const DiffFormatter = struct {
             var buffered_writer_ = MutableString.BufferedWriter{ .context = &received_buf };
             var buffered_writer = &buffered_writer_;
 
-            var buf_writer = buffered_writer.writer();
+            const buf_writer = buffered_writer.writer();
             const Writer = @TypeOf(buf_writer);
 
-            const fmt_options = ZigConsoleClient.FormatOptions{
+            const fmt_options = ConsoleObject.FormatOptions{
                 .enable_colors = false,
                 .add_newline = false,
                 .flush = false,
                 .ordered_properties = true,
                 .quote_strings = true,
+                .max_depth = 100,
             };
-            ZigConsoleClient.format(
+            ConsoleObject.format2(
                 .Debug,
                 this.globalObject,
                 @as([*]const JSValue, @ptrCast(&received)),
@@ -115,7 +116,7 @@ pub const DiffFormatter = struct {
 
             buffered_writer_.context = &expected_buf;
 
-            ZigConsoleClient.format(
+            ConsoleObject.format2(
                 .Debug,
                 this.globalObject,
                 @as([*]const JSValue, @ptrCast(&this.expected)),
@@ -144,7 +145,7 @@ pub const DiffFormatter = struct {
         switch (received.determineDiffMethod(expected, this.globalObject)) {
             .none => {
                 const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
-                var formatter = ZigConsoleClient.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
+                var formatter = ConsoleObject.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
                 if (Output.enable_ansi_colors) {
                     try writer.print(Output.prettyFmt(fmt, true), .{
                         expected.toFmt(this.globalObject, &formatter),

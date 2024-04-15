@@ -284,6 +284,7 @@ describe("Server", () => {
 
   test("server.fetch should work with a string", async () => {
     const server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response("Hello World!");
       },
@@ -301,6 +302,7 @@ describe("Server", () => {
 
   test("server.fetch should work with a Request object", async () => {
     const server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response("Hello World!");
       },
@@ -371,13 +373,15 @@ describe("Server", () => {
   });
 
   test("should be able to parse source map and fetch small stream", async () => {
-    const proc = Bun.spawn({
+    const { stderr, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), path.join("js-sink-sourmap-fixture", "index.mjs")],
       cwd: import.meta.dir,
       env: bunEnv,
+      stdin: "inherit",
+      stderr: "inherit",
+      stdout: "inherit",
     });
-    await proc.exited;
-    expect(proc.exitCode).toBe(0);
+    expect(exitCode).toBe(0);
   });
 
   test("handshake failures should not impact future connections", async () => {
@@ -396,7 +400,7 @@ describe("Server", () => {
     try {
       // should fail
       await fetch(`http://${url}`, { tls: { rejectUnauthorized: false } });
-      expect(true).toBe(false);
+      expect.unreachable();
     } catch (err: any) {
       expect(err.code).toBe("ConnectionClosed");
     }
@@ -408,4 +412,70 @@ describe("Server", () => {
       server.stop(true);
     }
   });
+
+  test("rejected promise handled by error method should not be logged", async () => {
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), path.join("rejected-promise-fixture.js")],
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    expect(stderr).toBeEmpty();
+    expect(exitCode).toBe(0);
+  });
+});
+
+// By not timing out, this test passes.
+test("Bun.serve().unref() works", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture.ts")]).toRun();
+});
+
+test("unref keeps process alive for ongoing connections", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture-2.ts")]).toRun();
+});
+
+test("Bun does not crash when given invalid config", async () => {
+  const server1 = Bun.serve({
+    fetch(request, server) {
+      //
+      throw new Error("Should not be called");
+    },
+    port: 0,
+  });
+
+  const cases = [
+    {
+      fetch() {},
+      port: server1.port,
+      websocket: {},
+    },
+    {
+      port: server1.port,
+      get websocket() {
+        throw new Error();
+      },
+    },
+    {
+      fetch() {},
+      port: server1.port,
+      get websocket() {
+        throw new Error();
+      },
+    },
+    {
+      fetch() {},
+      port: server1.port,
+      get tls() {
+        throw new Error();
+      },
+    },
+  ];
+
+  for (const options of cases) {
+    expect(() => {
+      Bun.serve(options as any);
+    }).toThrow();
+  }
+
+  server1.stop();
 });

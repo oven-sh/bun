@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_lexer = bun.js_lexer;
 const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
@@ -52,7 +52,7 @@ const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
 threadlocal var imported_module_ids_list_unset: bool = true;
@@ -75,7 +75,7 @@ fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void
 }
 
 pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void {
-    std.debug.assert(module_id != 0); // either module_id is forgotten or it should be disabled
+    bun.assert(module_id != 0); // either module_id is forgotten or it should be disabled
     _ = writer.writeAll("$") catch unreachable;
     std.fmt.formatInt(module_id, 16, .lower, .{}, writer) catch unreachable;
 }
@@ -153,12 +153,11 @@ fn ws(comptime str: []const u8) Whitespacer {
         pub const with = str;
 
         pub const without = brk: {
-            var buf = [_]u8{0} ** str.len;
-            var i: usize = 0;
+            var buf = std.mem.zeroes([str.len]u8);
             var buf_i: usize = 0;
-            while (i < str.len) : (i += 1) {
-                if (str[i] != ' ') {
-                    buf[buf_i] = str[i];
+            for (str) |c| {
+                if (c != ' ') {
+                    buf[buf_i] = c;
                     buf_i += 1;
                 }
             }
@@ -196,10 +195,15 @@ pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize
 
 pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
     var bytes = output_;
+    try quoteForJSONBuffer(text, &bytes, ascii_only);
+    return bytes;
+}
+
+pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     try bytes.growIfNeeded(estimateLengthForJSON(text, ascii_only));
     try bytes.appendChar('"');
     var i: usize = 0;
-    var n: usize = text.len;
+    const n: usize = text.len;
     while (i < n) {
         const width = strings.wtf8ByteSequenceLengthWithInvalid(text[i]);
         const c = strings.decodeWTF8RuneT(text.ptr[i .. i + 4][0..4], width, i32, 0);
@@ -301,7 +305,6 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
         }
     }
     bytes.appendChar('"') catch unreachable;
-    return bytes;
 }
 
 const JSONFormatter = struct {
@@ -444,7 +447,7 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
 }
 
 test "quoteForJSON" {
-    var allocator = default_allocator;
+    const allocator = default_allocator;
     try std.testing.expectEqualStrings(
         "\"I don't need any quotes.\"",
         (try quoteForJSON("I don't need any quotes.", MutableString.init(allocator, 0) catch unreachable, false)).list.items,
@@ -488,11 +491,12 @@ pub const Options = struct {
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
-    rewrite_require_resolve: bool = true,
     allocator: std.mem.Allocator = default_allocator,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
+
+    runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
     commonjs_named_exports_deoptimized: bool = false,
@@ -734,7 +738,177 @@ fn NewPrinter(
 
         temporary_bindings: std.ArrayListUnmanaged(B.Property) = .{},
 
+        binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
+
         const Printer = @This();
+
+        /// The handling of binary expressions is convoluted because we're using
+        /// iteration on the heap instead of recursion on the call stack to avoid
+        /// stack overflow for deeply-nested ASTs. See the comments for the similar
+        /// code in the JavaScript parser for details.
+        pub const BinaryExpressionVisitor = struct {
+            // Inputs
+            e: *E.Binary,
+            level: Level = .lowest,
+            flags: ExprFlag.Set = ExprFlag.None(),
+
+            // Input for visiting the left child
+            left_level: Level = .lowest,
+            left_flags: ExprFlag.Set = ExprFlag.None(),
+
+            // "Local variables" passed from "checkAndPrepare" to "visitRightAndFinish"
+            entry: *const Op = undefined,
+            wrap: bool = false,
+            right_level: Level = .lowest,
+
+            pub fn checkAndPrepare(v: *BinaryExpressionVisitor, p: *Printer) bool {
+                var e = v.e;
+
+                const entry: *const Op = Op.Table.getPtrConst(e.op);
+                const e_level = entry.level;
+                v.entry = entry;
+                v.wrap = v.level.gte(e_level) or (e.op == Op.Code.bin_in and v.flags.contains(.forbid_in));
+
+                // Destructuring assignments must be parenthesized
+                const n = p.writer.written;
+                if (n == p.stmt_start or n == p.arrow_expr_start) {
+                    switch (e.left.data) {
+                        .e_object => {
+                            v.wrap = true;
+                        },
+                        else => {},
+                    }
+                }
+
+                if (v.wrap) {
+                    p.print("(");
+                    v.flags.insert(.forbid_in);
+                }
+
+                v.left_level = e_level.sub(1);
+                v.right_level = e_level.sub(1);
+                const left_level = &v.left_level;
+                const right_level = &v.right_level;
+
+                if (e.op.isRightAssociative()) {
+                    left_level.* = e_level;
+                }
+
+                if (e.op.isLeftAssociative()) {
+                    right_level.* = e_level;
+                }
+
+                switch (e.op) {
+                    // "??" can't directly contain "||" or "&&" without being wrapped in parentheses
+                    .bin_nullish_coalescing => {
+                        switch (e.left.data) {
+                            .e_binary => {
+                                const left = e.left.data.e_binary;
+                                switch (left.op) {
+                                    .bin_logical_and, .bin_logical_or => {
+                                        left_level.* = .prefix;
+                                    },
+                                    else => {},
+                                }
+                            },
+                            else => {},
+                        }
+
+                        switch (e.right.data) {
+                            .e_binary => {
+                                const right = e.right.data.e_binary;
+                                switch (right.op) {
+                                    .bin_logical_and, .bin_logical_or => {
+                                        right_level.* = .prefix;
+                                    },
+                                    else => {},
+                                }
+                            },
+                            else => {},
+                        }
+                    },
+                    // "**" can't contain certain unary expressions
+                    .bin_pow => {
+                        switch (e.left.data) {
+                            .e_unary => {
+                                const left = e.left.data.e_unary;
+                                if (left.op.unaryAssignTarget() == .none) {
+                                    left_level.* = .call;
+                                }
+                            },
+                            .e_await, .e_undefined, .e_number => {
+                                left_level.* = .call;
+                            },
+                            .e_boolean => {
+                                // When minifying, booleans are printed as "!0 and "!1"
+                                if (p.options.minify_syntax) {
+                                    left_level.* = .call;
+                                }
+                            },
+                            else => {},
+                        }
+                    },
+                    else => {},
+                }
+
+                // Special-case "#foo in bar"
+                if (e.left.data == .e_private_identifier and e.op == .bin_in) {
+                    const private = e.left.data.e_private_identifier;
+                    const name = p.renamer.nameForSymbol(private.ref);
+                    p.addSourceMappingForName(e.left.loc, name, private.ref);
+                    p.printIdentifier(name);
+                    v.visitRightAndFinish(p);
+                    return false;
+                }
+
+                v.left_flags = ExprFlag.Set{};
+
+                if (v.flags.contains(.forbid_in)) {
+                    v.left_flags.insert(.forbid_in);
+                }
+
+                if (e.op == .bin_comma)
+                    v.left_flags.insert(.expr_result_is_unused);
+
+                return true;
+            }
+            pub fn visitRightAndFinish(v: *BinaryExpressionVisitor, p: *Printer) void {
+                const e = v.e;
+                const entry = v.entry;
+                var flags = ExprFlag.Set{};
+
+                if (e.op != .bin_comma) {
+                    p.printSpace();
+                }
+
+                if (entry.is_keyword) {
+                    p.printSpaceBeforeIdentifier();
+                    p.print(entry.text);
+                } else {
+                    p.printSpaceBeforeOperator(e.op);
+                    p.print(entry.text);
+                    p.prev_op = e.op;
+                    p.prev_op_end = p.writer.written;
+                }
+
+                p.printSpace();
+
+                // The result of the right operand of the comma operator is unused if the caller doesn't use it
+                if (e.op == .bin_comma and v.flags.contains(.expr_result_is_unused)) {
+                    flags.insert(.expr_result_is_unused);
+                }
+
+                if (v.flags.contains(.forbid_in)) {
+                    flags.insert(.forbid_in);
+                }
+
+                p.printExpr(e.right, v.right_level, flags);
+
+                if (v.wrap) {
+                    p.print(")");
+                }
+            }
+        };
 
         pub fn writeAll(p: *Printer, bytes: anytype) anyerror!void {
             p.print(bytes);
@@ -845,7 +1019,7 @@ fn NewPrinter(
         }
 
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
-            if (comptime !is_bun_platform) unreachable;
+            comptime bun.assert(is_bun_platform);
 
             switch (p.options.module_type) {
                 .cjs => {
@@ -1195,29 +1369,25 @@ fn NewPrinter(
             printer.source_map_builder.addSourceMapping(location, printer.writer.slice());
         }
 
-        // pub inline fn addSourceMappingForName(printer: *Printer, location: logger.Loc, name: string, ref: Ref) void {
-        //     _ = location;
-        //     if (comptime !generate_source_map) {
-        //         return;
-        //     }
+        pub inline fn addSourceMappingForName(printer: *Printer, location: logger.Loc, _: string, _: Ref) void {
+            if (comptime !generate_source_map) {
+                return;
+            }
 
-        //     if (printer.symbols().get(printer.symbols().follow(ref))) |symbol| {
-        //         if (!strings.eqlLong(symbol.original_name, name)) {
-        //             printer.source_map_builder.addSourceMapping()
-        //         }
-        //     }
-        // }
+            // TODO:
+            printer.addSourceMapping(location);
+        }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
-            std.debug.assert(!ref.isNull());
+            bun.assert(!ref.isNull());
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
         }
         pub fn printClauseAlias(p: *Printer, alias: string) void {
-            std.debug.assert(alias.len > 0);
+            bun.assert(alias.len > 0);
 
-            if (!strings.containsNonBmpCodePoint(alias)) {
+            if (!strings.containsNonBmpCodePointOrIsInvalidIdentifier(alias)) {
                 p.printSpaceBeforeIdentifier();
                 p.printIdentifier(alias);
             } else {
@@ -1356,7 +1526,7 @@ fn NewPrinter(
                         p.print("10");
                     },
                     11...99 => {
-                        var buf: *[2]u8 = (p.writer.reserve(2) catch unreachable)[0..2];
+                        const buf: *[2]u8 = (p.writer.reserve(2) catch unreachable)[0..2];
                         formatUnsignedIntegerBetween(2, buf, val);
                         p.writer.advance(2);
                     },
@@ -1364,7 +1534,7 @@ fn NewPrinter(
                         p.print("100");
                     },
                     101...999 => {
-                        var buf: *[3]u8 = (p.writer.reserve(3) catch unreachable)[0..3];
+                        const buf: *[3]u8 = (p.writer.reserve(3) catch unreachable)[0..3];
                         formatUnsignedIntegerBetween(3, buf, val);
                         p.writer.advance(3);
                     },
@@ -1373,7 +1543,7 @@ fn NewPrinter(
                         p.print("1000");
                     },
                     1001...9999 => {
-                        var buf: *[4]u8 = (p.writer.reserve(4) catch unreachable)[0..4];
+                        const buf: *[4]u8 = (p.writer.reserve(4) catch unreachable)[0..4];
                         formatUnsignedIntegerBetween(4, buf, val);
                         p.writer.advance(4);
                     },
@@ -1397,32 +1567,32 @@ fn NewPrinter(
                     },
 
                     10001...99999 => {
-                        var buf: *[5]u8 = (p.writer.reserve(5) catch unreachable)[0..5];
+                        const buf: *[5]u8 = (p.writer.reserve(5) catch unreachable)[0..5];
                         formatUnsignedIntegerBetween(5, buf, val);
                         p.writer.advance(5);
                     },
                     100001...999999 => {
-                        var buf: *[6]u8 = (p.writer.reserve(6) catch unreachable)[0..6];
+                        const buf: *[6]u8 = (p.writer.reserve(6) catch unreachable)[0..6];
                         formatUnsignedIntegerBetween(6, buf, val);
                         p.writer.advance(6);
                     },
                     1_000_001...9_999_999 => {
-                        var buf: *[7]u8 = (p.writer.reserve(7) catch unreachable)[0..7];
+                        const buf: *[7]u8 = (p.writer.reserve(7) catch unreachable)[0..7];
                         formatUnsignedIntegerBetween(7, buf, val);
                         p.writer.advance(7);
                     },
                     10_000_001...99_999_999 => {
-                        var buf: *[8]u8 = (p.writer.reserve(8) catch unreachable)[0..8];
+                        const buf: *[8]u8 = (p.writer.reserve(8) catch unreachable)[0..8];
                         formatUnsignedIntegerBetween(8, buf, val);
                         p.writer.advance(8);
                     },
                     100_000_001...999_999_999 => {
-                        var buf: *[9]u8 = (p.writer.reserve(9) catch unreachable)[0..9];
+                        const buf: *[9]u8 = (p.writer.reserve(9) catch unreachable)[0..9];
                         formatUnsignedIntegerBetween(9, buf, val);
                         p.writer.advance(9);
                     },
                     1_000_000_001...9_999_999_999 => {
-                        var buf: *[10]u8 = (p.writer.reserve(10) catch unreachable)[0..10];
+                        const buf: *[10]u8 = (p.writer.reserve(10) catch unreachable)[0..10];
                         formatUnsignedIntegerBetween(10, buf, val);
                         p.writer.advance(10);
                     },
@@ -1575,7 +1745,7 @@ fn NewPrinter(
                                             const len = count_ - 1;
                                             i += len;
                                             var ptr = e.writer.reserve(len) catch unreachable;
-                                            var to_copy = ptr[0..len];
+                                            const to_copy = ptr[0..len];
 
                                             strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
                                             e.writer.advance(len);
@@ -1583,7 +1753,7 @@ fn NewPrinter(
                                         } else {
                                             const count = @as(u32, @truncate(remain.len));
                                             var ptr = e.writer.reserve(count) catch unreachable;
-                                            var to_copy = ptr[0..count];
+                                            const to_copy = ptr[0..count];
                                             strings.copyU16IntoU8(to_copy, []const u16, remain);
                                             e.writer.advance(count);
                                             i += count;
@@ -1685,7 +1855,7 @@ fn NewPrinter(
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {
-            p.print("(()=>{ throw new Error(`Cannot require module ");
+            p.print("(()=>{throw new Error(`Cannot require module ");
             p.printQuotedUTF8(text, false);
             p.print("`);})()");
         }
@@ -1724,13 +1894,32 @@ fn NewPrinter(
                 //      const foo = await Promise.resolve(globalThis.Bun)
                 //      const bar = globalThis.Bun
                 //
-                if (record.tag == .bun) {
-                    if (record.kind == .dynamic) {
-                        p.print("Promise.resolve(globalThis.Bun)");
-                    } else if (record.kind == .require) {
-                        p.print("globalThis.Bun");
-                    }
-                    return;
+                switch (record.tag) {
+                    .bun => {
+                        if (record.kind == .dynamic) {
+                            p.print("Promise.resolve(globalThis.Bun)");
+                        } else if (record.kind == .require) {
+                            p.print("globalThis.Bun");
+                        }
+                        return;
+                    },
+                    .bun_test => {
+                        if (record.kind == .dynamic) {
+                            if (p.options.module_type == .cjs) {
+                                p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
+                            } else {
+                                p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
+                            }
+                        } else if (record.kind == .require) {
+                            if (p.options.module_type == .cjs) {
+                                p.print("globalThis.Bun.jest(__filename)");
+                            } else {
+                                p.print("globalThis.Bun.jest(import.meta.path)");
+                            }
+                        }
+                        return;
+                    },
+                    else => {},
                 }
             }
 
@@ -1842,14 +2031,12 @@ fn NewPrinter(
                     }
                 }
 
-                if (comptime is_bun_platform) {
-                    if (p.options.module_type == .esm) {
-                        p.print("import.meta.require");
-                    } else {
-                        p.print("require");
-                    }
+                if (p.options.module_type == .esm and is_bun_platform) {
+                    p.print("import.meta.require");
+                } else if (p.options.require_ref) |ref| {
+                    p.printSymbol(ref);
                 } else {
-                    p.printSymbol(p.options.require_ref.?);
+                    p.print("require");
                 }
 
                 p.print("(");
@@ -2063,7 +2250,7 @@ fn NewPrinter(
                         // This is currently only used in Bun's runtime for CommonJS modules
                         // referencing import.meta
                         if (comptime Environment.allow_assert)
-                            std.debug.assert(p.options.module_type == .cjs);
+                            bun.assert(p.options.module_type == .cjs);
 
                         p.printSymbol(p.options.import_meta_ref);
                     }
@@ -2147,8 +2334,6 @@ fn NewPrinter(
                         wrap = true;
                     }
 
-                    const is_unbound_eval = !e.is_direct_eval and p.isUnboundEvalIdentifier(e.target);
-
                     if (wrap) {
                         p.print("(");
                     }
@@ -2163,8 +2348,13 @@ fn NewPrinter(
                     // We only want to generate an unbound eval() in CommonJS
                     p.call_target = e.target.data;
 
-                    if (is_unbound_eval and p.options.module_type != .cjs) {
-                        p.print("(0, ");
+                    const is_unbound_eval = (!e.is_direct_eval and
+                        p.isUnboundEvalIdentifier(e.target) and
+                        e.optional_chain == null);
+
+                    if (is_unbound_eval) {
+                        p.print("(0,");
+                        p.printSpace();
                         p.printExpr(e.target, .postfix, ExprFlag.None());
                         p.print(")");
                     } else {
@@ -2197,20 +2387,25 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .cjs or !is_bun_platform) {
-                        p.print("require");
-                    } else {
+                    if (p.options.module_type == .esm and is_bun_platform) {
                         p.print("import.meta.require");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                    } else {
+                        p.print("require");
                     }
                 },
                 .e_require_resolve_call_target => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .cjs or !is_bun_platform) {
-                        p.print("require.resolve");
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.require.resolve");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".resolve");
                     } else {
-                        p.print("import.meta.resolveSync");
+                        p.print("require.resolve");
                     }
                 },
                 .e_require_string => |e| {
@@ -2219,24 +2414,28 @@ fn NewPrinter(
                     }
                 },
                 .e_require_resolve_string => |e| {
-                    if (p.options.rewrite_require_resolve) {
-                        // require.resolve("../src.js") => "../src.js"
-                        p.printSpaceBeforeIdentifier();
-                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    const wrap = level.gte(.new) or flags.contains(.forbid_call);
+                    if (wrap) {
+                        p.print("(");
+                    }
+
+                    p.printSpaceBeforeIdentifier();
+
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.require.resolve");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".resolve");
                     } else {
-                        const wrap = level.gte(.new) or flags.contains(.forbid_call);
-                        if (wrap) {
-                            p.print("(");
-                        }
+                        p.print("require.resolve");
+                    }
 
-                        p.printSpaceBeforeIdentifier();
-                        p.print("require.resolve(");
-                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    p.print("(");
+                    p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    p.print(")");
+
+                    if (wrap) {
                         p.print(")");
-
-                        if (wrap) {
-                            p.print(")");
-                        }
                     }
                 },
                 .e_import => |e| {
@@ -2283,7 +2482,7 @@ fn NewPrinter(
                     if (e.optional_chain == null) {
                         flags.insert(.has_non_optional_chain_parent);
                     } else {
-                        if (flags.contains(.has_non_optional_chain_parent) and e.optional_chain.? == .ccontinue) {
+                        if (flags.contains(.has_non_optional_chain_parent)) {
                             wrap = true;
                             p.print("(");
                         }
@@ -2444,7 +2643,7 @@ fn NewPrinter(
                 },
                 .e_function => |e| {
                     const n = p.writer.written;
-                    var wrap = p.stmt_start == n or p.export_default_start == n;
+                    const wrap = p.stmt_start == n or p.export_default_start == n;
 
                     if (wrap) {
                         p.print("(");
@@ -2474,7 +2673,7 @@ fn NewPrinter(
                 },
                 .e_class => |e| {
                     const n = p.writer.written;
-                    var wrap = p.stmt_start == n or p.export_default_start == n;
+                    const wrap = p.stmt_start == n or p.export_default_start == n;
                     if (wrap) {
                         p.print("(");
                     }
@@ -2617,6 +2816,10 @@ fn NewPrinter(
                     p.print(c);
                     p.printStringContent(e, c);
                     p.print(c);
+                },
+                .e_utf8_string => |e| {
+                    p.addSourceMapping(expr.loc);
+                    quoteForJSONBuffer(e.data, p.writer.getMutableBuffer(), ascii_only) catch bun.outOfMemory();
                 },
                 .e_template => |e| {
                     if (e.tag) |tag| {
@@ -2900,120 +3103,49 @@ fn NewPrinter(
                     }
                 },
                 .e_binary => |e| {
-                    // 4.00 ms  enums.EnumIndexer(src.js_ast.Op.Code).indexOf
-                    const entry: *const Op = Op.Table.getPtrConst(e.op);
-                    const e_level = entry.level;
+                    // The handling of binary expressions is convoluted because we're using
+                    // iteration on the heap instead of recursion on the call stack to avoid
+                    // stack overflow for deeply-nested ASTs. See the comments for the similar
+                    // code in the JavaScript parser for details.
+                    var v = BinaryExpressionVisitor{
+                        .e = e,
+                        .level = level,
+                        .flags = flags,
+                        .entry = Op.Table.getPtrConst(e.op),
+                    };
 
-                    var wrap = level.gte(e_level) or (e.op == Op.Code.bin_in and flags.contains(.forbid_in));
+                    // Use a single stack to reduce allocation overhead
+                    const stack_bottom = p.binary_expression_stack.items.len;
 
-                    // Destructuring assignments must be parenthesized
-                    const n = p.writer.written;
-                    if (n == p.stmt_start or n == p.arrow_expr_start) {
-                        switch (e.left.data) {
-                            .e_object => {
-                                wrap = true;
-                            },
-                            else => {},
+                    while (true) {
+                        if (!v.checkAndPrepare(p)) {
+                            break;
                         }
+
+                        const left = v.e.left;
+                        const left_binary: ?*E.Binary = if (left.data == .e_binary) left.data.e_binary else null;
+
+                        // Stop iterating if iteration doesn't apply to the left node
+                        if (left_binary == null) {
+                            p.printExpr(left, v.left_level, v.left_flags);
+                            v.visitRightAndFinish(p);
+                            break;
+                        }
+
+                        // Only allocate heap memory on the stack for nested binary expressions
+                        p.binary_expression_stack.append(v) catch bun.outOfMemory();
+                        v = BinaryExpressionVisitor{
+                            .e = left_binary.?,
+                            .level = v.left_level,
+                            .flags = v.left_flags,
+                        };
                     }
 
-                    if (wrap) {
-                        p.print("(");
-                        flags.insert(.forbid_in);
-                    }
-
-                    var left_level = e_level.sub(1);
-                    var right_level = e_level.sub(1);
-
-                    if (e.op.isRightAssociative()) {
-                        left_level = e_level;
-                    }
-
-                    if (e.op.isLeftAssociative()) {
-                        right_level = e_level;
-                    }
-
-                    switch (e.op) {
-                        // "??" can't directly contain "||" or "&&" without being wrapped in parentheses
-                        .bin_nullish_coalescing => {
-                            switch (e.left.data) {
-                                .e_binary => {
-                                    const left = e.left.data.e_binary;
-                                    switch (left.op) {
-                                        .bin_logical_and, .bin_logical_or => {
-                                            left_level = .prefix;
-                                        },
-                                        else => {},
-                                    }
-                                },
-                                else => {},
-                            }
-
-                            switch (e.right.data) {
-                                .e_binary => {
-                                    const right = e.right.data.e_binary;
-                                    switch (right.op) {
-                                        .bin_logical_and, .bin_logical_or => {
-                                            right_level = .prefix;
-                                        },
-                                        else => {},
-                                    }
-                                },
-                                else => {},
-                            }
-                        },
-                        // "**" can't contain certain unary expressions
-                        .bin_pow => {
-                            switch (e.left.data) {
-                                .e_unary => {
-                                    const left = e.left.data.e_unary;
-                                    if (left.op.unaryAssignTarget() == .none) {
-                                        left_level = .call;
-                                    }
-                                },
-                                .e_await, .e_undefined, .e_number => {
-                                    left_level = .call;
-                                },
-                                else => {},
-                            }
-                        },
-                        else => {},
-                    }
-
-                    // Special-case "#foo in bar"
-                    if (e.op == .bin_in and @as(Expr.Tag, e.left.data) == .e_private_identifier) {
-                        p.printSymbol(e.left.data.e_private_identifier.ref);
-                    } else {
-                        flags.insert(.forbid_in);
-                        p.printExpr(e.left, left_level, flags);
-                    }
-
-                    if (e.op != .bin_comma) {
-                        p.printSpace();
-                    }
-
-                    if (entry.is_keyword) {
-                        p.printSpaceBeforeIdentifier();
-                        p.print(entry.text);
-                    } else {
-                        p.printSpaceBeforeOperator(e.op);
-                        p.print(entry.text);
-                        p.prev_op = e.op;
-                        p.prev_op_end = p.writer.written;
-                    }
-
-                    p.printSpace();
-                    flags.insert(.forbid_in);
-
-                    // this feels like a hack? I think something is wrong here.
-                    if (e.op == .bin_assign) {
-                        flags.remove(.expr_result_is_unused);
-                    }
-
-                    p.printExpr(e.right, right_level, flags);
-
-                    if (wrap) {
-                        p.print(")");
+                    // Process all binary operations from the deepest-visited node back toward
+                    // our original top-level binary operation
+                    while (p.binary_expression_stack.items.len > stack_bottom) {
+                        var last = p.binary_expression_stack.pop();
+                        last.visitRightAndFinish(p);
                     }
                 },
                 else => {
@@ -3486,7 +3618,7 @@ fn NewPrinter(
             }
 
             if (comptime is_json) {
-                std.debug.assert(item.initializer == null);
+                bun.assert(item.initializer == null);
             }
 
             if (item.initializer) |initial| {
@@ -4115,6 +4247,12 @@ fn NewPrinter(
                         .k_var => {
                             p.printDeclStmt(s.is_export, "var", s.decls.slice());
                         },
+                        .k_using => {
+                            p.printDeclStmt(s.is_export, "using", s.decls.slice());
+                        },
+                        .k_await_using => {
+                            p.printDeclStmt(s.is_export, "await using", s.decls.slice());
+                        },
                     }
                 },
                 .s_if => |s| {
@@ -4325,7 +4463,7 @@ fn NewPrinter(
                     p.needs_semicolon = false;
                 },
                 .s_import => |s| {
-                    std.debug.assert(s.import_record_index < p.import_records.len);
+                    bun.assert(s.import_record_index < p.import_records.len);
 
                     const record: *const ImportRecord = p.importRecord(s.import_record_index);
 
@@ -4584,6 +4722,11 @@ fn NewPrinter(
                     }
 
                     p.printImportRecordPath(record);
+
+                    if ((record.tag.loader() orelse options.Loader.file).isSQLite()) {
+                        // we do not preserve "embed": "true" since it is not necessary
+                        p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
+                    }
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {
@@ -4815,7 +4958,7 @@ fn NewPrinter(
                 return;
             }
 
-            @call(.always_inline, printModuleId, .{ p, p.importRecord(import_record_index).module_id });
+            @call(bun.callmod_inline, printModuleId, .{ p, p.importRecord(import_record_index).module_id });
         }
 
         pub fn printCallModuleID(p: *Printer, module_id: u32) void {
@@ -4824,26 +4967,13 @@ fn NewPrinter(
         }
 
         inline fn printModuleId(p: *Printer, module_id: u32) void {
-            std.debug.assert(module_id != 0); // either module_id is forgotten or it should be disabled
+            bun.assert(module_id != 0); // either module_id is forgotten or it should be disabled
             p.printModuleIdAssumeEnabled(module_id);
         }
 
         inline fn printModuleIdAssumeEnabled(p: *Printer, module_id: u32) void {
             p.print("$");
             std.fmt.formatInt(module_id, 16, .lower, .{}, p) catch unreachable;
-        }
-
-        pub fn printBundledRequire(p: *Printer, require: E.RequireString) void {
-            if (p.importRecord(require.import_record_index).is_internal) {
-                return;
-            }
-
-            p.printSymbol(p.options.runtime_imports.__require.?.ref);
-
-            // d is for default
-            p.print(".d(");
-            p.printLoadFromBundle(require.import_record_index);
-            p.print(")");
         }
 
         pub fn printBundledRexport(p: *Printer, name: string, import_record_index: u32) void {
@@ -4892,6 +5022,12 @@ fn NewPrinter(
                         },
                         .k_const => {
                             p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
+                        },
+                        .k_using => {
+                            p.printDecls("using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
+                        },
+                        .k_await_using => {
+                            p.printDecls("await using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                     }
                 },
@@ -5242,7 +5378,7 @@ pub fn NewWriter(
         }
 
         pub fn isCopyFileRangeSupported() bool {
-            return comptime std.meta.trait.hasFn("copyFileRange")(ContextType);
+            return comptime std.meta.hasFn(ContextType, "copyFileRange");
         }
 
         pub fn copyFileRange(ctx: ContextType, in_file: StoredFileDescriptorType, start: usize, end: usize) !void {
@@ -5251,6 +5387,10 @@ pub fn NewWriter(
                 start,
                 end,
             );
+        }
+
+        pub fn getMutableBuffer(this: *Self) *MutableString {
+            return this.ctx.getMutableBuffer();
         }
 
         pub fn slice(this: *Self) string {
@@ -5268,11 +5408,11 @@ pub fn NewWriter(
         }
 
         pub inline fn prevChar(writer: *const Self) u8 {
-            return @call(.always_inline, getLastByte, .{&writer.ctx});
+            return @call(bun.callmod_inline, getLastByte, .{&writer.ctx});
         }
 
         pub inline fn prevPrevChar(writer: *const Self) u8 {
-            return @call(.always_inline, getLastLastByte, .{&writer.ctx});
+            return @call(bun.callmod_inline, getLastLastByte, .{&writer.ctx});
         }
 
         pub fn reserve(writer: *Self, count: u32) anyerror![*]u8 {
@@ -5323,15 +5463,13 @@ pub fn NewWriter(
             }
         }
 
-        const hasFlush = std.meta.trait.hasFn("flush");
         pub fn flush(writer: *Self) !void {
-            if (hasFlush(ContextType)) {
+            if (std.meta.hasFn(ContextType, "flush")) {
                 try writer.ctx.flush();
             }
         }
-        const hasDone = std.meta.trait.hasFn("done");
         pub fn done(writer: *Self) !void {
-            if (hasDone(ContextType)) {
+            if (std.meta.hasFn(ContextType, "done")) {
                 try writer.ctx.done();
             }
         }
@@ -5364,6 +5502,10 @@ const FileWriterInternal = struct {
 
     pub fn getBuffer() *MutableString {
         buffer.reset();
+        return &buffer;
+    }
+
+    pub fn getMutableBuffer(_: *FileWriterInternal) *MutableString {
         return &buffer;
     }
 
@@ -5412,7 +5554,7 @@ const FileWriterInternal = struct {
         return @as([*]u8, @ptrCast(&buffer.list.items.ptr[buffer.list.items.len]));
     }
     pub fn advanceBy(this: *FileWriterInternal, count: u32) void {
-        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
+        if (comptime Environment.isDebug) bun.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
         if (count >= 2) {
@@ -5426,7 +5568,7 @@ const FileWriterInternal = struct {
         ctx: *FileWriterInternal,
     ) anyerror!void {
         defer buffer.reset();
-        var result_ = buffer.toOwnedSliceLeaky();
+        const result_ = buffer.toOwnedSliceLeaky();
         var result = result_;
 
         while (result.len > 0) {
@@ -5479,6 +5621,10 @@ pub const BufferWriter = struct {
     approximate_newline_count: usize = 0,
     last_bytes: [2]u8 = [_]u8{ 0, 0 },
 
+    pub fn getMutableBuffer(this: *BufferWriter) *MutableString {
+        return &this.buffer;
+    }
+
     pub fn getWritten(this: *BufferWriter) []u8 {
         return this.buffer.list.items;
     }
@@ -5527,7 +5673,7 @@ pub const BufferWriter = struct {
         return @as([*]u8, @ptrCast(&ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]));
     }
     pub fn advanceBy(ctx: *BufferWriter, count: u32) void {
-        if (comptime Environment.isDebug) std.debug.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
+        if (comptime Environment.isDebug) bun.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
 
         ctx.buffer.list.items = ctx.buffer.list.items.ptr[0 .. ctx.buffer.list.items.len + count];
 
@@ -5591,7 +5737,7 @@ pub const FileWriter = NewWriter(
     FileWriterInternal.advanceBy,
 );
 pub fn NewFileWriter(file: std.fs.File) FileWriter {
-    var internal = FileWriterInternal.init(file);
+    const internal = FileWriterInternal.init(file);
     return FileWriter.init(internal);
 }
 
@@ -5712,7 +5858,7 @@ pub fn printAst(
             }
         }
 
-        std.sort.block(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
+        std.sort.pdq(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
 
         try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols);
         var minifier = tree.char_freq.?.compile(allocator);
@@ -5739,7 +5885,7 @@ pub fn printAst(
         false,
         generate_source_map,
     );
-    var writer = _writer;
+    const writer = _writer;
 
     var printer = PrinterType.init(
         writer,
@@ -5748,6 +5894,9 @@ pub fn printAst(
         renamer,
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
     );
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    defer printer.binary_expression_stack.clearAndFree();
     defer {
         imported_module_ids_list = printer.imported_module_ids;
     }
@@ -5771,7 +5920,20 @@ pub fn printAst(
         }
     }
 
-    if (comptime generate_source_map) {
+    if (comptime FeatureFlags.runtime_transpiler_cache and generate_source_map) {
+        if (opts.source_map_handler) |handler| {
+            const source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            if (opts.runtime_transpiler_cache) |cache| {
+                cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
+            }
+
+            try handler.onSourceMapChunk(source_maps_chunk, source.*);
+        } else {
+            if (opts.runtime_transpiler_cache) |cache| {
+                cache.put(printer.writer.ctx.getWritten(), "");
+            }
+        }
+    } else if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
             try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
         }
@@ -5789,16 +5951,16 @@ pub fn printJSON(
     source: *const logger.Source,
 ) !usize {
     const PrinterType = NewPrinter(false, Writer, false, false, true, false);
-    var writer = _writer;
+    const writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
-    var stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
+    const stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
         .s_expr = &s_expr,
     } };
     var stmts = [_]js_ast.Stmt{stmt};
     var parts = [_]js_ast.Part{.{ .stmts = &stmts }};
     const ast = Ast.initTest(&parts);
-    var list = js_ast.Symbol.List.init(ast.symbols.slice());
-    var nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
+    const list = js_ast.Symbol.List.init(ast.symbols.slice());
+    const nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
     var renamer = rename.NoOpRenamer.init(js_ast.Symbol.Map.initList(nested_list), source);
 
     var printer = PrinterType.init(
@@ -5808,6 +5970,9 @@ pub fn printJSON(
         renamer.toRenamer(),
         undefined,
     );
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    defer printer.binary_expression_stack.clearAndFree();
 
     printer.printExpr(expr, Level.lowest, ExprFlag.Set{});
     if (printer.writer.getError()) {} else |err| {
@@ -5832,7 +5997,7 @@ pub fn print(
     const trace = bun.tracy.traceNamed(@src(), "JSPrinter.print");
     defer trace.end();
 
-    var buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
+    const buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
     var buffer_printer = BufferPrinter.init(buffer_writer);
 
     return printWithWriter(
@@ -5891,14 +6056,15 @@ pub fn printWithWriterAndPlatform(
     comptime generate_source_maps: bool,
 ) PrintResult {
     const PrinterType = NewPrinter(
-        false,
+        // if it's bun, it is also ascii_only
+        is_bun_platform,
         Writer,
         false,
         is_bun_platform,
         false,
         generate_source_maps,
     );
-    var writer = _writer;
+    const writer = _writer;
     var printer = PrinterType.init(
         writer,
         import_records,
@@ -5906,6 +6072,10 @@ pub fn printWithWriterAndPlatform(
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    defer printer.binary_expression_stack.clearAndFree();
+
     defer printer.temporary_bindings.deinit(bun.default_allocator);
     defer _writer.* = printer.writer.*;
     defer {
@@ -5954,7 +6124,7 @@ pub fn printCommonJS(
     comptime generate_source_map: bool,
 ) !usize {
     const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, generate_source_map);
-    var writer = _writer;
+    const writer = _writer;
     var renamer = rename.NoOpRenamer.init(symbols, source);
     var printer = PrinterType.init(
         writer,
@@ -5963,6 +6133,9 @@ pub fn printCommonJS(
         renamer.toRenamer(),
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    defer printer.binary_expression_stack.clearAndFree();
     defer {
         imported_module_ids_list = printer.imported_module_ids;
     }

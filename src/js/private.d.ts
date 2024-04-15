@@ -1,14 +1,14 @@
 // The types in this file are not publicly defined, but do exist.
 // Stuff like `Bun.fs()` and so on.
 
-/**
- * Works like the zig `@compileError` built-in, but only supports plain strings.
- */
-declare function $bundleError(error: string);
-
 type BunFSWatchOptions = { encoding?: BufferEncoding; persistent?: boolean; recursive?: boolean; signal?: AbortSignal };
 type BunWatchEventType = "rename" | "change" | "error" | "close";
 type BunWatchListener<T> = (event: WatchEventType, filename: T | undefined) => void;
+
+/**
+ * If this is not tree-shaken away, the bundle will fail.
+ */
+declare function $bundleError(...message: any[]): never;
 
 interface BunFSWatcher {
   /**
@@ -105,9 +105,6 @@ declare module "bun" {
   var TOML: {
     parse(contents: string): any;
   };
-  function fs(): BunFS;
-  function _Os(): typeof import("node:os");
-  function _Path(isWin32?: boolean): typeof import("node:path");
   function jest(): typeof import("bun:test");
   var main: string;
   var tty: Array<{ hasColors: boolean }>;
@@ -152,65 +149,8 @@ declare interface Error {
   code?: string;
 }
 
-/**
- * Load an internal native module. To see implementation details, open ZigGlobalObject.cpp and cmd+f `static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad`
- *
- * This is only valid in src/js/ as it is replaced with `globalThis[Symbol.for("Bun.lazy")]` at bundle time.
- */
-function $lazy<T extends keyof BunLazyModules>(id: T): BunLazyModules[T];
-
-interface BunLazyModules {
-  "bun:jsc": Omit<typeof import("bun:jsc"), "jscDescribe" | "jscDescribeArray"> & {
-    describe: typeof import("bun:jsc").jscDescribe;
-    describeArray: typeof import("bun:jsc").jscDescribe;
-  };
-  "bun:stream": {
-    maybeReadMore: Function;
-    resume: Function;
-    emitReadable: Function;
-    onEofChunk: Function;
-    ReadableState: Function;
-  };
-  sqlite: any;
-  "vm": {
-    createContext: Function;
-    isContext: Function;
-    Script: typeof import("node:vm").Script;
-    runInNewContext: Function;
-    runInThisContext: Function;
-  };
-  /** typeof === 'undefined', but callable -> throws not implemented */
-  "masqueradesAsUndefined": (...args: any) => any;
-  pathToFileURL: typeof import("node:url").pathToFileURL;
-  fileURLToPath: typeof import("node:url").fileURLToPath;
-  noop: {
-    getterSetter: any;
-    function: any;
-    functionRegular: any;
-    callback: any;
-  };
-  "async_hooks": {
-    cleanupLater: () => void;
-    setAsyncHooksEnabled: (enabled: boolean) => void;
-  };
-  "worker_threads": [workerData: any, threadId: number, _receiveMessageOnPort: (port: MessagePort) => any];
-  "tty": {
-    ttySetMode: (fd: number, mode: number) => number;
-    isatty: (fd: number) => boolean;
-    getWindowSize: (fd: number, out: number[2]) => boolean;
-  };
-
-  // ReadableStream related
-  [1]: any;
-  [2]: any;
-  [4]: any;
-}
-
-/** Assign to this variable in src/js/{bun,node,thirdparty} to act as module.exports */
-declare var $exports: any;
-
 interface CommonJSModuleRecord {
-  $require(id: string, mod: any): any;
+  $require(id: string, mod: any, args_count: number, args: Array): any;
   children: CommonJSModuleRecord[];
   exports: any;
   id: string;
@@ -220,3 +160,16 @@ interface CommonJSModuleRecord {
   paths: string[];
   require: typeof require;
 }
+
+declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
+declare function $zig<T = any>(filename: NativeFilenameZig, symbol: string): T;
+declare function $newCppFunction<T = (...args: any) => any>(
+  filename: NativeFilenameCPP,
+  symbol: string,
+  argCount: number,
+): T;
+declare function $newZigFunction<T = (...args: any) => any>(
+  filename: NativeFilenameZig,
+  symbol: string,
+  argCount: number,
+): T;

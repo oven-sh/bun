@@ -104,6 +104,62 @@ describe("bun test", () => {
     });
     expect(stderr).toContain(path);
   });
+  test("works with require", () => {
+    const stderr = runTest({
+      args: [],
+      input: [
+        `
+          const { test, expect } = require("bun:test");
+          test("test #1", () => {
+            expect().pass();
+          })
+        `,
+      ],
+    });
+    expect(stderr).toContain("test #1");
+  });
+  test("works with dynamic import", () => {
+    const stderr = runTest({
+      args: [],
+      input: `
+        const { test, expect } = await import("bun:test");
+        test("test #1", () => {
+          expect().pass();
+        })
+      `,
+    });
+    expect(stderr).toContain("test #1");
+  });
+  test("works with cjs require", () => {
+    const cwd = createTest(
+      `
+        const { test, expect } = require("bun:test");
+        test("test #1", () => {
+          expect().pass();
+        })
+      `,
+      "test.test.cjs",
+    );
+    const stderr = runTest({
+      cwd,
+    });
+    expect(stderr).toContain("test #1");
+  });
+  test("works with cjs dynamic import", () => {
+    const cwd = createTest(
+      `
+        const { test, expect } = await import("bun:test");
+        test("test #1", () => {
+          expect().pass();
+        })
+      `,
+      "test.test.cjs",
+    );
+    const stderr = runTest({
+      cwd,
+    });
+    expect(stderr).toContain("test #1");
+  });
   test.todo("can provide a mix of files and directories");
   describe("--rerun-each", () => {
     test.todo("can rerun with a default value");
@@ -237,7 +293,7 @@ describe("bun test", () => {
           });
         `,
       });
-      expect(stderr).toContain("Bailed out after 1 failures");
+      expect(stderr).toContain("Bailed out after 1 failure");
       expect(stderr).not.toContain("test #2");
     });
 
@@ -277,26 +333,13 @@ describe("bun test", () => {
       });
       expect(stderr).toContain("Invalid timeout");
     });
-    test("timeout can be set to 0ms", () => {
+    // TODO: https://github.com/oven-sh/bun/issues/8069
+    // This test crashes, which will pass because stderr contains "timed out"
+    // but the crash can also mean it hangs, which will end up failing.
+    // Possibly fixed by https://github.com/oven-sh/bun/pull/8076/files
+    test.todo("timeout can be set to 30ms", () => {
       const stderr = runTest({
-        args: ["--timeout", "0"],
-        input: `
-          import { test, expect } from "bun:test";
-          import { sleep } from "bun";
-          test("ok", async () => {
-            await expect(Promise.resolve()).resolves.toBeUndefined();
-            await expect(Promise.reject()).rejects.toBeUndefined();
-          });
-          test("timeout", async () => {
-            await expect(sleep(1)).resolves.toBeUndefined();
-          });
-        `,
-      });
-      expect(stderr).toContain("timed out after 0ms");
-    });
-    test("timeout can be set to 1ms", () => {
-      const stderr = runTest({
-        args: ["--timeout", "1"],
+        args: ["--timeout", "30"],
         input: `
           import { test, expect } from "bun:test";
           import { sleep } from "bun";
@@ -304,19 +347,22 @@ describe("bun test", () => {
             await expect(sleep(1)).resolves.toBeUndefined();
           });
           test("timeout", async () => {
-            await expect(sleep(2)).resolves.toBeUndefined();
+            await expect(sleep(64)).resolves.toBeUndefined();
           });
         `,
       });
-      expect(stderr).toContain("timed out after 1ms");
+      expect(stderr).toContain("timed out after 30ms");
     });
     test("timeout should default to 5000ms", () => {
+      // TODO: Lower this timeout to 5005 once https://github.com/oven-sh/bun/issues/8913 is fixed
+      // Linux does not seem to have this issue.
+      const time = process.platform === "linux" ? 5005 : 5500;
       const stderr = runTest({
         input: `
           import { test, expect } from "bun:test";
           import { sleep } from "bun";
           test("timeout", async () => {
-            await sleep(5001);
+            await sleep(${time});
           });
         `,
       });
@@ -454,13 +500,39 @@ describe("bun test", () => {
       });
       expect(stderr).not.toContain("::error");
     });
-    test("should annotate errors when enabled", () => {
+    test("should annotate errors in the global scope", () => {
       const stderr = runTest({
         input: `
-          import { test, expect } from "bun:test";
-          test("fail", () => {
+          throw new Error();
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
+    });
+    test.each(["test", "describe"])("should annotate errors in a %s scope", type => {
+      const stderr = runTest({
+        input: `
+          import { ${type} } from "bun:test";
+          ${type}("fail", () => {
             throw new Error();
           });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
+    });
+    test.each(["beforeAll", "beforeEach", "afterEach", "afterAll"])("should annotate errors in a %s callback", type => {
+      const stderr = runTest({
+        input: `
+          import { test, ${type} } from "bun:test";
+          ${type}(() => {
+            throw new Error();
+          });
+          test("test", () => {});
         `,
         env: {
           GITHUB_ACTIONS: "true",
@@ -500,6 +572,21 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error title=error: Oops!::/);
     });
+    test("should annotate a test timeout", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("time out", async () => {
+            await Bun.sleep(1000);
+          }, { timeout: 1 });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
+    });
   });
   describe(".each", () => {
     test("should run tests with test.each", () => {
@@ -521,6 +608,52 @@ describe("bun test", () => {
       });
       numbers.forEach(numbers => {
         expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+      });
+    });
+    test("should allow tests run with test.each to be skipped", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: ["-t", "$a"],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("%i + %i = %i", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+      });
+    });
+    test("should allow tests run with test.each to be matched", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: ["-t", "1 \\+"],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("%i + %i = %i", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        if (numbers[0] === 1) {
+          expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+        } else {
+          expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+        }
       });
     });
     test("should run tests with describe.each", () => {
@@ -716,18 +849,58 @@ describe("bun test", () => {
     });
     test.todo("check formatting for %p", () => {});
   });
+
+  test("path to a non-test.ts file will work", () => {
+    const stderr = runTest({
+      args: ["./index.ts"],
+      input: [
+        {
+          filename: "index.ts",
+          contents: `
+            import { test, expect } from "bun:test";
+            test("test #1", () => {
+              expect(true).toBe(true);
+            });
+          `,
+        },
+      ],
+    });
+    expect(stderr).toContain("test #1");
+  });
+
+  test("path to a non-test.ts without ./ will print a helpful hint", () => {
+    const stderr = runTest({
+      args: ["index.ts"],
+      input: [
+        {
+          filename: "index.ts",
+          contents: `
+            import { test, expect } from "bun:test";
+            test("test #1", () => {
+              expect(true).toBe(true);
+            });
+          `,
+        },
+      ],
+    });
+    expect(stderr).not.toContain("test #1");
+    expect(stderr).toContain("index.ts");
+  });
 });
 
-function createTest(input?: string | string[], filename?: string): string {
+function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {
   const cwd = mkdtempSync(join(tmpdir(), "bun-test-"));
   const inputs = Array.isArray(input) ? input : [input ?? ""];
   for (const input of inputs) {
-    const path = join(cwd, filename ?? `bun-test-${Math.random()}.test.ts`);
+    const contents = typeof input === "string" ? input : input.contents;
+    const name = typeof input === "string" ? filename ?? `bun-test-${Math.random()}.test.ts` : input.filename;
+
+    const path = join(cwd, name);
     try {
-      writeFileSync(path, input);
+      writeFileSync(path, contents);
     } catch {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, input);
+      writeFileSync(path, contents);
     }
   }
   return cwd;
@@ -739,7 +912,7 @@ function runTest({
   args = [],
   env = {},
 }: {
-  input?: string | string[];
+  input?: string | (string | { filename: string; contents: string })[];
   cwd?: string;
   args?: string[];
   env?: Record<string, string | undefined>;

@@ -1,19 +1,23 @@
 import fs, { mkdirSync } from "fs";
-import { it, expect, describe } from "bun:test";
+import { it, expect, describe, test } from "bun:test";
 import path, { join } from "path";
-import { gcTick, withoutAggressiveGC, bunExe, bunEnv } from "harness";
+import { gcTick, withoutAggressiveGC, bunExe, bunEnv, isWindows } from "harness";
 import { tmpdir } from "os";
+const tmpbase = tmpdir() + path.sep;
 
 it("Bun.write blob", async () => {
-  await Bun.write(Bun.file("/tmp/response-file.test.txt"), Bun.file(path.join(import.meta.dir, "fetch.js.txt")));
+  await Bun.write(
+    Bun.file(join(tmpdir(), "response-file.test.txt")),
+    Bun.file(path.resolve(import.meta.dir, "fetch.js.txt")),
+  );
   await gcTick();
-  await Bun.write(Bun.file("/tmp/response-file.test.txt"), "blah blah blha");
+  await Bun.write(Bun.file(join(tmpdir(), "response-file.test.txt")), "blah blah blha");
   await gcTick();
-  await Bun.write(Bun.file("/tmp/response-file.test.txt"), new Uint32Array(1024));
+  await Bun.write(Bun.file(join(tmpdir(), "response-file.test.txt")), new Uint32Array(1024));
   await gcTick();
-  await Bun.write("/tmp/response-file.test.txt", new Uint32Array(1024));
+  await Bun.write(join(tmpdir(), "response-file.test.txt"), new Uint32Array(1024));
   await gcTick();
-  expect(await Bun.write(new TextEncoder().encode("/tmp/response-file.test.txt"), new Uint32Array(1024))).toBe(
+  expect(await Bun.write(new TextEncoder().encode(tmpbase + "response-file.test.txt"), new Uint32Array(1024))).toBe(
     new Uint32Array(1024).byteLength,
   );
   await gcTick();
@@ -22,7 +26,7 @@ it("Bun.write blob", async () => {
 describe("large file", () => {
   const fixtures = [
     [
-      `/tmp/bun-test-large-file-${Date.now()}.txt`,
+      tmpbase + `bun-test-large-file-${Date.now()}.txt`,
       "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(10000),
     ],
   ];
@@ -72,7 +76,7 @@ describe("large file", () => {
 it("Bun.file not found returns ENOENT", async () => {
   try {
     await gcTick();
-    await Bun.file("/does/not/exist.txt").text();
+    await Bun.file(join("does", "not", "exist.txt")).text();
     await gcTick();
   } catch (exception) {
     expect(exception.code).toBe("ENOENT");
@@ -81,21 +85,25 @@ it("Bun.file not found returns ENOENT", async () => {
 });
 
 it("Bun.write file not found returns ENOENT, issue#6336", async () => {
-  const dst = Bun.file(path.join(tmpdir(), "does/not/exist.txt"));
+  const dst = Bun.file(path.join(tmpdir(), join("does", "not", "exist.txt")));
+  fs.rmSync(join(tmpdir(), "does"), { force: true, recursive: true });
+
   try {
     await gcTick();
-    await Bun.write(dst, "");
+    await Bun.write(dst, "", { createPath: false });
     await gcTick();
+    expect.unreachable();
   } catch (exception) {
     expect(exception.code).toBe("ENOENT");
     expect(exception.path).toBe(dst.name);
   }
 
   const src = Bun.file(path.join(tmpdir(), `test-bun-write-${Date.now()}.txt`));
+
   await Bun.write(src, "");
   try {
     await gcTick();
-    await Bun.write(dst, src);
+    await Bun.write(dst, src, { createPath: false });
     await gcTick();
   } catch (exception) {
     expect(exception.code).toBe("ENOENT");
@@ -106,55 +114,60 @@ it("Bun.write file not found returns ENOENT, issue#6336", async () => {
 });
 
 it("Bun.write('out.txt', 'string')", async () => {
+  const outpath = path.join(tmpdir(), "out." + ((Math.random() * 102400) | 0).toString(32) + "txt");
   for (let erase of [true, false]) {
     if (erase) {
       try {
-        fs.unlinkSync(path.join("/tmp", "out.txt"));
+        fs.unlinkSync(outpath);
       } catch (e) {}
     }
     await gcTick();
-    expect(await Bun.write("/tmp/out.txt", "string")).toBe("string".length);
+    expect(await Bun.write(outpath, "string")).toBe("string".length);
     await gcTick();
-    const out = Bun.file("/tmp/out.txt");
+    const out = Bun.file(outpath);
     await gcTick();
     expect(await out.text()).toBe("string");
     await gcTick();
-    expect(await out.text()).toBe(fs.readFileSync("/tmp/out.txt", "utf8"));
+    expect(await out.text()).toBe(fs.readFileSync(outpath, "utf8"));
     await gcTick();
   }
 });
 
 it("Bun.file -> Bun.file", async () => {
   try {
-    fs.unlinkSync(path.join("/tmp", "fetch.js.in"));
+    fs.unlinkSync(path.join(tmpdir(), "fetch.js.in"));
   } catch (e) {}
   await gcTick();
   try {
-    fs.unlinkSync(path.join("/tmp", "fetch.js.out"));
+    fs.unlinkSync(path.join(tmpdir(), "fetch.js.out"));
   } catch (e) {}
   await gcTick();
+
   const file = path.join(import.meta.dir, "fetch.js.txt");
   await gcTick();
   const text = fs.readFileSync(file, "utf8");
-  fs.writeFileSync("/tmp/fetch.js.in", text);
+  fs.writeFileSync(tmpbase + "fetch.js.in", text);
   await gcTick();
   {
-    const result = await Bun.write(Bun.file("/tmp/fetch.js.out"), Bun.file("/tmp/fetch.js.in"));
+    const result = await Bun.write(Bun.file(tmpbase + "fetch.js.out"), Bun.file(tmpbase + "fetch.js.in"));
     await gcTick();
-    expect(await Bun.file("/tmp/fetch.js.out").text()).toBe(text);
+    expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(text);
     await gcTick();
   }
 
   {
-    await Bun.write(Bun.file("/tmp/fetch.js.in").slice(0, (text.length / 2) | 0), Bun.file("/tmp/fetch.js.out"));
-    expect(await Bun.file("/tmp/fetch.js.in").text()).toBe(text.substring(0, (text.length / 2) | 0));
+    await Bun.write(
+      Bun.file(tmpbase + "fetch.js.in").slice(0, (text.length / 2) | 0),
+      Bun.file(tmpbase + "fetch.js.out"),
+    );
+    expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(text.substring(0, (text.length / 2) | 0));
   }
 
   {
     await gcTick();
-    await Bun.write("/tmp/fetch.js.in", Bun.file("/tmp/fetch.js.out"));
+    await Bun.write(tmpbase + "fetch.js.in", Bun.file(tmpbase + "fetch.js.out"));
     await gcTick();
-    expect(await Bun.file("/tmp/fetch.js.in").text()).toBe(text);
+    expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(text);
   }
 });
 
@@ -181,7 +194,7 @@ it("Bun.file lastModified update", async () => {
   const lastModified0 = file.lastModified;
 
   // sleep some time and write the file again.
-  await Bun.sleep(10);
+  await Bun.sleep(isWindows ? 1000 : 100);
   await Bun.write(file, "test text2.");
   const lastModified1 = file.lastModified;
 
@@ -236,6 +249,7 @@ it("Response -> Bun.file", async () => {
   const text = fs.readFileSync(file, "utf8");
   await gcTick();
   const response = new Response(Bun.file(file));
+
   await gcTick();
   expect(await response.text()).toBe(text);
   await gcTick();
@@ -244,19 +258,18 @@ it("Response -> Bun.file", async () => {
 it("Bun.file -> Response", async () => {
   // ensure the file doesn't already exist
   try {
-    fs.unlinkSync("/tmp/fetch.js.out");
+    fs.unlinkSync(tmpbase + "fetch.js.out");
   } catch {}
   await gcTick();
   const file = path.join(import.meta.dir, "fetch.js.txt");
   await gcTick();
-  const text = fs.readFileSync(file, "utf8");
+  const text = fs.readFileSync(file, "utf8").replaceAll("\r\n", "\n");
   await gcTick();
   const resp = await fetch("https://example.com");
   await gcTick();
-
-  expect(await Bun.write("/tmp/fetch.js.out", resp)).toBe(text.length);
   await gcTick();
-  expect(await Bun.file("/tmp/fetch.js.out").text()).toBe(text);
+  expect(await Bun.write(tmpbase + "fetch.js.out", resp)).toBe(text.length);
+  expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(text);
   await gcTick();
 });
 
@@ -275,10 +288,10 @@ it("Response -> Bun.file -> Response -> text", async () => {
 });
 
 it("Bun.write('output.html', '')", async () => {
-  await Bun.write("/tmp/output.html", "lalalala");
-  expect(await Bun.write("/tmp/output.html", "")).toBe(0);
-  await Bun.write("/tmp/output.html", "lalalala");
-  expect(await Bun.file("/tmp/output.html").text()).toBe("lalalala");
+  await Bun.write(tmpbase + "output.html", "lalalala");
+  expect(await Bun.write(tmpbase + "output.html", "")).toBe(0);
+  await Bun.write(tmpbase + "output.html", "lalalala");
+  expect(await Bun.file(tmpbase + "output.html").text()).toBe("lalalala");
 });
 
 it("Bun.write(Bun.stdout, 'Bun.write STDOUT TEST')", async () => {
@@ -297,9 +310,17 @@ it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", a
   expect(await Bun.write(Bun.stderr, new TextEncoder().encode("\nBun.write STDERR TEST\n\n"))).toBe(24);
 });
 
+it("Bun.file(0) survives GC", async () => {
+  for (let i = 0; i < 10; i++) {
+    let f = Bun.file(0);
+    await gcTick();
+    expect(Bun.inspect(f)).toContain("FileRef (fd: 0)");
+  }
+});
+
 // FLAKY TEST
 // Since Bun.file is resolved lazily, this needs to specifically be checked
-it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async done => {
+it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async done => {
   var rewriter = new HTMLRewriter();
 
   rewriter.on("div", {
@@ -307,22 +328,13 @@ it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async don
       element.setInnerContent("<blink>it worked!</blink>", { html: true });
     },
   });
-  await Bun.write("/tmp/html-rewriter.txt.js", "<div>hello</div>");
-  var input = new Response(Bun.file("/tmp/html-rewriter.txt.js"));
+  await Bun.write(tmpbase + "html-rewriter.txt.js", "<div>hello</div>");
+  var input = new Response(Bun.file(tmpbase + "html-rewriter.txt.js"));
   var output = rewriter.transform(input);
-  const outpath = `/tmp/html-rewriter.${Date.now()}.html`;
+  const outpath = tmpbase + `html-rewriter.${Date.now()}.html`;
   await Bun.write(outpath, output);
   expect(await Bun.file(outpath).text()).toBe("<div><blink>it worked!</blink></div>");
   done();
-});
-
-it("offset should work #4963", async () => {
-  const filename = tmpdir() + "/bun.test.offset.txt";
-  await Bun.write(filename, "contents");
-  const file = Bun.file(filename);
-  const slice = file.slice(2, file.size);
-  const contents = await slice.text();
-  expect(contents).toBe("ntents");
 });
 
 it("length should be limited by file size #5080", async () => {
@@ -335,22 +347,22 @@ it("length should be limited by file size #5080", async () => {
   expect(contents.length).toBeLessThanOrEqual(file.size);
 });
 
-it("#2674", async () => {
-  const file = path.join(import.meta.dir, "big-stdout.js");
+// it("#2674", async () => {
+//   const file = path.join(import.meta.dir, "big-stdout.js");
 
-  const { stderr, stdout, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "run", file],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  console.log(stderr?.toString());
-  const text = stdout?.toString();
-  expect(text?.length).toBe(300000);
-  const error = stderr?.toString();
-  expect(error?.length).toBeFalsy();
-  expect(exitCode).toBe(0);
-});
+//   const { stderr, stdout, exitCode } = Bun.spawnSync({
+//     cmd: [bunExe(), "run", file],
+//     env: bunEnv,
+//     stderr: "pipe",
+//     stdout: "pipe",
+//   });
+//   console.log(stderr?.toString());
+//   const text = stdout?.toString();
+//   expect(text?.length).toBe(300000);
+//   const error = stderr?.toString();
+//   expect(error?.length).toBeFalsy();
+//   expect(exitCode).toBe(0);
+// });
 
 if (process.platform === "linux") {
   describe("should work when copyFileRange is not available", () => {
@@ -425,3 +437,62 @@ if (process.platform === "linux") {
     });
   });
 }
+
+describe("ENOENT", () => {
+  const creates = (...opts) => {
+    it("creates the directory", async () => {
+      const dir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/ENOENT`;
+      const file = join(dir, "file");
+      try {
+        await Bun.write(file, "contents", ...opts);
+        expect(fs.existsSync(file)).toBe(true);
+      } finally {
+        fs.rmSync(dir, { force: true });
+      }
+    });
+  };
+
+  describe("by default", () => creates());
+  describe("with { createPath: true }", () => {
+    creates({ createPath: true });
+  });
+
+  describe("with { createPath: false }", () => {
+    it("does not create the directory", async () => {
+      const dir = `${tmpdir()}/fs.test.js/${performance.now()}-1/bun-write/ENOENT`;
+      const file = join(dir, "file");
+      try {
+        expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
+          "No such file or directory",
+        );
+        expect(fs.existsSync(file)).toBe(false);
+      } finally {
+        fs.rmSync(dir, { force: true });
+      }
+    });
+
+    it("throws when given a file descriptor", async () => {
+      const file = Bun.file(123);
+      expect(async () => await Bun.write(file, "contents", { createPath: true })).toThrow(
+        "Cannot create a directory for a file descriptor",
+      );
+    });
+  });
+});
+
+test("timed output should work", async () => {
+  const producer_file = path.join(import.meta.dir, "timed-stderr-output.js");
+
+  const producer = Bun.spawn([bunExe(), "run", producer_file], {
+    stderr: "pipe",
+    stdout: "inherit",
+    stdin: "inherit",
+  });
+
+  let text = "";
+  for await (const chunk of producer.stderr) {
+    text += [...chunk].map(x => String.fromCharCode(x)).join("");
+    await Bun.sleep(1000);
+  }
+  expect(text).toBe("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n");
+});

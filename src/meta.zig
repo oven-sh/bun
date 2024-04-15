@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 pub usingnamespace std.meta;
 
@@ -9,6 +10,11 @@ pub fn ReturnOf(comptime function: anytype) type {
 pub fn ReturnOfType(comptime Type: type) type {
     const typeinfo: std.builtin.Type.Fn = @typeInfo(Type).Fn;
     return typeinfo.return_type orelse void;
+}
+
+pub fn typeName(comptime Type: type) []const u8 {
+    const name = @typeName(Type);
+    return typeBaseName(name);
 }
 
 // partially emulates behaviour of @typeName in previous Zig versions,
@@ -31,11 +37,21 @@ pub fn enumFieldNames(comptime Type: type) []const []const u8 {
     for (names) |name| {
         // zig seems to include "_" or an empty string in the list of enum field names
         // it makes sense, but humans don't want that
-        if (@import("root").bun.strings.eqlAnyComptime(name, &.{ "_none", "", "_" })) {
+        if (bun.strings.eqlAnyComptime(name, &.{ "_none", "", "_" })) {
             continue;
         }
         names[i] = name;
         i += 1;
     }
     return names[0..i];
+}
+
+pub fn banFieldType(comptime Container: type, comptime T: type) void {
+    comptime {
+        for (std.meta.fields(Container)) |field| {
+            if (field.type == T) {
+                @compileError(std.fmt.comptimePrint(typeName(T) ++ " field \"" ++ field.name ++ "\" not allowed in " ++ typeName(Container), .{}));
+            }
+        }
+    }
 }

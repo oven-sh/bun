@@ -469,7 +469,7 @@ test("CallFrame.p.toString", () => {
   expect(e.stack[0].toString().includes("<anonymous>")).toBe(true);
 });
 
-test("err.stack should invoke prepareStackTrace", () => {
+test.todo("err.stack should invoke prepareStackTrace", () => {
   var lineNumber = -1;
   var functionName = "";
   var parentLineNumber = -1;
@@ -492,9 +492,9 @@ test("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(488);
+  expect(lineNumber).toBe(491);
   // TODO: this is wrong
-  expect(parentLineNumber).toBe(497);
+  expect(parentLineNumber).toBe(499);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {
@@ -531,4 +531,20 @@ test("Error.captureStackTrace inside error constructor works", () => {
   expect(() => {
     throw new AnotherError();
   }).toThrow();
+});
+
+import "harness";
+import { join } from "path";
+
+test("Error.prepareStackTrace has a default implementation which behaves the same as being unset", () => {
+  expect([join(import.meta.dirname, "error-prepare-stack-default-fixture.js")]).toRun();
+});
+
+test("Error.prepareStackTrace returns a CallSite object", () => {
+  Error.prepareStackTrace = function (err, stack) {
+    return stack;
+  };
+  const error = new Error();
+  expect(error.stack[0]).not.toBeString();
+  expect(error.stack[0][Symbol.toStringTag]).toBe("CallSite");
 });

@@ -22,16 +22,32 @@ fn fallback(url: string) void {
     Output.flush();
 }
 
-pub fn openURL(url: string) void {
+pub fn openURL(url: stringZ) void {
     if (comptime Environment.isWasi) return fallback(url);
 
-    var args_buf = [_]string{ opener, url };
-    var child_process = std.ChildProcess.init(&args_buf, default_allocator);
-    child_process.stderr_behavior = .Pipe;
-    child_process.stdin_behavior = .Ignore;
-    child_process.stdout_behavior = .Pipe;
-    child_process.spawn() catch return fallback(url);
-    _ = child_process.wait() catch return fallback(url);
+    var args_buf = [_]stringZ{ opener, url };
+
+    maybe_fallback: {
+        switch (bun.spawnSync(&.{
+            .argv = &args_buf,
+
+            .envp = null,
+
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
+
+            .windows = if (Environment.isWindows) .{
+                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+            } else {},
+        }) catch break :maybe_fallback) {
+            // don't fallback:
+            .result => |*result| if (result.isOK()) return,
+            .err => {},
+        }
+    }
+
+    fallback(url);
 }
 
 pub const Editor = enum(u8) {
@@ -274,7 +290,7 @@ pub const Editor = enum(u8) {
             },
             .textmate => {
                 try file_path_buf_writer.writeAll(file);
-                var file_path = file_path_buf_stream.getWritten();
+                const file_path = file_path_buf_stream.getWritten();
 
                 if (line) |line_| {
                     if (line_.len > 0) {
@@ -288,7 +304,7 @@ pub const Editor = enum(u8) {
                                 try file_path_buf_writer.print(":{s}", .{col});
                         }
 
-                        var line_column = file_path_buf_stream.getWritten()[file_path.len..];
+                        const line_column = file_path_buf_stream.getWritten()[file_path.len..];
                         if (line_column.len > 0) {
                             args_buf[i] = line_column;
                             i += 1;
@@ -304,7 +320,7 @@ pub const Editor = enum(u8) {
             else => {
                 if (file.len > 0) {
                     try file_path_buf_writer.writeAll(file);
-                    var file_path = file_path_buf_stream.getWritten();
+                    const file_path = file_path_buf_stream.getWritten();
                     args_buf[i] = file_path;
                     i += 1;
                 }

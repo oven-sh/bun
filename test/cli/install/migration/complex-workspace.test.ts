@@ -63,9 +63,7 @@ test("the install succeeds", async () => {
     cwd = false as any;
     throw new Error("Failed to install");
   }
-
-  console.log(cwd);
-});
+}, 10000);
 
 // bun-types
 validate("node_modules/bun-types", "1.0.0");

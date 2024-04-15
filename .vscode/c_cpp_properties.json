@@ -3,6 +3,7 @@
     {
       "name": "Debug",
       "forcedInclude": ["${workspaceFolder}/src/bun.js/bindings/root.h"],
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
       "includePath": [
         "${workspaceFolder}/build/bun-webkit/include",
         "${workspaceFolder}/build/codegen",
@@ -16,7 +17,7 @@
         "${workspaceFolder}/src/deps",
         "${workspaceFolder}/src/napi/*",
         "${workspaceFolder}/packages/bun-usockets/src",
-        "${workspaceFolder}/packages/"
+        "${workspaceFolder}/packages/",
       ],
       "browse": {
         "path": [
@@ -29,10 +30,10 @@
           "${workspaceFolder}/src/deps/boringssl/include/*",
           "${workspaceFolder}/packages/bun-usockets/*",
           "${workspaceFolder}/packages/bun-uws/*",
-          "${workspaceFolder}/src/napi/*"
+          "${workspaceFolder}/src/napi/*",
         ],
         "limitSymbolsToIncludedHeaders": true,
-        "databaseFilename": ".vscode/cppdb"
+        "databaseFilename": ".vscode/cppdb",
       },
       "defines": [
         "STATICALLY_LINKED_WITH_JavaScriptCore=1",
@@ -43,17 +44,18 @@
         "BUILDING_JSCONLY__",
         "USE_FOUNDATION=1",
         "ASSERT_ENABLED=1",
-        "DU_DISABLE_RENAMING=1"
+        "DU_DISABLE_RENAMING=1",
       ],
       "macFrameworkPath": [],
       "compilerPath": "${workspaceFolder}/.vscode/clang++",
       "cStandard": "c17",
-      "cppStandard": "c++20"
+      "cppStandard": "c++20",
     },
     {
       "name": "BunWithJSCDebug",
       "forcedInclude": ["${workspaceFolder}/src/bun.js/bindings/root.h"],
       "includePath": [
+        "${workspaceFolder}/build/codegen",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Debug/",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Debug/ICU/Headers/",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Debug/JavaScriptCore/PrivateHeaders/",
@@ -70,7 +72,7 @@
         "${workspaceFolder}/src/deps",
         "${workspaceFolder}/src/napi/*",
         "${workspaceFolder}/packages/bun-usockets/src",
-        "${workspaceFolder}/packages/"
+        "${workspaceFolder}/packages/",
       ],
       "browse": {
         "path": [
@@ -92,10 +94,10 @@
           "${workspaceFolder}/src/deps/boringssl/include/",
           "${workspaceFolder}/packages/bun-usockets/",
           "${workspaceFolder}/packages/bun-uws/",
-          "${workspaceFolder}/src/napi"
+          "${workspaceFolder}/src/napi",
         ],
         "limitSymbolsToIncludedHeaders": true,
-        "databaseFilename": ".vscode/cppdb_debug"
+        "databaseFilename": ".vscode/cppdb_debug",
       },
       "defines": [
         "STATICALLY_LINKED_WITH_JavaScriptCore=1",
@@ -106,13 +108,13 @@
         "BUILDING_JSCONLY__",
         "USE_FOUNDATION=1",
         "ASSERT_ENABLED=1",
-        "DU_DISABLE_RENAMING=1"
+        "DU_DISABLE_RENAMING=1",
       ],
       "macFrameworkPath": [],
       "compilerPath": "${workspaceFolder}/.vscode/clang++",
       "cStandard": "c17",
-      "cppStandard": "c++20"
-    }
+      "cppStandard": "c++20",
+    },
   ],
-  "version": 4
+  "version": 4,
 }

@@ -1,7 +1,6 @@
 // This code is based on https://github.com/frmdstryr/zhp/blob/a4b5700c289c3619647206144e10fb414113a888/src/websocket.zig
 // Thank you @frmdstryr.
 const std = @import("std");
-const native_endian = @import("builtin").target.cpu.arch.endian();
 
 const os = std.os;
 const bun = @import("root").bun;
@@ -42,8 +41,7 @@ pub const WebsocketHeader = packed struct {
     len: u7,
     mask: bool,
     opcode: Opcode,
-    rsv3: u1 = 0,
-    rsv2: u1 = 0,
+    rsv: u2 = 0, //rsv2 and rsv3
     compressed: bool = false, // rsv1
     final: bool = true,
 
@@ -56,12 +54,12 @@ pub const WebsocketHeader = packed struct {
             stream.writer().writeInt(u16, @as(u16, @bitCast(header)), .big) catch unreachable;
             stream.pos = 0;
             const casted = stream.reader().readInt(u16, .big) catch unreachable;
-            std.debug.assert(casted == @as(u16, @bitCast(header)));
-            std.debug.assert(std.meta.eql(@as(WebsocketHeader, @bitCast(casted)), header));
+            bun.assert(casted == @as(u16, @bitCast(header)));
+            bun.assert(std.meta.eql(@as(WebsocketHeader, @bitCast(casted)), header));
         }
 
         try writer.writeInt(u16, @as(u16, @bitCast(header)), .big);
-        std.debug.assert(header.len == packLength(n));
+        bun.assert(header.len == packLength(n));
     }
 
     pub fn packLength(length: usize) u7 {
@@ -89,6 +87,14 @@ pub const WebsocketHeader = packed struct {
 
     pub fn frameSizeIncludingMask(byte_length: usize) usize {
         return frameSize(byte_length) + mask_length;
+    }
+
+    pub fn slice(self: WebsocketHeader) [2]u8 {
+        return @as([2]u8, @bitCast(@byteSwap(@as(u16, @bitCast(self)))));
+    }
+
+    pub fn fromSlice(bytes: [2]u8) WebsocketHeader {
+        return @as(WebsocketHeader, @bitCast(@byteSwap(@as(u16, @bitCast(bytes)))));
     }
 };
 
@@ -141,7 +147,7 @@ pub const Websocket = struct {
     stream: std.net.Stream,
 
     err: ?anyerror = null,
-    buf: [8096]u8 = undefined,
+    buf: [8192]u8 = undefined,
     read_stream: ReadStream,
     reader: ReadStream.Reader,
     flags: u32 = 0,
@@ -149,14 +155,14 @@ pub const Websocket = struct {
         fd: std.os.fd_t,
         comptime flags: u32,
     ) Websocket {
-        var stream = ReadStream{
+        const stream = ReadStream{
             .buffer = &[_]u8{},
             .pos = 0,
         };
         var socket = Websocket{
             .read_stream = undefined,
             .reader = undefined,
-            .stream = std.net.Stream{ .handle = @as(std.os.socket_t, @intCast(fd)) },
+            .stream = std.net.Stream{ .handle = bun.socketcast(fd) },
             .flags = flags,
         };
 
@@ -184,7 +190,7 @@ pub const Websocket = struct {
 
     // Close and send the status
     pub fn close(self: *Websocket, code: u16) !void {
-        const c = if (native_endian == .Big) code else @byteSwap(code);
+        const c = @byteSwap(code);
         const data = @as([2]u8, @bitCast(c));
         _ = try self.writeMessage(.Close, &data);
     }
@@ -264,7 +270,7 @@ pub const Websocket = struct {
         @memset(&self.buf, 0);
 
         // Read and retry if we hit the end of the stream buffer
-        var start = try self.stream.read(&self.buf);
+        const start = try self.stream.read(&self.buf);
         if (start == 0) {
             return error.ConnectionClosed;
         }
@@ -322,7 +328,7 @@ pub const Websocket = struct {
         const end = start + length;
 
         if (end > self.read_stream.pos) {
-            var extend_length = try self.stream.read(self.buf[self.read_stream.pos..]);
+            const extend_length = try self.stream.read(self.buf[self.read_stream.pos..]);
             if (self.read_stream.pos + extend_length > self.buf.len) {
                 return error.MessageTooLarge;
             }

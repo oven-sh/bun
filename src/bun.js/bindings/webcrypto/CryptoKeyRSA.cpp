@@ -30,7 +30,6 @@
 #include "JsonWebKey.h"
 #include "../wtf-bindings.h"
 #include <wtf/text/Base64.h>
-#include "Bun_base64URLEncodeToString.h"
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -134,7 +133,7 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
 
 JsonWebKey CryptoKeyRSA::exportJwk() const
 {
-    JsonWebKey result;
+    JsonWebKey result {};
     result.kty = "RSA"_s;
     result.key_ops = usages();
     result.ext = extractable();

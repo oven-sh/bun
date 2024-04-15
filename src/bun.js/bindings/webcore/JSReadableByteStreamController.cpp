@@ -139,7 +139,9 @@ void JSReadableByteStreamController::finishCreation(VM& vm)
 
 JSObject* JSReadableByteStreamController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSReadableByteStreamControllerPrototype::create(vm, &globalObject, JSReadableByteStreamControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSReadableByteStreamControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSReadableByteStreamControllerPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSReadableByteStreamController::prototype(VM& vm, JSDOMGlobalObject& globalObject)

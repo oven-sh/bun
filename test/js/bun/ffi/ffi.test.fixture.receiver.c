@@ -197,8 +197,18 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
    return res;
 }
 
-
-
+static EncodedJSValue UINT32_TO_JSVALUE(uint32_t val) {
+  EncodedJSValue res;
+  if(val <= MAX_INT32) {
+    res.asInt64 = NumberTag | val;
+    return res;
+  } else {
+    EncodedJSValue res;
+    res.asDouble = val;
+    res.asInt64 += DoubleEncodeOffset;
+    return res;
+  }
+}
 
 static EncodedJSValue FLOAT_TO_JSVALUE(float val) {
   return DOUBLE_TO_JSVALUE((double)val);
@@ -281,7 +291,6 @@ ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
 // --- Generated Code ---
 /* --- The Function To Call */
 float not_a_callback(float arg0);
-
 
 /* ---- Your Wrapper Function ---- */
 ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {

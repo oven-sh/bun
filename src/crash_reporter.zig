@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 fn setup_sigactions(act: ?*const os.Sigaction) !void {
     try os.sigaction(os.SIG.ABRT, act, null);
@@ -11,30 +12,29 @@ fn setup_sigactions(act: ?*const os.Sigaction) !void {
 
 const builtin = @import("builtin");
 const ErrorCallback = *const fn (sig: i32, addr: usize) void;
-var on_error: ?ErrorCallback = null;
+pub var on_error: ?ErrorCallback = null;
 noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
     // Prevent recursive calls
     setup_sigactions(null) catch unreachable;
 
-    const addr = switch (comptime builtin.target.os.tag) {
+    const addr = switch (builtin.target.os.tag) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .macos, .freebsd => @intFromPtr(info.addr),
         .netbsd => @intFromPtr(info.info.reason.fault.addr),
         .openbsd => @intFromPtr(info.data.fault.addr),
         .solaris => @intFromPtr(info.reason.fault.addr),
-        else => unreachable,
+        else => @compileError("unreachable"),
     };
     if (on_error) |handle| handle(sig, addr);
 }
 
 noinline fn sigpipe_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
-    const bun = @import("root").bun;
     bun.Output.debug("SIGPIPE received\n", .{});
 }
 
 pub fn reloadHandlers() !void {
-    if (comptime @import("root").bun.Environment.isWindows) {
-        return @import("root").bun.todo(@src(), {});
+    if (comptime bun.Environment.isWindows) {
+        return bun.todo(@src(), {});
     }
     try os.sigaction(os.SIG.PIPE, null, null);
     try setup_sigactions(null);
@@ -46,7 +46,7 @@ pub fn reloadHandlers() !void {
     };
 
     try setup_sigactions(&act);
-
+    bun.spawn.WaiterThread.reloadHandlers();
     bun_ignore_sigpipe();
 }
 const os = std.os;
@@ -59,6 +59,7 @@ pub fn start() !void {
 
     try setup_sigactions(&act);
     bun_ignore_sigpipe();
+    bun.spawn.WaiterThread.reloadHandlers();
 }
 
 extern fn bun_ignore_sigpipe() void;

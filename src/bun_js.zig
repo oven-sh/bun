@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -27,8 +27,8 @@ const Command = @import("cli.zig").Command;
 const bundler = bun.bundler;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
-const JSC = @import("root").bun.JSC;
-const AsyncHTTP = @import("root").bun.HTTP.AsyncHTTP;
+const JSC = bun.JSC;
+const AsyncHTTP = bun.http.AsyncHTTP;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
@@ -39,15 +39,14 @@ pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
-    arena: Arena = undefined,
+    arena: Arena,
     any_unhandled: bool = false,
 
-    pub fn bootStandalone(ctx_: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
-        var ctx = ctx_;
+    pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
         bun.JSC.initialize();
 
-        var graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
+        const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
 
         js_ast.Expr.Data.Store.create(default_allocator);
@@ -55,13 +54,14 @@ pub const Run = struct {
         var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
-            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
         run = .{
             .vm = try VirtualMachine.initWithModuleGraph(.{
                 .allocator = arena.allocator(),
                 .log = ctx.log,
+                .args = ctx.args,
                 .graph = graph_ptr,
             }),
             .arena = arena,
@@ -103,23 +103,13 @@ pub const Run = struct {
             .unspecified => {},
         }
 
+        b.options.env.behavior = .load_all_without_inlining;
+
         b.configureRouter(false) catch {
-            if (Output.enable_ansi_colors_stderr) {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("\n", .{});
-            Global.exit(1);
+            failWithBuildError(vm);
         };
         b.configureDefines() catch {
-            if (Output.enable_ansi_colors_stderr) {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("\n", .{});
-            Global.exit(1);
+            failWithBuildError(vm);
         };
 
         AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
@@ -128,22 +118,45 @@ pub const Run = struct {
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
-        var callback = OpaqueWrap(Run, Run.start);
+        const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
     }
 
-    pub fn boot(ctx_: Command.Context, entry_path: string) !void {
-        var ctx = ctx_;
-        JSC.markBinding(@src());
-        bun.JSC.initialize();
+    fn bootBunShell(ctx: Command.Context, entry_path: []const u8) !bun.shell.ExitCode {
+        @setCold(true);
 
+        // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
+        var bundle = try bun.Bundler.init(
+            ctx.allocator,
+            ctx.log,
+            try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+            null,
+        );
+        try bundle.runEnvLoader(false);
+        const mini = JSC.MiniEventLoop.initGlobal(bundle.env);
+        mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
+        return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
+    }
+
+    pub fn boot(ctx: Command.Context, entry_path: string) !void {
+        JSC.markBinding(@src());
+
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
+        }
+
+        if (strings.endsWithComptime(entry_path, ".sh")) {
+            const exit_code = try bootBunShell(ctx, entry_path);
+            Global.exitWide(exit_code);
+            return;
+        }
+
+        // The shell does not need to initialize JSC.
+        // JSC initialization costs 1-3ms
+        bun.JSC.initialize();
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
         var arena = try Arena.init();
-
-        if (!ctx.debug.loaded_bunfig) {
-            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
-        }
 
         run = .{
             .vm = try VirtualMachine.init(
@@ -153,6 +166,7 @@ pub const Run = struct {
                     .args = ctx.args,
                     .store_fd = ctx.debug.hot_reload != .none,
                     .smol = ctx.runtime_options.smol,
+                    .eval = ctx.runtime_options.eval.eval_and_print,
                     .debugger = ctx.runtime_options.debugger,
                 },
             ),
@@ -168,12 +182,14 @@ pub const Run = struct {
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
 
-        if (ctx.runtime_options.eval_script.len > 0) {
-            vm.module_loader.eval_script = ptr: {
-                var v = try bun.default_allocator.create(logger.Source);
-                v.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval_script);
-                break :ptr v;
-            };
+        if (ctx.runtime_options.eval.script.len > 0) {
+            const script_source = try bun.default_allocator.create(logger.Source);
+            script_source.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval.script);
+            vm.module_loader.eval_source = script_source;
+
+            if (ctx.runtime_options.eval.eval_and_print) {
+                b.options.dead_code_elimination = false;
+            }
         }
 
         b.options.install = ctx.install;
@@ -191,6 +207,7 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
+        b.options.env.behavior = .load_all_without_inlining;
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
         switch (ctx.debug.macros) {
@@ -204,22 +221,10 @@ pub const Run = struct {
         }
 
         b.configureRouter(false) catch {
-            if (Output.enable_ansi_colors_stderr) {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("\n", .{});
-            Global.exit(1);
+            failWithBuildError(vm);
         };
         b.configureDefines() catch {
-            if (Output.enable_ansi_colors_stderr) {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("\n", .{});
-            Global.exit(1);
+            failWithBuildError(vm);
         };
 
         AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
@@ -237,7 +242,7 @@ pub const Run = struct {
 
         vm.bundler.env.loadTracy();
 
-        var callback = OpaqueWrap(Run, Run.start);
+        const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
     }
 
@@ -253,7 +258,7 @@ pub const Run = struct {
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
-        if (this.ctx.runtime_options.eval_script.len > 0) {
+        if (this.ctx.runtime_options.eval.script.len > 0) {
             Bun__ExposeNodeModuleGlobals(vm.global);
         }
 
@@ -284,25 +289,16 @@ pub const Run = struct {
             _ = promise.result(vm.global.vm());
 
             if (vm.log.msgs.items.len > 0) {
-                if (Output.enable_ansi_colors) {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
+                dumpBuildError(vm);
                 vm.log.msgs.items.len = 0;
-                Output.prettyErrorln("\n", .{});
-                Output.flush();
             }
         } else |err| {
             if (vm.log.msgs.items.len > 0) {
-                if (Output.enable_ansi_colors) {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
-                Output.flush();
+                dumpBuildError(vm);
+                vm.log.msgs.items.len = 0;
             } else {
                 Output.prettyErrorln("Error occurred loading entry point: {s}", .{@errorName(err)});
+                Output.flush();
             }
 
             if (vm.hot_reload != .none) {
@@ -366,16 +362,39 @@ pub const Run = struct {
                     vm.eventLoop().autoTickActive();
                 }
 
+                if (this.ctx.runtime_options.eval.eval_and_print) {
+                    const to_print = brk: {
+                        const result = vm.entry_point_result.value.get() orelse .undefined;
+                        if (result.asAnyPromise()) |promise| {
+                            switch (promise.status(vm.jsc)) {
+                                .Pending => {
+                                    result._then(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+
+                                    vm.tick();
+                                    vm.eventLoop().autoTickActive();
+
+                                    while (vm.isEventLoopAlive()) {
+                                        vm.tick();
+                                        vm.eventLoop().autoTickActive();
+                                    }
+
+                                    break :brk result;
+                                },
+                                else => break :brk promise.result(vm.jsc),
+                            }
+                        }
+
+                        break :brk result;
+                    };
+
+                    to_print.print(vm.global, .Log, .Log);
+                }
+
                 vm.onBeforeExit();
             }
 
             if (vm.log.msgs.items.len > 0) {
-                if (Output.enable_ansi_colors) {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
-                Output.prettyErrorln("\n", .{});
+                dumpBuildError(vm);
                 Output.flush();
             }
         }
@@ -393,3 +412,43 @@ pub const Run = struct {
         Global.exit(exit_code);
     }
 };
+
+pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+    const arguments = callframe.arguments(1).slice();
+    const result = arguments[0];
+    result.print(global, .Log, .Log);
+    Global.exit(global.bunVM().exit_handler.exit_code);
+    return .undefined;
+}
+
+pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+    const arguments = callframe.arguments(1).slice();
+    const result = arguments[0];
+    result.print(global, .Log, .Log);
+    Global.exit(global.bunVM().exit_handler.exit_code);
+    return .undefined;
+}
+
+noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
+    @setCold(true);
+
+    Output.flush();
+
+    const error_writer = Output.errorWriter();
+    var buffered_writer = std.io.bufferedWriter(error_writer);
+    defer {
+        buffered_writer.flush() catch {};
+    }
+
+    const writer = buffered_writer.writer();
+
+    switch (Output.enable_ansi_colors_stderr) {
+        inline else => |enable_colors| vm.log.printForLogLevelWithEnableAnsiColors(writer, enable_colors) catch {},
+    }
+}
+
+noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
+    @setCold(true);
+    dumpBuildError(vm);
+    Global.exit(1);
+}

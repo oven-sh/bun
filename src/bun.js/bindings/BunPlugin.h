@@ -70,9 +70,14 @@ public:
         }
 
         VirtualModuleMap* virtualModules = nullptr;
+        bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 
+        bool hasVirtualModules() const { return virtualModules != nullptr; }
+
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+
+        std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
         ~OnLoad()
         {

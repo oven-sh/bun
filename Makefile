@@ -673,7 +673,7 @@ assert-deps:
 	@echo "You have the dependencies installed! Woo"
 
 # the following allows you to run `make submodule` to update or init submodules. but we will exclude webkit
-# unless you explicity clone it yourself (a huge download)
+# unless you explicitly clone it yourself (a huge download)
 SUBMODULE_NAMES=$(shell cat .gitmodules | grep 'path = ' | awk '{print $$3}')
 ifeq ("$(wildcard src/bun.js/WebKit/.git)", "")
 	SUBMODULE_NAMES := $(filter-out src/bun.js/WebKit, $(SUBMODULE_NAMES))
@@ -823,7 +823,6 @@ fmt: fmt-cpp fmt-zig
 api:
 	./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 	$(ZIG) fmt src/api/schema.zig
-	$(PRETTIER) --config=.prettierrc.cjs --write src/api/schema.js src/api/schema.d.ts
 
 .PHONY: node-fallbacks
 node-fallbacks:
@@ -836,17 +835,7 @@ fallback_decoder:
 
 .PHONY: runtime_js
 runtime_js:
-	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV=\"production\" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
-	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV=\"production\" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.refresh.js; cat src/runtime.footer.with-refresh.js >> src/runtime.out.refresh.js
-	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV=\"production\" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.node.pre.out.js; cat src/runtime.node.pre.out.js src/runtime.footer.node.js > src/runtime.node.out.js
-	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV=\"production\" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.bun.pre.out.js; cat src/runtime.bun.pre.out.js src/runtime.footer.bun.js > src/runtime.bun.out.js
-
-.PHONY: runtime_js_dev
-runtime_js_dev:
-	@NODE_ENV=development $(ESBUILD) --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
-	@NODE_ENV=development $(ESBUILD) --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.refresh.js; cat src/runtime.footer.with-refresh.js >> src/runtime.out.refresh.js
-	@NODE_ENV=development $(ESBUILD) --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.node.pre.out.js; cat src/runtime.node.pre.out.js src/runtime.footer.node.js > src/runtime.node.out.js
-	@NODE_ENV=development $(ESBUILD) --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.bun.pre.out.js; cat src/runtime.bun.pre.out.js src/runtime.footer.bun.js > src/runtime.bun.out.js
+	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV=\"production\" --target=esnext --bundle src/runtime.bun.js --format=esm --platform=node --minify --external:/bun:* > src/runtime.out.js
 
 .PHONY: bun_error
 bun_error:
@@ -1733,7 +1722,7 @@ sizegen:
 # Linux uses bundled SQLite3
 ifeq ($(OS_NAME),linux)
 sqlite:
-	$(CC) $(EMIT_LLVM_FOR_RELEASE) $(CFLAGS) $(INCLUDE_DIRS) -DSQLITE_ENABLE_COLUMN_METADATA= -DSQLITE_MAX_VARIABLE_NUMBER=250000 -DSQLITE_ENABLE_RTREE=1 -DSQLITE_ENABLE_FTS3=1 -DSQLITE_ENABLE_FTS3_PARENTHESIS=1 -DSQLITE_ENABLE_FTS5=1 -DSQLITE_ENABLE_JSON1=1 $(SRC_DIR)/sqlite/sqlite3.c -c -o $(SQLITE_OBJECT)
+	$(CC) $(EMIT_LLVM_FOR_RELEASE) $(CFLAGS) $(INCLUDE_DIRS) -DSQLITE_ENABLE_COLUMN_METADATA= -DSQLITE_MAX_VARIABLE_NUMBER=250000 -DSQLITE_ENABLE_RTREE=1 -DSQLITE_ENABLE_FTS3=1 -DSQLITE_ENABLE_FTS3_PARENTHESIS=1 -DSQLITE_ENABLE_FTS5=1 -DSQLITE_ENABLE_JSON1=1 -DSQLITE_ENABLE_MATH_FUNCTIONS=1 $(SRC_DIR)/sqlite/sqlite3.c -c -o $(SQLITE_OBJECT)
 endif
 
 picohttp:

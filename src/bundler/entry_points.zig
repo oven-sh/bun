@@ -1,4 +1,4 @@
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -8,7 +8,7 @@ const Bundler = bun.Bundler;
 const strings = bun.strings;
 
 pub const FallbackEntryPoint = struct {
-    code_buffer: [8096]u8 = undefined,
+    code_buffer: [8192]u8 = undefined,
     path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
     source: logger.Source = undefined,
     built_code: string = "",
@@ -74,7 +74,7 @@ pub const FallbackEntryPoint = struct {
 };
 
 pub const ClientEntryPoint = struct {
-    code_buffer: [8096]u8 = undefined,
+    code_buffer: [8192]u8 = undefined,
     path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
     source: logger.Source = undefined,
 
@@ -94,7 +94,7 @@ pub const ClientEntryPoint = struct {
 
     pub fn decodeEntryPointPath(outbuffer: []u8, original_path: Fs.PathName) string {
         var joined_base_and_dir_parts = [_]string{ original_path.dir, original_path.base };
-        var generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
+        const generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
         var original_ext = original_path.ext;
         if (strings.indexOf(original_path.ext, "entry")) |entry_i| {
             original_ext = original_path.ext[entry_i + "entry".len ..];
@@ -157,25 +157,6 @@ pub const ClientEntryPoint = struct {
     }
 };
 
-const QuoteEscapeFormat = struct {
-    data: []const u8,
-
-    pub fn format(self: QuoteEscapeFormat, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var i: usize = 0;
-        while (std.mem.indexOfAnyPos(u8, self.data, i, "\"\n\\")) |j| : (i = j + 1) {
-            try writer.writeAll(self.data[i..j]);
-            try writer.writeAll(switch (self.data[j]) {
-                '"' => "\\\"",
-                '\n' => "\\n",
-                '\\' => "\\\\",
-                else => unreachable,
-            });
-        }
-        if (i == self.data.len) return;
-        try writer.writeAll(self.data[i..]);
-    }
-};
-
 pub const ServerEntryPoint = struct {
     source: logger.Source = undefined,
 
@@ -218,7 +199,7 @@ pub const ServerEntryPoint = struct {
                     \\
                 ,
                     .{
-                        QuoteEscapeFormat{ .data = path_to_use },
+                        strings.QuoteEscapeFormat{ .data = path_to_use },
                     },
                 );
             }
@@ -239,7 +220,7 @@ pub const ServerEntryPoint = struct {
                 \\
             ,
                 .{
-                    QuoteEscapeFormat{ .data = path_to_use },
+                    strings.QuoteEscapeFormat{ .data = path_to_use },
                 },
             );
         };
@@ -261,7 +242,7 @@ pub const MacroEntryPoint = struct {
     source: logger.Source = undefined,
 
     pub fn generateID(entry_path: string, function_name: string, buf: []u8, len: *u32) i32 {
-        var hasher = bun.Wyhash.init(0);
+        var hasher = bun.Wyhash11.init(0);
         hasher.update(js_ast.Macro.namespaceWithColon);
         hasher.update(entry_path);
         hasher.update(function_name);
@@ -334,12 +315,20 @@ pub const MacroEntryPoint = struct {
                 \\Bun.registerMacro({d}, Macros['{s}']);
             ,
                 .{
-                    dir_to_use,
-                    import_path.filename,
+                    bun.fmt.fmtPath(u8, dir_to_use, .{
+                        .escape_backslashes = true,
+                    }),
+                    bun.fmt.fmtPath(u8, import_path.filename, .{
+                        .escape_backslashes = true,
+                    }),
                     function_name,
                     function_name,
-                    dir_to_use,
-                    import_path.filename,
+                    bun.fmt.fmtPath(u8, dir_to_use, .{
+                        .escape_backslashes = true,
+                    }),
+                    bun.fmt.fmtPath(u8, import_path.filename, .{
+                        .escape_backslashes = true,
+                    }),
                     macro_id,
                     function_name,
                 },

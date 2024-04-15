@@ -316,6 +316,27 @@ pub const ZlibError = error{
     ShortRead,
 };
 
+const ZlibAllocator = struct {
+    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
+        if (comptime bun.is_heap_breakdown_enabled) {
+            const zone = bun.HeapBreakdown.malloc_zone_t.get(ZlibAllocator);
+            return zone.malloc_zone_calloc(items, len).?;
+        }
+
+        return mimalloc.mi_calloc(items, len) orelse unreachable;
+    }
+
+    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
+        if (comptime bun.is_heap_breakdown_enabled) {
+            const zone = bun.HeapBreakdown.malloc_zone_t.get(ZlibAllocator);
+            zone.malloc_zone_free(data);
+            return;
+        }
+
+        mimalloc.mi_free(data);
+    }
+};
+
 pub const ZlibReaderArrayList = struct {
     const ZlibReader = ZlibReaderArrayList;
 
@@ -333,14 +354,6 @@ pub const ZlibReaderArrayList = struct {
     zlib: zStream_struct,
     allocator: std.mem.Allocator,
     state: State = State.Uninitialized,
-
-    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-        return mimalloc.mi_malloc(items * len) orelse unreachable;
-    }
-
-    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
-        mimalloc.mi_free(data);
-    }
 
     pub fn deinit(this: *ZlibReader) void {
         var allocator = this.allocator;
@@ -393,8 +406,8 @@ pub const ZlibReaderArrayList = struct {
             .total_out = @truncate(zlib_reader.list.items.len),
 
             .err_msg = null,
-            .alloc_func = ZlibReader.alloc,
-            .free_func = ZlibReader.free,
+            .alloc_func = ZlibAllocator.alloc,
+            .free_func = ZlibAllocator.free,
 
             .internal_state = null,
             .user_data = zlib_reader,

@@ -7,8 +7,8 @@ const ThreadPool = @This();
 const Futex = @import("./futex.zig");
 
 const Environment = bun.Environment;
-const assert = std.debug.assert;
-const Atomic = std.atomic.Atomic;
+const assert = bun.assert;
+const Atomic = std.atomic.Value;
 pub const OnSpawnCallback = *const fn (ctx: ?*anyopaque) ?*anyopaque;
 
 sleep_on_idle_network_thread: bool = true,
@@ -52,7 +52,7 @@ const Sync = packed struct {
 /// Configuration options for the thread pool.
 /// TODO: add CPU core affinity?
 pub const Config = struct {
-    stack_size: u32 = (std.Thread.SpawnConfig{}).stack_size,
+    stack_size: u32 = default_thread_stack_size,
     max_threads: u32,
 };
 
@@ -93,7 +93,7 @@ pub const Batch = struct {
         if (len == 0) {
             return null;
         }
-        var task = this.head.?;
+        const task = this.head.?;
         if (task.node.next) |node| {
             this.head = @fieldParentPtr(Task, "node", node);
         } else {
@@ -227,8 +227,8 @@ pub fn ConcurrentFunction(
             task: Task = .{ .callback = callback },
 
             pub fn callback(task: *Task) void {
-                var routine = @fieldParentPtr(@This(), "task", task);
-                @call(.always_inline, Fn, routine.args);
+                const routine = @fieldParentPtr(@This(), "task", task);
+                @call(bun.callmod_inline, Fn, routine.args);
             }
         };
 
@@ -320,7 +320,7 @@ pub fn Do(
             runner_task.ctx.wait_group.finish();
         }
     };
-    var wait_context = allocator.create(WaitContext) catch unreachable;
+    const wait_context = allocator.create(WaitContext) catch unreachable;
     wait_context.* = .{
         .ctx = ctx,
         .wait_group = wait_group,
@@ -360,8 +360,8 @@ pub fn Do(
 test "parallel for loop" {
     Output.initTest();
     var thread_pool = ThreadPool.init(.{ .max_threads = 12 });
-    var sleepy_time: u32 = 100;
-    var huge_array = &[_]u32{
+    const sleepy_time: u32 = 100;
+    const huge_array = &[_]u32{
         sleepy_time + std.rand.DefaultPrng.init(1).random().uintAtMost(u32, 20),
         sleepy_time + std.rand.DefaultPrng.init(2).random().uintAtMost(u32, 20),
         sleepy_time + std.rand.DefaultPrng.init(3).random().uintAtMost(u32, 20),
@@ -389,10 +389,10 @@ test "parallel for loop" {
         pub fn run(ctx: *@This(), value: u32, _: usize) void {
             std.time.sleep(value);
             ctx.completed += 1;
-            std.debug.assert(ctx.completed <= ctx.total);
+            bun.assert(ctx.completed <= ctx.total);
         }
     };
-    var runny = try std.heap.page_allocator.create(Runner);
+    const runny = try std.heap.page_allocator.create(Runner);
     runny.* = .{ .total = huge_array.len };
     try thread_pool.doAndWait(std.heap.page_allocator, null, runny, Runner.run, std.mem.span(huge_array));
     try std.testing.expectEqual(huge_array.len, runny.completed);
@@ -440,6 +440,22 @@ inline fn notify(self: *ThreadPool, is_waking: bool) void {
     return self.notifySlow(is_waking);
 }
 
+pub const default_thread_stack_size = brk: {
+    // 4mb
+    const default = 4 * 1024 * 1024;
+
+    if (!Environment.isMac) break :brk default;
+
+    const size = default - (default % std.mem.page_size);
+
+    // stack size must be a multiple of page_size
+    // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
+    if (size % std.mem.page_size != 0)
+        @compileError("Thread stack size is not a multiple of page size");
+
+    break :brk size;
+};
+
 /// Warm the thread pool up to the given number of threads.
 /// https://www.youtube.com/watch?v=ys3qcbO5KWw
 pub fn warm(self: *ThreadPool, count: u14) void {
@@ -451,19 +467,13 @@ pub fn warm(self: *ThreadPool, count: u14) void {
     while (sync.spawned < to_spawn) {
         var new_sync = sync;
         new_sync.spawned += 1;
-        sync = @as(Sync, @bitCast(self.sync.tryCompareAndSwap(
+        sync = @as(Sync, @bitCast(self.sync.cmpxchgWeak(
             @as(u32, @bitCast(sync)),
             @as(u32, @bitCast(new_sync)),
             .Release,
             .Monotonic,
         ) orelse break));
-        const spawn_config = if (Environment.isMac)
-            // stack size must be a multiple of page_size
-            // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-            std.Thread.SpawnConfig{ .stack_size = ((std.Thread.SpawnConfig{}).stack_size + (std.mem.page_size / 2) / std.mem.page_size) * std.mem.page_size }
-        else
-            std.Thread.SpawnConfig{};
-
+        const spawn_config = std.Thread.SpawnConfig{ .stack_size = default_thread_stack_size };
         const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
         thread.detach();
     }
@@ -492,7 +502,7 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
 
         // Release barrier synchronizes with Acquire in wait()
         // to ensure pushes to run queues happen before observing a posted notification.
-        sync = @as(Sync, @bitCast(self.sync.tryCompareAndSwap(
+        sync = @bitCast(self.sync.cmpxchgWeak(
             @as(u32, @bitCast(sync)),
             @as(u32, @bitCast(new_sync)),
             .Release,
@@ -505,20 +515,14 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
 
             // We signaled to spawn a new thread
             if (can_wake and sync.spawned < self.max_threads) {
-                const spawn_config = if (Environment.isMac)
-                    // stack size must be a multiple of page_size
-                    // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-                    std.Thread.SpawnConfig{ .stack_size = ((std.Thread.SpawnConfig{}).stack_size + (std.mem.page_size / 2) / std.mem.page_size) * std.mem.page_size }
-                else
-                    std.Thread.SpawnConfig{};
-
+                const spawn_config = std.Thread.SpawnConfig{ .stack_size = default_thread_stack_size };
                 const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
                 // if (self.name.len > 0) thread.setName(self.name) catch {};
                 return thread.detach();
             }
 
             return;
-        }));
+        });
     }
 }
 
@@ -542,7 +546,7 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
 
             // Acquire barrier synchronizes with notify()
             // to ensure that pushes to run queue are observed after wait() returns.
-            sync = @as(Sync, @bitCast(self.sync.tryCompareAndSwap(
+            sync = @as(Sync, @bitCast(self.sync.cmpxchgWeak(
                 @as(u32, @bitCast(sync)),
                 @as(u32, @bitCast(new_sync)),
                 .Acquire,
@@ -556,7 +560,7 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
             if (is_waking)
                 new_sync.state = .pending;
 
-            sync = @as(Sync, @bitCast(self.sync.tryCompareAndSwap(
+            sync = @as(Sync, @bitCast(self.sync.cmpxchgWeak(
                 @as(u32, @bitCast(sync)),
                 @as(u32, @bitCast(new_sync)),
                 .Monotonic,
@@ -587,7 +591,7 @@ pub noinline fn shutdown(self: *ThreadPool) void {
         new_sync.idle = 0;
 
         // Full barrier to synchronize with both wait() and notify()
-        sync = @as(Sync, @bitCast(self.sync.tryCompareAndSwap(
+        sync = @as(Sync, @bitCast(self.sync.cmpxchgWeak(
             @as(u32, @bitCast(sync)),
             @as(u32, @bitCast(new_sync)),
             .AcqRel,
@@ -606,7 +610,7 @@ fn register(noalias self: *ThreadPool, noalias thread: *Thread) void {
     var threads = self.threads.load(.Monotonic);
     while (true) {
         thread.next = threads;
-        threads = self.threads.tryCompareAndSwap(
+        threads = self.threads.cmpxchgWeak(
             threads,
             thread,
             .Release,
@@ -666,7 +670,7 @@ fn join(self: *ThreadPool) void {
     thread.join_event.notify();
 }
 
-const Output = @import("root").bun.Output;
+const Output = bun.Output;
 
 pub const Thread = struct {
     next: ?*Thread = null,
@@ -686,10 +690,15 @@ pub const Thread = struct {
         };
         self.idle_queue.push(list);
     }
-
+    var counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: *ThreadPool) void {
-        Output.Source.configureNamedThread("Bun Pool");
+        {
+            var counter_buf: [100]u8 = undefined;
+            const int = counter.fetchAdd(1, .SeqCst);
+            const named = std.fmt.bufPrintZ(&counter_buf, "Bun Pool {d}", .{int}) catch "Bun Pool";
+            Output.Source.configureNamedThread(named);
+        }
 
         var self_ = Thread{};
         var self = &self_;
@@ -802,14 +811,14 @@ const Event = struct {
             // Acquire barrier to ensure operations before the shutdown() are seen after the wait().
             // Shutdown is rare so it's better to have an Acquire barrier here instead of on CAS failure + load which are common.
             if (state == SHUTDOWN) {
-                std.atomic.fence(.Acquire);
+                @fence(.Acquire);
                 return;
             }
 
             // Consume a notification when it pops up.
             // Acquire barrier to ensure operations before the notify() appear after the wait().
             if (state == NOTIFIED) {
-                state = self.state.tryCompareAndSwap(
+                state = self.state.cmpxchgWeak(
                     state,
                     acquire_with,
                     .Acquire,
@@ -820,7 +829,7 @@ const Event = struct {
 
             // There is no notification to consume, we should wait on the event by ensuring its WAITING.
             if (state != WAITING) blk: {
-                state = self.state.tryCompareAndSwap(
+                state = self.state.cmpxchgWeak(
                     state,
                     WAITING,
                     .Monotonic,
@@ -853,14 +862,14 @@ const Event = struct {
             // Acquire barrier to ensure operations before the shutdown() are seen after the wait().
             // Shutdown is rare so it's better to have an Acquire barrier here instead of on CAS failure + load which are common.
             if (state == SHUTDOWN) {
-                std.atomic.fence(.Acquire);
+                @fence(.Acquire);
                 return;
             }
 
             // Consume a notification when it pops up.
             // Acquire barrier to ensure operations before the notify() appear after the wait().
             if (state == NOTIFIED) {
-                state = self.state.tryCompareAndSwap(
+                state = self.state.cmpxchgWeak(
                     state,
                     acquire_with,
                     .Acquire,
@@ -871,7 +880,7 @@ const Event = struct {
 
             // There is no notification to consume, we should wait on the event by ensuring its WAITING.
             if (state != WAITING) blk: {
-                state = self.state.tryCompareAndSwap(
+                state = self.state.cmpxchgWeak(
                     state,
                     WAITING,
                     .Monotonic,
@@ -954,7 +963,7 @@ pub const Node = struct {
                 new_stack |= (stack & ~PTR_MASK);
 
                 // Push to the stack with a release barrier for the consumer to see the proper list links.
-                stack = self.stack.tryCompareAndSwap(
+                stack = self.stack.cmpxchgWeak(
                     stack,
                     new_stack,
                     .Release,
@@ -980,7 +989,7 @@ pub const Node = struct {
 
                 // Acquire barrier on getting the consumer to see cache/Node updates done by previous consumers
                 // and to ensure our cache/Node updates in pop() happen after that of previous consumers.
-                stack = self.stack.tryCompareAndSwap(
+                stack = self.stack.cmpxchgWeak(
                     stack,
                     new_stack,
                     .Acquire,
@@ -1043,7 +1052,7 @@ pub const Node = struct {
 
         fn push(noalias self: *Buffer, noalias list: *List) error{Overflow}!void {
             var head = self.head.load(.Monotonic);
-            var tail = self.tail.loadUnchecked(); // we're the only thread that can change this
+            var tail = self.tail.raw; // we're the only thread that can change this
 
             while (true) {
                 var size = tail -% head;
@@ -1075,22 +1084,22 @@ pub const Node = struct {
                 // Migrating half amortizes the cost of stealing while requiring future pops to still use the buffer.
                 // Acquire barrier to ensure the linked list creation after the steal only happens after we successfully steal.
                 var migrate = size / 2;
-                head = self.head.tryCompareAndSwap(
+                head = self.head.cmpxchgWeak(
                     head,
                     head +% migrate,
                     .Acquire,
                     .Monotonic,
                 ) orelse {
                     // Link the migrated Nodes together
-                    const first = self.array[head % capacity].loadUnchecked();
+                    const first = self.array[head % capacity].raw;
                     while (migrate > 0) : (migrate -= 1) {
-                        const prev = self.array[head % capacity].loadUnchecked();
+                        const prev = self.array[head % capacity].raw;
                         head +%= 1;
-                        prev.next = self.array[head % capacity].loadUnchecked();
+                        prev.next = self.array[head % capacity].raw;
                     }
 
                     // Append the list that was supposed to be pushed to the end of the migrated Nodes
-                    const last = self.array[(head -% 1) % capacity].loadUnchecked();
+                    const last = self.array[(head -% 1) % capacity].raw;
                     last.next = list.head;
                     list.tail.next = null;
 
@@ -1103,11 +1112,11 @@ pub const Node = struct {
 
         fn pop(self: *Buffer) ?*Node {
             var head = self.head.load(.Monotonic);
-            var tail = self.tail.loadUnchecked(); // we're the only thread that can change this
+            const tail = self.tail.raw; // we're the only thread that can change this
 
             while (true) {
                 // Quick sanity check and return null when not empty
-                var size = tail -% head;
+                const size = tail -% head;
                 assert(size <= capacity);
                 if (size == 0) {
                     return null;
@@ -1115,12 +1124,12 @@ pub const Node = struct {
 
                 // Dequeue with an acquire barrier to ensure any writes done to the Node
                 // only happens after we successfully claim it from the array.
-                head = self.head.tryCompareAndSwap(
+                head = self.head.cmpxchgWeak(
                     head,
                     head +% 1,
                     .Acquire,
                     .Monotonic,
-                ) orelse return self.array[head % capacity].loadUnchecked();
+                ) orelse return self.array[head % capacity].raw;
             }
         }
 
@@ -1134,7 +1143,7 @@ pub const Node = struct {
             defer queue.releaseConsumer(consumer);
 
             const head = self.head.load(.Monotonic);
-            const tail = self.tail.loadUnchecked(); // we're the only thread that can change this
+            const tail = self.tail.raw; // we're the only thread that can change this
 
             const size = tail -% head;
             assert(size <= capacity);
@@ -1153,7 +1162,7 @@ pub const Node = struct {
             const node = queue.pop(&consumer) orelse blk: {
                 if (pushed == 0) return null;
                 pushed -= 1;
-                break :blk self.array[(tail +% pushed) % capacity].loadUnchecked();
+                break :blk self.array[(tail +% pushed) % capacity].raw;
             };
 
             // Update the array tail with the nodes we pushed to it.
@@ -1167,7 +1176,7 @@ pub const Node = struct {
 
         fn steal(noalias self: *Buffer, noalias buffer: *Buffer) ?Stole {
             const head = self.head.load(.Monotonic);
-            const tail = self.tail.loadUnchecked(); // we're the only thread that can change this
+            const tail = self.tail.raw; // we're the only thread that can change this
 
             const size = tail -% head;
             assert(size <= capacity);
@@ -1193,8 +1202,7 @@ pub const Node = struct {
                 // Copy the nodes we will steal from the target's array to our own.
                 // Atomically load from the target buffer array as it may be pushing and atomically storing to it.
                 // Atomic store to our array as other steal() threads may be atomically loading from it as above.
-                var i: Index = 0;
-                while (i < steal_size) : (i += 1) {
+                for (0..steal_size) |i| {
                     const node = buffer.array[(buffer_head +% i) % capacity].load(.Unordered);
                     self.array[(tail +% i) % capacity].store(node, .Unordered);
                 }
@@ -1203,7 +1211,7 @@ pub const Node = struct {
                 // - an Acquire barrier to ensure that we only interact with the stolen Nodes after the steal was committed.
                 // - a Release barrier to ensure that the Nodes are copied above prior to the committing of the steal
                 //   because if they're copied after the steal, the could be getting rewritten by the target's push().
-                _ = buffer.head.compareAndSwap(
+                _ = buffer.head.cmpxchgStrong(
                     buffer_head,
                     buffer_head +% steal_size,
                     .AcqRel,
@@ -1211,7 +1219,7 @@ pub const Node = struct {
                 ) orelse {
                     // Pop one from the nodes we stole as we'll be returning it
                     const pushed = steal_size - 1;
-                    const node = self.array[(tail +% pushed) % capacity].loadUnchecked();
+                    const node = self.array[(tail +% pushed) % capacity].raw;
 
                     // Update the array tail with the nodes we pushed to it.
                     // Release barrier to synchronize with Acquire barrier in steal()'s to see the written array Nodes.

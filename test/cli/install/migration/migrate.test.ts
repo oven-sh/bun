@@ -1,12 +1,27 @@
 import fs from "fs";
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { join } from "path";
+import { join, sep } from "path";
 import { mkdtempSync } from "js/node/fs/export-star-from";
 import { tmpdir } from "os";
 
-test("migrate from npm during `bun add`", async () => {
-  const testDir = mkdtempSync(join(tmpdir(), "migrate-"));
+const ROOT_TEMP_DIR = join(tmpdir(), "migrate", sep);
+
+beforeAll(() => {
+  // if the test was stopped early
+  fs.rmSync(ROOT_TEMP_DIR, { recursive: true, force: true });
+  fs.mkdirSync(ROOT_TEMP_DIR);
+});
+
+afterAll(() => {
+  fs.rmSync(ROOT_TEMP_DIR, {
+    recursive: true,
+    force: true,
+  });
+});
+
+function testMigration(lockfile: string) {
+  const testDir = mkdtempSync(ROOT_TEMP_DIR);
 
   fs.writeFileSync(
     join(testDir, "package.json"),
@@ -17,7 +32,7 @@ test("migrate from npm during `bun add`", async () => {
       },
     }),
   );
-  fs.cpSync(join(import.meta.dir, "add-while-migrate-fixture.json"), join(testDir, "package-lock.json"));
+  fs.cpSync(join(import.meta.dir, lockfile), join(testDir, "package-lock.json"));
 
   Bun.spawnSync([bunExe(), "add", "lodash@4.17.21"], {
     env: bunEnv,
@@ -31,11 +46,19 @@ test("migrate from npm during `bun add`", async () => {
 
   const lodash_version = JSON.parse(fs.readFileSync(join(testDir, "node_modules/lodash/package.json"), "utf8")).version;
   expect(lodash_version).toBe("4.17.21");
+}
+
+test("migrate from npm during `bun add`", () => {
+  testMigration("add-while-migrate-fixture.json");
+});
+
+test("migrate from npm lockfile v2 during `bun add`", () => {
+  testMigration("migrate-from-lockfilev2-fixture.json");
 });
 
 // Currently this upgrades svelte :(
 test.todo("migrate workspace from npm during `bun add`", async () => {
-  const testDir = join(tmpdir(), "migrate-" + Math.random().toString(36).slice(2));
+  const testDir = mkdtempSync(ROOT_TEMP_DIR);
 
   fs.cpSync(join(import.meta.dir, "add-while-migrate-workspace"), testDir, { recursive: true });
 
@@ -54,7 +77,7 @@ test.todo("migrate workspace from npm during `bun add`", async () => {
 });
 
 test("migrate from npm lockfile that is missing `resolved` properties", async () => {
-  const testDir = join(tmpdir(), "migrate-" + Math.random().toString(36).slice(2));
+  const testDir = mkdtempSync(ROOT_TEMP_DIR);
 
   fs.cpSync(join(import.meta.dir, "missing-resolved-properties"), testDir, { recursive: true });
 

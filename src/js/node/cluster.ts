@@ -3,7 +3,7 @@
 // We leave it in here to provide a better error message
 // TODO: implement node cluster
 const EventEmitter = require("node:events");
-const { throwNotImplemented } = require("$shared");
+const { throwNotImplemented } = require("internal/shared");
 
 // TODO: is it okay for this to be a class?
 class Cluster extends EventEmitter {

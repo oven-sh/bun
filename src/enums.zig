@@ -2,7 +2,7 @@
 // This exists mostly as a workaround for https://github.com/ziglang/zig/issues/16980
 
 const std = @import("std");
-const assert = std.debug.assert;
+const assert = @import("root").bun.assert;
 const testing = std.testing;
 const EnumField = std.builtin.Type.EnumField;
 
@@ -123,7 +123,7 @@ pub fn directEnumArray(
 
 test "std.enums.directEnumArray" {
     const E = enum(i4) { a = 4, b = 6, c = 2 };
-    var runtime_false: bool = false;
+    const runtime_false: bool = false;
     const array = directEnumArray(E, bool, 4, .{
         .a = true,
         .b = runtime_false,
@@ -165,7 +165,7 @@ pub fn directEnumArrayDefault(
 
 test "std.enums.directEnumArrayDefault" {
     const E = enum(i4) { a = 4, b = 6, c = 2 };
-    var runtime_false: bool = false;
+    const runtime_false: bool = false;
     const array = directEnumArrayDefault(E, bool, false, 4, .{
         .a = true,
         .b = runtime_false,
@@ -179,7 +179,7 @@ test "std.enums.directEnumArrayDefault" {
 
 test "std.enums.directEnumArrayDefault slice" {
     const E = enum(i4) { a = 4, b = 6, c = 2 };
-    var runtime_b = "b";
+    const runtime_b = "b";
     const array = directEnumArrayDefault(E, []const u8, "default", 4, .{
         .a = "a",
         .b = runtime_b,
@@ -197,9 +197,9 @@ pub fn nameCast(comptime E: type, comptime value: anytype) E {
     return comptime blk: {
         const V = @TypeOf(value);
         if (V == E) break :blk value;
-        var name: ?[]const u8 = switch (@typeInfo(V)) {
+        const name: ?[]const u8 = switch (@typeInfo(V)) {
             .EnumLiteral, .Enum => @tagName(value),
-            .Pointer => if (std.meta.trait.isZigString(V)) value else null,
+            .Pointer => value,
             else => null,
         };
         if (name) |n| {
@@ -246,8 +246,7 @@ pub fn EnumSet(comptime E: type) type {
                 /// Initializes the set using a struct of bools
                 pub fn init(init_values: EnumFieldStruct(E, bool, false)) Self {
                     var result = Self{};
-                    comptime var i: usize = 0;
-                    inline while (i < Self.len) : (i += 1) {
+                    inline for (0..Self.len) |i| {
                         const key = comptime Indexer.keyForIndex(i);
                         const tag = comptime @tagName(key);
                         if (@field(init_values, tag)) {
@@ -274,8 +273,7 @@ pub fn EnumMap(comptime E: type, comptime V: type) type {
                 /// Initializes the map using a sparse struct of optionals
                 pub fn init(init_values: EnumFieldStruct(E, ?V, @as(?V, null))) Self {
                     var result = Self{};
-                    comptime var i: usize = 0;
-                    inline while (i < Self.len) : (i += 1) {
+                    inline for (0..Self.len) |i| {
                         const key = comptime Indexer.keyForIndex(i);
                         const tag = comptime @tagName(key);
                         if (@field(init_values, tag)) |*v| {
@@ -307,8 +305,7 @@ pub fn EnumMap(comptime E: type, comptime V: type) type {
                         .bits = Self.BitSet.initFull(),
                         .values = undefined,
                     };
-                    comptime var i: usize = 0;
-                    inline while (i < Self.len) : (i += 1) {
+                    inline for (0..Self.len) |i| {
                         const key = comptime Indexer.keyForIndex(i);
                         const tag = comptime @tagName(key);
                         result.values[i] = @field(init_values, tag);
@@ -734,8 +731,7 @@ pub fn EnumArray(comptime E: type, comptime V: type) type {
                 /// Initializes values in the enum array, with the specified default.
                 pub fn initDefault(comptime default: ?V, init_values: EnumFieldStruct(E, V, default)) Self {
                     var result = Self{ .values = undefined };
-                    comptime var i: usize = 0;
-                    inline while (i < Self.len) : (i += 1) {
+                    inline for (0..Self.len) |i| {
                         const key = comptime Indexer.keyForIndex(i);
                         const tag = @tagName(key);
                         result.values[i] = @field(init_values, tag);
@@ -1363,6 +1359,7 @@ pub fn EnumIndexer(comptime E: type) type {
         pub const Key = E;
         pub const count = fields_len;
         pub fn indexOf(e: E) usize {
+            @setEvalBranchQuota(123456);
             for (keys, 0..) |k, i| {
                 if (k == e) return i;
             }

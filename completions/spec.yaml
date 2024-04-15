@@ -2,7 +2,7 @@
 name: bun
 appspec: { version: "0.001" }
 plugins: [-Meta]
-title: A tool for installing and managing Python packages
+title: A tool for installing and managing JavaScript packages
 
 options:
   - version|V                  --Show version and exit
@@ -121,7 +121,7 @@ subcommands:
       - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
-      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
       - name: cache-dir
         type: string
         summary: "Store & load cached data from a specific directory path"
@@ -156,7 +156,7 @@ subcommands:
       - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
-      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
       - no-cache -- "Ignore manifest cache entirely"
       - silent -- "Don't output anything"
       - verbose -- "Excessively verbose logging"
@@ -194,7 +194,7 @@ subcommands:
       - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
-      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
       - name: cache-dir
         type: string
         summary: "Store & load cached data from a specific directory path"

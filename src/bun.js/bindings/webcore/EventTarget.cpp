@@ -92,8 +92,6 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     // if (!passive.has_value() && Quirks::shouldMakeEventListenerPassive(*this, eventType, listener.get()))
     //     passive = true;
 
-    bool listenerCreatedFromScript = is<JSEventListener>(listener) && !downcast<JSEventListener>(listener.get()).wasCreatedFromMarkup();
-
     if (!ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once }))
         return false;
 
@@ -167,7 +165,7 @@ void EventTarget::setAttributeEventListener(const AtomString& eventType, JSC::JS
         if (existingListener)
             removeEventListener(eventType, *existingListener, false);
     } else if (existingListener) {
-        bool capture = false;
+        // bool capture = false;
 
         // InspectorInstrumentation::willRemoveEventListener(*this, eventType, *existingListener, capture);
         existingListener->replaceJSFunctionForAttributeListener(asObject(listener), &jsEventTarget);

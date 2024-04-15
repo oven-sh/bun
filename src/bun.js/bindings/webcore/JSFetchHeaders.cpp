@@ -178,7 +178,6 @@ template<> void JSFetchHeadersDOMConstructor::initializeProperties(VM& vm, JSDOM
  **/
 JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersGetterCount, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    auto& vm = JSC::getVM(globalObject);
     JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(JSValue::decode(thisValue));
     if (UNLIKELY(!castedThis)) {
         return JSValue::encode(jsUndefined());
@@ -341,7 +340,9 @@ void JSFetchHeaders::computeMemoryCost()
 
 JSObject* JSFetchHeaders::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSFetchHeadersPrototype::create(vm, &globalObject, JSFetchHeadersPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSFetchHeadersPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSFetchHeadersPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSFetchHeaders::prototype(VM& vm, JSDOMGlobalObject& globalObject)

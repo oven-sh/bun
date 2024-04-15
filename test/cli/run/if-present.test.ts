@@ -26,7 +26,7 @@ describe("bun", () => {
       stderr: "pipe",
     });
     expect(stdout.toString()).toBeEmpty();
-    expect(stderr.toString()).toMatch(/script not found/);
+    expect(stderr.toString()).toMatch(/Script not found/);
     expect(exitCode).toBe(1);
   });
   test("should error with missing module", () => {
@@ -38,7 +38,7 @@ describe("bun", () => {
       stderr: "pipe",
     });
     expect(stdout.toString()).toBeEmpty();
-    expect(stderr.toString()).toMatch(/module not found/);
+    expect(stderr.toString()).toMatch(/Module not found/);
     expect(exitCode).toBe(1);
   });
   test("should error with missing file", () => {
@@ -50,7 +50,7 @@ describe("bun", () => {
       stderr: "pipe",
     });
     expect(stdout.toString()).toBeEmpty();
-    expect(stderr.toString()).toMatch(/file not found/);
+    expect(stderr.toString()).toMatch(/File not found/);
     expect(exitCode).toBe(1);
   });
 });

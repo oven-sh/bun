@@ -1,5 +1,5 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const assert = @import("root").bun.assert;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 
@@ -132,7 +132,7 @@ pub const ArenaAllocator = struct {
             self.child_allocator.rawFree(alloc_buf, align_bits, @returnAddress());
             it = next_it;
         } else null;
-        std.debug.assert(maybe_first_node == null or maybe_first_node.?.next == null);
+        assert(maybe_first_node == null or maybe_first_node.?.next == null);
         // reset the state before we try resizing the buffers, so we definitely have reset the arena to 0.
         self.state.end_index = 0;
         if (maybe_first_node) |first_node| {
@@ -257,7 +257,7 @@ test "ArenaAllocator (reset with preheating)" {
         rounds -= 1;
         _ = arena_allocator.reset(.retain_capacity);
         var alloced_bytes: usize = 0;
-        var total_size: usize = random.intRangeAtMost(usize, 256, 16384);
+        const total_size: usize = random.intRangeAtMost(usize, 256, 16384);
         while (alloced_bytes < total_size) {
             const size = random.intRangeAtMost(usize, 16, 256);
             const alignment = 32;

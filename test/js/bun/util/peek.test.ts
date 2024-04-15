@@ -27,6 +27,9 @@ test("peek", () => {
   expect(peeked instanceof Error).toBe(true);
   expect((peeked as Error).message).toBe("Succesfully tested promise rejection");
   rejected.catch(() => {});
+
+  expect(peek(new (class extends Promise<any> {})(() => {}))).toBeInstanceOf(Promise);
+  expect(peek({ __proto__: Promise.prototype })).toBeInstanceOf(Promise);
 });
 
 test("peek.status", () => {
@@ -39,4 +42,6 @@ test("peek.status", () => {
   const rejected = Promise.reject(new Error("oh nooo"));
   expect(peek.status(rejected)).toBe("rejected");
   rejected.catch(() => {});
+
+  expect(peek.status(1)).toBe("fulfilled");
 });

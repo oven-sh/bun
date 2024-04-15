@@ -5,7 +5,7 @@ name: Add a trusted dependency
 Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts for installed dependencies, such as `postinstall` and `node-gyp` builds. These scripts represent a potential security risk, as they can execute arbitrary code on your machine.
 
 {% callout %}
-Soon, Bun will include a built-in allow-list that automatically allows lifecycle scripts to be run by popular packages that are known to be safe. This is still under development.
+Bun includes a default allowlist of popular packages containing `postinstall` scripts that are known to be safe. You can see this list [here](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt).
 {% /callout %}
 
 ---

@@ -104,7 +104,7 @@ static Vector<uint8_t> combineSegmentsData(const FragmentedSharedBuffer::DataSeg
     Vector<uint8_t> combinedData;
     combinedData.reserveInitialCapacity(size);
     for (auto& segment : segments)
-        combinedData.append(segment.segment->data(), segment.segment->size());
+        combinedData.append(std::span { segment.segment->data(), segment.segment->size() });
     ASSERT(combinedData.size() == size);
     return combinedData;
 }
@@ -126,7 +126,7 @@ Vector<uint8_t> FragmentedSharedBuffer::copyData() const
     Vector<uint8_t> data;
     data.reserveInitialCapacity(size());
     forEachSegment([&data](auto& span) {
-        data.uncheckedAppend(span);
+        data.unsafeAppendWithoutCapacityCheck(span.data(), span.size());
     });
     return data;
 }
@@ -164,10 +164,10 @@ Ref<SharedBuffer> FragmentedSharedBuffer::getContiguousData(size_t position, siz
         return SharedBufferDataView { element->segment.copyRef(), offsetInSegment, length }.createSharedBuffer();
     Vector<uint8_t> combinedData;
     combinedData.reserveInitialCapacity(length);
-    combinedData.append(element->segment->data() + offsetInSegment, element->segment->size() - offsetInSegment);
+    combinedData.append(std::span { element->segment->data() + offsetInSegment, element->segment->size() - offsetInSegment });
     for (++element; combinedData.size() < length && element != m_segments.end(); element++) {
         auto canCopy = std::min(length - combinedData.size(), element->segment->size());
-        combinedData.append(element->segment->data(), canCopy);
+        combinedData.append(std::span { element->segment->data(), canCopy });
     }
     return SharedBuffer::create(WTFMove(combinedData));
 }
@@ -217,7 +217,7 @@ void FragmentedSharedBuffer::append(const FragmentedSharedBuffer& data)
     ASSERT(!m_contiguous);
     m_segments.reserveCapacity(m_segments.size() + data.m_segments.size());
     for (const auto& element : data.m_segments) {
-        m_segments.uncheckedAppend({ m_size, element.segment.copyRef() });
+        m_segments.unsafeAppendWithoutCapacityCheck(DataSegmentVectorEntry { m_size, element.segment.copyRef() });
         m_size += element.segment->size();
     }
     ASSERT(internallyConsistent());
@@ -226,7 +226,7 @@ void FragmentedSharedBuffer::append(const FragmentedSharedBuffer& data)
 void FragmentedSharedBuffer::append(const uint8_t* data, size_t length)
 {
     ASSERT(!m_contiguous);
-    m_segments.append({ m_size, DataSegment::create(Vector { data, length }) });
+    m_segments.append({ m_size, DataSegment::create(Vector(std::span { data, length })) });
     m_size += length;
     ASSERT(internallyConsistent());
 }
@@ -255,7 +255,7 @@ Ref<FragmentedSharedBuffer> FragmentedSharedBuffer::copy() const
     clone->m_size = m_size;
     clone->m_segments.reserveInitialCapacity(m_segments.size());
     for (const auto& element : m_segments)
-        clone->m_segments.uncheckedAppend({ element.beginPosition, element.segment.copyRef() });
+        clone->m_segments.unsafeAppendWithoutCapacityCheck(DataSegmentVectorEntry { element.beginPosition, element.segment.copyRef() });
     ASSERT(clone->internallyConsistent());
     ASSERT(internallyConsistent());
     return clone;
@@ -319,7 +319,7 @@ Vector<uint8_t> FragmentedSharedBuffer::read(size_t offset, size_t length) const
     auto* currentSegment = getSegmentForPosition(offset);
     size_t offsetInSegment = offset - currentSegment->beginPosition;
     size_t availableInSegment = std::min(currentSegment->segment->size() - offsetInSegment, remaining);
-    data.append(currentSegment->segment->data() + offsetInSegment, availableInSegment);
+    data.append(std::span { currentSegment->segment->data() + offsetInSegment, availableInSegment });
 
     remaining -= availableInSegment;
 
@@ -327,7 +327,7 @@ Vector<uint8_t> FragmentedSharedBuffer::read(size_t offset, size_t length) const
 
     while (remaining && ++currentSegment != afterLastSegment) {
         size_t lengthInSegment = std::min(currentSegment->segment->size(), remaining);
-        data.append(currentSegment->segment->data(), lengthInSegment);
+        data.append(std::span { currentSegment->segment->data(), lengthInSegment });
         remaining -= lengthInSegment;
     }
     return data;

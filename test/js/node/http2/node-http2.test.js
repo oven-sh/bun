@@ -465,6 +465,7 @@ describe("Client Basics", () => {
   it("getDefaultSettings", () => {
     const settings = http2.getDefaultSettings();
     expect(settings).toEqual({
+      enableConnectProtocol: false,
       headerTableSize: 4096,
       enablePush: true,
       initialWindowSize: 65535,
@@ -483,6 +484,7 @@ describe("Client Basics", () => {
       maxConcurrentStreams: 4,
       maxHeaderListSize: 5,
       maxHeaderSize: 5,
+      enableConnectProtocol: false,
     };
     const buffer = http2.getPackedSettings(settings);
     expect(buffer.byteLength).toBe(36);
@@ -1063,7 +1065,7 @@ describe("Client Basics", () => {
       const settings = new http2utils.SettingsFrame(true);
       socket.write(settings.data);
       const frame = new http2utils.Frame(7, 7, 0, 0).data;
-      socket.end(Buffer.concat([frame, Buffer.alloc(7)]));
+      socket.write(Buffer.concat([frame, Buffer.alloc(7)]));
     });
     server.listen(0, "127.0.0.1", async () => {
       const url = `http://127.0.0.1:${server.address().port}`;
@@ -1094,7 +1096,7 @@ describe("Client Basics", () => {
       socket.write(settings.data);
       await waitToWrite;
       const frame = new http2utils.DataFrame(1, Buffer.alloc(16384 * 2), 0, 1).data;
-      socket.end(frame);
+      socket.write(frame);
     });
     server.listen(0, "127.0.0.1", async () => {
       const url = `http://127.0.0.1:${server.address().port}`;
@@ -1126,7 +1128,7 @@ describe("Client Basics", () => {
       socket.write(settings.data);
       await waitToWrite;
       const frame = new http2utils.Frame(4, 3, 0, 0).data;
-      socket.end(Buffer.concat([frame, Buffer.alloc(4)]));
+      socket.write(Buffer.concat([frame, Buffer.alloc(4)]));
     });
     server.listen(0, "127.0.0.1", async () => {
       const url = `http://127.0.0.1:${server.address().port}`;
@@ -1158,7 +1160,7 @@ describe("Client Basics", () => {
       socket.write(settings.data);
       await waitToWrite;
       const frame = new http2utils.Frame(3, 3, 0, 1).data;
-      socket.end(Buffer.concat([frame, Buffer.alloc(3)]));
+      socket.write(Buffer.concat([frame, Buffer.alloc(3)]));
     });
     server.listen(0, "127.0.0.1", async () => {
       const url = `http://127.0.0.1:${server.address().port}`;
@@ -1191,7 +1193,7 @@ describe("Client Basics", () => {
       await waitToWrite;
       const buffer = Buffer.alloc(16384 * 2);
       const frame = new http2utils.Frame(buffer.byteLength, 3, 0, 1).data;
-      socket.end(Buffer.concat([frame, buffer]));
+      socket.write(Buffer.concat([frame, buffer]));
     });
     server.listen(0, "127.0.0.1", async () => {
       const url = `http://127.0.0.1:${server.address().port}`;
@@ -1261,7 +1263,7 @@ describe("Client Basics", () => {
       await waitToWrite;
 
       const frame = new http2utils.Frame(4, 2, 0, 1).data;
-      socket.end(Buffer.concat([frame, Buffer.alloc(4)]));
+      socket.write(Buffer.concat([frame, Buffer.alloc(4)]));
     });
     server.listen(0, "127.0.0.1", async () => {
       const url = `http://127.0.0.1:${server.address().port}`;

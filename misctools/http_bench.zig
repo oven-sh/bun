@@ -91,7 +91,7 @@ pub const Arguments = struct {
             return err;
         };
 
-        var positionals = args.positionals();
+        const positionals = args.positionals();
         var raw_args: std.ArrayListUnmanaged(string) = undefined;
 
         if (positionals.len > 0) {
@@ -111,20 +111,20 @@ pub const Arguments = struct {
 
         if (args.option("--file")) |file_path| {
             if (file_path.len > 0) {
-                var cwd = try std.process.getCwd(&cwd_buf);
+                const cwd = try std.process.getCwd(&cwd_buf);
                 var parts = [_]string{file_path};
-                var absolute_path = path_handler.joinAbsStringBuf(cwd, &file_path_buf, &parts, .auto);
+                const absolute_path = path_handler.joinAbsStringBuf(cwd, &file_path_buf, &parts, .auto);
                 file_path_buf[absolute_path.len] = 0;
                 file_path_buf[absolute_path.len + 1] = 0;
-                var absolute_path_len = absolute_path.len;
-                var absolute_path_ = file_path_buf[0..absolute_path_len :0];
+                const absolute_path_len = absolute_path.len;
+                const absolute_path_ = file_path_buf[0..absolute_path_len :0];
 
                 var body_file = std.fs.openFileAbsoluteZ(absolute_path_, .{ .mode = .read_only }) catch |err| {
                     Output.printErrorln("<r><red>{s}<r> opening file {s}", .{ @errorName(err), absolute_path });
                     Global.exit(1);
                 };
 
-                var file_contents = body_file.readToEndAlloc(allocator, try body_file.getEndPos()) catch |err| {
+                const file_contents = body_file.readToEndAlloc(allocator, try body_file.getEndPos()) catch |err| {
                     Output.printErrorln("<r><red>{s}<r> reading file {s}", .{ @errorName(err), absolute_path });
                     Global.exit(1);
                 };
@@ -177,7 +177,7 @@ pub const Arguments = struct {
     }
 };
 
-const HTTP = @import("root").bun.HTTP;
+const HTTP = bun.http;
 const NetworkThread = HTTP.NetworkThread;
 
 var stdout_: std.fs.File = undefined;
@@ -190,7 +190,7 @@ pub fn main() anyerror!void {
 
     defer Output.flush();
 
-    var args = try Arguments.parse(default_allocator);
+    const args = try Arguments.parse(default_allocator);
 
     var channel = try default_allocator.create(HTTP.HTTPChannel);
     channel.* = HTTP.HTTPChannel.init();
@@ -211,7 +211,7 @@ pub fn main() anyerror!void {
         var batch = Batch{};
         while (i < args.count) : (i += 1) {
             groups[i] = Group{};
-            var response_body = &groups[i].response_body;
+            const response_body = &groups[i].response_body;
             response_body.* = try MutableString.init(default_allocator, 1024);
 
             var ctx = &groups[i].context;
@@ -284,7 +284,7 @@ pub fn main() anyerror!void {
                 Output.printError(" err: {s}\n", .{@errorName(err)});
             } else {
                 fail_count += 1;
-                Output.prettyError(" Uh-oh: {s}\n", .{@tagName(http.state.loadUnchecked())});
+                Output.prettyError(" Uh-oh: {s}\n", .{@tagName(http.state.raw)});
             }
 
             Output.flush();

@@ -1,6 +1,17 @@
 import { gc as bunGC, unsafe, which } from "bun";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
+import { readlink, readFile, writeFile } from "fs/promises";
+import { isAbsolute, sep, join, dirname } from "path";
+import fs, { openSync, closeSync } from "node:fs";
+import os from "node:os";
 
-export const bunEnv: any = {
+export const isMacOS = process.platform === "darwin";
+export const isLinux = process.platform === "linux";
+export const isPosix = isMacOS || isLinux;
+export const isWindows = process.platform === "win32";
+export const isIntelMacOS = isMacOS && process.arch === "x64";
+
+export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
@@ -8,14 +19,26 @@ export const bunEnv: any = {
   FORCE_COLOR: undefined,
   TZ: "Etc/UTC",
   CI: "1",
+  BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
 };
 
-export function bunExe() {
-  return process.execPath;
+if (isWindows) {
+  bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
 }
 
-export function withoutMimalloc(input: string) {
-  return input.replaceAll(/^mimalloc warning:.*$/gm, "");
+for (let key in bunEnv) {
+  if (bunEnv[key] === undefined) {
+    delete bunEnv[key];
+  }
+
+  if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
+    delete bunEnv[key];
+  }
+}
+
+export function bunExe() {
+  if (isWindows) return process.execPath.replaceAll("\\", "/");
+  return process.execPath;
 }
 
 export function nodeExe(): string | null {
@@ -88,24 +111,29 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>): string {
-  var fs = require("fs");
-  var path = require("path");
-  var { tmpdir } = require("os");
+type DirectoryTree = {
+  [name: string]: string | Buffer | DirectoryTree;
+};
 
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
-  for (const [name, contents] of Object.entries(files)) {
-    if (typeof contents === "object") {
-      for (const [_name, _contents] of Object.entries(contents)) {
-        fs.mkdirSync(path.dirname(path.join(dir, name, _name)), { recursive: true });
-        fs.writeFileSync(path.join(dir, name, _name), _contents);
+export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
+  function makeTree(base: string, tree: DirectoryTree) {
+    for (const [name, contents] of Object.entries(tree)) {
+      const joined = join(base, name);
+      if (name.includes("/")) {
+        const dir = dirname(name);
+        fs.mkdirSync(join(base, dir), { recursive: true });
       }
-      continue;
+      if (typeof contents === "object" && contents && !Buffer.isBuffer(contents)) {
+        fs.mkdirSync(joined);
+        makeTree(joined, contents);
+        continue;
+      }
+      fs.writeFileSync(joined, contents);
     }
-    fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
-    fs.writeFileSync(path.join(dir, name), contents);
   }
-  return dir;
+  const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
+  makeTree(base, files);
+  return base;
 }
 
 export function bunRun(file: string, env?: Record<string, string>) {
@@ -142,8 +170,13 @@ export function bunTest(file: string, env?: Record<string, string>) {
   };
 }
 
-export function bunRunAsScript(dir: string, script: string, env?: Record<string, string>) {
-  const result = Bun.spawnSync([bunExe(), `run`, `${script}`], {
+export function bunRunAsScript(
+  dir: string,
+  script: string,
+  env?: Record<string, string | undefined>,
+  execArgv?: string[],
+) {
+  const result = Bun.spawnSync([bunExe(), ...(execArgv ?? []), `run`, `${script}`], {
     cwd: dir,
     env: {
       ...bunEnv,

@@ -38,7 +38,7 @@ pub const Param = struct {
     pub const List = std.MultiArrayList(Param);
 };
 
-dir: StoredFileDescriptorType = 0,
+dir: StoredFileDescriptorType = .zero,
 routes: Routes,
 loaded_routes: bool = false,
 allocator: std.mem.Allocator,
@@ -60,6 +60,14 @@ pub fn init(
         .allocator = allocator,
         .config = config,
     };
+}
+
+pub fn deinit(this: *Router) void {
+    if (comptime Environment.isWindows) {
+        for (this.routes.list.items(.filepath)) |abs_path| {
+            this.allocator.free(abs_path);
+        }
+    }
 }
 
 pub fn getEntryPoints(this: *const Router) ![]const string {
@@ -164,7 +172,7 @@ pub const Routes = struct {
                     .name = index.name,
                     .path = index.abs_path.slice(),
                     .pathname = url_path.pathname,
-                    .basename = index.entry.base(),
+                    .basename = index.basename,
                     .hash = index_route_hash,
                     .file_path = index.abs_path.slice(),
                     .query_string = url_path.query_string,
@@ -187,7 +195,7 @@ pub const Routes = struct {
                 .name = route.name,
                 .path = route.abs_path.slice(),
                 .pathname = url_path.pathname,
-                .basename = route.entry.base(),
+                .basename = route.basename,
                 .hash = route.full_hash,
                 .file_path = route.abs_path.slice(),
                 .query_string = url_path.query_string,
@@ -204,12 +212,9 @@ pub const Routes = struct {
 
     fn matchDynamic(this: *Routes, allocator: std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
         // its cleaned, so now we search the big list of strings
-        var i: usize = 0;
-        while (i < this.dynamic_names.len) : (i += 1) {
-            const name = this.dynamic_match_names[i];
-            const case_sensitive_name_without_leading_slash = this.dynamic_names[i][1..];
-            if (Pattern.match(path, case_sensitive_name_without_leading_slash, name, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
-                return this.dynamic[i];
+        for (this.dynamic_names, this.dynamic_match_names, this.dynamic) |case_sensitive_name, name, route| {
+            if (Pattern.match(path, case_sensitive_name[1..], name, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
+                return route;
             }
         }
 
@@ -243,7 +248,7 @@ const RouteLoader = struct {
     pub fn appendRoute(this: *RouteLoader, route: Route) void {
         // /index.js
         if (route.full_hash == index_route_hash) {
-            var new_route = this.allocator.create(Route) catch unreachable;
+            const new_route = this.allocator.create(Route) catch unreachable;
             this.index = new_route;
             new_route.* = route;
             this.all_routes.append(this.allocator, new_route) catch unreachable;
@@ -252,7 +257,7 @@ const RouteLoader = struct {
 
         // static route
         if (route.param_count == 0) {
-            var entry = this.static_list.getOrPut(route.match_name.slice()) catch unreachable;
+            const entry = this.static_list.getOrPut(route.match_name.slice()) catch unreachable;
 
             if (entry.found_existing) {
                 const source = Logger.Source.initEmptyFile(route.abs_path.slice());
@@ -266,7 +271,7 @@ const RouteLoader = struct {
                 return;
             }
 
-            var new_route = this.allocator.create(Route) catch unreachable;
+            const new_route = this.allocator.create(Route) catch unreachable;
             new_route.* = route;
 
             // Handle static routes with uppercase characters by ensuring exact case still matches
@@ -277,7 +282,7 @@ const RouteLoader = struct {
             // This hack is below the engineering quality bar I'm happy with.
             // It will cause unexpected behavior.
             if (route.has_uppercase) {
-                var static_entry = this.static_list.getOrPut(route.name[1..]) catch unreachable;
+                const static_entry = this.static_list.getOrPut(route.name[1..]) catch unreachable;
                 if (static_entry.found_existing) {
                     const source = Logger.Source.initEmptyFile(route.abs_path.slice());
                     this.log.addErrorFmt(
@@ -316,7 +321,7 @@ const RouteLoader = struct {
         }
 
         {
-            var new_route = this.allocator.create(Route) catch unreachable;
+            const new_route = this.allocator.create(Route) catch unreachable;
             new_route.* = route;
             this.all_routes.append(this.allocator, new_route) catch unreachable;
         }
@@ -356,7 +361,7 @@ const RouteLoader = struct {
             .allocator = allocator,
         };
 
-        std.sort.block(*Route, this.all_routes.items, Route.Sorter{}, Route.Sorter.sortByName);
+        std.sort.pdq(*Route, this.all_routes.items, Route.Sorter{}, Route.Sorter.sortByName);
 
         var route_list = RouteIndex.List{};
         route_list.setCapacity(allocator, this.all_routes.items.len) catch unreachable;
@@ -462,7 +467,7 @@ const RouteLoader = struct {
                                 // length is extended by one
                                 // entry.dir is a string with a trailing slash
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(entry.dir.ptr[base_dir.len - 1] == '/');
+                                    bun.assert(bun.path.isSepAny(entry.dir[base_dir.len - 1]));
                                 }
 
                                 const public_dir = entry.dir.ptr[base_dir.len - 1 .. entry.dir.len];
@@ -524,7 +529,7 @@ pub const TinyPtr = packed struct {
         const right = @intFromPtr(in.ptr) + in.len;
         const end = @intFromPtr(parent.ptr) + parent.len;
         if (comptime Environment.isDebug) {
-            std.debug.assert(end < right);
+            bun.assert(end < right);
         }
 
         const length = @max(end, right) - right;
@@ -546,10 +551,23 @@ pub const Route = struct {
     /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
     match_name: PathString,
 
-    entry: *Fs.FileSystem.Entry,
+    basename: string,
     full_hash: u32,
     param_count: u16,
-    abs_path: PathString,
+
+    // On windows we need to normalize this path to have forward slashes.
+    // To avoid modifying memory we do not own, allocate another buffer
+    abs_path: if (Environment.isWindows) struct {
+        path: string,
+
+        pub fn slice(this: @This()) string {
+            return this.path;
+        }
+
+        pub fn isEmpty(this: @This()) bool {
+            return this.path.len == 0;
+        }
+    } else PathString,
 
     /// URL-safe path for the route's transpiled script relative to project's top level directory
     /// - It might not share a prefix with the absolute path due to symlinks.
@@ -563,17 +581,15 @@ pub const Route = struct {
     pub const Ptr = TinyPtr;
 
     pub const index_route_name: string = "/";
-    var route_file_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var second_route_file_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var route_file_buf: bun.PathBuffer = undefined;
+    threadlocal var second_route_file_buf: bun.PathBuffer = undefined;
+    threadlocal var normalized_abs_path_buf: bun.windows.PathBuffer = undefined;
 
     pub const Sorter = struct {
         const sort_table: [std.math.maxInt(u8)]u8 = brk: {
             var table: [std.math.maxInt(u8)]u8 = undefined;
-            var i: u16 = 0;
-            while (i < @as(u16, table.len)) {
-                table[i] = @as(u8, @intCast(i));
-                i += 1;
-            }
+            for (&table, 0..) |*t, i| t.* = @as(u8, @intCast(i));
+
             // move dynamic routes to the bottom
             table['['] = 252;
             table[']'] = 253;
@@ -586,9 +602,8 @@ pub const Route = struct {
             const math = std.math;
 
             const n = @min(lhs.len, rhs.len);
-            var i: usize = 0;
-            while (i < n) : (i += 1) {
-                switch (math.order(sort_table[lhs[i]], sort_table[rhs[i]])) {
+            for (lhs[0..n], rhs[0..n]) |lhs_i, rhs_i| {
+                switch (math.order(sort_table[lhs_i], sort_table[rhs_i])) {
                     .eq => continue,
                     .lt => return true,
                     .gt => return false,
@@ -652,9 +667,9 @@ pub const Route = struct {
         else
             entry.abs_path.slice();
 
-        var base = base_[0 .. base_.len - extname.len];
+        const base = base_[0 .. base_.len - extname.len];
 
-        var public_dir = std.mem.trim(u8, public_dir_, "/");
+        const public_dir = std.mem.trim(u8, public_dir_, std.fs.path.sep_str);
 
         // this is a path like
         // "/pages/index.js"
@@ -676,6 +691,11 @@ pub const Route = struct {
             buf = buf[base.len..];
             bun.copy(u8, buf, extname);
             buf = buf[extname.len..];
+
+            if (comptime Environment.isWindows) {
+                bun.path.platformToPosixInPlace(u8, route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(&route_file_buf)]);
+            }
+
             break :brk route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(&route_file_buf)];
         };
 
@@ -723,8 +743,8 @@ pub const Route = struct {
                 match_name = name[1..];
             }
 
-            if (Environment.allow_assert) std.debug.assert(match_name[0] != '/');
-            if (Environment.allow_assert) std.debug.assert(name[0] == '/');
+            if (Environment.allow_assert) bun.assert(match_name[0] != '/');
+            if (Environment.allow_assert) bun.assert(name[0] == '/');
         } else {
             name = Route.index_route_name;
             match_name = Route.index_route_name;
@@ -736,13 +756,13 @@ pub const Route = struct {
             var file: std.fs.File = undefined;
             var needs_close = false;
             defer if (needs_close) file.close();
-            if (entry.cache.fd != 0) {
-                file = std.fs.File{ .handle = bun.fdcast(entry.cache.fd) };
+            if (entry.cache.fd != .zero) {
+                file = entry.cache.fd.asFile();
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
                 abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);
                 route_file_buf[abs_path_str.len] = 0;
-                var buf = route_file_buf[0..abs_path_str.len :0];
+                const buf = route_file_buf[0..abs_path_str.len :0];
                 file = std.fs.openFileAbsoluteZ(buf, .{ .mode = .read_only }) catch |err| {
                     log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} opening route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                     return null;
@@ -753,7 +773,7 @@ pub const Route = struct {
                 if (!needs_close) entry.cache.fd = bun.toFD(file.handle);
             }
 
-            var _abs = bun.getFdPath(file.handle, &route_file_buf) catch |err| {
+            const _abs = bun.getFdPath(file.handle, &route_file_buf) catch |err| {
                 log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} resolving route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                 return null;
             };
@@ -762,9 +782,22 @@ pub const Route = struct {
             entry.abs_path = PathString.init(abs_path_str);
         }
 
+        const abs_path = if (comptime Environment.isWindows)
+            allocator.dupe(u8, bun.path.platformToPosixBuf(u8, abs_path_str, &normalized_abs_path_buf)) catch bun.outOfMemory()
+        else
+            PathString.init(abs_path_str);
+
+        if (comptime Environment.allow_assert and Environment.isWindows) {
+            bun.assert(!strings.containsChar(name, '\\'));
+            bun.assert(!strings.containsChar(public_path, '\\'));
+            bun.assert(!strings.containsChar(match_name, '\\'));
+            bun.assert(!strings.containsChar(abs_path, '\\'));
+            bun.assert(!strings.containsChar(entry.base(), '\\'));
+        }
+
         return Route{
             .name = name,
-            .entry = entry,
+            .basename = entry.base(),
             .public_path = PathString.init(public_path),
             .match_name = PathString.init(match_name),
             .full_hash = if (is_index)
@@ -773,7 +806,9 @@ pub const Route = struct {
                 @as(u32, @truncate(bun.hash(name))),
             .param_count = validation_result.param_count,
             .kind = validation_result.kind,
-            .abs_path = entry.abs_path,
+            .abs_path = if (comptime Environment.isWindows) .{
+                .path = abs_path,
+            } else abs_path,
             .has_uppercase = has_uppercase,
         };
     }
@@ -807,7 +842,7 @@ pub fn match(app: *Router, comptime Server: type, server: Server, comptime Reque
             return;
         }
 
-        std.debug.assert(route.path.len > 0);
+        bun.assert(route.path.len > 0);
 
         if (comptime @hasField(std.meta.Child(Server), "watcher")) {
             if (server.watcher.watchloop_handle == null) {
@@ -905,11 +940,11 @@ pub const MockServer = struct {
 
 fn makeTest(cwd_path: string, data: anytype) !void {
     Output.initTest();
-    std.debug.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
-    const bun_tests_dir = try std.fs.cwd().makeOpenPathIterable("bun-test-scratch", .{});
+    bun.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
+    const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{});
     bun_tests_dir.deleteTree(cwd_path) catch {};
 
-    const cwd = try bun_tests_dir.makeOpenPathIterable(cwd_path, .{});
+    const cwd = try bun_tests_dir.makeOpenPath(cwd_path, .{});
     try cwd.setAsCwd();
 
     const Data = @TypeOf(data);
@@ -932,7 +967,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const expectStr = std.testing.expectEqualStrings;
-const Logger = @import("root").bun.logger;
+const Logger = bun.logger;
 
 pub const Test = struct {
     pub fn makeRoutes(comptime testName: string, data: anytype) !Routes {
@@ -941,15 +976,15 @@ pub const Test = struct {
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
-        var fs = try FileSystem.init(null);
-        var top_level_dir = fs.top_level_dir;
+        const fs = try FileSystem.init(null);
+        const top_level_dir = fs.top_level_dir;
 
         var pages_parts = [_]string{ top_level_dir, "pages" };
-        var pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
+        const pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
         // _ = try std.fs.makeDirAbsolute(
         //     pages_dir,
         // );
-        var router = try Router.init(&FileSystem.instance, default_allocator, Options.RouteConfig{
+        const router = try Router.init(&FileSystem.instance, default_allocator, Options.RouteConfig{
             .dir = pages_dir,
             .routes_enabled = true,
             .extensions = &.{"js"},
@@ -961,7 +996,7 @@ pub const Test = struct {
             logger.printForLogLevel(Output.errorWriter()) catch {};
         }
 
-        var opts = Options.BundleOptions{
+        const opts = Options.BundleOptions{
             .resolve_mode = .lazy,
             .target = .browser,
             .loaders = undefined,
@@ -983,7 +1018,7 @@ pub const Test = struct {
 
         var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
 
-        var root_dir = (try resolver.readDirInfo(pages_dir)).?;
+        const root_dir = (try resolver.readDirInfo(pages_dir)).?;
         return RouteLoader.loadAll(default_allocator, opts.routes, &logger, Resolver, &resolver, root_dir);
         // try router.loadRoutes(root_dir, Resolver, &resolver, 0, true);
         // var entry_points = try router.getEntryPoints(default_allocator);
@@ -998,11 +1033,11 @@ pub const Test = struct {
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
-        var fs = try FileSystem.initWithForce(null, true);
-        var top_level_dir = fs.top_level_dir;
+        const fs = try FileSystem.initWithForce(null, true);
+        const top_level_dir = fs.top_level_dir;
 
         var pages_parts = [_]string{ top_level_dir, "pages" };
-        var pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
+        const pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
         // _ = try std.fs.makeDirAbsolute(
         //     pages_dir,
         // );
@@ -1018,7 +1053,7 @@ pub const Test = struct {
             logger.printForLogLevel(Output.errorWriter()) catch {};
         }
 
-        var opts = Options.BundleOptions{
+        const opts = Options.BundleOptions{
             .resolve_mode = .lazy,
             .target = .browser,
             .loaders = undefined,
@@ -1040,7 +1075,7 @@ pub const Test = struct {
 
         var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
 
-        var root_dir = (try resolver.readDirInfo(pages_dir)).?;
+        const root_dir = (try resolver.readDirInfo(pages_dir)).?;
         try router.loadRoutes(
             &logger,
             root_dir,
@@ -1048,7 +1083,7 @@ pub const Test = struct {
             &resolver,
             FileSystem.instance.top_level_dir,
         );
-        var entry_points = try router.getEntryPoints();
+        const entry_points = try router.getEntryPoints();
 
         try expectEqual(std.meta.fieldNames(@TypeOf(data)).len, entry_points.len);
         return router;
@@ -1182,7 +1217,7 @@ const Pattern = struct {
 
         var count: u16 = 0;
         var offset: RoutePathInt = 0;
-        std.debug.assert(input.len > 0);
+        bun.assert(input.len > 0);
         var kind: u4 = @intFromEnum(Tag.static);
         const end = @as(u32, @truncate(input.len - 1));
         while (offset < end) {

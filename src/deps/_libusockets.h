@@ -123,23 +123,24 @@ typedef struct {
 
 typedef void (*uws_listen_handler)(struct us_listen_socket_t *listen_socket,
                                    void *user_data);
-typedef void (*uws_listen_domain_handler)(struct us_listen_socket_t *listen_socket, 
-                                          const char* domain, int options, 
-                                          void *user_data);
+typedef void (*uws_listen_domain_handler)(
+    struct us_listen_socket_t *listen_socket, const char *domain, int options,
+    void *user_data);
 
 typedef void (*uws_method_handler)(uws_res_t *response, uws_req_t *request,
                                    void *user_data);
 typedef void (*uws_filter_handler)(uws_res_t *response, int, void *user_data);
 typedef void (*uws_missing_server_handler)(const char *hostname,
                                            void *user_data);
-typedef void (*uws_get_headers_server_handler)(const char *header_name, 
-                                               size_t header_name_size, 
-                                               const char *header_value, 
-                                               size_t header_value_size, 
+typedef void (*uws_get_headers_server_handler)(const char *header_name,
+                                               size_t header_name_size,
+                                               const char *header_value,
+                                               size_t header_value_size,
                                                void *user_data);
 
 // Basic HTTP
-uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options);
+uws_app_t *uws_create_app(int ssl,
+                          struct us_bun_socket_context_options_t options);
 
 void uws_app_destroy(int ssl, uws_app_t *app);
 void uws_app_get(int ssl, uws_app_t *app, const char *pattern,
@@ -170,11 +171,14 @@ void uws_app_listen(int ssl, uws_app_t *app, int port,
 void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
                                 uint16_t port, int32_t options,
                                 uws_listen_handler handler, void *user_data);
-void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, 
-                           uws_listen_domain_handler handler, void *user_data);
+void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain,
+                           size_t pathlen, uws_listen_domain_handler handler,
+                           void *user_data);
 
-void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain,
-                                        int options, uws_listen_domain_handler handler,
+void uws_app_listen_domain_with_options(int ssl, uws_app_t *app,
+                                        const char *domain, size_t pathlen,
+                                        int options,
+                                        uws_listen_domain_handler handler,
                                         void *user_data);
 void uws_app_domain(int ssl, uws_app_t *app, const char *server_name);
 
@@ -267,10 +271,10 @@ void uws_res_write_header_int(int ssl, uws_res_t *res, const char *key,
 void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection);
 void uws_res_end_stream(int ssl, uws_res_t *res, bool close_connection);
 bool uws_res_write(int ssl, uws_res_t *res, const char *data, size_t length);
-uintmax_t uws_res_get_write_offset(int ssl, uws_res_t *res);
+uint64_t uws_res_get_write_offset(int ssl, uws_res_t *res);
 bool uws_res_has_responded(int ssl, uws_res_t *res);
 void uws_res_on_writable(int ssl, uws_res_t *res,
-                         bool (*handler)(uws_res_t *res, uintmax_t,
+                         bool (*handler)(uws_res_t *res, uint64_t,
                                          void *opcional_data),
                          void *user_data);
 void uws_res_on_aborted(int ssl, uws_res_t *res,
@@ -302,10 +306,12 @@ size_t uws_req_get_query(uws_req_t *res, const char *key, size_t key_length,
                          const char **dest);
 size_t uws_req_get_parameter(uws_req_t *res, unsigned short index,
                              const char **dest);
-void uws_req_for_each_header(uws_req_t *res, uws_get_headers_server_handler handler, void *user_data);
+void uws_req_for_each_header(uws_req_t *res,
+                             uws_get_headers_server_handler handler,
+                             void *user_data);
 
 struct us_loop_t *uws_get_loop();
-struct us_loop_t *uws_get_loop_with_native(void* existing_native_loop);
+struct us_loop_t *uws_get_loop_with_native(void *existing_native_loop);
 
 void uws_loop_addPostHandler(us_loop_t *loop, void *ctx_,
                              void (*cb)(void *ctx, us_loop_t *loop));
@@ -327,7 +333,7 @@ bool uws_res_try_end(int ssl, uws_res_t *res, const char *bytes, size_t len,
                      size_t total_len, bool close);
 
 void uws_res_prepare_for_sendfile(int ssl, uws_res_t *res);
-void uws_res_override_write_offset(int ssl, uws_res_t *res, uintmax_t offset);
+void uws_res_override_write_offset(int ssl, uws_res_t *res, uint64_t offset);
 
 void uws_app_close(int ssl, uws_app_t *app);
 

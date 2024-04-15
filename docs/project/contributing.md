@@ -1,19 +1,19 @@
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
-If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
+If you are using Windows, please refer to [this guide](/docs/project/building-windows)
 
 ## Install Dependencies
 
-Using your system's package manager, install the Bun's dependencies:
+Using your system's package manager, install Bun's dependencies:
 
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja pkg-config rust
+$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+$ sudo apt install curl wget lsb-release software-properties-common cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
 ```
 
 ```bash#Arch
@@ -21,35 +21,32 @@ $ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-
 ```
 
 ```bash#Fedora
-$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc libatomic-static libstdc++-static sed unzip which libicu-devel
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+```
+
+```bash#openSUSE Tumbleweed
+$ sudo zypper install go cmake ninja automake git rustup && rustup toolchain install stable
 ```
 
 {% /codetabs %}
+
+> **Note**: The Zig compiler is automatically installed and updated by the build scripts. Manual installation is not required.
 
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
 {% codetabs %}
 
 ```bash#Native
-$ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+$ curl -fsSL https://bun.sh/install | bash
 ```
 
 ```bash#npm
-$ npm install -g bun # the last `npm` command you'll ever need
+$ npm install -g bun
 ```
 
 ```bash#Homebrew
-$ brew tap oven-sh/bun # for macOS and Linux
+$ brew tap oven-sh/bun
 $ brew install bun
-```
-
-```bash#Docker
-$ docker pull oven/bun
-$ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
-```
-
-```bash#proto
-$ proto install bun
 ```
 
 {% /codetabs %}
@@ -79,6 +76,10 @@ $ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
 $ sudo dnf install llvm clang lld
 ```
 
+```bash#openSUSE Tumbleweed
+$ sudo zypper install clang16 lld16 llvm16
+```
+
 {% /codetabs %}
 
 If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
@@ -95,7 +96,7 @@ If not, run this to manually link it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:$(brew --prefix llvm@16)/bin"
+$ export PATH="$(brew --prefix llvm@16)/bin:$PATH"
 ```
 
 ```bash#Arch
@@ -105,18 +106,7 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 
 {% /codetabs %}
 
-## Install Zig
-
-Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).
-
-```bash
-$ bun install -g @oven/zig
-$ zigup 0.12.0-dev.1604+caae40c21
-```
-
-{% callout %}
-We last updated Zig on **October 26th, 2023**
-{% /callout %}
+> ⚠️ Ubuntu distributions may require installation of the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
 
 ## Building Bun
 
@@ -143,15 +133,17 @@ These two scripts, `setup` and `build`, are aliases to do roughly the following:
 
 ```bash
 $ ./scripts/setup.sh
-$ cmake -S . -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
+$ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 $ ninja -C build # 'bun run build' runs just this
 ```
 
-Advanced uses can pass CMake flags to customize the build.
+Advanced users can pass CMake flags to customize the build.
 
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
+
+If you use a different editor, make sure that you tell ZLS to use the automatically installed Zig compiler, which is located at `./.cache/zig/zig` (`zig.exe` on Windows).
 
 ## Code generation scripts
 
@@ -265,6 +257,16 @@ fatal error: 'span' file not found
          ^~~~~~
 ```
 
+The issue may manifest when initially running `bun setup` as Clang being unable to compile a simple program:
+
+```
+The C++ compiler
+
+  "/usr/bin/clang++-16"
+
+is not able to compile a simple test program.
+```
+
 To fix the error, we need to update the GCC version to 11. To do this, we'll need to check if the latest version is available in the distribution's official repositories or use a third-party repository that provides GCC 11 packages. Here are general steps:
 
 ```bash
@@ -300,12 +302,12 @@ If you see this error when compiling, run:
 $ xcode-select --install
 ```
 
-## Arch Linux / Cannot find `libatomic.a`
+## Cannot find `libatomic.a`
 
-Bun requires `libatomic` to be statically linked. On Arch Linux, it is only given as a shared library, but as a workaround you can symlink it to get the build working locally.
+Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
 ```bash
-$ sudo ln -s /lib/libatomic.so /lib/libatomic.a
+$ bun setup -DUSE_STATIC_LIBATOMIC=OFF
 ```
 
 The built version of Bun may not work on other systems if compiled this way.

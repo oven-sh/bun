@@ -49,8 +49,8 @@ const bun = @import("root").bun;
 pub const OsIterator = struct {
     const Error = process.ArgIterator.InitError;
 
-    arena: @import("root").bun.ArenaAllocator,
-    remain: [][*:0]u8,
+    arena: bun.ArenaAllocator,
+    remain: [][:0]const u8,
 
     /// The executable path (this is the first argument passed to the program)
     /// TODO: Is it the right choice for this to be null? Maybe `init` should
@@ -59,7 +59,7 @@ pub const OsIterator = struct {
 
     pub fn init(allocator: mem.Allocator) OsIterator {
         var res = OsIterator{
-            .arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .arena = bun.ArenaAllocator.init(allocator),
             .exe_arg = undefined,
             .remain = bun.argv(),
         };
@@ -73,7 +73,7 @@ pub const OsIterator = struct {
 
     pub fn next(iter: *OsIterator) ?[:0]const u8 {
         if (iter.remain.len > 0) {
-            const res = bun.sliceTo(iter.remain[0], 0);
+            const res = iter.remain[0];
             iter.remain = iter.remain[1..];
             return res;
         }
@@ -90,12 +90,12 @@ pub const ShellIterator = struct {
         QuoteNotClosed,
     } || mem.Allocator.Error;
 
-    arena: @import("root").bun.ArenaAllocator,
+    arena: bun.ArenaAllocator,
     str: []const u8,
 
     pub fn init(allocator: mem.Allocator, str: []const u8) ShellIterator {
         return .{
-            .arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .arena = bun.ArenaAllocator.init(allocator),
             .str = str,
         };
     }

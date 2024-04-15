@@ -47,6 +47,12 @@ To filter by _test name_, use the `-t`/`--test-name-pattern` flag.
 $ bun test --test-name-pattern addition
 ```
 
+To run a specific file in the test runner, make sure the path starts with `./` or `/` to distinguish it from a filter name.
+
+```bash
+$ bun test ./test/specific-file.test.ts
+```
+
 The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
 
 ## Timeouts
@@ -97,7 +103,7 @@ Bun supports the following lifecycle hooks:
 | `afterEach`  | Runs after each test.       |
 | `afterAll`   | Runs once after all tests.  |
 
-These hooks can be define inside test files, or in a separate file that is preloaded with the `--preload` flag.
+These hooks can be defined inside test files, or in a separate file that is preloaded with the `--preload` flag.
 
 ```ts
 $ bun test --preload ./setup.ts
@@ -107,17 +113,13 @@ See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
 
 ## Mocks
 
-{% callout %}
-Module mocking (`jest.mock()`) is not yet supported. Track support for it [here](https://github.com/oven-sh/bun/issues/5394).
-{% /callout %}
-
 Create mock functions with the `mock` function. Mocks are automatically reset between tests.
 
 ```ts
 import { test, expect, mock } from "bun:test";
 const random = mock(() => Math.random());
 
-test("random", async () => {
+test("random", () => {
   const val = random();
   expect(val).toBeGreaterThan(0);
   expect(random).toHaveBeenCalled();
@@ -145,7 +147,7 @@ Snapshots are supported by `bun test`.
 // example usage of toMatchSnapshot
 import { test, expect } from "bun:test";
 
-test("snapshot", async () => {
+test("snapshot", () => {
   expect({ a: 1 }).toMatchSnapshot();
 });
 ```

@@ -9,7 +9,7 @@ const StatError = std.fs.File.StatError;
 const off_t = std.c.off_t;
 const errno = os.errno;
 const zeroes = mem.zeroes;
-
+const This = @This();
 pub extern "c" fn copyfile(from: [*:0]const u8, to: [*:0]const u8, state: ?std.c.copyfile_state_t, flags: u32) c_int;
 pub const COPYFILE_STATE_SRC_FD = @as(c_int, 1);
 pub const COPYFILE_STATE_SRC_FILENAME = @as(c_int, 2);
@@ -288,13 +288,14 @@ pub const SystemErrno = enum(u8) {
     pub const max = 107;
 
     pub fn init(code: anytype) ?SystemErrno {
-        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
-            if (code < 0)
-                return init(-code);
+        if (code < 0) {
+            if (code <= -max) {
+                return null;
+            }
+            return @enumFromInt(-code);
         }
-
         if (code >= max) return null;
-        return @as(SystemErrno, @enumFromInt(code));
+        return @enumFromInt(code);
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -616,11 +617,11 @@ const IO_CTL_RELATED = struct {
         return (x >> @as(c_int, 8)) & @as(c_int, 0xff);
     }
     pub const IOCPARM_MAX = IOCPARM_MASK + @as(c_int, 1);
-    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hexadecimal));
-    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hexadecimal));
-    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hexadecimal));
+    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hex));
+    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hex));
+    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hex));
     pub const IOC_INOUT = IOC_IN | IOC_OUT;
-    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hexadecimal));
+    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hex));
     pub inline fn _IOC(inout: anytype, group: anytype, num: anytype, len: anytype) @TypeOf(((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num) {
         return ((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num;
     }
@@ -765,7 +766,14 @@ pub const sockaddr_dl = extern struct {
 
 pub usingnamespace @cImport({
     @cInclude("sys/spawn.h");
+    @cInclude("sys/fcntl.h");
+    @cInclude("sys/socket.h");
 });
+
+pub const F = struct {
+    pub const DUPFD_CLOEXEC = This.F_DUPFD_CLOEXEC;
+    pub const DUPFD = This.F_DUPFD;
+};
 
 // it turns out preallocating on APFS on an M1 is slower.
 // so this is a linux-only optimization for now.
@@ -774,6 +782,22 @@ pub const preallocate_length = std.math.maxInt(u51);
 pub const Mode = std.os.mode_t;
 
 pub const E = std.os.E;
+pub const S = std.os.S;
 pub fn getErrno(rc: anytype) E {
     return std.c.getErrno(rc);
 }
+pub extern "c" fn umask(Mode) Mode;
+
+// #define RENAME_SECLUDE                  0x00000001
+// #define RENAME_SWAP                     0x00000002
+// #define RENAME_EXCL                     0x00000004
+// #define RENAME_RESERVED1                0x00000008
+// #define RENAME_NOFOLLOW_ANY             0x00000010
+pub const RENAME_SECLUDE = 0x00000001;
+pub const RENAME_SWAP = 0x00000002;
+pub const RENAME_EXCL = 0x00000004;
+pub const RENAME_RESERVED1 = 0x00000008;
+pub const RENAME_NOFOLLOW_ANY = 0x00000010;
+
+// int renameatx_np(int fromfd, const char *from, int tofd, const char *to, unsigned int flags);
+pub extern "c" fn renameatx_np(fromfd: c_int, from: ?[*:0]const u8, tofd: c_int, to: ?[*:0]const u8, flags: c_uint) c_int;

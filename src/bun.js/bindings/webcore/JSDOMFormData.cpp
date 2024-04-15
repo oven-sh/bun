@@ -241,7 +241,9 @@ void JSDOMFormData::finishCreation(VM& vm)
 
 JSObject* JSDOMFormData::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSDOMFormDataPrototype::create(vm, &globalObject, JSDOMFormDataPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSDOMFormDataPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSDOMFormDataPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSDOMFormData::prototype(VM& vm, JSDOMGlobalObject& globalObject)

@@ -41,6 +41,12 @@ function generate(name) {
       pendingWebSockets: {
         getter: "getPendingWebSockets",
       },
+      ref: {
+        fn: "doRef",
+      },
+      unref: {
+        fn: "doUnref",
+      },
       hostname: {
         getter: "getHostname",
         cache: true,

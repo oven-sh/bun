@@ -142,12 +142,10 @@ pub const ReadableStream = struct {
     }
 
     pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
-        this.detachIfPossible(globalThis);
-    }
-
-    pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-
+        // done is called when we are done consuming the stream
+        // cancel actually mark the stream source as done
+        // this will resolve any pending promises to done: true
         switch (this.ptr) {
             .Blob => |source| {
                 source.parent().cancel();
@@ -160,13 +158,20 @@ pub const ReadableStream = struct {
             },
             else => {},
         }
-        ReadableStream__cancel(this.value, globalThis);
         this.detachIfPossible(globalThis);
+    }
+
+    pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
+        JSC.markBinding(@src());
+        // cancel the stream
+        ReadableStream__cancel(this.value, globalThis);
+        // mark the stream source as done
+        this.done(globalThis);
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-
+        // for now we are just calling cancel should be fine
         this.cancel(globalThis);
     }
 

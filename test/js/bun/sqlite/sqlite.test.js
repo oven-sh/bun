@@ -797,6 +797,26 @@ it("issue#6597", () => {
   db.close();
 });
 
+it.only("issue#6597 with many columns", () => {
+  // better-sqlite3 returns the last value of duplicate fields
+  const db = new Database(":memory:");
+  const count = 100;
+  const columns = Array.from({ length: count }, (_, i) => `col${i}`);
+  const values_foo = Array.from({ length: count }, (_, i) => `'foo${i}'`);
+  const values_bar = Array.from({ length: count }, (_, i) => `'bar${i}'`);
+  values_bar[0] = values_foo[0];
+  db.run(`CREATE TABLE foo (${columns.join(",")})`);
+  db.run(`CREATE TABLE bar (${columns.join(",")})`);
+  db.run(`INSERT INTO foo (${columns.join(",")}) VALUES (${values_foo.join(",")})`);
+  db.run(`INSERT INTO bar (${columns.join(",")}) VALUES (${values_bar.join(",")})`);
+  const result = db.prepare("SELECT * FROM foo JOIN bar ON foo.col0 = bar.col0").get();
+  expect(result.col0).toBe("foo0");
+  for (let i = 1; i < count; i++) {
+    expect(result[`col${i}`]).toBe(`bar${i}`);
+  }
+  db.close();
+});
+
 it("issue#7147", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");

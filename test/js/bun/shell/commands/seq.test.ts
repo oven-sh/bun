@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { describe } from "bun:test";
 import { TestBuilder } from "../test_builder";
 
+$.nothrow();
 describe("seq", async () => {
   TestBuilder.command`seq`
     .exitCode(1)

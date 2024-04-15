@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { describe, test, expect } from "bun:test";
 import { TestBuilder } from "../test_builder";
 
+$.nothrow();
 describe("dirname", async () => {
   TestBuilder.command`dirname`.exitCode(1).stdout("").stderr("usage: dirname string\n").runAsTest("shows usage");
 

@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { describe, test, expect } from "bun:test";
 import { TestBuilder } from "../test_builder";
 
+$.nothrow();
 describe("false", async () => {
   TestBuilder.command`false`.exitCode(1).runAsTest("works");
 

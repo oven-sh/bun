@@ -98,51 +98,21 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
   const leak = Math.floor(consumption > 0 ? consumption / 1024 / 1024 : 0);
   return { leak, start_memory, peak_memory, end_memory, memory_examples };
 }
-it("#10265 should not leak memory when ignoring the body", async () => {
-  const report = await calculateMemoryLeak(callIgnore);
-  console.log(report);
 
-  // peak memory is too high
-  expect(report.peak_memory > report.start_memory * 2).toBe(false);
-  // acceptable memory leak
-  expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
-});
+for (const test of [
+  ["#10265 should not leak memory when ignoring the body", callIgnore],
+  ["should not leak memory when buffering the body", callBuffering],
+  ["should not leak memory when streaming the body", callStreaming],
+  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming],
+  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho],
+]) {
+  it(test[0] as string, async () => {
+    const report = await calculateMemoryLeak(test[1] as () => Promise<void>);
+    console.log(report);
 
-it("should not leak memory when buffering the body", async () => {
-  const report = await calculateMemoryLeak(callBuffering);
-  console.log(report);
-  // peak memory is too high
-  expect(report.peak_memory > report.start_memory * 2).toBe(false);
-  // acceptable memory leak
-  expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
-});
-
-it("should not leak memory when streaming the body", async () => {
-  const report = await calculateMemoryLeak(callStreaming);
-  console.log(report);
-
-  // peak memory is too high
-  expect(report.peak_memory > report.start_memory * 2).toBe(false);
-  // acceptable memory leak
-  expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
-});
-
-it("should not leak memory when streaming the body incompletely", async () => {
-  const report = await calculateMemoryLeak(callIncompleteStreaming);
-  console.log(report);
-
-  // peak memory is too high
-  expect(report.peak_memory > report.start_memory * 2).toBe(false);
-  // acceptable memory leak
-  expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
-});
-
-it("should not leak memory when streaming the body and echoing it back", async () => {
-  const report = await calculateMemoryLeak(callStreamingEcho);
-  console.log(report);
-
-  // peak memory is too high
-  expect(report.peak_memory > report.start_memory * 2).toBe(false);
-  // acceptable memory leak
-  expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
-});
+    // peak memory is too high
+    expect(report.peak_memory > report.start_memory * 2).toBe(false);
+    // acceptable memory leak
+    expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
+  });
+}

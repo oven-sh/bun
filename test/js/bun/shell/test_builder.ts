@@ -5,7 +5,7 @@ import { ShellPromise, BunFile } from "bun";
 import { join } from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
-import { bunExe } from "harness";
+// import { bunExe } from "harness";
 
 export class TestBuilder {
   // private promise: { type: "ok"; val: ShellPromise } | { type: "err"; val: Error };
@@ -237,7 +237,6 @@ export class TestBuilder {
       }
       if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
-      console.log("Checking files");
       for (const [filename, expected] of Object.entries(this.file_equals)) {
         const actual = await Bun.file(join(this.tempdir!, filename)).text();
         expect(actual).toEqual(expected);
@@ -354,4 +353,9 @@ function generateRandomString(length: number): string {
   }
 
   return result;
+}
+
+export function bunExe() {
+  if (process.platform === "win32") return process.execPath.replaceAll("\\", "/");
+  return process.execPath;
 }

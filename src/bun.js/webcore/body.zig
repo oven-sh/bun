@@ -852,7 +852,7 @@ pub const Body = struct {
                             bun.default_allocator,
                         );
                     }
-                    readable.done(global);
+                    readable.abort(global);
                     locked.readable.deinit();
                 }
                 // will be unprotected by body value deinit

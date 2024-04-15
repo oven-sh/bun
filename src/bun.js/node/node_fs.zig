@@ -410,7 +410,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     .shelltask = shelltask,
                 },
             );
-            task.ref.ref(JSC.MiniEventLoop.global);
+            task.ref.ref(mini);
             task.args.src.toThreadSafe();
             task.args.dest.toThreadSafe();
             // task.tracker.didSchedule(globalObject);

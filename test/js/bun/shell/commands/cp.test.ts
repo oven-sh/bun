@@ -9,16 +9,20 @@ const { builtinDisabled } = shellInternals;
 
 const p = process.platform === 'win32' ? (s: string) => s.replaceAll('/', '\\') : (s: string) => s;
 
+$.nothrow()
+
 describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cp -v lmao.txt lmao2.txt`
     .stdout(p("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao2.txt\n"))
     .ensureTempDir()
+    .testMini()
     .fileEquals("lmao2.txt", await $`cat ${import.meta.filename}`.text())
     .runAsTest("file -> file");
 
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; touch lmao2.txt; cp -v lmao.txt lmao2.txt`
     .stdout(p("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao2.txt\n"))
     .ensureTempDir()
+    .testMini()
     .fileEquals("lmao2.txt", await $`cat ${import.meta.filename}`.text())
     .runAsTest("file -> existing file replaces contents");
 
@@ -26,12 +30,14 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     .ensureTempDir()
     .stdout(p("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao2/lmao.txt\n"))
     .fileEquals("lmao2/lmao.txt", await $`cat ${import.meta.filename}`.text())
+    .testMini()
     .runAsTest("file -> dir");
 
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cp -v lmao.txt lmao2/`
     .ensureTempDir()
     .stderr("cp: lmao2/ is not a directory\n")
     .exitCode(1)
+    .testMini()
     .runAsTest("file -> non-existent dir fails");
 
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cat ${import.meta.filename} > lmao2.txt; mkdir lmao3; cp -v lmao.txt lmao2.txt lmao3`
@@ -43,12 +49,14 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     )
     .fileEquals("lmao3/lmao.txt", await $`cat ${import.meta.filename}`.text())
     .fileEquals("lmao3/lmao2.txt", await $`cat ${import.meta.filename}`.text())
+    .testMini()
     .runAsTest("file+ -> dir");
 
   TestBuilder.command`mkdir lmao; mkdir lmao2; cp -v lmao lmao2 lmao3`
     .ensureTempDir()
     .stderr(expectSortedOutput("cp: lmao is a directory (not copied)\ncp: lmao2 is a directory (not copied)\n"))
     .exitCode(1)
+    .testMini()
     .runAsTest("dir -> ? fails without -R");
 
   describe("uutils ported", () => {
@@ -67,7 +75,7 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     const TEST_COPY_TO_FOLDER_NEW_FILE: string = "hello_dir_new/hello_world.txt";
 
     // beforeAll doesn't work beacuse of the way TestBuilder is setup
-    const tmpdir: string = tempDirWithFiles("cp-uutils", {
+    const tempFiles = {
       "hello_world.txt": "Hello, World!",
       "existing_file.txt": "Cogito ergo sum.",
       "how_are_you.txt": "How are you?",
@@ -89,50 +97,60 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
         "8": "",
         "9": "",
       },
-    });
+    }
+    const tmpdir: string = tempDirWithFiles("cp-uutils", tempFiles);
+    const mini_tmpdir: string = tempDirWithFiles("cp-uutils-mini", tempFiles);
 
     TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_DEST}`
       .ensureTempDir(tmpdir)
       .fileEquals(TEST_HELLO_WORLD_DEST, "Hello, World!")
+      .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_cp");
 
     TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_EXISTING_FILE}`
       .ensureTempDir(tmpdir)
       .fileEquals(TEST_EXISTING_FILE, "Hello, World!")
+      .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_existing_target");
 
     TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_SOURCE} ${TEST_COPY_TO_FOLDER}`
       .ensureTempDir(tmpdir)
       .file(TEST_EXISTING_FILE, "Hello, World!\n")
+      .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_duplicate_files");
 
     TestBuilder.command`touch a; cp a a`
       .ensureTempDir(tmpdir)
       .stderr_contains("cp: a and a are identical (not copied)\n")
       .exitCode(1)
+      .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_same_file");
 
     TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_SOURCE} ${TEST_EXISTING_FILE}`
       .ensureTempDir(tmpdir)
       .stderr_contains(`cp: ${TEST_EXISTING_FILE} is not a directory\n`)
       .exitCode(1)
+      .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_multiple_files_target_is_file");
 
     TestBuilder.command`cp ${TEST_COPY_TO_FOLDER} ${TEST_HELLO_WORLD_DEST}`
       .ensureTempDir(tmpdir)
       .stderr_contains(`cp: ${TEST_COPY_TO_FOLDER} is a directory (not copied)\n`)
       .exitCode(1)
+      .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_directory_not_recursive");
 
     TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HOW_ARE_YOU_SOURCE} ${TEST_COPY_TO_FOLDER}`
       .ensureTempDir(tmpdir)
       .fileEquals(TEST_COPY_TO_FOLDER_FILE, "Hello, World!")
       .fileEquals(TEST_HOW_ARE_YOU_DEST, "How are you?")
+      .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_multiple_files");
 
     TestBuilder.command`cp -R ${TEST_COPY_FROM_FOLDER} ${TEST_COPY_TO_FOLDER_NEW}`
       .ensureTempDir(tmpdir)
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
+      .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
   });
 });

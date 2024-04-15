@@ -1,13 +1,14 @@
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
-import { ShellError, ShellOutput } from "bun";
-import { ShellPromise } from "bun";
+import { ShellError, ShellExpression, ShellOutput } from "bun";
+import { ShellPromise, BunFile } from "bun";
 // import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
+import { bunExe } from "harness";
 
 export class TestBuilder {
-  private promise: { type: "ok"; val: ShellPromise } | { type: "err"; val: Error };
+  // private promise: { type: "ok"; val: ShellPromise } | { type: "err"; val: Error };
   private _testName: string | undefined = undefined;
 
   private expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
@@ -21,8 +22,19 @@ export class TestBuilder {
   private tempdir: string | undefined = undefined;
   private _env: { [key: string]: string } | undefined = undefined;
   private _cwd: string | undefined = undefined;
+  _miniCwd: string | undefined = undefined;
 
   private __todo: boolean | string = false;
+
+  _quiet: boolean = false;
+
+  _testMini: boolean = false
+  _onlyMini: boolean = false;
+  __insideExec: boolean = false
+  _scriptStr: TemplateStringsArray 
+  _expresssions: ShellExpression[]
+
+  _skipExecOnUnknownType: boolean = false
 
   static UNEXPECTED_SUBSHELL_ERROR_OPEN =
     "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
@@ -30,8 +42,9 @@ export class TestBuilder {
   static UNEXPECTED_SUBSHELL_ERROR_CLOSE =
     "Unexpected `)`, subshells are currently not supported right now. Escape the `)` or open a GitHub issue.";
 
-  constructor(promise: TestBuilder["promise"]) {
-    this.promise = promise;
+  constructor(_scriptStr: TemplateStringsArray, _expressions: any[]) {
+    this._scriptStr = _scriptStr;
+    this._expresssions = _expressions;
   }
 
   /**
@@ -45,15 +58,7 @@ export class TestBuilder {
    * ```
    */
   static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
-    try {
-      if (process.env.BUN_DEBUG_SHELL_LOG_CMD === "1") console.info("[ShellTestBuilder] Cmd", strings.join(""));
-      const promise = Bun.$(strings, ...expressions).nothrow();
-      const This = new this({ type: "ok", val: promise });
-      This._testName = strings.join("");
-      return This;
-    } catch (err) {
-      return new this({ type: "err", val: err as Error });
-    }
+    return new TestBuilder(strings, expressions); 
   }
 
   cwd(path: string): this {
@@ -69,6 +74,18 @@ export class TestBuilder {
 
   doesNotExist(path: string): this {
     this._doesNotExist.push(path);
+    return this;
+  }
+
+  /**
+   * @param opts 
+   * @returns 
+   */
+  testMini(opts?: { errorOnSupportedTemplate?: boolean, onlyMini?: boolean, cwd?: string }): this {
+    this._testMini = true;
+    this._skipExecOnUnknownType = opts?.errorOnSupportedTemplate ?? false
+    this._onlyMini = opts?.onlyMini ?? false
+    this._miniCwd = opts?.cwd
     return this;
   }
 
@@ -98,9 +115,7 @@ export class TestBuilder {
   }
 
   quiet(): this {
-    if (this.promise.type === "ok") {
-      this.promise.val.quiet();
-    }
+    this._quiet = true
     return this;
   }
 
@@ -172,18 +187,17 @@ export class TestBuilder {
 
   setTempdir(tempdir: string): this {
     this.tempdir = tempdir;
-    if (this.promise.type === "ok") {
-      this.promise.val.cwd(this.tempdir!);
-    }
     return this;
+  }
+
+  newTempdir(): string {
+    this.tempdir = undefined;
+    return this.getTempDir();
   }
 
   getTempDir(): string {
     if (this.tempdir === undefined) {
       this.tempdir = TestBuilder.tmpdir();
-      if (this.promise.type === "ok") {
-        this.promise.val.cwd(this.tempdir!);
-      }
       return this.tempdir!;
     }
     return this.tempdir;
@@ -194,57 +208,58 @@ export class TestBuilder {
     return this;
   }
 
-  async run(): Promise<undefined> {
-    if (this.promise.type === "err") {
-      const err = this.promise.val;
-      if (this.expected_error === undefined) throw err;
-      if (this.expected_error === true) return undefined;
-      if (this.expected_error === false) expect(err).toBeUndefined();
-      if (typeof this.expected_error === "string") {
-        expect(err.message).toEqual(this.expected_error);
-      } else if (this.expected_error instanceof ShellError) {
-        expect(err).toBeInstanceOf(ShellError);
-        const e = err as ShellError;
-        expect(e.exitCode).toEqual(this.expected_error.exitCode);
-        expect(e.stdout.toString()).toEqual(this.expected_error.stdout.toString());
-        expect(e.stderr.toString()).toEqual(this.expected_error.stderr.toString());
+  async runImpl(): Promise<undefined> {
+    try {
+      let finalPromise = Bun.$(this._scriptStr, ...this._expresssions);
+      if (this.tempdir) finalPromise = finalPromise.cwd(this.tempdir);
+      if (this._cwd) finalPromise = finalPromise.cwd(this._cwd);
+      if (this._env) finalPromise = finalPromise.env(this._env);
+      if (this._quiet) finalPromise = finalPromise.quiet();
+      const output = await finalPromise;
+
+      const { stdout, stderr, exitCode } = output!;
+      const tempdir = this.tempdir || "NO_TEMP_DIR";
+      if (this.expected_stdout !== undefined) {
+        if (typeof this.expected_stdout === "string") {
+          expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
+        } else {
+          this.expected_stdout(stdout.toString(), tempdir);
+        }
       }
-      return undefined;
-    }
-
-    let finalPromise = this.promise.val;
-    if (this._cwd) finalPromise = finalPromise.cwd(this._cwd);
-    if (this._env) finalPromise = finalPromise.env(this._env);
-    const output = await finalPromise;
-
-    const { stdout, stderr, exitCode } = output!;
-    const tempdir = this.tempdir || "NO_TEMP_DIR";
-    if (this.expected_stdout !== undefined) {
-      if (typeof this.expected_stdout === "string") {
-        expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
-      } else {
-        this.expected_stdout(stdout.toString(), tempdir);
+      if (this.expected_stderr !== undefined) {
+        if (typeof this.expected_stderr === "string") {
+          expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
+        } else if (typeof this.expected_stderr === "function") {
+          this.expected_stderr(stderr.toString(), tempdir);
+        } else {
+          expect(stderr.toString()).toContain(this.expected_stderr.contains);
+        }
       }
-    }
-    if (this.expected_stderr !== undefined) {
-      if (typeof this.expected_stderr === "string") {
-        expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
-      } else if (typeof this.expected_stderr === "function") {
-        this.expected_stderr(stderr.toString(), tempdir);
-      } else {
-        expect(stderr.toString()).toContain(this.expected_stderr.contains);
+      if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
+
+      console.log("Checking files");
+      for (const [filename, expected] of Object.entries(this.file_equals)) {
+        const actual = await Bun.file(join(this.tempdir!, filename)).text();
+        expect(actual).toEqual(expected);
       }
-    }
-    if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
-    console.log("Checking files");
-    for (const [filename, expected] of Object.entries(this.file_equals)) {
-      const actual = await Bun.file(join(this.tempdir!, filename)).text();
-      expect(actual).toEqual(expected);
-    }
-
-    for (const fsname of this._doesNotExist) {
-      expect(fs.existsSync(join(this.tempdir!, fsname))).toBeFalsy();
+      for (const fsname of this._doesNotExist) {
+        expect(fs.existsSync(join(this.tempdir!, fsname))).toBeFalsy();
+      }
+    } catch (err) {
+        if (this.expected_error === undefined) throw err;
+        if (this.expected_error === true) return undefined;
+        if (this.expected_error === false) expect(err).toBeUndefined();
+        if (typeof this.expected_error === "string") {
+          expect(err.message).toEqual(this.expected_error);
+        } else if (this.expected_error instanceof ShellError) {
+          expect(err).toBeInstanceOf(ShellError);
+          const e = err as ShellError;
+          expect(e.exitCode).toEqual(this.expected_error.exitCode);
+          expect(e.stdout.toString()).toEqual(this.expected_error.stdout.toString());
+          expect(e.stderr.toString()).toEqual(this.expected_error.stderr.toString());
+        }
+        return undefined;
     }
 
     // return output;
@@ -260,53 +275,73 @@ export class TestBuilder {
     const tb = this;
     if (this.__todo) {
       test.todo(typeof this.__todo === "string" ? `${name} skipped: ${this.__todo}` : name, async () => {
-        await tb.run();
+        await tb.runImpl();
       });
+      return;
     } else {
-      test(
-        name,
-        async () => {
-          await tb.run();
-        },
-        this._timeout,
-      );
+      if (!this._onlyMini) {
+        test(
+          name,
+          async () => {
+            await tb.runImpl();
+          },
+          this._timeout,
+        );
+      }
+
+      if (this._testMini) {
+        test(
+          name + " (exec)",
+          async () => {
+            let cwd: string = ""
+            if (tb._miniCwd === undefined) { 
+              cwd = tb.newTempdir() 
+            } else {
+              tb._cwd = tb._miniCwd;
+              cwd = tb._cwd
+            }
+            const joinedstr = tb.joinTemplate()
+            console.log("JOIEND", joinedstr)
+            await Bun.$`echo ${joinedstr} > script.bun.sh`.cwd(cwd);
+            ((script: TemplateStringsArray, ...exprs: any[]) => {
+              tb._scriptStr = script
+              tb._expresssions = exprs
+            })`${bunExe()} run script.bun.sh`
+            await tb.runImpl()
+          },
+          this._timeout,
+        );
+      }
     }
   }
 
-  // async run(): Promise<undefined> {
-  //   async function doTest(tb: TestBuilder) {
-  //     if (tb.promise.type === "err") {
-  //       const err = tb.promise.val;
-  //       if (tb.expected_error === undefined) throw err;
-  //       if (tb.expected_error === true) return undefined;
-  //       if (tb.expected_error === false) expect(err).toBeUndefined();
-  //       if (typeof tb.expected_error === "string") {
-  //         expect(err.message).toEqual(tb.expected_error);
-  //       }
-  //       return undefined;
-  //     }
+  joinTemplate(): string {
+    let buf = [] 
+    for (let i = 0; i < this._scriptStr.length; i++) {
+      buf.push(this._scriptStr[i])
+      if (this._expresssions[i] !== undefined) {
+        const expr = this._expresssions[i]
+        this.processShellExpr(buf, expr)
+      }
+    }
 
-  //     const output = await tb.promise.val;
+    return buf.join('')
+  }
 
-  //     const { stdout, stderr, exitCode } = output!;
-  //     if (tb.expected_stdout !== undefined) expect(stdout.toString()).toEqual(tb.expected_stdout);
-  //     if (tb.expected_stderr !== undefined) expect(stderr.toString()).toEqual(tb.expected_stderr);
-  //     if (tb.expected_exit_code !== undefined) expect(exitCode).toEqual(tb.expected_exit_code);
+  processShellExpr(buf: string[], expr: ShellExpression) {
+    if (typeof expr === "string") {
+      buf.push(Bun.$.escape(expr))
+    } else if (typeof expr?.raw === 'string') {
+      buf.push(Bun.$.escape( expr.raw ))
+    } else if (Array.isArray(expr))  {
+      expr.forEach(e => this.processShellExpr(buf, e))
+    }
+      else {
+      if (this._skipExecOnUnknownType) { console.warn(`Unexpected expression type: ${expr}\nSkipping.`); return  }
+      throw new Error(`Unexpected expression type ${expr}`)
+    }
+  }
 
-  //     for (const [filename, expected] of Object.entries(tb.file_equals)) {
-  //       const actual = await Bun.file(filename).text();
-  //       expect(actual).toEqual(expected);
-  //     }
-  //     return output;
-  //   }
-
-  //   if (this._testName !== undefined) {
-  //     test(this._testName, async () => {
-  //       await doTest(this);
-  //     });
-  //   }
-  //   await doTest(this);
-  // }
 }
 function generateRandomString(length: number): string {
   const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";

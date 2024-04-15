@@ -57,7 +57,8 @@ describe("bind()", () => {
     });
   });
 
-  describe.each([
+
+  const dataTypes = [
     {
       binaryType: undefined,
       type: Buffer,
@@ -74,94 +75,88 @@ describe("bind()", () => {
       binaryType: "uint8array",
       type: Uint8Array,
     },
-  ])("can receive data from a socket", ({ binaryType, type }) => {
-    const onData = mock((socket, data, port, address) => {
-      expect(socket).toBeInstanceOf(Object);
-      expect(socket.binaryType).toBe(binaryType || "nodebuffer");
-      expect(data).toBeInstanceOf(type);
-      expect(port).toBeInteger();
-      expect(port).toBeWithin(1, 65535 + 1);
-      expect(port).not.toBe(socket.port);
-      expect(address).toBeString();
-      expect(address).not.toBeEmpty();
-    });
-    const socket = bind({
-      binaryType: binaryType as any,
-      socket: {
-        data: onData,
-      },
-    });
-    test.each([
-      {
-        label: "string (ascii)",
-        data: "ascii",
-        bytes: [0x61, 0x73, 0x63, 0x69, 0x69],
-      },
-      {
-        label: "string (latin1)",
-        data: "latin1-©",
-        bytes: [0x6c, 0x61, 0x74, 0x69, 0x6e, 0x31, 0x2d, 0xc2, 0xa9],
-      },
-      {
-        label: "string (utf-8)",
-        data: "utf8-😶",
-        bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x98, 0xb6],
-      },
-      {
-        label: "string (empty)",
-        data: "",
-        bytes: [],
-      },
-      {
-        label: "Uint8Array (utf-8)",
-        data: new TextEncoder().encode("utf8-🙂"),
-        bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x99, 0x82],
-      },
-      {
-        label: "Uint8Array (empty)",
-        data: new Uint8Array(),
-        bytes: [],
-      },
-      {
-        label: "ArrayBuffer (utf-8)",
-        data: new TextEncoder().encode("utf8-🙃").buffer,
-        bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x99, 0x83],
-      },
-      {
-        label: "ArrayBuffer (empty)",
-        data: new ArrayBuffer(0),
-        bytes: [],
-      },
-      {
-        label: "Buffer (utf-8)",
-        data: Buffer.from("utf8-🤩"),
-        bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0xa4, 0xa9],
-      },
-      {
-        label: "Buffer (empty)",
-        data: Buffer.from([]),
-        bytes: [],
-      },
-    ])("$label", ({ data, bytes }) => {
-      send(socket.port, socket.hostname, data);
-      expect(onData.mock.calls).toHaveLength(1);
-      expect(onData.mock.calls[0]).toHaveLength(4);
-      expect(onData.mock.calls[0][0]).toStrictEqual(socket);
-      expect(onData.mock.calls[0][1]).toBeInstanceOf(type);
-      expect(onData.mock.calls[0][1]).toHaveLength(bytes.length);
-      expect(Buffer.from(onData.mock.calls[0][1])).toStrictEqual(Buffer.from(bytes));
-      expect(onData.mock.calls[0][2]).toBeInteger();
-      expect(onData.mock.calls[0][2]).toBeWithin(1, 65535 + 1);
-      expect(onData.mock.calls[0][2]).not.toBe(socket.port);
-      expect(onData.mock.calls[0][3]).toBeString();
-    });
-    afterEach(() => {
-      onData.mockClear();
-    });
-    afterAll(() => {
-      socket.close();
-    });
-  });
+  ];
+
+  const recvCases = [
+    {
+      label: "string (ascii)",
+      data: "ascii",
+      bytes: [0x61, 0x73, 0x63, 0x69, 0x69],
+    },
+    {
+      label: "string (latin1)",
+      data: "latin1-©",
+      bytes: [0x6c, 0x61, 0x74, 0x69, 0x6e, 0x31, 0x2d, 0xc2, 0xa9],
+    },
+    {
+      label: "string (utf-8)",
+      data: "utf8-😶",
+      bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x98, 0xb6],
+    },
+    {
+      label: "string (empty)",
+      data: "",
+      bytes: [],
+    },
+    {
+      label: "Uint8Array (utf-8)",
+      data: new TextEncoder().encode("utf8-🙂"),
+      bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x99, 0x82],
+    },
+    {
+      label: "Uint8Array (empty)",
+      data: new Uint8Array(),
+      bytes: [],
+    },
+    {
+      label: "ArrayBuffer (utf-8)",
+      data: new TextEncoder().encode("utf8-🙃").buffer,
+      bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x99, 0x83],
+    },
+    {
+      label: "ArrayBuffer (empty)",
+      data: new ArrayBuffer(0),
+      bytes: [],
+    },
+    {
+      label: "Buffer (utf-8)",
+      data: Buffer.from("utf8-🤩"),
+      bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0xa4, 0xa9],
+    },
+    {
+      label: "Buffer (empty)",
+      data: Buffer.from([]),
+      bytes: [],
+    },
+  ];
+
+  for (const { binaryType, type } of dataTypes) {
+    for (const { label, data, bytes } of recvCases) {
+      test(`${label} (${binaryType || "undefined"})`, (done) => {
+        const client = bind({});
+        const server = bind({
+          binaryType: binaryType,
+          socket: {
+            data(socket, data, port, address) {
+              expect(socket).toBeInstanceOf(Object);
+              expect(socket.binaryType).toBe(binaryType || "nodebuffer");
+              expect(data).toBeInstanceOf(type);
+              expect(port).toBeInteger();
+              expect(port).toBeWithin(1, 65535 + 1);
+              expect(port).not.toBe(socket.port);
+              expect(address).toBeString();
+              expect(address).not.toBeEmpty();
+              server.close();
+              client.close();
+              done();
+            },
+          },
+        });
+
+        send(data, server.port, server.hostname);
+      });
+    }
+  }
 
   const sendCases = [
     {
@@ -216,7 +211,7 @@ describe("bind()", () => {
     },
   ];
 
-  describe.each(sendCases)("can send data to a socket", ({ label, data, bytes }) => {
+  for (const { label, data, bytes } of sendCases) {
     test(label, (done) => {
       const client = bind({});
       const server = bind({
@@ -238,11 +233,10 @@ describe("bind()", () => {
       });
       client.send(data, server.port, "127.0.0.1");
     });
-  });
+  }
 });
 
-
-function send(port: number, address: string, data: string | BufferSource): void {
+function send(data: string | BufferSource, port: number, address: string): void {
   const base64 = typeof data === "string" ? "" : "1";
   const message = typeof data === "string" ? data : Buffer.from(data as any).toString("base64");
   const { exitCode, stderr } = spawnSync({
@@ -255,9 +249,3 @@ function send(port: number, address: string, data: string | BufferSource): void 
     throw new Error(reason);
   }
 }
-
-// function send(port: number, address: string, data: string | BufferSource): void {
-//   const client = bind({});
-//   client.send(data, port, address);
-//   // client.close();
-// }

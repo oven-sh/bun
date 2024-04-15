@@ -6,7 +6,7 @@ import type { Subprocess } from "bun";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
 beforeAll(async () => {
-  process = Bun.spawn(["bun", "--smol", join(import.meta.dirname, "body-leak-test-feature.ts")], {
+  process = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-feature.ts")], {
     env: bunEnv,
     stdout: "pipe",
     stderr: "inherit",

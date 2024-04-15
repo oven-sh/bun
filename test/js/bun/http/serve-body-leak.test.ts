@@ -25,11 +25,7 @@ afterAll(() => {
 });
 
 async function getMemoryUsage(): Promise<number> {
-  return await fetch(`${url.origin}/report`).then(res => res.json());
-}
-async function garbageCollect() {
-  await Bun.sleep(100);
-  await fetch(`${url.origin}/gc`);
+  return (await fetch(`${url.origin}/report`).then(res => res.json())) as number;
 }
 
 async function warmup() {
@@ -48,22 +44,31 @@ async function callBuffering() {
   });
 }
 async function callStreaming() {
-  await fetch(`${url.origin}/streaming`, {
+  const result = await fetch(`${url.origin}/streaming`, {
     method: "POST",
     body: payload,
-  });
+  }).then(res => res.text());
+  expect(result).toBe("Ok");
 }
 async function callIncompleteStreaming() {
-  await fetch(`${url.origin}/incomplete-streaming`, {
+  const result = await fetch(`${url.origin}/incomplete-streaming`, {
     method: "POST",
     body: payload,
-  });
+  }).then(res => res.text());
+  expect(result).toBe("Ok");
+}
+async function callStreamingEcho() {
+  const result = await fetch(`${url.origin}/streaming-echo`, {
+    method: "POST",
+    body: payload,
+  }).then(res => res.text());
+  expect(result).toBe(payload);
 }
 async function callIgnore() {
   await fetch(url, {
     method: "POST",
     body: payload,
-  });
+  }).then(res => res.text());
 }
 
 async function calculateMemoryLeak(fn: () => Promise<void>) {
@@ -123,6 +128,16 @@ it("should not leak memory when streaming the body", async () => {
 
 it("should not leak memory when streaming the body incompletely", async () => {
   const report = await calculateMemoryLeak(callIncompleteStreaming);
+  console.log(report);
+
+  // peak memory is too high
+  expect(report.peak_memory > report.start_memory * 2).toBe(false);
+  // acceptable memory leak
+  expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
+});
+
+it("should not leak memory when streaming the body and echoing it back", async () => {
+  const report = await calculateMemoryLeak(callStreamingEcho);
   console.log(report);
 
   // peak memory is too high

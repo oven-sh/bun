@@ -25,6 +25,12 @@ const server = Bun.serve({
         // we will receive ABORT_ERR here so we just catch it and ignores it
         reader?.read().catch(() => {});
       }
+    } else if (req.url.endsWith("/streaming-echo")) {
+      return new Response(req.body, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+        },
+      });
     }
     return new Response("Ok");
   },

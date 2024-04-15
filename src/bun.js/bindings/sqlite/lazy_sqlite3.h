@@ -20,6 +20,8 @@ typedef int (*lazy_sqlite3_bind_parameter_index_type)(sqlite3_stmt*, const char*
 typedef int (*lazy_sqlite3_changes_type)(sqlite3*);
 typedef int (*lazy_sqlite3_clear_bindings_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_close_v2_type)(sqlite3*);
+typedef int (*lazy_sqlite3_close_type)(sqlite3*);
+typedef int (*lazy_sqlite3_file_control_type)(sqlite3*, const char* zDbName, int op, void* pArg);
 typedef int (*lazy_sqlite3_extended_result_codes_type)(sqlite3*, int onoff);
 typedef const void* (*lazy_sqlite3_column_blob_type)(sqlite3_stmt*, int iCol);
 typedef double (*lazy_sqlite3_column_double_type)(sqlite3_stmt*, int iCol);
@@ -100,6 +102,8 @@ static lazy_sqlite3_bind_text16_type lazy_sqlite3_bind_text16;
 static lazy_sqlite3_changes_type lazy_sqlite3_changes;
 static lazy_sqlite3_clear_bindings_type lazy_sqlite3_clear_bindings;
 static lazy_sqlite3_close_v2_type lazy_sqlite3_close_v2;
+static lazy_sqlite3_close_type lazy_sqlite3_close;
+static lazy_sqlite3_file_control_type lazy_sqlite3_file_control;
 static lazy_sqlite3_column_blob_type lazy_sqlite3_column_blob;
 static lazy_sqlite3_column_bytes_type lazy_sqlite3_column_bytes;
 static lazy_sqlite3_column_bytes16_type lazy_sqlite3_column_bytes16;
@@ -147,6 +151,8 @@ static lazy_sqlite3_memory_used_type lazy_sqlite3_memory_used;
 #define sqlite3_changes lazy_sqlite3_changes
 #define sqlite3_clear_bindings lazy_sqlite3_clear_bindings
 #define sqlite3_close_v2 lazy_sqlite3_close_v2
+#define sqlite3_close lazy_sqlite3_close
+#define sqlite3_file_control lazy_sqlite3_file_control
 #define sqlite3_column_blob lazy_sqlite3_column_blob
 #define sqlite3_column_bytes lazy_sqlite3_column_bytes
 #define sqlite3_column_count lazy_sqlite3_column_count
@@ -226,6 +232,8 @@ static int lazyLoadSQLite()
     lazy_sqlite3_changes = (lazy_sqlite3_changes_type)dlsym(sqlite3_handle, "sqlite3_changes");
     lazy_sqlite3_clear_bindings = (lazy_sqlite3_clear_bindings_type)dlsym(sqlite3_handle, "sqlite3_clear_bindings");
     lazy_sqlite3_close_v2 = (lazy_sqlite3_close_v2_type)dlsym(sqlite3_handle, "sqlite3_close_v2");
+    lazy_sqlite3_close = (lazy_sqlite3_close_type)dlsym(sqlite3_handle, "sqlite3_close");
+    lazy_sqlite3_file_control = (lazy_sqlite3_file_control_type)dlsym(sqlite3_handle, "sqlite3_file_control");
     lazy_sqlite3_column_blob = (lazy_sqlite3_column_blob_type)dlsym(sqlite3_handle, "sqlite3_column_blob");
     lazy_sqlite3_column_bytes = (lazy_sqlite3_column_bytes_type)dlsym(sqlite3_handle, "sqlite3_column_bytes");
     lazy_sqlite3_column_count = (lazy_sqlite3_column_count_type)dlsym(sqlite3_handle, "sqlite3_column_count");

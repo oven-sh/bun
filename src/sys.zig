@@ -1733,11 +1733,11 @@ pub const WindowsSymlinkOptions = packed struct {
     pub var has_failed_to_create_symlink = false;
 };
 
-pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe(void) {
+pub fn symlinkOrJunctionOnWindows(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
         var sym16: bun.WPathBuffer = undefined;
         var target16: bun.WPathBuffer = undefined;
-        const sym_path = bun.strings.toNTPath(&sym16, sym);
+        const sym_path = bun.strings.toNTPath(&sym16, dest);
         const target_path = bun.strings.toNTPath(&target16, target);
         switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
             .result => {
@@ -1751,17 +1751,17 @@ pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe
         }
     }
 
-    return sys_uv.symlinkUV(sym, target, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
+    return sys_uv.symlinkUV(target, dest, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
 }
 
-pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
+pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
     while (true) {
         const flags = options.flags();
 
-        if (windows.kernel32.CreateSymbolicLinkW(sym, target, flags) == 0) {
+        if (windows.kernel32.CreateSymbolicLinkW(dest, target, flags) == 0) {
             const errno = bun.windows.Win32Error.get();
             log("CreateSymbolicLinkW({}, {}, {any}) = {s}", .{
-                bun.fmt.fmtPath(u16, sym, .{}),
+                bun.fmt.fmtPath(u16, dest, .{}),
                 bun.fmt.fmtPath(u16, target, .{}),
                 flags,
                 @tagName(errno),
@@ -1788,7 +1788,7 @@ pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymli
         }
 
         log("CreateSymbolicLinkW({}, {}, {any}) = 0", .{
-            bun.fmt.fmtPath(u16, sym, .{}),
+            bun.fmt.fmtPath(u16, dest, .{}),
             bun.fmt.fmtPath(u16, target, .{}),
             flags,
         });

@@ -2101,16 +2101,16 @@ pub const PackageInstall = struct {
             const dest_z = dest_buf[0..offset :0];
 
             to_buf[to_path.len] = 0;
-            const to_path_z = to_buf[0..to_path.len :0];
+            const target_z = to_buf[0..to_path.len :0];
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
-            switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, to_path_z)) {
+            switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, target_z)) {
                 .err => |err_| brk: {
                     var err = err_;
                     if (err.getErrno() == .EXIST) {
-                        _ = bun.sys.unlink(to_path_z);
-                        switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, to_path_z)) {
+                        _ = bun.sys.unlink(target_z);
+                        switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, target_z)) {
                             .err => |e| err = e,
                             .result => break :brk,
                         }

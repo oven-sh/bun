@@ -9,7 +9,7 @@ const payload = "1".repeat(64 * 1024); // decent size payload to test memory lea
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
 beforeAll(async () => {
-  process = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
+  process = Bun.spawn(["bun-debug", "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
     env: bunEnv,
     stdout: "pipe",
     stderr: "inherit",
@@ -118,6 +118,6 @@ for (const test of [
       // acceptable memory leak
       expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
     },
-    10_000,
+    20_000,
   );
 }

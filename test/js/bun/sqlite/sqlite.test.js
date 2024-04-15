@@ -883,11 +883,12 @@ it("close() should NOT throw an error if the database is in use", () => {
 
 it("should dispose AND throw an error if the database is in use", () => {
   expect(() => {
+    let prepared;
     {
       using db = new Database(":memory:");
       db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
-      var prepared = db.prepare("SELECT * FROM foo");
+      prepared = db.prepare("SELECT * FROM foo");
     }
   }).toThrow("database is locked");
 });
@@ -903,8 +904,8 @@ it("should dispose", () => {
 });
 
 it("can continue to use existing statements after database has been GC'd", async () => {
-  var called = false;
-  var registry = new FinalizationRegistry(() => {
+  let called = false;
+  const registry = new FinalizationRegistry(() => {
     called = true;
   });
   function leakTheStatement() {
@@ -939,10 +940,11 @@ it("statements should be disposable", () => {
 
 it("query should work if the cached statement was finalized", () => {
   {
+    let prevQuery;
     using db = new Database("mydb.sqlite");
     {
       using query = db.query("select 'Hello world' as message;");
-      var prevQuery = query;
+      prevQuery = query;
       query.get();
     }
     {

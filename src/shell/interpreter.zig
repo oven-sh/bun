@@ -58,7 +58,7 @@ const stderr_no = 2;
 
 pub fn OOM(e: anyerror) noreturn {
     if (comptime bun.Environment.allow_assert) {
-        if (e != error.OutOfMemory) @panic("Ruh roh");
+        if (e != error.OutOfMemory) bun.outOfMemory();
     }
     @panic("Out of memory");
 }
@@ -2910,10 +2910,7 @@ pub const Interpreter = struct {
             parent: ParentPtr,
             io: IO,
         ) *Binary {
-            var binary = interpreter.allocator.create(Binary) catch |err| {
-                std.debug.print("Ruh roh: {any}\n", .{err});
-                @panic("Ruh roh");
-            };
+            var binary = interpreter.allocator.create(Binary) catch bun.outOfMemory();
             binary.node = node;
             binary.base = .{ .kind = .binary, .interpreter = interpreter, .shell = shell_state };
             binary.parent = parent;
@@ -4350,11 +4347,7 @@ pub const Interpreter = struct {
             parent: ParentPtr,
             io: IO,
         ) *Cmd {
-            var cmd = interpreter.allocator.create(Cmd) catch |err| {
-                _ = err; // autofix
-
-                @panic("Ruh roh");
-            };
+            var cmd = interpreter.allocator.create(Cmd) catch bun.outOfMemory();
             cmd.* = .{
                 .base = .{ .kind = .cmd, .interpreter = interpreter, .shell = shell_state },
                 .node = node,

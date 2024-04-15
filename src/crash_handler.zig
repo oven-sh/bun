@@ -119,7 +119,7 @@ pub fn crashHandler(
                 //
                 // To make the release-mode behavior easier to demo, debug mode
                 // checks for this CLI flag.
-                const debug_trace = bun.Environment.isDebug and check_flag: {
+                const debug_trace = check_flag: {
                     for (bun.argv) |arg| {
                         if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
                             break :check_flag false;
@@ -129,24 +129,15 @@ pub fn crashHandler(
                 };
 
                 if (!has_printed_message) {
-                    has_printed_message = true;
-
                     Output.flush();
                     Output.Source.Stdio.restore();
 
                     writer.writeAll("=" ** 60 ++ "\n") catch std.os.abort();
-
-                    // Omit this blurb in debug builds because it is noise
-                    if (!debug_trace) {
-                        Output.err("oh no",
-                            \\Bun has crashed. This indicates a bug in Bun, and
-                            \\should be reported as a GitHub issue.
-                            \\
-                            \\
-                        , .{});
-                    }
-                    Output.flush();
                     printMetadata(writer) catch std.os.abort();
+
+                    Output.flush();
+                } else {
+                    Output.err("oh no", "multiple threads are crashing", .{});
                 }
 
                 if (Output.enable_ansi_colors) {
@@ -154,6 +145,11 @@ pub fn crashHandler(
                 }
 
                 writer.writeAll("panic") catch std.os.abort();
+
+                if (Output.enable_ansi_colors) {
+                    writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.os.abort();
+                }
+
                 if (bun.CLI.Cli.is_main_thread) {
                     writer.writeAll("(main thread)") catch std.os.abort();
                 } else switch (bun.Environment.os) {
@@ -170,15 +166,10 @@ pub fn crashHandler(
                     else => @compileError("TODO"),
                 }
 
-                writer.print(": {}", .{reason}) catch std.os.abort();
+                Output.prettyErrorln(":<r> {}", .{reason});
+                Output.flush();
 
-                if (Output.enable_ansi_colors) {
-                    writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.os.abort();
-                } else {
-                    writer.writeAll("\n") catch std.os.abort();
-                }
-
-                var addr_buf: [32]usize = undefined;
+                var addr_buf: [10]usize = undefined;
                 var trace_buf: std.builtin.StackTrace = undefined;
 
                 // If a trace was not provided, compute one now
@@ -194,7 +185,20 @@ pub fn crashHandler(
                 if (debug_trace) {
                     dumpStackTrace(trace.*);
                 } else {
-                    writer.writeAll("tracestr:\n") catch std.os.abort();
+                    if (!has_printed_message) {
+                        has_printed_message = true;
+                        Output.err("oh no",
+                            \\Bun has crashed. This indicates a bug in Bun, not your code.
+                            \\
+                            \\The following URL will redirect to create a new GitHub issue
+                            \\from the stack trace of this crash. The report does not
+                            \\include any of your own code or data, and you will be able
+                            \\to edit the issue text before submitting it:
+                            \\
+                            \\
+                        , .{});
+                        Output.flush();
+                    }
 
                     if (Output.enable_ansi_colors) {
                         writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.os.abort();
@@ -216,7 +220,7 @@ pub fn crashHandler(
                     writer.writeAll("\n") catch std.os.abort();
                 }
 
-                writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{}) catch std.os.abort();
+                // writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{}) catch std.os.abort();
 
                 Output.flush();
             }
@@ -642,6 +646,10 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
 }
 
 pub fn printMetadata(writer: anytype) !void {
+    if (Output.enable_ansi_colors) {
+        try writer.writeAll(Output.prettyFmt("<r><d>", true));
+    }
+
     try writer.writeAll(metadata_version_line);
     {
         try writer.print("Args: ", .{});
@@ -688,6 +696,9 @@ pub fn printMetadata(writer: anytype) !void {
         });
     }
 
+    if (Output.enable_ansi_colors) {
+        try writer.writeAll(Output.prettyFmt("<r>", true));
+    }
     try writer.writeAll("\n");
 }
 
@@ -1054,7 +1065,7 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
         //
         // To make the release-mode behavior easier to demo, debug mode
         // checks for this CLI flag.
-        const is_debug = bun.Environment.isDebug and check_flag: {
+        const is_debug = check_flag: {
             for (bun.argv) |arg| {
                 if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
                     break :check_flag false;

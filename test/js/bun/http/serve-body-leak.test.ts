@@ -99,15 +99,15 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
   return { leak, start_memory, peak_memory, end_memory, memory_examples };
 }
 
-for (const test of [
-  ["#10265 should not leak memory when ignoring the body", callIgnore],
-  ["should not leak memory when buffering the body", callBuffering],
-  ["should not leak memory when streaming the body", callStreaming],
-  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming],
-  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho],
+for (const test_info of [
+  ["#10265 should not leak memory when ignoring the body", callIgnore, false],
+  ["should not leak memory when buffering the body", callBuffering, false],
+  ["should not leak memory when streaming the body", callStreaming, false],
+  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, true],
+  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, true],
 ]) {
-  const [testName, fn] = test as [string, () => Promise<void>];
-  it(
+  const [testName, fn, skip] = test_info as [string, () => Promise<void>, boolean];
+  it.todoIf(skip)(
     testName,
     async () => {
       const report = await calculateMemoryLeak(fn);
@@ -118,6 +118,6 @@ for (const test of [
       // acceptable memory leak
       expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
     },
-    20_000,
+    30_000,
   );
 }

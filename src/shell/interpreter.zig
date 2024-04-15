@@ -605,7 +605,7 @@ pub const EnvMap = struct {
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
-    command_ctx: *const bun.CLI.Command.Context,
+    command_ctx: bun.CLI.Command.Context,
     event_loop: JSC.EventLoopHandle,
     /// This is the arena used to allocate the input shell script's AST nodes,
     /// tokens, and a string pool used to store all strings.
@@ -1082,7 +1082,7 @@ pub const Interpreter = struct {
     /// If all initialization allocations succeed, the arena will be copied
     /// into the interpreter struct, so it is not a stale reference and safe to call `arena.deinit()` on error.
     pub fn init(
-        ctx: *const bun.CLI.Command.Context,
+        ctx: bun.CLI.Command.Context,
         event_loop: JSC.EventLoopHandle,
         allocator: Allocator,
         arena: *bun.ArenaAllocator,
@@ -1183,7 +1183,7 @@ pub const Interpreter = struct {
         return .{ .result = interpreter };
     }
 
-    pub fn initAndRunFromFile(ctx: *const bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
+    pub fn initAndRunFromFile(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
@@ -1257,7 +1257,7 @@ pub const Interpreter = struct {
         return code;
     }
 
-    pub fn initAndRunFromSource(ctx: *bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
+    pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
         bun.Analytics.Features.standalone_shell += 1;
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -10912,10 +10912,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         fn unknownTag(tag: Ptr.TagInt) void {
-            if (comptime bun.Environment.allow_assert) {
-                std.debug.print("Bad tag: {d}\n", .{tag});
-                @panic("Bad tag");
-            }
+            if (bun.Environment.allow_assert) std.debug.panic("Bad tag: {d}\n", .{tag});
         }
 
         fn tagInt(this: @This()) Ptr.TagInt {

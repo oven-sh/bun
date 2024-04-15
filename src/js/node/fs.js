@@ -138,8 +138,16 @@ var access = function access(...args) {
   appendFile = function appendFile(...args) {
     callbackify(fs.appendFile, args);
   },
-  close = function close(...args) {
-    callbackify(fs.close, args);
+  close = function close(fd, callback) {
+    if ($isCallable(callback)) {
+      fs.close(fd).then(() => callback(), callback);
+    } else if (callback == undefined) {
+      fs.close(fd).then(() => {});
+    } else {
+      const err = new TypeError("Callback must be a function");
+      err.code = "ERR_INVALID_ARG_TYPE";
+      throw err;
+    }
   },
   rm = function rm(...args) {
     callbackify(fs.rm, args);

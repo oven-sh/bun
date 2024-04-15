@@ -3338,10 +3338,7 @@ pub const PackageManager = struct {
     }
 
     pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {
-        // TODO: is this slow?
-        var dir = this.getCacheDirectory().openDirZ(folder_path, .{}) catch return false;
-        dir.close();
-        return true;
+        return bun.sys.directoryExistsAt(this.getCacheDirectory(), folder_path).unwrap() catch false;
     }
 
     pub fn pathForCachedNPMPath(
@@ -6976,13 +6973,11 @@ pub const PackageManager = struct {
 
     pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
         const cli = try CommandLineArguments.parse(ctx.allocator, subcommand);
-
-        var _ctx = ctx;
-        return initWithCLI(&_ctx, cli, subcommand);
+        return initWithCLI(ctx, cli, subcommand);
     }
 
     fn initWithCLI(
-        ctx: *Command.Context,
+        ctx: Command.Context,
         cli: CommandLineArguments,
         comptime subcommand: Subcommand,
     ) !*PackageManager {
@@ -7500,7 +7495,7 @@ pub const PackageManager = struct {
                 }
                 manager.global_dir = try Options.openGlobalDir(explicit_global_dir);
 
-                try manager.setupGlobalDir(&ctx);
+                try manager.setupGlobalDir(ctx);
 
                 break :brk manager.global_dir.?.makeOpenPath("node_modules", .{}) catch |err| {
                     if (manager.options.log_level != .silent)
@@ -7689,7 +7684,7 @@ pub const PackageManager = struct {
                 }
                 manager.global_dir = try Options.openGlobalDir(explicit_global_dir);
 
-                try manager.setupGlobalDir(&ctx);
+                try manager.setupGlobalDir(ctx);
 
                 break :brk manager.global_dir.?.makeOpenPath("node_modules", .{}) catch |err| {
                     if (manager.options.log_level != .silent)
@@ -8861,15 +8856,15 @@ pub const PackageManager = struct {
                 LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
         }
 
-        pub fn printTreeDeps(this: *PackageInstaller) void {
-            for (this.tree_ids_to_trees_the_id_depends_on, 0..) |deps, j| {
-                std.debug.print("tree #{d:3}: ", .{j});
-                for (0..this.lockfile.buffers.trees.items.len) |tree_id| {
-                    std.debug.print("{d} ", .{@intFromBool(deps.isSet(tree_id))});
-                }
-                std.debug.print("\n", .{});
-            }
-        }
+        // pub fn printTreeDeps(this: *PackageInstaller) void {
+        //     for (this.tree_ids_to_trees_the_id_depends_on, 0..) |deps, j| {
+        //         std.debug.print("tree #{d:3}: ", .{j});
+        //         for (0..this.lockfile.buffers.trees.items.len) |tree_id| {
+        //             std.debug.print("{d} ", .{@intFromBool(deps.isSet(tree_id))});
+        //         }
+        //         std.debug.print("\n", .{});
+        //     }
+        // }
 
         pub fn deinit(this: *PackageInstaller) void {
             const allocator = this.manager.allocator;
@@ -10085,7 +10080,7 @@ pub const PackageManager = struct {
         return manager.pending_tasks.load(.Monotonic);
     }
 
-    pub fn setupGlobalDir(manager: *PackageManager, ctx: *const Command.Context) !void {
+    pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
         var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
         const result = try bun.getFdPath(manager.options.global_bin_dir.fd, &out_buffer);
@@ -10610,7 +10605,7 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.global) {
-            try manager.setupGlobalDir(&ctx);
+            try manager.setupGlobalDir(ctx);
         }
 
         const packages_len_before_install = manager.lockfile.packages.len;

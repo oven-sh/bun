@@ -7,9 +7,9 @@ import fs from "fs";
 import { shellInternals } from "bun:internal-for-testing";
 const { builtinDisabled } = shellInternals;
 
-const p = process.platform === 'win32' ? (s: string) => s.replaceAll('/', '\\') : (s: string) => s;
+const p = process.platform === "win32" ? (s: string) => s.replaceAll("/", "\\") : (s: string) => s;
 
-$.nothrow()
+$.nothrow();
 
 describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cp -v lmao.txt lmao2.txt`
@@ -97,7 +97,7 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
         "8": "",
         "9": "",
       },
-    }
+    };
     const tmpdir: string = tempDirWithFiles("cp-uutils", tempFiles);
     const mini_tmpdir: string = tempDirWithFiles("cp-uutils-mini", tempFiles);
 

@@ -28,13 +28,13 @@ export class TestBuilder {
 
   _quiet: boolean = false;
 
-  _testMini: boolean = false
+  _testMini: boolean = false;
   _onlyMini: boolean = false;
-  __insideExec: boolean = false
-  _scriptStr: TemplateStringsArray 
-  _expresssions: ShellExpression[]
+  __insideExec: boolean = false;
+  _scriptStr: TemplateStringsArray;
+  _expresssions: ShellExpression[];
 
-  _skipExecOnUnknownType: boolean = false
+  _skipExecOnUnknownType: boolean = false;
 
   static UNEXPECTED_SUBSHELL_ERROR_OPEN =
     "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
@@ -58,7 +58,7 @@ export class TestBuilder {
    * ```
    */
   static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
-    return new TestBuilder(strings, expressions); 
+    return new TestBuilder(strings, expressions);
   }
 
   cwd(path: string): this {
@@ -78,14 +78,14 @@ export class TestBuilder {
   }
 
   /**
-   * @param opts 
-   * @returns 
+   * @param opts
+   * @returns
    */
-  testMini(opts?: { errorOnSupportedTemplate?: boolean, onlyMini?: boolean, cwd?: string }): this {
+  testMini(opts?: { errorOnSupportedTemplate?: boolean; onlyMini?: boolean; cwd?: string }): this {
     this._testMini = true;
-    this._skipExecOnUnknownType = opts?.errorOnSupportedTemplate ?? false
-    this._onlyMini = opts?.onlyMini ?? false
-    this._miniCwd = opts?.cwd
+    this._skipExecOnUnknownType = opts?.errorOnSupportedTemplate ?? false;
+    this._onlyMini = opts?.onlyMini ?? false;
+    this._miniCwd = opts?.cwd;
     return this;
   }
 
@@ -115,7 +115,7 @@ export class TestBuilder {
   }
 
   quiet(): this {
-    this._quiet = true
+    this._quiet = true;
     return this;
   }
 
@@ -247,19 +247,19 @@ export class TestBuilder {
         expect(fs.existsSync(join(this.tempdir!, fsname))).toBeFalsy();
       }
     } catch (err) {
-        if (this.expected_error === undefined) throw err;
-        if (this.expected_error === true) return undefined;
-        if (this.expected_error === false) expect(err).toBeUndefined();
-        if (typeof this.expected_error === "string") {
-          expect(err.message).toEqual(this.expected_error);
-        } else if (this.expected_error instanceof ShellError) {
-          expect(err).toBeInstanceOf(ShellError);
-          const e = err as ShellError;
-          expect(e.exitCode).toEqual(this.expected_error.exitCode);
-          expect(e.stdout.toString()).toEqual(this.expected_error.stdout.toString());
-          expect(e.stderr.toString()).toEqual(this.expected_error.stderr.toString());
-        }
-        return undefined;
+      if (this.expected_error === undefined) throw err;
+      if (this.expected_error === true) return undefined;
+      if (this.expected_error === false) expect(err).toBeUndefined();
+      if (typeof this.expected_error === "string") {
+        expect(err.message).toEqual(this.expected_error);
+      } else if (this.expected_error instanceof ShellError) {
+        expect(err).toBeInstanceOf(ShellError);
+        const e = err as ShellError;
+        expect(e.exitCode).toEqual(this.expected_error.exitCode);
+        expect(e.stdout.toString()).toEqual(this.expected_error.stdout.toString());
+        expect(e.stderr.toString()).toEqual(this.expected_error.stderr.toString());
+      }
+      return undefined;
     }
 
     // return output;
@@ -293,21 +293,21 @@ export class TestBuilder {
         test(
           name + " (exec)",
           async () => {
-            let cwd: string = ""
-            if (tb._miniCwd === undefined) { 
-              cwd = tb.newTempdir() 
+            let cwd: string = "";
+            if (tb._miniCwd === undefined) {
+              cwd = tb.newTempdir();
             } else {
               tb._cwd = tb._miniCwd;
-              cwd = tb._cwd
+              cwd = tb._cwd;
             }
-            const joinedstr = tb.joinTemplate()
-            console.log("JOIEND", joinedstr)
+            const joinedstr = tb.joinTemplate();
+            console.log("JOIEND", joinedstr);
             await Bun.$`echo ${joinedstr} > script.bun.sh`.cwd(cwd);
             ((script: TemplateStringsArray, ...exprs: any[]) => {
-              tb._scriptStr = script
-              tb._expresssions = exprs
-            })`${bunExe()} run script.bun.sh`
-            await tb.runImpl()
+              tb._scriptStr = script;
+              tb._expresssions = exprs;
+            })`${bunExe()} run script.bun.sh`;
+            await tb.runImpl();
           },
           this._timeout,
         );
@@ -316,32 +316,33 @@ export class TestBuilder {
   }
 
   joinTemplate(): string {
-    let buf = [] 
+    let buf = [];
     for (let i = 0; i < this._scriptStr.length; i++) {
-      buf.push(this._scriptStr[i])
+      buf.push(this._scriptStr[i]);
       if (this._expresssions[i] !== undefined) {
-        const expr = this._expresssions[i]
-        this.processShellExpr(buf, expr)
+        const expr = this._expresssions[i];
+        this.processShellExpr(buf, expr);
       }
     }
 
-    return buf.join('')
+    return buf.join("");
   }
 
   processShellExpr(buf: string[], expr: ShellExpression) {
     if (typeof expr === "string") {
-      buf.push(Bun.$.escape(expr))
-    } else if (typeof expr?.raw === 'string') {
-      buf.push(Bun.$.escape( expr.raw ))
-    } else if (Array.isArray(expr))  {
-      expr.forEach(e => this.processShellExpr(buf, e))
-    }
-      else {
-      if (this._skipExecOnUnknownType) { console.warn(`Unexpected expression type: ${expr}\nSkipping.`); return  }
-      throw new Error(`Unexpected expression type ${expr}`)
+      buf.push(Bun.$.escape(expr));
+    } else if (typeof expr?.raw === "string") {
+      buf.push(Bun.$.escape(expr.raw));
+    } else if (Array.isArray(expr)) {
+      expr.forEach(e => this.processShellExpr(buf, e));
+    } else {
+      if (this._skipExecOnUnknownType) {
+        console.warn(`Unexpected expression type: ${expr}\nSkipping.`);
+        return;
+      }
+      throw new Error(`Unexpected expression type ${expr}`);
     }
   }
-
 }
 function generateRandomString(length: number): string {
   const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";

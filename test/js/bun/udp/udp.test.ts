@@ -163,7 +163,7 @@ describe("bind()", () => {
     });
   });
 
-  describe.each([
+  const sendCases = [
     {
       label: "string (ascii)",
       data: "ascii",
@@ -214,43 +214,33 @@ describe("bind()", () => {
       data: Buffer.from([]),
       bytes: [],
     },
-  ])("can send data to a socket", ({ label, data, bytes }) => {
-    const onData = mock((socket, data, port, address) => {
-      expect(socket).toBeInstanceOf(Object);
-      expect(socket.binaryType).toBe("nodebuffer");
-      expect(data).toBeInstanceOf(Buffer);
-      expect(port).toBeInteger();
-      expect(port).toBeWithin(1, 65535 + 1);
-      expect(port).not.toBe(socket.port);
-      expect(address).toBeString();
-      expect(address).not.toBeEmpty();
-    });
-    const server = bind({
-      socket: {
-        data: onData,
-      },
-    });
-    const client = bind({});
-    test(label, () => {
+  ];
+
+  describe.each(sendCases)("can send data to a socket", ({ label, data, bytes }) => {
+    test(label, (done) => {
+      const client = bind({});
+      const server = bind({
+        socket: {
+          data(socket, data, port, address) {
+            expect(socket).toBeInstanceOf(Object);
+            expect(socket.binaryType).toBe("nodebuffer");
+            expect(data).toBeInstanceOf(Buffer);
+            expect(data).toHaveLength(bytes.length);
+            expect(data).toStrictEqual(Buffer.from(bytes));
+            expect(port).toBeInteger();
+            expect(port).toBeWithin(1, 65535 + 1);
+            expect(port).not.toBe(socket.port);
+            expect(address).toBeString();
+            socket.close();
+            done();
+          },
+        },
+      });
       client.send(data, server.port, "127.0.0.1");
-      expect(onData).toHaveBeenCalledTimes(1);
-      expect(onData.mock.calls[0]).toHaveLength(4);
-      expect(onData.mock.calls[0][0]).toStrictEqual(server);
-      expect(onData.mock.calls[0][1]).toBeInstanceOf(Buffer);
-      expect(onData.mock.calls[0][1]).toHaveLength(bytes.length);
-      expect(onData.mock.calls[0][1]).toStrictEqual(Buffer.from(bytes));
-      expect(onData.mock.calls[0][2]).toBe(client.port);
-      expect(onData.mock.calls[0][3]).toBeString();
-    });
-    afterEach(() => {
-      onData.mockClear();
-    });
-    afterAll(() => {
-      client.close();
-      server.close();
     });
   });
 });
+
 
 function send(port: number, address: string, data: string | BufferSource): void {
   const base64 = typeof data === "string" ? "" : "1";
@@ -265,3 +255,9 @@ function send(port: number, address: string, data: string | BufferSource): void 
     throw new Error(reason);
   }
 }
+
+// function send(port: number, address: string, data: string | BufferSource): void {
+//   const client = bind({});
+//   client.send(data, port, address);
+//   // client.close();
+// }

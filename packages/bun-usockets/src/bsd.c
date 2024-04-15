@@ -54,33 +54,7 @@ struct us_internal_udp_packet_buffer {
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, int flags) {
-// #if defined(__APPLE__)
-//
-// struct mmsghdr {
-//     struct msghdr msg_hdr;  /* Message header */
-//     unsigned int  msg_len;  /* Number of bytes transmitted */
-// };
-//
-//     struct mmsghdr *hdrs = (struct mmsghdr *) msgvec;
-//
-//     for (int i = 0; i < vlen; i++) {
-//         int ret = sendmsg(fd, &hdrs[i].msg_hdr, flags);
-//         if (ret == -1) {
-//             if (i) {
-//                 return i;
-//             } else {
-//                 return -1;
-//             }
-//         } else {
-//             hdrs[i].msg_len = ret;
-//         }
-//     }
-//
-//     return vlen;
-//
-//#elif defined(_WIN32)
 #if defined(_WIN32) || defined(__APPLE__)
-
     struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
 
     /* Let's just use sendto here */

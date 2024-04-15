@@ -257,8 +257,8 @@ void us_internal_on_ssl_handshake(
 struct us_internal_ssl_socket_t *
 us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
                              void *reason) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+  // struct us_internal_ssl_socket_context_t *context =
+  //     (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
   if (s->handshake_state != HANDSHAKE_COMPLETED) {
     // if we have some pending handshake we cancel it and try to check the

@@ -18,8 +18,6 @@
 #include "libusockets.h"
 #include "internal/internal.h"
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
@@ -81,7 +79,7 @@ int us_udp_socket_bound_port(struct us_udp_socket_t *s) {
 }
 
 void us_udp_socket_bound_ip(struct us_udp_socket_t *s, char *buf, int *length) {
-  struct us_internal_udp_t *udp = (struct us_internal_udp_t *)s;
+//   struct us_internal_udp_t *udp = (struct us_internal_udp_t *)s;
 
   struct bsd_addr_t addr;
   if (bsd_local_addr(us_poll_fd((struct us_poll_t *)s), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
@@ -147,8 +145,6 @@ struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, struct us_u
     struct bsd_addr_t tmp;
     bsd_local_addr(fd, &tmp);
     cb->port = bsd_addr_get_port(&tmp);
-
-    //printf("The port of UDP is: %d\n", cb->port);
 
     /* There is no udp socket context, only user data */
     /* This should really be ext like everything else */

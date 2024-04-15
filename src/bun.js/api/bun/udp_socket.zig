@@ -158,7 +158,7 @@ pub const UDPSocketConfig = struct {
             }
 
             inline for (handlers) |handler| {
-                if (socket.getTruthy(globalThis, handler.@"0")) |value| {
+                if (socket.getTruthyComptime(globalThis, handler.@"0")) |value| {
                     if (!value.isCell() or !value.isCallable(globalThis.vm())) {
                         globalThis.throwInvalidArguments("Expected \"socket.{s}\" to be a function", .{handler.@"0"});
                         return null;
@@ -190,7 +190,7 @@ pub const UDPSocket = struct {
 
     config: UDPSocketConfig,
 
-    socket: *uws.UDPSocket = undefined,
+    socket: *uws.UDPSocket,
     loop: *uws.Loop,
     receive_buf: *uws.UDPPacketBuffer,
     send_buf: *uws.UDPPacketBuffer,
@@ -202,6 +202,7 @@ pub const UDPSocket = struct {
     poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
     strong_self: JSC.Strong = .{},
     closed: bool = false,
+    vm: *JSC.VirtualMachine,
 
     pub usingnamespace JSC.Codegen.JSUDPSocket;
 
@@ -220,11 +221,13 @@ pub const UDPSocket = struct {
         var vm = globalThis.bunVM();
         var this: *This = vm.allocator.create(This) catch @panic("Out of memory");
         this.* = This{
+            .socket = undefined,
             .config = config,
             .globalThis = globalThis,
             .receive_buf = uws.us_create_udp_packet_buffer().?,
             .send_buf = uws.us_create_udp_packet_buffer().?,
             .loop = uws.Loop.get(),
+            .vm = vm,
         };
 
         if (uws.us_create_udp_socket(
@@ -242,7 +245,7 @@ pub const UDPSocket = struct {
             return .zero;
         }
 
-        var thisValue = this.toJS(globalThis);
+        const thisValue = this.toJS(globalThis);
         this.strong_self.set(globalThis, thisValue);
         this.poll_ref.ref(vm);
         this.config.protect();
@@ -365,7 +368,7 @@ pub const UDPSocket = struct {
 
     pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         if (!this.closed) {
-            var thisValue = callframe.this();
+            const thisValue = callframe.this();
             this.poll_ref.ref(globalThis.bunVM());
             this.strong_self.set(globalThis, thisValue);
         }
@@ -445,7 +448,7 @@ pub const UDPSocket = struct {
         };
 
         const slice = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        var addr = bun.String.create(slice);
+        var addr = bun.String.createLatin1(slice);
         const port = uws.us_udp_socket_bound_port(this.socket);
         return JSSocketAddress__create(
             globalThis,
@@ -473,8 +476,8 @@ pub const UDPSocket = struct {
     }
 
     pub fn deinit(this: *This) void {
-        // this.strong_self.deinit();
-        this.poll_ref.unref(this.globalThis.bunVM());
+        this.strong_self.deinit();
+        this.poll_ref.unref(this.vm);
 
         // Cast into a us_poll_t pointer so uSockets can free the memory
         var poll: *uws.Poll = @ptrCast(this.socket);

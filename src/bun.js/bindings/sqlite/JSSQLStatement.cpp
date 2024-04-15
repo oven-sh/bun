@@ -506,12 +506,12 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
             // When joining multiple tables, the same column names can appear multiple times
             // columnNames de-dupes property names internally
-            // We can't have two properties with the same name, so we use columnOffsets to track this.
-            int preCount = columnNames->size();
+            // We can't have two properties with the same name, so we use validColumns to track this.
+            auto preCount = columnNames->size();
             columnNames->add(
                 Identifier::fromString(vm, WTF::String::fromUTF8({name, len}))
             );
-            int curCount = columnNames->size();
+            auto curCount = columnNames->size();
 
             if (preCount != curCount) {
                 castedThis->validColumns.set(i);
@@ -541,7 +541,6 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 castedThis->columnNames->vm(),
                 castedThis->columnNames->propertyNameMode(),
                 castedThis->columnNames->privateSymbolMode()));
-            // castedThis->columnOffsets = 0;
             castedThis->validColumns.clearAll();
         }
     }
@@ -585,9 +584,9 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             }
         }
 
-        int preCount = castedThis->columnNames->size();
+        auto preCount = castedThis->columnNames->size();
         castedThis->columnNames->add(key);
-        int curCount = castedThis->columnNames->size();
+        auto curCount = castedThis->columnNames->size();
 
         // only put the property if it's not a duplicate
         if (preCount != curCount) {

@@ -378,7 +378,7 @@ pub const CreateCommand = struct {
                 progress.refresh();
 
                 var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
-                    [1]Archive.Plucker{try Archive.Plucker.init("package.json", 2048, ctx.allocator)}
+                    [1]Archive.Plucker{try Archive.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
                 else
                     [1]Archive.Plucker{undefined};
 
@@ -597,7 +597,7 @@ pub const CreateCommand = struct {
             var parent_dir = try std.fs.openDirAbsolute(destination, .{});
             defer parent_dir.close();
             if (comptime Environment.isWindows) {
-                try parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{});
+                parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{}) catch {};
             } else {
                 std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
             }

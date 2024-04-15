@@ -58,7 +58,7 @@ jobs:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: "1.0.21"
       - name: Install Dependencies
@@ -83,7 +83,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: "1.0.21"
       - name: Install Dependencies
@@ -112,12 +112,12 @@ jobs:
           node-version: latest
       - name: Setup Bun
         if: ${{ env.BUN_VERSION != 'canary' }}
-        uses: oven-sh/setup-bun@v1
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: "1.0.21"
       - name: Setup Bun
         if: ${{ env.BUN_VERSION == 'canary' }}
-        uses: oven-sh/setup-bun@v1
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: "canary" # Must be 'canary' so tag is correct
       - name: Install Dependencies
@@ -254,7 +254,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: "1.0.21"
       - name: Install Dependencies

@@ -25,7 +25,7 @@ const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
 const StmtNodeList = js_ast.StmtNodeList;
 const BindingNodeList = js_ast.BindingNodeList;
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 const LocRef = js_ast.LocRef;
 const S = js_ast.S;
@@ -94,9 +94,9 @@ fn newExpr(t: anytype, loc: logger.Loc) Expr {
         if (comptime Type == E.Object) {
             for (t.properties.slice()) |prop| {
                 // json should never have an initializer set
-                std.debug.assert(prop.initializer == null);
-                std.debug.assert(prop.key != null);
-                std.debug.assert(prop.value != null);
+                bun.assert(prop.initializer == null);
+                bun.assert(prop.key != null);
+                bun.assert(prop.value != null);
             }
         }
     }
@@ -506,9 +506,6 @@ pub const PackageJSONVersionChecker = struct {
             },
             else => {
                 try p.lexer.unexpected();
-                if (comptime Environment.isDebug) {
-                    @breakpoint();
-                }
                 return error.ParserError;
             },
         }
@@ -765,7 +762,7 @@ pub fn ParseJSONUTF8(
     }
 
     var parser = try JSONParser.init(allocator, source.*, log);
-    std.debug.assert(parser.source().contents.len > 0);
+    bun.assert(parser.source().contents.len > 0);
 
     return try parser.parseExpr(false, true);
 }
@@ -799,7 +796,7 @@ pub fn ParseJSONUTF8AlwaysDecode(
         .always_decode_escape_sequences = true,
     }).init(allocator, source.*, log);
     if (comptime Environment.allow_assert) {
-        std.debug.assert(parser.source().contents.len > 0);
+        bun.assert(parser.source().contents.len > 0);
     }
 
     return try parser.parseExpr(false, true);

@@ -259,6 +259,12 @@ const ProxyTunnel = struct {
             ssl.configureHTTPClient(hostname);
             BoringSSL.SSL_CTX_set_verify(ssl_ctx, BoringSSL.SSL_VERIFY_NONE, null);
             BoringSSL.SSL_set_verify(ssl, BoringSSL.SSL_VERIFY_NONE, null);
+            // TODO: change this to ssl_renegotiate_explicit for optimization
+            // if we allow renegotiation, we need to set the mode here
+            // https://github.com/oven-sh/bun/issues/6197
+            // https://github.com/oven-sh/bun/issues/5363
+            // renegotiation is only valid for <= TLS1_2_VERSION
+            BoringSSL.SSL_set_renegotiate_mode(ssl, BoringSSL.ssl_renegotiate_freely);
             return ProxyTunnel{ .ssl = ssl, .ssl_ctx = ssl_ctx, .in_bio = in_bio, .out_bio = out_bio, .read_buffer = bun.default_allocator.alloc(u8, 16 * 1024) catch unreachable, .partial_data = null };
         }
         unreachable;
@@ -466,10 +472,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         return client.firstCall(comptime ssl, socket);
                     } else {
                         // if authorized it self is false, this means that the connection was rejected
-                        return client.onConnectError(
-                            comptime ssl,
-                            socket,
-                        );
+                        socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                        if (client.state.stage != .done and client.state.stage != .fail)
+                            client.fail(error.ConnectionRefused);
+                        return;
                     }
                 }
 
@@ -1062,11 +1068,9 @@ pub fn onTimeout(
 pub fn onConnectError(
     client: *HTTPClient,
     comptime is_ssl: bool,
-    socket: NewHTTPContext(is_ssl).HTTPSocket,
+    _: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    _ = socket;
     log("onConnectError  {s}\n", .{client.url.href});
-
     if (client.state.stage != .done and client.state.stage != .fail)
         client.fail(error.ConnectionRefused);
 }

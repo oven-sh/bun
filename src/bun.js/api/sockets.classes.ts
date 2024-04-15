@@ -29,6 +29,18 @@ function generate(ssl) {
         fn: "getCipher",
         length: 0,
       },
+      renegotiate: {
+        fn: "renegotiate",
+        length: 0,
+      },
+      disableRenegotiation: {
+        fn: "disableRenegotiation",
+        length: 0,
+      },
+      setVerifyMode: {
+        fn: "setVerifyMode",
+        length: 2,
+      },
       getSession: {
         fn: "getSession",
         length: 0,

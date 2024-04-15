@@ -94,7 +94,7 @@ jobs:
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
-            runner: macos-12-large
+            runner: macos-13-large
             artifact: bun-obj-darwin-x64-baseline
     steps:
       - uses: actions/checkout@v4
@@ -169,7 +169,7 @@ jobs:
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
-            runner: macos-12-large
+            runner: macos-13-large
             artifact: bun-obj-darwin-x64-baseline
     steps:
       - uses: actions/checkout@v4
@@ -243,7 +243,7 @@ jobs:
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
             package: bun-darwin-x64
-            runner: macos-12-large
+            runner: macos-13-large
             artifact: bun-obj-darwin-x64-baseline
     steps:
       - uses: actions/checkout@v4
@@ -379,7 +379,7 @@ jobs:
       matrix:
         include:
           - tag: bun-darwin-x64-baseline
-            runner: macos-12-large
+            runner: macos-13-large
     steps:
       - id: checkout
         name: Checkout

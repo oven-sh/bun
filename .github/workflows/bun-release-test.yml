@@ -15,7 +15,7 @@ jobs:
     name: Test Release Script
     strategy:
       matrix:
-        machine: [namespace-profile-bun-linux-x64, linux-arm64, macos-arm64, macos-12-large, windows-latest]
+        machine: [namespace-profile-bun-linux-x64, linux-arm64, macos-arm64, macos-13-large, windows-latest]
       fail-fast: false
     runs-on: ${{ matrix.machine }}
     permissions:

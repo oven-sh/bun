@@ -65,10 +65,11 @@ async function callStreamingEcho() {
   expect(result).toBe(payload);
 }
 async function callIgnore() {
-  await fetch(url, {
+  const result = await fetch(url, {
     method: "POST",
     body: payload,
   }).then(res => res.text());
+  expect(result).toBe("Ok");
 }
 
 async function calculateMemoryLeak(fn: () => Promise<void>) {

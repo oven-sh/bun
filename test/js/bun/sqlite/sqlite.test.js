@@ -1,8 +1,8 @@
 import { expect, it, describe } from "bun:test";
 import { Database, constants, SQLiteError } from "bun:sqlite";
-import { existsSync, fstat, realpathSync, rmSync, writeFileSync } from "fs";
+import { existsSync, fstat, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { spawnSync } from "bun";
-import { bunExe } from "harness";
+import { bunExe, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -847,4 +847,108 @@ it("issue#7147", () => {
     },
   ]);
   db.close();
+});
+
+it("should close with WAL enabled", () => {
+  const dir = tempDirWithFiles("sqlite-wal-test", { "empty.txt": "" });
+  const file = path.join(dir, "my.db");
+  const db = new Database(file);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+  db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+  db.exec("INSERT INTO foo (name) VALUES ('foo')");
+  expect(db.query("SELECT * FROM foo").all()).toEqual([{ id: 1, name: "foo" }]);
+  db.exec("PRAGMA wal_checkpoint(truncate)");
+  db.close();
+  expect(readdirSync(dir).sort()).toEqual(["empty.txt", "my.db"]);
+});
+
+it("close(true) should throw an error if the database is in use", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+  db.exec("INSERT INTO foo (name) VALUES ('foo')");
+  const prepared = db.prepare("SELECT * FROM foo");
+  expect(() => db.close(true)).toThrow("database is locked");
+  prepared.finalize();
+  expect(() => db.close(true)).not.toThrow();
+});
+
+it("close() should NOT throw an error if the database is in use", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+  db.exec("INSERT INTO foo (name) VALUES ('foo')");
+  const prepared = db.prepare("SELECT * FROM foo");
+  expect(() => db.close()).not.toThrow("database is locked");
+});
+
+it("should dispose AND throw an error if the database is in use", () => {
+  expect(() => {
+    {
+      using db = new Database(":memory:");
+      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.exec("INSERT INTO foo (name) VALUES ('foo')");
+      var prepared = db.prepare("SELECT * FROM foo");
+    }
+  }).toThrow("database is locked");
+});
+
+it("should dispose", () => {
+  expect(() => {
+    {
+      using db = new Database(":memory:");
+      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.exec("INSERT INTO foo (name) VALUES ('foo')");
+    }
+  }).not.toThrow();
+});
+
+it("can continue to use existing statements after database has been GC'd", async () => {
+  var called = false;
+  var registry = new FinalizationRegistry(() => {
+    called = true;
+  });
+  function leakTheStatement() {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+    db.exec("INSERT INTO foo (name) VALUES ('foo')");
+    const prepared = db.prepare("SELECT * FROM foo");
+    registry.register(db);
+    return prepared;
+  }
+
+  const stmt = leakTheStatement();
+  Bun.gc(true);
+  await Bun.sleep(1);
+  Bun.gc(true);
+  expect(stmt.all()).toEqual([{ id: 1, name: "foo" }]);
+  stmt.finalize();
+  expect(() => stmt.all()).toThrow();
+  if (!isWindows) {
+    // on Windows, FinalizationRegistry is more flaky than on POSIX.
+    expect(called).toBe(true);
+  }
+});
+
+it("statements should be disposable", () => {
+  {
+    using db = new Database("mydb.sqlite");
+    using query = db.query("select 'Hello world' as message;");
+    console.log(query.get()); // => { message: "Hello world" }
+  }
+});
+
+it("query should work if the cached statement was finalized", () => {
+  {
+    using db = new Database("mydb.sqlite");
+    {
+      using query = db.query("select 'Hello world' as message;");
+      var prevQuery = query;
+      query.get();
+    }
+    {
+      using query = db.query("select 'Hello world' as message;");
+      expect(() => query.get()).not.toThrow();
+    }
+    expect(() => prevQuery.get()).toThrow();
+  }
 });

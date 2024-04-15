@@ -1,10 +1,6 @@
 const server = Bun.serve({
   port: 0,
   async fetch(req: Request) {
-    if (req.url.endsWith("/gc")) {
-      Bun.gc(true);
-      return new Response("Ok");
-    }
     if (req.url.endsWith("/report")) {
       Bun.gc(true);
       return new Response(JSON.stringify(process.memoryUsage.rss()), {
@@ -17,7 +13,7 @@ const server = Bun.serve({
       await req.text();
     } else if (req.url.endsWith("/streaming")) {
       const reader = req.body?.getReader();
-      while (true) {
+      while (reader) {
         const { done, value } = await reader?.read();
         if (done) {
           break;
@@ -25,7 +21,7 @@ const server = Bun.serve({
       }
     } else if (req.url.endsWith("/incomplete-streaming")) {
       const reader = req.body?.getReader();
-      await reader?.read();
+      reader?.read();
     }
     return new Response("Ok");
   },

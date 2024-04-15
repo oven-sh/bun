@@ -1022,7 +1022,6 @@ fn crash() noreturn {
             std.os.abort();
         },
         else => {
-
             // Install default handler so that the tkill below will terminate.
             const sigact = std.os.Sigaction{ .handler = .{ .handler = std.os.SIG.DFL }, .mask = std.os.empty_sigset, .flags = 0 };
             inline for (.{

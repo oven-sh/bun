@@ -850,7 +850,7 @@ pub const ZigString = extern struct {
 
     inline fn assertGlobal(this: *const ZigString) void {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(this.len == 0 or
+            bun.assert(this.len == 0 or
                 bun.Mimalloc.mi_is_in_heap_region(untagged(this._unsafe_ptr_do_not_use)) or
                 bun.Mimalloc.mi_check_owned(untagged(this._unsafe_ptr_do_not_use)));
         }
@@ -1705,14 +1705,14 @@ pub const JSCell = extern struct {
 
     pub fn getGetterSetter(this: *JSCell) *GetterSetter {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(JSValue.fromCell(this).isGetterSetter());
+            bun.assert(JSValue.fromCell(this).isGetterSetter());
         }
         return @as(*GetterSetter, @ptrCast(@alignCast(this)));
     }
 
     pub fn getCustomGetterSetter(this: *JSCell) *CustomGetterSetter {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(JSValue.fromCell(this).isCustomGetterSetter());
+            bun.assert(JSValue.fromCell(this).isCustomGetterSetter());
         }
         return @as(*CustomGetterSetter, @ptrCast(@alignCast(this)));
     }
@@ -3038,7 +3038,7 @@ pub const JSGlobalObject = extern struct {
             //   make bindings -j10
             const assertion = this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(JSC.VirtualMachine.get()));
             if (!assertion) @breakpoint();
-            std.debug.assert(assertion);
+            bun.assert(assertion);
         }
         return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
     }
@@ -3717,7 +3717,7 @@ pub const JSValue = enum(JSValueReprInt) {
         this: JSValue,
     ) JSType {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(!this.isEmpty());
+            bun.assert(!this.isEmpty());
         }
         return cppFn("jsType", .{this});
     }
@@ -4707,7 +4707,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: JSNativeFn, reject: JSNativeFn) void {
         if (comptime bun.Environment.allow_assert)
-            std.debug.assert(JSValue.fromPtr(ctx).asPtr(anyopaque) == ctx.?);
+            bun.assert(JSValue.fromPtr(ctx).asPtr(anyopaque) == ctx.?);
         return this._then(global, JSValue.fromPtr(ctx), resolve, reject);
     }
 
@@ -4746,7 +4746,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
-        std.debug.assert(this.isCell());
+        bun.assert(this.isCell());
         const function = this.fastGet(global, BuiltinName.toString) orelse return false;
         return function.isCell() and function.isCallable(global.vm());
     }
@@ -5113,7 +5113,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub inline fn asInt52(this: JSValue) i64 {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(this.isNumber());
+            bun.assert(this.isNumber());
         }
         return coerceJSValueDoubleTruncatingTT(i52, i64, this.asNumber());
     }
@@ -5128,8 +5128,8 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(!this.isString()); // use coerce() instead
-            std.debug.assert(!this.isCell()); // use coerce() instead
+            bun.assert(!this.isString()); // use coerce() instead
+            bun.assert(!this.isCell()); // use coerce() instead
         }
 
         // TODO: this shouldn't be reachable.
@@ -5145,13 +5145,13 @@ pub const JSValue = enum(JSValueReprInt) {
         // case but is bad code practice to misuse JSValue casts.
         //
         // if (bun.Environment.allow_assert) {
-        //     std.debug.assert(this.isInt32());
+        //     bun.assert(this.isInt32());
         // }
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
     }
 
     pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
-        std.debug.assert(this.isNumber());
+        bun.assert(this.isNumber());
         return bun.FDImpl.fromUV(this.toInt32()).encode();
     }
 
@@ -5479,7 +5479,7 @@ pub const JSValue = enum(JSValueReprInt) {
         // we assume the class name is ASCII text
         const data = out.latin1();
         if (bun.Environment.allow_assert) {
-            std.debug.assert(bun.strings.isAllASCII(data));
+            bun.assert(bun.strings.isAllASCII(data));
         }
         return data;
     }

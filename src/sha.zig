@@ -15,7 +15,7 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
                 .hasher = undefined,
             };
 
-            std.debug.assert(Init(&this.hasher) == 1);
+            bun.assert(Init(&this.hasher) == 1);
             return this;
         }
 
@@ -26,12 +26,12 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
 
         pub fn update(this: *@This(), data: []const u8) void {
             @setRuntimeSafety(false);
-            std.debug.assert(Update(&this.hasher, data.ptr, data.len) == 1);
+            bun.assert(Update(&this.hasher, data.ptr, data.len) == 1);
         }
 
         pub fn final(this: *@This(), out: *Digest) void {
             @setRuntimeSafety(false);
-            std.debug.assert(Final(out, &this.hasher) == 1);
+            bun.assert(Final(out, &this.hasher) == 1);
         }
     };
 }
@@ -54,7 +54,7 @@ fn NewEVP(
 
             BoringSSL.EVP_MD_CTX_init(&this.ctx);
 
-            std.debug.assert(BoringSSL.EVP_DigestInit(&this.ctx, md) == 1);
+            bun.assert(BoringSSL.EVP_DigestInit(&this.ctx, md) == 1);
 
             return this;
         }
@@ -62,15 +62,15 @@ fn NewEVP(
         pub fn hash(bytes: []const u8, out: *Digest, engine: *BoringSSL.ENGINE) void {
             const md = @field(BoringSSL, MDName)();
 
-            std.debug.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);
+            bun.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);
         }
 
         pub fn update(this: *@This(), data: []const u8) void {
-            std.debug.assert(BoringSSL.EVP_DigestUpdate(&this.ctx, data.ptr, data.len) == 1);
+            bun.assert(BoringSSL.EVP_DigestUpdate(&this.ctx, data.ptr, data.len) == 1);
         }
 
         pub fn final(this: *@This(), out: *Digest) void {
-            std.debug.assert(BoringSSL.EVP_DigestFinal(&this.ctx, out, null) == 1);
+            bun.assert(BoringSSL.EVP_DigestFinal(&this.ctx, out, null) == 1);
         }
 
         pub fn deinit(this: *@This()) void {

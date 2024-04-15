@@ -223,7 +223,7 @@ pub const Error = struct {
     };
 
     pub inline fn withFd(this: Error, fd: anytype) Error {
-        if (Environment.allow_assert) std.debug.assert(fd != bun.invalid_fd);
+        if (Environment.allow_assert) bun.assert(fd != bun.invalid_fd);
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,
@@ -822,7 +822,7 @@ pub fn openFileAtWindowsNtPath(
     // Another problem re: normalization is that you can use relative paths, but no leading '.\' or './''
     // this path is probably already backslash normalized so we're only going to check for '.\'
     // const path = if (bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, ".\\")) path_maybe_leading_dot[2..] else path_maybe_leading_dot;
-    // std.debug.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
+    // bun.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
     assertIsValidWindowsPath(u16, path);
 
     var result: windows.HANDLE = undefined;
@@ -1186,7 +1186,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
         .windows => {
             // "WriteFile sets this value to zero before doing any work or error checking."
             var bytes_written: u32 = undefined;
-            std.debug.assert(bytes.len > 0);
+            bun.assert(bytes.len > 0);
             const rc = kernel32.WriteFile(
                 fd.cast(),
                 bytes.ptr,
@@ -2018,7 +2018,7 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
 
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {
     if (comptime !Environment.isLinux) @compileError("Linux-only");
-    std.debug.assert(capacity > 0);
+    bun.assert(capacity > 0);
 
     // In  Linux  versions  before 2.6.11, the capacity of a
     // pipe was the same as the system page size (e.g., 4096
@@ -2116,6 +2116,73 @@ pub fn exists(path: []const u8) bool {
     }
 
     @compileError("TODO: existsOSPath");
+}
+
+pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
+    const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
+    const dir_fd = bun.toFD(dir_);
+    if (comptime Environment.isWindows) {
+        var wbuf: bun.WPathBuffer = undefined;
+        const path = bun.strings.toNTPath(&wbuf, subpath);
+        const path_len_bytes: u16 = @truncate(path.len * 2);
+        var nt_name = w.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(path.ptr),
+        };
+        var attr = w.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
+                null
+            else if (dir_fd == bun.invalid_fd)
+                std.fs.cwd().fd
+            else
+                dir_fd.cast(),
+            .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        };
+        var basic_info: w.FILE_BASIC_INFORMATION = undefined;
+        const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
+        if (JSC.Maybe(bool).errnoSysP(rc, .access, subpath)) |err| {
+            syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err });
+            return err;
+        }
+
+        const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0;
+        syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_dir) });
+
+        return .{
+            .result = is_dir,
+        };
+    }
+
+    if (comptime !has_sentinel) {
+        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.oom };
+        return directoryExistsAt(dir_fd, path);
+    }
+
+    if (comptime Environment.isLinux) {
+        // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
+        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.O.DIRECTORY | linux.O.RDONLY, 0);
+        syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), rc });
+        if (rc == 0) {
+            return JSC.Maybe(bool){ .result = true };
+        }
+
+        return JSC.Maybe(bool){ .result = false };
+    }
+
+    // on toher platforms use faccessat from libc
+    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.O.DIRECTORY | std.os.O.RDONLY, 0);
+    syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), rc });
+    if (rc == 0) {
+        return JSC.Maybe(bool){ .result = true };
+    }
+
+    return JSC.Maybe(bool){ .result = false };
 }
 
 pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
@@ -2356,7 +2423,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
     }
 
     if (comptime Environment.allow_assert)
-        std.debug.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
+        bun.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
 
     return Maybe(void).errnoSysP(
         std.os.linux.linkat(

@@ -399,18 +399,50 @@ const TLSSocket = (function (InternalTLSSocket) {
       return !!this.#session;
     }
 
-    renegotiate() {
+    renegotiate(options, callback) {
       if (this.#renegotiationDisabled) {
+        // if renegotiation is disabled should emit error event in nextTick for nodejs compatibility
         const error = new Error("ERR_TLS_RENEGOTIATION_DISABLED: TLS session renegotiation disabled for this socket");
         error.name = "ERR_TLS_RENEGOTIATION_DISABLED";
-        throw error;
+        typeof callback === "function" && process.nextTick(callback, error);
+        return false;
       }
 
-      throw Error("Not implented in Bun yet");
+      const socket = this[bunSocketInternal];
+      // if the socket is detached we can't renegotiate, nodejs do a noop too (we should not return false or true here)
+      if (!socket) return;
+
+      if (options) {
+        let requestCert = !!this._requestCert;
+        let rejectUnauthorized = !!this._rejectUnauthorized;
+
+        if (options.requestCert !== undefined) requestCert = !!options.requestCert;
+        if (options.rejectUnauthorized !== undefined) rejectUnauthorized = !!options.rejectUnauthorized;
+
+        if (requestCert !== this._requestCert || rejectUnauthorized !== this._rejectUnauthorized) {
+          socket.setVerifyMode(requestCert, rejectUnauthorized);
+          this._requestCert = requestCert;
+          this._rejectUnauthorized = rejectUnauthorized;
+        }
+      }
+      try {
+        socket.renegotiate();
+        // if renegotiate is successful should emit secure event when done
+        typeof callback === "function" && this.once("secure", () => callback(null));
+        return true;
+      } catch (err) {
+        // if renegotiate fails should emit error event in nextTick for nodejs compatibility
+        typeof callback === "function" && process.nextTick(callback, err);
+        return false;
+      }
     }
+
     disableRenegotiation() {
       this.#renegotiationDisabled = true;
+      // disable renegotiation on the socket
+      return this[bunSocketInternal]?.disableRenegotiation();
     }
+
     getTLSTicket() {
       return this[bunSocketInternal]?.getTLSTicket();
     }
@@ -485,7 +517,8 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
   },
 );
-
+let CLIENT_RENEG_LIMIT = 3,
+  CLIENT_RENEG_WINDOW = 600;
 class Server extends NetServer {
   key;
   cert;
@@ -592,6 +625,8 @@ class Server extends NetServer {
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,
+        clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
+        clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
       },
       SocketClass,
     ];
@@ -601,9 +636,7 @@ class Server extends NetServer {
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
-const CLIENT_RENEG_LIMIT = 3,
-  CLIENT_RENEG_WINDOW = 600,
-  DEFAULT_ECDH_CURVE = "auto",
+const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_CIPHERS =
     "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",

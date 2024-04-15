@@ -154,7 +154,8 @@ pub const UpgradeCheckerThread = struct {
     fn run(env_loader: *DotEnv.Loader) void {
         _run(env_loader) catch |err| {
             if (Environment.isDebug) {
-                std.debug.print("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
+                Output.prettyError("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
+                Output.flush();
             }
         };
     }

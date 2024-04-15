@@ -470,7 +470,7 @@ pub const Response = struct {
                         break :brk Init.init(bun.default_allocator, globalThis, arguments[1]) catch null;
                     }
 
-                    std.debug.assert(!arguments[1].isEmptyOrUndefinedOrNull());
+                    bun.assert(!arguments[1].isEmptyOrUndefinedOrNull());
 
                     const err = globalThis.createTypeErrorInstance("Expected options to be one of: null, undefined, or object", .{});
                     globalThis.throwValue(err);
@@ -1204,7 +1204,7 @@ pub const Fetch = struct {
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
-            std.debug.assert(this.result.fail != null);
+            bun.assert(this.result.fail != null);
             log("onReject", .{});
 
             if (this.getAbortError()) |err| {
@@ -1406,7 +1406,7 @@ pub const Fetch = struct {
 
         fn toResponse(this: *FetchTasklet) Response {
             log("toResponse", .{});
-            std.debug.assert(this.metadata != null);
+            bun.assert(this.metadata != null);
             // at this point we always should have metadata
             const metadata = this.metadata.?;
             const http_response = metadata.response;
@@ -1539,8 +1539,8 @@ pub const Fetch = struct {
             fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
 
             if (fetch_tasklet.request_body == .Sendfile) {
-                std.debug.assert(fetch_options.url.isHTTP());
-                std.debug.assert(fetch_options.proxy == null);
+                bun.assert(fetch_options.url.isHTTP());
+                bun.assert(fetch_options.proxy == null);
                 fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
             }
 
@@ -1618,7 +1618,7 @@ pub const Fetch = struct {
             // metadata should be provided only once so we preserve it until we consume it
             if (result.metadata) |metadata| {
                 log("added callback metadata", .{});
-                std.debug.assert(task.metadata == null);
+                bun.assert(task.metadata == null);
                 task.metadata = metadata;
             }
             task.body_size = result.body_size;

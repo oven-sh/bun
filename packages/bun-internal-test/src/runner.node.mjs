@@ -497,9 +497,17 @@ if (failing_tests.length) {
     report += "[Link to file](" + linkToGH(path) + ")\n\n";
     report += `${reason}\n\n`;
     report += "```\n";
-    report += output
+
+    let failing_output = output
       .replace(/\x1b\[[0-9;]*m/g, "")
       .replace(/^::(group|endgroup|error|warning|set-output|add-matcher|remove-matcher).*$/gm, "");
+
+    if (failing_output.length > 1024 * 64) {
+      failing_output = failing_output.slice(0, 1024 * 64) + `\n\n[truncated output (length: ${failing_output.length})]`;
+    }
+
+    report += failing_output;
+
     report += "```\n\n";
   }
 }

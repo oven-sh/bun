@@ -266,7 +266,7 @@ pub const RunCommand = struct {
     const log = Output.scoped(.RUN, false);
 
     fn runPackageScriptForeground(
-        ctx: *Command.Context,
+        ctx: Command.Context,
         allocator: std.mem.Allocator,
         original_script: string,
         name: string,
@@ -458,15 +458,15 @@ pub const RunCommand = struct {
         // a relative lookup, because in the case we do find it, we have to
         // generate this full path anyways.
         if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path and bun.strings.hasSuffixComptime(executable, ".exe")) {
-            std.debug.assert(std.fs.path.isAbsolute(executable));
+            bun.assert(std.fs.path.isAbsolute(executable));
 
             // Using @constCast is safe because we know that
             // `direct_launch_buffer` is the data destination that assumption is
             // backed by the immediate assertion.
             var wpath = @constCast(bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable));
-            std.debug.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
+            bun.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
 
-            std.debug.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
+            bun.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
             wpath.len += ".bunx".len - ".exe".len;
             @memcpy(wpath[wpath.len - "bunx".len ..], comptime bun.strings.w("bunx"));
 
@@ -806,7 +806,7 @@ pub const RunCommand = struct {
                         .ALREADY_EXISTS => {},
                         else => {
                             {
-                                std.debug.assert(target_path_buffer[dir_slice.len] == '\\');
+                                bun.assert(target_path_buffer[dir_slice.len] == '\\');
                                 target_path_buffer[dir_slice.len] = 0;
                                 std.os.mkdirW(target_path_buffer[0..dir_slice.len :0], 0) catch {};
                                 target_path_buffer[dir_slice.len] = '\\';
@@ -929,23 +929,14 @@ pub const RunCommand = struct {
         return root_dir_info;
     }
 
-    pub fn configurePathForRun(
+    pub fn configurePathForRunWithPackageJsonDir(
         ctx: Command.Context,
-        root_dir_info: *DirInfo,
+        package_json_dir: string,
         this_bundler: *bundler.Bundler,
         ORIGINAL_PATH: ?*string,
         cwd: string,
         force_using_bun: bool,
-    ) !void {
-        var package_json_dir: string = "";
-
-        if (root_dir_info.enclosing_package_json) |package_json| {
-            if (root_dir_info.package_json == null) {
-                // no trailing slash
-                package_json_dir = strings.withoutTrailingSlash(package_json.source.path.name.dir);
-            }
-        }
-
+    ) ![]u8 {
         const PATH = this_bundler.env.get("PATH") orelse "";
         if (ORIGINAL_PATH) |original_path| {
             original_path.* = PATH;
@@ -1015,7 +1006,29 @@ pub const RunCommand = struct {
             try new_path.appendSlice(PATH);
         }
 
-        this_bundler.env.map.put("PATH", new_path.items) catch bun.outOfMemory();
+        return new_path.items;
+    }
+
+    pub fn configurePathForRun(
+        ctx: Command.Context,
+        root_dir_info: *DirInfo,
+        this_bundler: *bundler.Bundler,
+        ORIGINAL_PATH: ?*string,
+        cwd: string,
+        force_using_bun: bool,
+    ) !void {
+        var package_json_dir: string = "";
+
+        if (root_dir_info.enclosing_package_json) |package_json| {
+            if (root_dir_info.package_json == null) {
+                // no trailing slash
+
+                package_json_dir = strings.withoutTrailingSlash(package_json.source.path.name.dir);
+            }
+        }
+
+        const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_bundler, ORIGINAL_PATH, cwd, force_using_bun);
+        this_bundler.env.map.put("PATH", new_path) catch bun.outOfMemory();
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
@@ -1281,12 +1294,11 @@ pub const RunCommand = struct {
     }
 
     pub fn exec(
-        ctx_: Command.Context,
+        ctx: Command.Context,
         comptime bin_dirs_only: bool,
         comptime log_errors: bool,
         comptime did_try_open_with_bun_js: bool,
     ) !bool {
-        var ctx = ctx_;
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
         if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {
@@ -1371,7 +1383,7 @@ pub const RunCommand = struct {
                         // once we know it's a file, check if they have any preloads
                         if (ext.len > 0 and !has_loader) {
                             if (!ctx.debug.loaded_bunfig) {
-                                try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                                try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
                             }
 
                             if (ctx.preloads.len == 0)
@@ -1451,7 +1463,7 @@ pub const RunCommand = struct {
 
                     if (scripts.get(temp_script_buffer[1..])) |prescript| {
                         if (!try runPackageScriptForeground(
-                            &ctx,
+                            ctx,
                             ctx.allocator,
                             prescript,
                             temp_script_buffer[1..],
@@ -1466,7 +1478,7 @@ pub const RunCommand = struct {
                     }
 
                     if (!try runPackageScriptForeground(
-                        &ctx,
+                        ctx,
                         ctx.allocator,
                         script_content,
                         script_name_to_search,
@@ -1481,7 +1493,7 @@ pub const RunCommand = struct {
 
                     if (scripts.get(temp_script_buffer)) |postscript| {
                         if (!try runPackageScriptForeground(
-                            &ctx,
+                            ctx,
                             ctx.allocator,
                             postscript,
                             temp_script_buffer,
@@ -1615,7 +1627,7 @@ pub const RunCommand = struct {
     }
 
     pub fn execAsIfNode(ctx: Command.Context) !void {
-        std.debug.assert(CLI.pretend_to_be_node);
+        bun.assert(CLI.pretend_to_be_node);
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const trigger = bun.pathLiteral("/[eval]");
@@ -1669,16 +1681,15 @@ pub const BunXFastPath = struct {
     var environment_buffer: bun.WPathBuffer = undefined;
 
     /// If this returns, it implies the fast path cannot be taken
-    fn tryLaunch(ctx_const: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+    fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
         if (!bun.FeatureFlags.windows_bunx_fast_path) return;
 
-        var ctx = ctx_const;
-        std.debug.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
+        bun.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
         debug("Attempting to find and load bunx file: '{}'", .{bun.fmt.utf16(path_to_use)});
         if (Environment.allow_assert) {
-            std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
+            bun.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
         }
         const handle = (bun.sys.openFileAtWindows(
             bun.invalid_fd, // absolute path is given
@@ -1705,7 +1716,7 @@ pub const BunXFastPath = struct {
             .arguments = command_line[0..i],
             .force_use_bun = ctx.debug.run_in_bun,
             .direct_launch_with_bun_js = &directLaunchCallback,
-            .cli_context = &ctx,
+            .cli_context = ctx,
             .environment = env.map.writeWindowsEnvBlock(&environment_buffer) catch return,
         };
 
@@ -1721,12 +1732,12 @@ pub const BunXFastPath = struct {
         debug("did not start via shim", .{});
     }
 
-    fn directLaunchCallback(wpath: []u16, ctx: *const Command.Context) void {
+    fn directLaunchCallback(wpath: []u16, ctx: Command.Context) void {
         const utf8 = bun.strings.convertUTF16toUTF8InBuffer(
             bun.reinterpretSlice(u8, &direct_launch_buffer),
             wpath,
         ) catch return;
-        Run.boot(ctx.*, utf8) catch |err| {
+        Run.boot(ctx, utf8) catch |err| {
             ctx.log.printForLogLevel(Output.errorWriter()) catch {};
             Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
             Global.exit(1);

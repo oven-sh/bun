@@ -22,12 +22,7 @@ pub const JSContextGroupRef = ?*const struct_OpaqueJSContextGroup;
 pub const struct_OpaqueJSContext = generic;
 pub const JSContextRef = *cpp.JSGlobalObject;
 pub const JSGlobalContextRef = ?*cpp.JSGlobalObject;
-pub const struct_OpaqueJSClass = opaque {
-    pub const name = "JSClassRef";
-    pub const is_pointer = false;
-    pub const Type = "JSClassRef";
-};
-pub const JSClassRef = ?*struct_OpaqueJSClass;
+
 
 pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
@@ -78,25 +73,7 @@ pub const kJSTypedArrayTypeFloat64Array = @intFromEnum(JSTypedArrayType.kJSTyped
 pub const kJSTypedArrayTypeArrayBuffer = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeArrayBuffer);
 pub const kJSTypedArrayTypeNone = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeNone);
 pub extern fn JSValueGetType(ctx: JSContextRef, value: JSValueRef) JSType;
-pub extern fn JSValueIsUndefined(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueIsNull(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueIsBoolean(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueIsNumber(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueIsString(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueIsSymbol(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueIsObject(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueIsObjectOfClass(ctx: JSContextRef, value: JSValueRef, jsClass: JSClassRef) bool;
-pub extern fn JSValueIsArray(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueIsDate(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueGetTypedArrayType(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSTypedArrayType;
-pub extern fn JSValueIsEqual(ctx: JSContextRef, a: JSValueRef, b: JSValueRef, exception: ExceptionRef) bool;
-pub extern fn JSValueIsStrictEqual(ctx: JSContextRef, a: JSValueRef, b: JSValueRef) bool;
-pub extern fn JSValueIsInstanceOfConstructor(ctx: JSContextRef, value: JSValueRef, constructor: JSObjectRef, exception: ExceptionRef) bool;
-pub extern fn JSValueMakeUndefined(ctx: JSContextRef) JSValueRef;
 pub extern fn JSValueMakeNull(ctx: JSContextRef) JSValueRef;
-pub extern fn JSValueMakeBoolean(ctx: JSContextRef, boolean: bool) JSValueRef;
-pub extern fn JSValueMakeNumber(ctx: JSContextRef, number: f64) JSValueRef;
-pub extern fn JSValueToBoolean(ctx: JSContextRef, value: JSValueRef) bool;
 pub extern fn JSValueToNumber(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) f64;
 pub extern fn JSValueToObject(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSObjectRef;
 

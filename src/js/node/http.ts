@@ -1388,6 +1388,7 @@ class ClientRequest extends OutgoingMessage {
   #timeoutTimer?: Timer = undefined;
   #options;
   #finished;
+  #tls;
 
   get path() {
     return this.#path;
@@ -1462,6 +1463,7 @@ class ClientRequest extends OutgoingMessage {
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
+        tls: this.#tls,
       };
 
       if (!!$debug) {
@@ -1681,6 +1683,7 @@ class ClientRequest extends OutgoingMessage {
     this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
+    this.#tls = options.tls;
 
     const timeout = options.timeout;
     if (timeout !== undefined && timeout !== 0) {

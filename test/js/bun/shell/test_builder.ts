@@ -208,7 +208,7 @@ export class TestBuilder {
     return this;
   }
 
-  async runImpl(): Promise<undefined> {
+  async run(): Promise<undefined> {
     try {
       let finalPromise = Bun.$(this._scriptStr, ...this._expresssions);
       if (this.tempdir) finalPromise = finalPromise.cwd(this.tempdir);
@@ -275,7 +275,7 @@ export class TestBuilder {
     const tb = this;
     if (this.__todo) {
       test.todo(typeof this.__todo === "string" ? `${name} skipped: ${this.__todo}` : name, async () => {
-        await tb.runImpl();
+        await tb.run();
       });
       return;
     } else {
@@ -283,7 +283,7 @@ export class TestBuilder {
         test(
           name,
           async () => {
-            await tb.runImpl();
+            await tb.run();
           },
           this._timeout,
         );
@@ -307,7 +307,7 @@ export class TestBuilder {
               tb._scriptStr = script;
               tb._expresssions = exprs;
             })`${bunExe()} run script.bun.sh`;
-            await tb.runImpl();
+            await tb.run();
           },
           this._timeout,
         );

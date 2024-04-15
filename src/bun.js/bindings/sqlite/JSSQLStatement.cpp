@@ -319,10 +319,9 @@ public:
     VersionSqlite3* version_db;
     uint64_t version;
     bool hasExecuted = false;
-    // Tracks which columns should be skipped because another column with the same name
-    // is being used instead. Each bit corresponds to a column index. If the bit is set,
-    // the column should be skipped.
-    WTF::BitVector skippedColumns;
+    // Tracks which columns are valid in the current result set. Used to handle duplicate column names.
+    // The bit at index i is set if the column at index i is valid.
+    WTF::BitVector validColumns;
     std::unique_ptr<PropertyNameArray> columnNames;
     mutable JSC::WriteBarrier<JSC::JSObject> _prototype;
     mutable JSC::WriteBarrier<JSC::Structure> _structure;
@@ -422,7 +421,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             castedThis->columnNames->propertyNameMode(),
             castedThis->columnNames->privateSymbolMode()));
     }
-    castedThis->skippedColumns.clearAll();
+    castedThis->validColumns.clearAll();
     castedThis->update_version();
 
     JSC::VM& vm = lexicalGlobalObject->vm();
@@ -469,7 +468,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             int curCount = columnNames->size();
 
             if (preCount != curCount) {
-                castedThis->skippedColumns.set(i);
+                castedThis->validColumns.set(i);
             }
         }
 
@@ -496,7 +495,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 castedThis->columnNames->propertyNameMode(),
                 castedThis->columnNames->privateSymbolMode()));
             // castedThis->columnOffsets = 0;
-            castedThis->skippedColumns.clearAll();
+            castedThis->validColumns.clearAll();
         }
     }
 
@@ -545,7 +544,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
         // only put the property if it's not a duplicate
         if (preCount != curCount) {
-            castedThis->skippedColumns.set(i);
+            castedThis->validColumns.set(i);
             object->putDirect(vm, key, primitive, 0);
         }
     }
@@ -1381,7 +1380,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         // i: the index of columns returned from SQLite
         // j: the index of object property
         for (int i = 0, j = 0; j < count; i++, j++) {
-            if (!castedThis->skippedColumns.get(i)) {
+            if (!castedThis->validColumns.get(i)) {
                 // this column is duplicate, skip
                 j -= 1;
                 continue;
@@ -1443,7 +1442,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         }
 
         for (int i = 0, j = 0; j < count; i++, j++) {
-            if (!castedThis->skippedColumns.get(i)) {
+            if (!castedThis->validColumns.get(i)) {
                 j -= 1;
                 continue;
             }
@@ -1506,7 +1505,7 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
     auto* stmt = castedThis->stmt;
 
     for (int i = 0, j = 0; j < count; i++, j++) {
-        if (!castedThis->skippedColumns.get(i)) {
+        if (!castedThis->validColumns.get(i)) {
             j -= 1;
             continue;
         }

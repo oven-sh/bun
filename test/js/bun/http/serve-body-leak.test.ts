@@ -79,7 +79,11 @@ async function memoryMemoryLeak(fn: () => Promise<void>) {
       memory_examples.push(report);
     }
   }
+  // wait for the last memory usage to be stable
   const end_memory = await getMemoryUsage();
+  if (end_memory > peak_memory) {
+    peak_memory = end_memory;
+  }
   // use first example as a reference if is a memory leak this should keep increasing and not be stable
   const consumption = end_memory - memory_examples[0];
   const leak = Math.floor(consumption > 0 ? consumption / 1024 / 1024 : 0);

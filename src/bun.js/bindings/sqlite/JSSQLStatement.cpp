@@ -340,6 +340,47 @@ protected:
     void finishCreation(JSC::VM& vm);
 };
 
+static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt* stmt, int i)
+{
+    switch (sqlite3_column_type(stmt, i)) {
+    case SQLITE_INTEGER: {
+        // https://github.com/oven-sh/bun/issues/1536
+        return jsNumberFromSQLite(stmt, i);
+    }
+    case SQLITE_FLOAT: {
+        return jsDoubleNumber(sqlite3_column_double(stmt, i));
+    }
+    // > Note that the SQLITE_TEXT constant was also used in SQLite version
+    // > 2 for a completely different meaning. Software that links against
+    // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
+    // > not SQLITE_TEXT.
+    case SQLITE3_TEXT: {
+        size_t len = sqlite3_column_bytes(stmt, i);
+        const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
+        if (UNLIKELY(text == nullptr || len == 0)) {
+            return jsEmptyString(vm);
+        }
+
+        return len < 64 ? jsString(vm, WTF::String::fromUTF8({ text, len })) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, globalObject));
+    }
+    case SQLITE_BLOB: {
+        size_t len = sqlite3_column_bytes(stmt, i);
+        const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
+        if (LIKELY(len > 0 && blob != nullptr)) {
+            JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), len);
+            memcpy(array->vector(), blob, len);
+            return array;
+        }
+
+        return JSC::JSUint8Array::create(globalObject, globalObject->m_typedArrayUint8.get(globalObject), 0);
+    }
+    default: {
+        break;
+    }
+    }
+
+    return jsNull();
+}
 extern "C" {
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSSQLStatement* castedThis));
 }
@@ -440,7 +481,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         // see https://github.com/oven-sh/bun/issues/987
         // also see https://github.com/oven-sh/bun/issues/1646
         auto& globalObject = *lexicalGlobalObject;
-        PropertyOffset offset;
+
         auto columnNames = castedThis->columnNames.get();
         bool anyHoles = false;
         for (int i = 0; i < count; i++) {
@@ -461,6 +502,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         }
 
         if (LIKELY(!anyHoles)) {
+            PropertyOffset offset;
             Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), columnNames->size());
             vm.writeBarrier(castedThis, structure);
 
@@ -1454,53 +1496,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         result = JSC::constructEmptyObject(vm, structure);
 
         for (unsigned int i = 0; i < count; i++) {
-            JSValue value;
-
-            // Loop 1. Fill the rowBuffer with values from SQLite
-            switch (sqlite3_column_type(stmt, i)) {
-            case SQLITE_INTEGER: {
-                // https://github.com/oven-sh/bun/issues/1536
-                value = jsNumberFromSQLite(stmt, i);
-                break;
-            }
-            case SQLITE_FLOAT: {
-                value = jsNumber(sqlite3_column_double(stmt, i));
-                break;
-            }
-            // > Note that the SQLITE_TEXT constant was also used in SQLite version
-            // > 2 for a completely different meaning. Software that links against
-            // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
-            // > not SQLITE_TEXT.
-            case SQLITE3_TEXT: {
-                size_t len = sqlite3_column_bytes(stmt, i);
-                const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
-
-                if (len > 64) {
-                    value = JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject));
-                    break;
-                } else {
-                    value = jsString(vm, WTF::String::fromUTF8({ text, len }));
-                    break;
-                }
-            }
-            case SQLITE_BLOB: {
-                size_t len = sqlite3_column_bytes(stmt, i);
-                const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
-                JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
-
-                if (LIKELY(blob && len))
-                    memcpy(array->vector(), blob, len);
-
-                value = array;
-                break;
-            }
-            default: {
-                value = jsNull();
-                break;
-            }
-            }
-
-            result->putDirectOffset(vm, i, value);
+            result->putDirectOffset(vm, i, toJS(vm, lexicalGlobalObject, stmt, i));
         }
 
     } else {
@@ -1511,50 +1507,8 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         }
 
         for (int i = 0; i < count; i++) {
-            auto name = columnNames[i];
-
-            switch (sqlite3_column_type(stmt, i)) {
-            case SQLITE_INTEGER: {
-                // https://github.com/oven-sh/bun/issues/1536
-                result->putDirect(vm, name, jsNumberFromSQLite(stmt, i), 0);
-                break;
-            }
-            case SQLITE_FLOAT: {
-                result->putDirect(vm, name, jsDoubleNumber(sqlite3_column_double(stmt, i)), 0);
-                break;
-            }
-            // > Note that the SQLITE_TEXT constant was also used in SQLite version
-            // > 2 for a completely different meaning. Software that links against
-            // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
-            // > not SQLITE_TEXT.
-            case SQLITE3_TEXT: {
-                size_t len = sqlite3_column_bytes(stmt, i);
-                const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
-
-                if (len > 64) {
-                    result->putDirect(vm, name, JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)), 0);
-                    continue;
-                }
-
-                result->putDirect(vm, name, jsString(vm, WTF::String::fromUTF8({ text, len })), 0);
-                break;
-            }
-            case SQLITE_BLOB: {
-                size_t len = sqlite3_column_bytes(stmt, i);
-                const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
-                JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
-
-                if (LIKELY(blob && len))
-                    memcpy(array->vector(), blob, len);
-
-                result->putDirect(vm, name, array, 0);
-                break;
-            }
-            default: {
-                result->putDirect(vm, name, jsNull(), 0);
-                break;
-            }
-            }
+            const auto& name = columnNames[i];
+            result->putDirect(vm, name, toJS(vm, lexicalGlobalObject, stmt, i), 0);
         }
     }
 
@@ -1565,53 +1519,15 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
 {
     int count = castedThis->columnNames->size();
     auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSArray* result = JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
     auto* stmt = castedThis->stmt;
 
     for (int i = 0; i < count; i++) {
-
-        switch (sqlite3_column_type(stmt, i)) {
-        case SQLITE_INTEGER: {
-            // https://github.com/oven-sh/bun/issues/1536
-            result->putDirectIndex(lexicalGlobalObject, i, jsNumberFromSQLite(stmt, i));
-            break;
-        }
-        case SQLITE_FLOAT: {
-            result->putDirectIndex(lexicalGlobalObject, i, jsDoubleNumber(sqlite3_column_double(stmt, i)));
-            break;
-        }
-        // > Note that the SQLITE_TEXT constant was also used in SQLite version
-        // > 2 for a completely different meaning. Software that links against
-        // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
-        // > not SQLITE_TEXT.
-        case SQLITE_TEXT: {
-            size_t len = sqlite3_column_bytes(stmt, i);
-            const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
-            if (UNLIKELY(text == nullptr || len == 0)) {
-                result->putDirectIndex(lexicalGlobalObject, i, jsEmptyString(vm));
-                continue;
-            }
-            result->putDirectIndex(lexicalGlobalObject, i, len < 64 ? jsString(vm, WTF::String::fromUTF8({ text, len })) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
-            break;
-        }
-        case SQLITE_BLOB: {
-            size_t len = sqlite3_column_bytes(stmt, i);
-            const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
-            if (LIKELY(len > 0 && blob != nullptr)) {
-                JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
-                memcpy(array->vector(), blob, len);
-                result->putDirectIndex(lexicalGlobalObject, i, array);
-            } else {
-                result->putDirectIndex(lexicalGlobalObject, i, JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0));
-            }
-            break;
-        }
-        default: {
-            result->putDirectIndex(lexicalGlobalObject, i, jsNull());
-            break;
-        }
-        }
+        JSValue value = toJS(vm, lexicalGlobalObject, stmt, i);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+        result->putDirectIndex(lexicalGlobalObject, i, value);
     }
 
     return result;

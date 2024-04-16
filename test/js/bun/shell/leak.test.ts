@@ -4,7 +4,9 @@ import { bunEnv } from "harness";
 import { appendFileSync, closeSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir, devNull } from "os";
 import { join } from "path";
-import { TestBuilder } from "./util";
+import { createTestBuilder } from "./util";
+const TestBuilder = createTestBuilder(import.meta.path);
+type TestBuilder = InstanceType<typeof TestBuilder>;
 
 $.env(bunEnv);
 $.cwd(process.cwd());
@@ -50,7 +52,7 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
 ];
 
 describe("fd leak", () => {
-  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 500, threshold: number = 5) {
+  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 1000, threshold: number = 5) {
     test(`fdleak_${name}`, async () => {
       Bun.gc(true);
       const baseline = openSync(devNull, "r");
@@ -83,13 +85,15 @@ describe("fd leak", () => {
       writeFileSync(tempfile, testcode);
 
       const impl = /* ts */ `
+              const TestBuilder = createTestBuilder(import.meta.path);
+
               const threshold = ${threshold}
               let prev: number | undefined = undefined;
               let prevprev: number | undefined = undefined;
               for (let i = 0; i < ${runs}; i++) {
                 Bun.gc(true);
                 await (async function() {
-                  await ${builder.toString().slice("() =>".length)}.quiet().run()
+                  await ${builder.toString().slice("() =>".length)}.quiet().runAsTest('iter:', i)
                 })()
                 Bun.gc(true);
                 Bun.gc(true);
@@ -111,7 +115,9 @@ describe("fd leak", () => {
         env: bunEnv,
       });
       // console.log('STDOUT:', stdout.toString(), '\n\nSTDERR:', stderr.toString());
-      console.log("\n\nSTDERR:", stderr.toString());
+      if (exitCode != 0) {
+        console.log("\n\nSTDERR:", stderr.toString());
+      }
       expect(exitCode).toBe(0);
     }, 100_000);
   }

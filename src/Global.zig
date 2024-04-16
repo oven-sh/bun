@@ -64,13 +64,17 @@ pub inline fn getStartTime() i128 {
     return bun.start_time;
 }
 
+extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(std.os.windows.WINAPI) std.os.windows.HRESULT;
+
 pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {
         _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch {};
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
     } else if (Environment.isWindows) {
-        _ = std.os.SetThreadDescription(std.os.GetCurrentThread(), name);
+        var name_buf: [1024]u16 = undefined;
+        const name_wide = bun.strings.convertUTF8toUTF16InBufferZ(&name_buf, name);
+        _ = SetThreadDescription(std.os.windows.kernel32.GetCurrentThread(), name_wide);
     }
 }
 

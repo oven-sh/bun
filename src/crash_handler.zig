@@ -199,6 +199,7 @@ pub fn crashHandler(
                     if (Output.enable_ansi_colors) {
                         writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.os.abort();
                     }
+
                     encodeTraceString(
                         .{
                             .trace = trace,
@@ -559,8 +560,6 @@ const metadata_version_line = std.fmt.comptimePrint(
 );
 
 fn handleSegfaultPosix(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) noreturn {
-    resetSegfaultHandler();
-
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
@@ -628,8 +627,7 @@ pub fn resetSegfaultHandler() void {
     updatePosixSegfaultHandler(&act) catch {};
 }
 
-pub fn handleSegfaultWindows(info: windows.EXCEPTION_POINTERS) callconv(windows.WINAPI) c_long {
-    resetSegfaultHandler();
+pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows.WINAPI) c_long {
     crashHandler(
         switch (info.ExceptionRecord.ExceptionCode) {
             windows.EXCEPTION_DATATYPE_MISALIGNMENT => .{ .datatype_misalignment = {} },
@@ -753,7 +751,7 @@ const StackLine = union(enum) {
     },
     javascript,
 
-    pub fn fromAddress(addr: usize, name_bytes: []const u8) StackLine {
+    pub fn fromAddress(addr: usize, name_bytes: []u8) StackLine {
         return switch (bun.Environment.os) {
             .windows => {
                 const module = bun.windows.getModuleHandleFromAddress(addr) orelse {
@@ -770,13 +768,13 @@ const StackLine = union(enum) {
                 const image_path = bun.windows.exePathW();
 
                 return .{
-                    .mapped = .{
+                    .known = .{
                         // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
-                        .address = addr - base_address,
+                        .address = @intCast(addr - base_address),
 
                         .object = if (!std.mem.eql(u16, name, image_path)) name: {
-                            const basename = name[std.mem.lastIndexOfAny(u16, name, "\\/") orelse 0 ..];
-                            break :name bun.strings.convertUTF8toUTF16InBuffer(&name_bytes, basename);
+                            const basename = name[std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' }) orelse 0 ..];
+                            break :name bun.strings.convertUTF16toUTF8InBuffer(name_bytes, basename) catch null;
                         } else null,
                     },
                 };

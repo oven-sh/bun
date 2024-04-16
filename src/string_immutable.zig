@@ -5402,6 +5402,20 @@ pub fn convertUTF8toUTF16InBuffer(
     return buf[0..result];
 }
 
+pub fn convertUTF8toUTF16InBufferZ(
+    buf: []u16,
+    input: []const u8,
+) [:0]u16 {
+    // TODO: see convertUTF8toUTF16InBuffer
+    if (input.len == 0) {
+        buf[0] = 0;
+        return buf[0..0 :0];
+    }
+    const result = bun.simdutf.convert.utf8.to.utf16.le(input, buf);
+    buf[result] = 0;
+    return buf[0..result :0];
+}
+
 pub fn convertUTF16toUTF8InBuffer(
     buf: []u8,
     input: []const u16,

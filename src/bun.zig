@@ -53,7 +53,7 @@ pub const shell = struct {
 };
 
 pub const Output = @import("./output.zig");
-pub const Global = @import("./__global.zig");
+pub const Global = @import("./global.zig");
 
 // make this non-pub after https://github.com/ziglang/zig/issues/18462 is resolved
 pub const FileDescriptorInt = if (Environment.isBrowser)

@@ -1109,6 +1109,7 @@ else()
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -fno-rtti
+        -fno-omit-frame-pointer
     )
     string(APPEND CMAKE_CXX_FLAGS " -std=c++2a")
 endif()

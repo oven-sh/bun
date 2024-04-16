@@ -175,3 +175,25 @@ jobs:
       pr-number: ${{ github.event.number }}
       runs-on: windows-latest
       tag: windows-x64-baseline
+  cleanup:
+    if: ${{ always() }}
+    name: Cleanup
+    needs:
+      - linux-x64
+      - linux-x64-baseline
+      - linux-aarch64
+      - darwin-x64
+      - darwin-x64-baseline
+      - darwin-aarch64
+      - windows-x64
+      - windows-x64-baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup Artifacts
+        uses: geekyeggo/delete-artifact@v2
+        with:
+          name: |
+            bun-*-cpp
+            bun-*-zig
+            bun-*-deps
+            bun-*-codegen

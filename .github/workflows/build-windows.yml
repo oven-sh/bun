@@ -315,7 +315,7 @@ jobs:
           nodetail: true
           title: ""
           description: |
-            ### [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
+            ### ❌ [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
 
             @${{ github.actor }}, the build for bun-${{ inputs.tag }} failed.
 

@@ -65,7 +65,11 @@ jobs:
         run: |
           unzip bun/bun-*.zip
           cd bun-*
-          pwd >> ${GITHUB_PATH}
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            pwd >> $env:GITHUB_PATH
+          else
+            pwd >> ${GITHUB_PATH}
+          fi
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -88,13 +92,15 @@ jobs:
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         run: |
-          node packages/bun-internal-test/src/runner.node.mjs || true
-      - name: Write Comment
+          node packages/bun-internal-test/src/runner.node.mjs
+      - if: ${{ failure()}}
+        name: Write Comment
         run: |
           echo "There are ${{ steps.test.outputs.failing_tests_count }} failing tests on bun-${{ inputs.tag }}." > comment.md
           echo "" >> comment.md
           echo "${{ steps.test.outputs.failing_tests }}" >> comment.md
-      - name: Upload Results
+      - if: ${{ always()}}
+        name: Upload Results
         uses: actions/upload-artifact@v4
         with:
           name: bun-${{ inputs.tag }}-tests
@@ -104,7 +110,7 @@ jobs:
             pr-number.txt
           if-no-files-found: error
           overwrite: true
-      - if: ${{ steps.test.outputs.failing_tests != '' && github.repository_owner == 'oven-sh' }}
+      - if: ${{ failure() && github.repository_owner == 'oven-sh' }}
         name: Send Message
         uses: sarisia/actions-status-discord@v1
         with:
@@ -120,7 +126,7 @@ jobs:
 
             **[View logs](https://github.com/oven-sh/bun/actions/runs/${{ github.run_id }})**
       - name: Fail
-        if: ${{ steps.test.outputs.failing_tests != '' }}
+        if: ${{ failure() }}
         run: |
-          echo "There are ${{ steps.test.outputs.failing_tests_count }} failing tests on bun-${{ inputs.tag }}."
+          echo "There are ${{ steps.test.outputs.failing_tests_count || 'some' }} failing tests on bun-${{ inputs.tag }}."
           exit 1

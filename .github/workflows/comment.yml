@@ -6,8 +6,6 @@ on:
       - CI
     types:
       - completed
-    branches:
-      - main
 
 jobs:
   comment:

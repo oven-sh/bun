@@ -132,6 +132,11 @@ noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []c
     return exception;
 }
 
+/// we always allow and check the SSL certificate after the handshake or renegotiation
+fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.C) c_int {
+    return 1;
+}
+
 fn normalizeHost(input: anytype) @TypeOf(input) {
     return input;
 }
@@ -218,8 +223,9 @@ const Handlers = struct {
                 this.unprotect();
                 // will deinit when is not wrapped or when is the TCP wrapped connection
                 if (wrapped != .tls) {
-                    if (ctx) |ctx_|
+                    if (ctx) |ctx_| {
                         ctx_.deinit(ssl);
+                    }
                 }
                 bun.default_allocator.destroy(this);
             }
@@ -825,23 +831,27 @@ pub const Listener = struct {
         const arguments = callframe.arguments(1);
         log("close", .{});
 
-        if (arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null) {
-            this.socket_context.?.close(this.ssl);
-            this.listener = null;
-        } else {
-            var listener = this.listener orelse return JSValue.jsUndefined();
-            this.listener = null;
-            listener.close(this.ssl);
-        }
+        var listener = this.listener orelse return JSValue.jsUndefined();
+        this.listener = null;
 
         this.poll_ref.unref(this.handlers.vm);
+        // if we already have no active connections, we can deinit the context now
         if (this.handlers.active_connections == 0) {
             this.handlers.unprotect();
-            this.socket_context.?.close(this.ssl);
+            // deiniting the context will also close the listener
             this.socket_context.?.deinit(this.ssl);
             this.socket_context = null;
             this.strong_self.clear();
             this.strong_data.clear();
+        } else {
+            const forceClose = arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null;
+            if (forceClose) {
+                // close all connections in this context and wait for them to close
+                this.socket_context.?.close(this.ssl);
+            } else {
+                // only close the listener and wait for the connections to close by it self
+                listener.close(this.ssl);
+            }
         }
 
         return JSValue.jsUndefined();
@@ -2044,6 +2054,84 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn disableRenegotiation(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = this.socket.ssl();
+            BoringSSL.SSL_set_renegotiate_mode(ssl_ptr, BoringSSL.ssl_renegotiate_never);
+            return JSValue.jsUndefined();
+        }
+
+        pub fn setVerifyMode(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const args = callframe.arguments(2);
+
+            if (args.len < 2) {
+                globalObject.throw("Expected requestCert and rejectUnauthorized arguments", .{});
+                return .zero;
+            }
+            const request_cert_js = args.ptr[0];
+            const reject_unauthorized_js = args.ptr[1];
+            if (!request_cert_js.isBoolean() or !reject_unauthorized_js.isBoolean()) {
+                globalObject.throw("Expected requestCert and rejectUnauthorized arguments to be boolean", .{});
+                return .zero;
+            }
+
+            const request_cert = request_cert_js.toBoolean();
+            const reject_unauthorized = request_cert_js.toBoolean();
+            var verify_mode: c_int = BoringSSL.SSL_VERIFY_NONE;
+            if (this.handlers.is_server) {
+                if (request_cert) {
+                    verify_mode = BoringSSL.SSL_VERIFY_PEER;
+                    if (reject_unauthorized)
+                        verify_mode |= BoringSSL.SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+                }
+            }
+            const ssl_ptr = this.socket.ssl();
+            // we always allow and check the SSL certificate after the handshake or renegotiation
+            BoringSSL.SSL_set_verify(ssl_ptr, verify_mode, alwaysAllowSSLVerifyCallback);
+            return JSValue.jsUndefined();
+        }
+
+        pub fn renegotiate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = this.socket.ssl();
+            BoringSSL.ERR_clear_error();
+            if (BoringSSL.SSL_renegotiate(ssl_ptr) != 1) {
+                globalObject.throwValue(getSSLException(globalObject, "SSL_renegotiate error"));
+                return .zero;
+            }
+            return JSValue.jsUndefined();
+        }
         pub fn getTLSTicket(
             this: *This,
             globalObject: *JSC.JSGlobalObject,

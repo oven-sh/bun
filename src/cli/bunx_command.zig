@@ -212,8 +212,7 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
-        var ctx = ctx_;
+    pub fn exec(ctx: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
         // Don't log stuff
         ctx.debug.silent = true;
 
@@ -331,8 +330,7 @@ pub const BunxCommand = struct {
                 else => ":",
             };
 
-            const has_banned_char = std.mem.indexOfAny(u8, update_request.name, banned_path_chars) != null or
-                std.mem.indexOfAny(u8, display_version, banned_path_chars) != null;
+            const has_banned_char = bun.strings.indexAnyComptime(update_request.name, banned_path_chars) != null or bun.strings.indexAnyComptime(display_version, banned_path_chars) != null;
 
             break :brk try if (has_banned_char)
                 // This branch gets hit usually when a URL is requested as the package

@@ -3833,20 +3833,20 @@ pub const Package = extern struct {
     ) !WorkspaceEntry {
         const path_to_use = if (path.len == 0) "package.json" else brk: {
             const paths = [_]string{ path, "package.json" };
-            break :brk bun.path.joinStringBuf(path_buf, &paths, .posix);
+            break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
         };
 
-        // TODO: windows
-        var workspace_file = dir.openFile(path_to_use, .{ .mode = .read_only }) catch |err| {
-            debug("processWorkspaceName({s}) = {} ", .{ path_to_use, err });
-            return err;
+        const workspace_source = brk: {
+            if (path_to_use.len + 1 < path_buf.len) {
+                path_buf[path_to_use.len] = 0;
+
+                break :brk try bun.sys.File.toSourceAt(dir, path_buf[0..path_to_use.len :0], workspace_allocator).unwrap();
+            }
+
+            break :brk try bun.sys.File.toSourceAt(dir, path_to_use, workspace_allocator).unwrap();
         };
 
-        defer workspace_file.close();
-
-        const workspace_bytes = try workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize));
-        defer workspace_allocator.free(workspace_bytes);
-        const workspace_source = logger.Source.initPathString(path, workspace_bytes);
+        defer workspace_allocator.free(workspace_source.contents);
 
         var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
 

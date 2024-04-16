@@ -765,7 +765,7 @@ pub fn ParsePackageJSONUTF8(
 
     var parser = try JSONLikeParser(.{
         .is_json = true,
-        .always_decode_escape_sequences = true,
+        .always_decode_escape_sequences = false,
         .allow_comments = true,
         .allow_trailing_commas = true,
     }).init(allocator, source.*, log);

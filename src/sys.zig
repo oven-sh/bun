@@ -2800,7 +2800,7 @@ pub const File = struct {
         return .{ .result = bytes };
     }
 
-    pub fn toSource(path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
+    pub fn toSourceAt(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
         if (std.meta.sentinel(@TypeOf(path)) == null) {
             return toSource(
                 &(std.os.toPosixPath(path) catch return .{
@@ -2810,10 +2810,14 @@ pub const File = struct {
             );
         }
 
-        return switch (readFrom(std.fs.cwd(), path, allocator)) {
+        return switch (readFrom(dir_fd, path, allocator)) {
             .err => |err| .{ .err = err },
             .result => |bytes| .{ .result = bun.logger.Source.initPathString(path, bytes) },
         };
+    }
+
+    pub fn toSource(path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
+        return toSourceAt(std.fs.cwd(), path, allocator);
     }
 };
 

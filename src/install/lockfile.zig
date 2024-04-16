@@ -3844,18 +3844,13 @@ pub const Package = extern struct {
         name_to_copy: *[1024]u8,
         log: *logger.Log,
     ) !WorkspaceEntry {
-        const path_to_use = if (path.len == 0) "package.json" else brk: {
-            const paths = [_]string{ path, "package.json" };
-            break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
-        };
-
         const workspace_source = brk: {
-            if (path_to_use.len + 1 < path_buf.len) {
-                path_buf[path_to_use.len] = 0;
-
-                break :brk try bun.sys.File.toSourceAt(dir, path_buf[0..path_to_use.len :0], workspace_allocator).unwrap();
+            if (path.len == 0) {
+                break :brk try bun.sys.File.toSourceAt(dir, "package.json", workspace_allocator).unwrap();
             }
 
+            const paths = [_]string{ path, "package.json" };
+            const path_to_use = bun.path.joinStringBuf(path_buf, &paths, .auto);
             break :brk try bun.sys.File.toSourceAt(dir, path_to_use, workspace_allocator).unwrap();
         };
 
@@ -3872,7 +3867,7 @@ pub const Package = extern struct {
             .name = name_to_copy[0..workspace_json.found_name.len],
             .name_loc = workspace_json.name_loc,
         };
-        debug("processWorkspaceName({s}) = {s}", .{ path_to_use, entry.name });
+        debug("processWorkspaceName({s}) = {s}", .{ path, entry.name });
         if (workspace_json.has_found_version) {
             entry.version = try allocator.dupe(u8, workspace_json.found_version);
         }
@@ -3955,7 +3950,7 @@ pub const Package = extern struct {
                 log,
             ) catch |err| {
                 switch (err) {
-                    error.FileNotFound => {
+                    error.EISNOTDIR, error.EISDIR, error.EACCESS, error.EPERM, error.ENOENT, error.FileNotFound => {
                         log.addErrorFmt(
                             source,
                             item.loc,

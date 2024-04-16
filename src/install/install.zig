@@ -1941,7 +1941,7 @@ pub const PackageInstall = struct {
                         var unintall_task = @fieldParentPtr(@This(), "task", task);
                         var debug_timer = bun.Output.DebugTimer.start();
                         defer {
-                            _ = PackageManager.instance.pending_tasks.fetchSub(1, .Monotonic);
+                            _ = PackageManager.instance.decrementPendingTasks();
                             PackageManager.instance.wake();
                         }
 
@@ -1983,8 +1983,7 @@ pub const PackageInstall = struct {
                     .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
                 });
                 PackageManager.instance.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
-                _ = PackageManager.instance.pending_tasks.fetchAdd(1, .Monotonic);
-                PackageManager.instance.total_tasks += 1;
+                _ = PackageManager.instance.incrementPendingTasks(1);
             },
         }
     }
@@ -2175,7 +2174,7 @@ pub const PackageInstall = struct {
 
     pub fn packageMissingFromCache(this: *PackageInstall, manager: *PackageManager, package_id: PackageID) bool {
         return switch (manager.getPreinstallState(package_id)) {
-            .done => false,
+            .done, .extracting => false,
             else => brk: {
                 const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
                 if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
@@ -4766,8 +4765,7 @@ pub const PackageManager = struct {
     pub fn scheduleTasks(manager: *PackageManager) usize {
         const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len;
 
-        _ = manager.pending_tasks.fetchAdd(@truncate(count), .Monotonic);
-        manager.total_tasks += @as(u32, @truncate(count));
+        _ = manager.incrementPendingTasks(@truncate(count));
         manager.thread_pool.schedule(manager.task_batch);
         manager.network_resolve_batch.push(manager.network_tarball_batch);
         HTTP.http_thread.schedule(manager.network_resolve_batch);
@@ -5163,7 +5161,7 @@ pub const PackageManager = struct {
         var network_tasks_iter = network_tasks_batch.iterator();
         while (network_tasks_iter.next()) |task| {
             if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
-            _ = manager.pending_tasks.fetchSub(1, .Monotonic);
+            _ = manager.decrementPendingTasks();
             // We cannot free the network task at the end of this scope.
             // It may continue to be referenced in a future task.
 
@@ -5489,7 +5487,7 @@ pub const PackageManager = struct {
         while (resolve_tasks_iter.next()) |task| {
             if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
             defer manager.preallocated_resolve_tasks.put(task);
-            _ = manager.pending_tasks.fetchSub(1, .Monotonic);
+            _ = manager.decrementPendingTasks();
 
             if (task.log.msgs.items.len > 0) {
                 switch (Output.enable_ansi_colors) {
@@ -8810,7 +8808,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub fn installAvailablePackages(this: *PackageInstaller, comptime log_level: Options.LogLevel, force: bool) void {
+        pub fn installAvailablePackages(this: *PackageInstaller, comptime log_level: Options.LogLevel, comptime force: bool) void {
             const prev_node_modules = this.node_modules;
             defer this.node_modules = prev_node_modules;
             const prev_tree_id = this.current_tree_id;
@@ -8834,6 +8832,7 @@ pub const PackageManager = struct {
                         this.node_modules.tree_id = context.tree_id;
                         this.node_modules.path = context.path;
                         this.current_tree_id = context.tree_id;
+
                         const needs_verify = false;
                         const is_pending_package_install = true;
                         this.installPackageWithNameAndResolution(
@@ -8994,29 +8993,30 @@ pub const PackageManager = struct {
 
                 for (callbacks.items) |*cb| {
                     const context = cb.dependency_install_context;
-                    if (this.canInstallPackageForTree(this.lockfile.buffers.trees.items, context.tree_id)) {
-                        this.node_modules.tree_id = context.tree_id;
-                        this.node_modules.path = context.path;
-                        this.current_tree_id = context.tree_id;
-                        const needs_verify = false;
-                        const is_pending_package_install = false;
-                        this.installPackageWithNameAndResolution(
-                            // This id might be different from the id used to enqueue the task. Important
-                            // to use the correct one because the package might be aliased with a different
-                            // name
-                            context.dependency_id,
-                            package_id,
-                            log_level,
-                            name,
-                            resolution,
-                            needs_verify,
-                            is_pending_package_install,
-                        );
-                        this.node_modules.deinit();
-                    } else {
-                        // install once all parent trees have installed
-                        this.pending_installs_to_tree_id[context.tree_id].append(this.manager.allocator, context) catch bun.outOfMemory();
-                    }
+                    const callback_package_id = this.lockfile.buffers.resolutions.items[context.dependency_id];
+                    const callback_resolution = &this.resolutions[callback_package_id];
+                    this.node_modules.tree_id = context.tree_id;
+                    this.node_modules.path = context.path;
+                    this.current_tree_id = context.tree_id;
+                    const needs_verify = false;
+                    const is_pending_package_install = false;
+                    this.installPackageWithNameAndResolution(
+                        // This id might be different from the id used to enqueue the task. Important
+                        // to use the correct one because the package might be aliased with a different
+                        // name
+                        context.dependency_id,
+                        callback_package_id,
+                        log_level,
+                        name,
+                        callback_resolution,
+                        needs_verify,
+                        is_pending_package_install,
+                    );
+                    this.node_modules.deinit();
+                }
+            } else {
+                if (comptime Environment.allow_assert) {
+                    Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {d} {any}", .{ dependency_id, data.* });
                 }
             }
         }
@@ -9216,6 +9216,7 @@ pub const PackageManager = struct {
 
                         Output.flush();
                         this.summary.fail += 1;
+                        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                         return;
                     };
 
@@ -9336,7 +9337,7 @@ pub const PackageManager = struct {
                     return;
                 }
 
-                if (!this.canInstallPackageForTree(this.lockfile.buffers.trees.items, this.current_tree_id)) {
+                if (!is_pending_package_install and !this.canInstallPackageForTree(this.lockfile.buffers.trees.items, this.current_tree_id)) {
                     this.pending_installs_to_tree_id[this.current_tree_id].append(this.manager.allocator, .{
                         .dependency_id = dependency_id,
                         .tree_id = this.current_tree_id,
@@ -9354,6 +9355,7 @@ pub const PackageManager = struct {
                         });
                     }
                     this.summary.fail += 1;
+                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                     return;
                 };
 
@@ -9533,6 +9535,8 @@ pub const PackageManager = struct {
                     },
                 }
             } else {
+                defer this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+
                 var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
                     if (log_level != .silent) {
                         Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
@@ -9581,8 +9585,6 @@ pub const PackageManager = struct {
                         }
                     }
                 }
-
-                this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
             }
         }
 
@@ -10232,6 +10234,15 @@ pub const PackageManager = struct {
 
     pub inline fn pendingTaskCount(manager: *const PackageManager) u32 {
         return manager.pending_tasks.load(.Monotonic);
+    }
+
+    pub inline fn incrementPendingTasks(manager: *PackageManager, count: u32) u32 {
+        manager.total_tasks += count;
+        return manager.pending_tasks.fetchAdd(count, .Monotonic);
+    }
+
+    pub inline fn decrementPendingTasks(manager: *PackageManager) u32 {
+        return manager.pending_tasks.fetchSub(1, .Monotonic);
     }
 
     pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {

@@ -93,12 +93,6 @@ jobs:
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         run: |
           node packages/bun-internal-test/src/runner.node.mjs
-      - if: ${{ failure()}}
-        name: Write Comment
-        run: |
-          echo "There are ${{ steps.test.outputs.failing_tests_count }} failing tests on bun-${{ inputs.tag }}." > comment.md
-          echo "" >> comment.md
-          echo "${{ steps.test.outputs.failing_tests }}" >> comment.md
       - if: ${{ always()}}
         name: Upload Results
         uses: actions/upload-artifact@v4
@@ -118,7 +112,7 @@ jobs:
           nodetail: true
           title: ""
           description: |
-            ### [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
+            ### ❌ [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
 
             @${{ github.actor }}, there are ${{ steps.test.outputs.failing_tests_count }} failing tests on bun-${{ inputs.tag }}.
 

@@ -527,6 +527,14 @@ if (ci) {
   }
   action.setOutput("failing_tests", failingTestDisplay);
   action.setOutput("failing_tests_count", failing_tests.length);
+  if (failing_tests.length) {
+    const tag = action.getInput("tag") || "unknown";
+    let comment = `There are ${failing_tests.length} failing tests on bun-${tag}.
+
+${failingTestDisplay}
+`;
+    writeFileSync("comment.md", comment);
+  }
   let truncated_report = report;
   if (truncated_report.length > 512 * 1000) {
     truncated_report = truncated_report.slice(0, 512 * 1000) + "\n\n...truncated...";

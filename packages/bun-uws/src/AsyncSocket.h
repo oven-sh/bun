@@ -242,7 +242,7 @@ public:
     /* Write in three levels of prioritization: cork-buffer, syscall, socket-buffer. Always drain if possible.
      * Returns pair of bytes written (anywhere) and wheter or not this call resulted in the polling for
      * writable (or we are in a state that implies polling for writable). */
-    std::pair<int, bool> write(const char *src, int length, bool optionally = false, int nextLength = 0) {
+    std::pair<int, bool> write(const char *src, int length, bool optionally = false, int nextLength = 0, bool autoCork = true) {
         /* Fake success if closed, simple fix to allow uncork of closed socket to succeed */
         if (us_socket_is_closed(SSL, (us_socket_t *) this)) {
             return {length, false};
@@ -275,7 +275,12 @@ public:
         }
 
         if (length) {
-            if (loopData->corkedSocket == this) {
+            auto isCorked = loopData->corkedSocket == this;
+            if (isCorked || autoCork) {
+                if(!isCorked) {
+                    /* Make sure that we are indead corked and auto-uncork any other socket*/
+                    cork();
+                }
                 /* We are corked */
                 if (LoopData::CORK_BUFFER_SIZE - loopData->corkOffset >= (unsigned int) length) {
                     /* If the entire chunk fits in cork buffer */
@@ -337,7 +342,7 @@ public:
 
             if (loopData->corkOffset) {
                 /* Corked data is already accounted for via its write call */
-                auto [written, failed] = write(loopData->corkBuffer, (int) loopData->corkOffset, false, length);
+                auto [written, failed] = write(loopData->corkBuffer, (int) loopData->corkOffset, false, length, false);
                 loopData->corkOffset = 0;
 
                 if (failed && optionally) {
@@ -347,7 +352,7 @@ public:
             }
 
             /* We should only return with new writes, not things written to cork already */
-            return write(src, length, optionally, 0);
+            return write(src, length, optionally, 0, false);
         } else {
             /* We are not even corked! */
             return {0, false};

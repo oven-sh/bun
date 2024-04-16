@@ -3840,23 +3840,31 @@ pub const Package = extern struct {
         workspace_allocator: std.mem.Allocator,
         dir: std.fs.Dir,
         path: []const u8,
-        path_buf: *[bun.MAX_PATH_BYTES]u8,
+        path_buf: *bun.OSPathBuffer,
         name_to_copy: *[1024]u8,
         log: *logger.Log,
     ) !WorkspaceEntry {
-        const workspace_source = brk: {
+        const workspace_source_contents = brk: {
             if (path.len == 0) {
-                break :brk try bun.sys.File.toSourceAt(dir, "package.json", workspace_allocator).unwrap();
+                break :brk try File.readFrom(dir, bun.pathLiteral("package.json"), workspace_allocator).unwrap();
             }
 
+            // TODO: have a cleaner & safer way to mix and match relative paths & absolute paths on Windows
+            // The reason for all the generics here is to work around a bug on Windows where
             const paths = [_]string{ path, "package.json" };
-            const path_to_use = bun.path.joinStringBuf(path_buf, &paths, .auto);
-            break :brk try bun.sys.File.toSourceAt(dir, path_to_use, workspace_allocator).unwrap();
+            const path_to_use = bun.path.joinStringBufT(bun.OSPathChar, path_buf, &paths, .auto);
+
+            if (Environment.isPosix and path_to_use.len + 1 < path_buf.len) {
+                path_buf[path_to_use.len] = 0;
+                break :brk try File.readFrom(dir, path_buf[0..path_to_use.len :0], workspace_allocator).unwrap();
+            }
+
+            break :brk try File.readFrom(dir, path_to_use, workspace_allocator).unwrap();
         };
 
-        defer workspace_allocator.free(workspace_source.contents);
+        defer workspace_allocator.free(workspace_source_contents);
 
-        var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
+        var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &logger.Source.initPathString("package.json", workspace_source_contents), log);
 
         _ = try workspace_json.parseExpr();
         if (!workspace_json.has_found_name) {
@@ -3894,8 +3902,9 @@ pub const Package = extern struct {
 
         var asterisked_workspace_paths = std.ArrayList(string).init(allocator);
         defer asterisked_workspace_paths.deinit();
-        const filepath_buf = allocator.create([bun.MAX_PATH_BYTES]u8) catch unreachable;
-        defer allocator.destroy(filepath_buf);
+        const filepath_bufOS = allocator.create(bun.OSPathBuffer) catch unreachable;
+        const filepath_buf = std.mem.asBytes(filepath_bufOS);
+        defer allocator.destroy(filepath_bufOS);
 
         for (arr.slice()) |item| {
             defer fallback.fixed_buffer_allocator.reset();
@@ -3945,7 +3954,7 @@ pub const Package = extern struct {
                 workspace_allocator,
                 std.fs.cwd(),
                 input_path,
-                filepath_buf,
+                filepath_bufOS,
                 workspace_name_buf,
                 log,
             ) catch |err| {
@@ -4081,7 +4090,7 @@ pub const Package = extern struct {
                         workspace_allocator,
                         dir_fd.asDir(),
                         "",
-                        filepath_buf,
+                        filepath_bufOS,
                         workspace_name_buf,
                         log,
                     ) catch |err| {

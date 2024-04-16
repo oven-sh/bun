@@ -2803,6 +2803,7 @@ pub const File = struct {
     pub fn toSourceAt(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
         if (std.meta.sentinel(@TypeOf(path)) == null) {
             return toSourceAt(
+                dir_fd,
                 &(std.os.toPosixPath(path) catch return .{
                     .err = Error.oom,
                 }),

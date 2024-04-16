@@ -1,8 +1,8 @@
 import { test, expect, describe } from "bun:test";
-import { bunRun } from "harness";
+import { bunRun, isBunCI } from "harness";
 import path from "path";
 
-const it = process.env.SMTP_SENDGRID_KEY && process.env.SMTP_SENDGRID_SENDER ? test : test.skip;
+const it = process.env.SMTP_SENDGRID_KEY && process.env.SMTP_SENDGRID_SENDER ? test : test.skipIf(!isBunCI);
 describe("nodemailer", () => {
   it("basic smtp", async () => {
     try {

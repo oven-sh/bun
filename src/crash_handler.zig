@@ -190,10 +190,8 @@ pub fn crashHandler(
                         Output.err("oh no",
                             \\Bun has crashed. This indicates a bug in Bun, not your code.
                             \\
-                            \\The following URL will redirect to create a new GitHub issue
-                            \\from the stack trace of this crash. The report does not
-                            \\include any of your own code or data, and you will be able
-                            \\to edit the issue text before submitting it:
+                            \\To send a redacted crash report to Bun's team,
+                            \\please file a GitHub issue using the link below:
                             \\
                             \\
                         , .{});
@@ -204,6 +202,8 @@ pub fn crashHandler(
                         writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.os.abort();
                     }
 
+                    writer.writeAll(" ") catch std.os.abort();
+
                     encodeTraceString(
                         .{
                             .trace = trace,
@@ -212,6 +212,8 @@ pub fn crashHandler(
                         },
                         writer,
                     ) catch std.os.abort();
+
+                    writer.writeAll(" ") catch std.os.abort();
                 }
 
                 if (Output.enable_ansi_colors) {
@@ -219,8 +221,6 @@ pub fn crashHandler(
                 } else {
                     writer.writeAll("\n") catch std.os.abort();
                 }
-
-                // writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{}) catch std.os.abort();
 
                 Output.flush();
             }
@@ -868,6 +868,7 @@ const StackLine = union(enum) {
                 std.os.dl_iterate_phdr(&ctx, error{Found}, struct {
                     fn callback(info: *std.os.dl_phdr_info, _: usize, context: *CtxTy) !void {
                         defer context.i += 1;
+
                         if (context.address < info.dlpi_addr) return;
                         const phdrs = info.dlpi_phdr[0..info.dlpi_phnum];
                         for (phdrs) |*phdr| {
@@ -879,9 +880,12 @@ const StackLine = union(enum) {
                             const seg_end = seg_start + phdr.p_memsz;
                             if (context.address >= seg_start and context.address < seg_end) {
                                 // const name = bun.sliceTo(info.dlpi_name, 0) orelse "";
-                                {
-                                    @compileError("TODO");
-                                }
+                                context.result = .{
+                                    .known = .{
+                                        .address = @intCast(context.address - info.dlpi_addr),
+                                        .object = null,
+                                    },
+                                };
                                 return error.Found;
                             }
                         }
@@ -916,7 +920,7 @@ const StackLine = union(enum) {
             .known => |known| try writer.print("0x{x}{s}{s}", .{
                 if (bun.Environment.isMac) @as(u64, known.address) + 0x100000000 else known.address,
                 if (known.object != null) " @ " else "",
-                known.object orelse "bun",
+                known.object orelse "",
             }),
             .javascript => try writer.print("javascript address", .{}),
         }
@@ -1135,11 +1139,44 @@ pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.S
 
 const stdDumpStackTrace = debug.dumpStackTrace;
 
+/// Version of the standard library dumpStackTrace that has some fallbacks for
+/// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
-    if (bun.Environment.isWindows) {
-        // TODO: Zig's dump trace for windows is not fully reliable.
+    const stderr = std.io.getStdErr().writer();
+    switch (bun.Environment.os) {
+        .windows => attempt_dump: {
+            // Windows has issues with opening the PDB file sometimes.
+            const debug_info = debug.getSelfDebugInfo() catch |err| {
+                stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
+                break :attempt_dump;
+            };
+            debug.writeStackTrace(trace, stderr, debug.getDebugInfoAllocator(), debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
+                stderr.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch return;
+                break :attempt_dump;
+            };
+            return;
+        },
+        .linux => {
+            // Linux doesnt seem to be able to decode it's own debug info.
+            // TODO(@paperdave): see if zig 0.12 fixes this
+        },
+        else => {
+            stdDumpStackTrace(trace);
+            return;
+        },
     }
-    stdDumpStackTrace(trace);
+    // TODO: It would be reasonable, but hacky, to spawn LLVM-symbolizer here in
+    // order to get the demangled stack traces.
+    var name_bytes: [1024]u8 = undefined;
+    for (trace.instruction_addresses[0..trace.index]) |addr| {
+        const line = StackLine.fromAddress(addr, &name_bytes);
+        stderr.print("- {}\n", .{line}) catch break;
+    }
+    const program = switch (bun.Environment.os) {
+        .windows => "pdb-addr2line",
+        else => "llvm-symbolizer",
+    };
+    stderr.print("note: Use " ++ program ++ " to demangle the above trace.\n", .{}) catch return;
 }
 
 pub const js_bindings = struct {

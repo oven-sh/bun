@@ -66,6 +66,7 @@ pub const alignment_bytes_to_repeat_buffer = [_]u8{0} ** 144;
 const JSAst = bun.JSAst;
 
 pub fn initializeStore() void {
+    {@panic("lol");}
     if (initialized_store) {
         JSAst.Expr.Data.Store.reset();
         JSAst.Stmt.Data.Store.reset();

@@ -1,4 +1,6 @@
-var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __commonJS =
+  (cb, mod: typeof module | undefined = undefined) =>
+  () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
 var Buffer = require("node:buffer").Buffer;
 

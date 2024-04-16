@@ -2,7 +2,7 @@
 const util = require("node:util");
 
 var isDeepEqual = Bun.deepEquals;
-var __commonJS = (cb, mod) =>
+var __commonJS = (cb, mod: typeof module | undefined = undefined) =>
   function () {
     return mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };

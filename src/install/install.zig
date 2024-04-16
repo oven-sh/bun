@@ -2174,7 +2174,7 @@ pub const PackageInstall = struct {
 
     pub fn packageMissingFromCache(this: *PackageInstall, manager: *PackageManager, package_id: PackageID) bool {
         return switch (manager.getPreinstallState(package_id)) {
-            .done, .extracting => false,
+            .done => false,
             else => brk: {
                 const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
                 if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);

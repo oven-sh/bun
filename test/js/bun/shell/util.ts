@@ -4,9 +4,9 @@ import { ShellPromise } from "bun";
 import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import * as fs from "node:fs";
-import { TestBuilder } from "./test_builder";
+import { createTestBuilder } from "./test_builder";
 
-export { TestBuilder };
+export { createTestBuilder };
 
 declare module "bun" {
   // Define the additional methods

@@ -738,6 +738,13 @@ pub fn cleanWithLogger(
     // We will only shrink the number of packages here.
     // never grow
 
+    // preinstall_state is used during installPackages. the indexes(package ids) need
+    // to be remapped
+    var preinstall_state = PackageManager.instance.preinstall_state;
+    var old_preinstall_state = preinstall_state.clone(old.allocator) catch bun.outOfMemory();
+    defer old_preinstall_state.deinit(old.allocator);
+    @memset(preinstall_state.items, .unknown);
+
     if (updates.len > 0) {
         try old.preprocessUpdateRequests(updates, exact_versions);
     }
@@ -775,6 +782,7 @@ pub fn cleanWithLogger(
         .mapping = package_id_mapping,
         .clone_queue = clone_queue_,
         .log = log,
+        .old_preinstall_state = old_preinstall_state,
     };
 
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
@@ -925,6 +933,7 @@ const Cloner = struct {
     trees: Tree.List = Tree.List{},
     trees_count: u32 = 1,
     log: *logger.Log,
+    old_preinstall_state: std.ArrayListUnmanaged(Install.PreinstallState),
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
@@ -2837,6 +2846,10 @@ pub const Package = extern struct {
         );
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
+
+        if (PackageManager.instance.preinstall_state.items.len > 0) {
+            PackageManager.instance.preinstall_state.items[new_package.meta.id] = cloner.old_preinstall_state.items[this.meta.id];
+        }
 
         for (old_dependencies, dependencies) |old_dep, *new_dep| {
             new_dep.* = try old_dep.clone(

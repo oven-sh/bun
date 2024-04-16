@@ -99,7 +99,6 @@ pub inline fn utf16(slice_: []const u16) FormatUTF16 {
 
 pub const FormatUTF16 = struct {
     buf: []const u16,
-    escape_backslashes: bool = false,
     path_fmt_opts: ?PathFormatOptions = null,
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         if (self.path_fmt_opts) |opts| {

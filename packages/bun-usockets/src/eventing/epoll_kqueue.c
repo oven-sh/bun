@@ -89,7 +89,7 @@ LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) {
 
 /* Returns any of listen socket, socket, shut down socket or callback */
 int us_internal_poll_type(struct us_poll_t *p) {
-    return p->state.poll_type & 3;
+    return p->state.poll_type & 0b111;
 }
 
 /* Bug: doesn't really SET, rather read and change, so needs to be inited first! */

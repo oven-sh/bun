@@ -24,16 +24,13 @@ extern fn JSSocketAddress__create(global: *JSGlobalObject, address: JSValue, por
 fn onDrain(socket: *uws.UDPSocket) callconv(.C) void {
     JSC.markBinding(@src());
 
-    const udpSocket: *UDPSocket = @ptrCast(@alignCast(uws.us_udp_socket_user(socket).?));
-    const callback = udpSocket.config.on_drain;
+    const this: *UDPSocket = @ptrCast(@alignCast(uws.us_udp_socket_user(socket).?));
+    const callback = this.config.on_drain;
     if (callback == .zero) return;
 
-    const globalThis = udpSocket.globalThis;
-    const thisValue = udpSocket.getThisValue(globalThis);
-
-    const result = callback.callWithThis(globalThis, thisValue, &[_]JSValue{thisValue});
+    const result = callback.callWithThis(this.globalThis, this.thisValue, &[_]JSValue{this.thisValue});
     if (result.toError()) |err| {
-        _ = udpSocket.callErrorHandler(.zero, &[_]JSValue{err});
+        _ = this.callErrorHandler(.zero, &[_]JSValue{err});
     }
 }
 
@@ -45,7 +42,6 @@ fn onData(socket: *uws.UDPSocket, buf: *uws.UDPPacketBuffer, packets: c_int) cal
     if (callback == .zero) return;
 
     const globalThis = udpSocket.globalThis;
-    const thisValue = udpSocket.getThisValue(globalThis);
 
     var i: c_int = 0;
     while (i < packets) : (i += 1) {
@@ -82,8 +78,8 @@ fn onData(socket: *uws.UDPSocket, buf: *uws.UDPPacketBuffer, packets: c_int) cal
         defer loop.exit();
         udpSocket.js_refcount += 1;
         defer udpSocket.js_refcount -= 1;
-        const result = callback.callWithThis(globalThis, thisValue, &[_]JSValue{
-            thisValue,
+        const result = callback.callWithThis(globalThis, udpSocket.thisValue, &[_]JSValue{
+            udpSocket.thisValue,
             udpSocket.config.binary_type.toJS(slice, globalThis),
             JSC.jsNumber(port),
             JSC.ZigString.init(std.mem.span(hostname.?)).toValueAuto(globalThis),
@@ -254,26 +250,13 @@ pub const UDPSocket = struct {
             return .zero;
         }
 
-        const thisValue = this.toJS(globalThis);
         this.poll_ref.ref(vm);
         this.config.protect();
         vm.eventLoop().ensureWaker();
+        const thisValue = this.toJS(globalThis);
+        this.thisValue = thisValue;
 
         return thisValue;
-    }
-
-    pub fn getThisValue(
-        this: *This,
-        globalThis: *JSGlobalObject,
-    ) JSValue {
-        if (this.thisValue == .zero) {
-            const value = this.toJS(globalThis);
-            value.ensureStillAlive();
-            this.thisValue = value;
-            return value;
-        }
-
-        return this.thisValue;
     }
 
     pub fn callErrorHandler(
@@ -478,7 +461,7 @@ pub const UDPSocket = struct {
     }
 
     pub fn finalize(this: *This) callconv(.C) void {
-        log("Finalize", .{});
+        log("Finalize {*}", .{this});
         this.deinit();
     }
 

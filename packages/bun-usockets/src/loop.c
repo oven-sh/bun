@@ -397,13 +397,32 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             }
             break;
         }
-        case POLL_TYPE_DGRAM: {
-            struct us_dgram_t *s = (struct us_dgram_t *) p;
-            struct us_loop_t *loop = s->loop;
+        case POLL_TYPE_UDP: {
+            struct us_udp_socket_t *u = (struct us_udp_socket_t *) p;
+            // do cleanup
+            if (u->closed) {
+                bsd_close_socket(us_poll_fd(p));
+                us_poll_stop(p, u->loop);
+                free(u->receive_buf);
+                us_poll_free(p, u->loop);
+                break;
+            }
+
+            if (events & LIBUS_SOCKET_WRITABLE && !error) {
+                u->on_drain(u);
+                if (u->closed) {
+                    break;
+                }
+                // TODO handle socket close in callback
+                us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
+            }
             if (events & LIBUS_SOCKET_READABLE) {
-                int length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, 0);
-                if (length > 0) {
-                    // s->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                int npackets = bsd_recvmmsg(us_poll_fd(p), u->receive_buf, LIBUS_UDP_MAX_NUM, MSG_DONTWAIT, NULL);
+                if (npackets > 0) {
+                    // TODO handle socket close in callback
+                    u->on_data(u, u->receive_buf, npackets);
+                } else if (npackets == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
+                    // TODO handle recv error
                 }
             }
             break;

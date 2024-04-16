@@ -54,12 +54,12 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 
 /* Poll type and what it polls for */
 enum {
-  /* Two first bits */
+  /* Three first bits */
   POLL_TYPE_SOCKET = 0,
   POLL_TYPE_SOCKET_SHUT_DOWN = 1,
   POLL_TYPE_SEMI_SOCKET = 2,
   POLL_TYPE_CALLBACK = 3,
-  POLL_TYPE_DGRAM = 4,
+  POLL_TYPE_UDP = 4,
 
   /* Two last bits */
   POLL_TYPE_POLLING_OUT = 8,
@@ -124,10 +124,19 @@ struct us_wrapped_socket_context_t {
   struct us_socket_events_t old_events;
 };
 
-struct us_dgram_t {
+struct us_udp_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
-    struct us_dgram_t *(*on_data)(struct us_dgram_t *, char *data, int length, char *ip, int ip_length, int port);
+    struct us_udp_packet_buffer_t *receive_buf;
+    void (*on_data)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int);
+    void (*on_drain)(struct us_udp_socket_t *);
+    void *user;
     struct us_loop_t *loop;
+    /* An UDP socket can only ever be bound to one single port regardless of how
+     * many interfaces it may listen to. Therefore we cache the port after creation
+     * and use it to build a proper and full sockaddr_in or sockaddr_in6 for every received packet */
+    int port;
+    uint16_t closed : 1;
+    uint16_t connected : 1;
 };
 
 #if defined(LIBUS_USE_KQUEUE)

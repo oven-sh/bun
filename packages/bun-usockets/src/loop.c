@@ -397,6 +397,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             }
             break;
         }
+        case POLL_TYPE_DGRAM: {
+            if (events & LIBUS_SOCKET_READABLE) {
+                // int length = bsd_recvmmsg()
+            }
+            break;
+        }
     }
 }
 

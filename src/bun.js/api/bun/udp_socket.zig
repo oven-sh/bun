@@ -77,6 +77,11 @@ fn onData(socket: *uws.UDPSocket, buf: *uws.UDPPacketBuffer, packets: c_int) cal
         const length = uws.us_udp_packet_buffer_payload_length(buf, i);
         const slice = payload[0..@as(usize, @intCast(length))];
 
+        const loop = udpSocket.vm.eventLoop();
+        loop.enter();
+        defer loop.exit();
+        udpSocket.js_refcount += 1;
+        defer udpSocket.js_refcount -= 1;
         const result = callback.callWithThis(globalThis, thisValue, &[_]JSValue{
             thisValue,
             udpSocket.config.binary_type.toJS(slice, globalThis),
@@ -200,15 +205,19 @@ pub const UDPSocket = struct {
 
     ref: JSC.Ref = JSC.Ref.init(),
     poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
-    strong_self: JSC.Strong = .{},
     closed: bool = false,
     vm: *JSC.VirtualMachine,
+    js_refcount: usize = 1,
 
     pub usingnamespace JSC.Codegen.JSUDPSocket;
 
     pub fn constructor(globalThis: *JSGlobalObject, _: *CallFrame) callconv(.C) ?*This {
         globalThis.throw("Cannot construct UDPSocket", .{});
         return null;
+    }
+
+    pub fn hasPendingActivity(this: *This) callconv(.C) bool {
+        return this.js_refcount > 0;
     }
 
     pub fn bind(globalThis: *JSGlobalObject, options: JSValue) JSValue {
@@ -246,7 +255,6 @@ pub const UDPSocket = struct {
         }
 
         const thisValue = this.toJS(globalThis);
-        this.strong_self.set(globalThis, thisValue);
         this.poll_ref.ref(vm);
         this.config.protect();
         vm.eventLoop().ensureWaker();
@@ -366,11 +374,9 @@ pub const UDPSocket = struct {
         return .undefined;
     }
 
-    pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         if (!this.closed) {
-            const thisValue = callframe.this();
             this.poll_ref.ref(globalThis.bunVM());
-            this.strong_self.set(globalThis, thisValue);
         }
 
         return .undefined;
@@ -397,8 +403,9 @@ pub const UDPSocket = struct {
         this.closed = true;
         this.config.unprotect();
         this.poll_ref.unref(this.globalThis.bunVM());
-        this.strong_self.clear();
         uws.us_udp_socket_close(this.socket);
+
+        this.js_refcount -= 1;
 
         return .undefined;
     }
@@ -476,7 +483,6 @@ pub const UDPSocket = struct {
     }
 
     pub fn deinit(this: *This) void {
-        this.strong_self.deinit();
         this.poll_ref.unref(this.vm);
 
         // Cast into a us_poll_t pointer so uSockets can free the memory

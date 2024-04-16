@@ -222,6 +222,7 @@ export default [
     JSType: "0b11101110",
     finalize: true,
     construct: true,
+    hasPendingActivity: true,
     proto: {
       send: {
         fn: "send",

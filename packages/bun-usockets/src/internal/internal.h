@@ -59,10 +59,11 @@ enum {
   POLL_TYPE_SOCKET_SHUT_DOWN = 1,
   POLL_TYPE_SEMI_SOCKET = 2,
   POLL_TYPE_CALLBACK = 3,
+  POLL_TYPE_DGRAM = 4,
 
   /* Two last bits */
-  POLL_TYPE_POLLING_OUT = 4,
-  POLL_TYPE_POLLING_IN = 8
+  POLL_TYPE_POLLING_OUT = 8,
+  POLL_TYPE_POLLING_IN = 16
 };
 
 /* Loop related */
@@ -121,6 +122,12 @@ struct us_socket_t {
 struct us_wrapped_socket_context_t {
   struct us_socket_events_t events;
   struct us_socket_events_t old_events;
+};
+
+struct us_dgram_t {
+    alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
+    struct us_dgram_t *(*on_data)(struct us_dgram_t *, char *data, int length, char *ip, int ip_length, int port);
+    struct us_loop_t *loop;
 };
 
 #if defined(LIBUS_USE_KQUEUE)

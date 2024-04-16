@@ -153,7 +153,7 @@ describe("bind()", () => {
           },
         });
 
-        send(data, server.port, server.hostname);
+        client.send(data, server.port, server.hostname);
       });
     }
   }

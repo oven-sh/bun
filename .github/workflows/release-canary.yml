@@ -1,0 +1,49 @@
+name: Release Canary
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  release:
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: bun
+          pattern: bun-*
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Upload to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: canary
+          make_latest: false
+          generate_release_notes: false
+          files: bun/*
+      - name: Upload to S3 (using SHA)
+        uses: shallwefootball/s3-upload-action@4350529f410221787ccf424e50133cbc1b52704e
+        with:
+          endpoint: ${{ secrets.AWS_ENDPOINT }}
+          aws_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
+          aws_bucket: ${{ secrets.AWS_BUCKET }}
+          source_dir: bun
+          destination_dir: releases/${{ github.event.workflow_run.head_sha }}
+      - name: Upload to S3 (using tag)
+        uses: shallwefootball/s3-upload-action@4350529f410221787ccf424e50133cbc1b52704e
+        with:
+          endpoint: ${{ secrets.AWS_ENDPOINT }}
+          aws_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
+          aws_bucket: ${{ secrets.AWS_BUCKET }}
+          source_dir: bun
+          destination_dir: releases/canary

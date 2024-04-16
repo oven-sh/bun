@@ -28,6 +28,10 @@ pub const Resolution = extern struct {
         return this.tag.isGit();
     }
 
+    pub fn canEnqueueInstallTask(this: *const Resolution) bool {
+        return this.tag.canEnqueueInstallTask();
+    }
+
     pub fn order(
         lhs: *const Resolution,
         rhs: *const Resolution,
@@ -336,6 +340,10 @@ pub const Resolution = extern struct {
 
         pub fn isGit(this: Tag) bool {
             return this == .git or this == .github or this == .gitlab;
+        }
+
+        pub fn canEnqueueInstallTask(this: Tag) bool {
+            return this == .npm or this == .local_tarball or this == .remote_tarball or this == .git or this == .github;
         }
     };
 };

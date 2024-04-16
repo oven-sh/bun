@@ -262,7 +262,7 @@ pub const Arguments = struct {
         Global.exit(0);
     }
 
-    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
             .result => |fd| fd.asFile(),
             .err => |err| {
@@ -307,7 +307,7 @@ pub const Arguments = struct {
 
         return null;
     }
-    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (!ctx.has_loaded_global_config) {
@@ -369,12 +369,12 @@ pub const Arguments = struct {
         comptime cmd: Command.Tag,
         allocator: std.mem.Allocator,
         args: clap.Args(clap.Help, cmd.params()),
-        ctx: *Command.Context,
+        ctx: Command.Context,
     ) !void {
         return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 
-    pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
+    pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
         const params_to_parse = comptime cmd.params();
 
@@ -1143,7 +1143,18 @@ pub const Command = struct {
         } = .{},
     };
 
-    pub const Context = struct {
+    var global_cli_ctx: Context = undefined;
+
+    var context_data: ContextData = ContextData{
+        .args = std.mem.zeroes(Api.TransformOptions),
+        .log = undefined,
+        .start_time = 0,
+        .allocator = undefined,
+    };
+
+    pub const init = ContextData.create;
+
+    pub const ContextData = struct {
         start_time: i128,
         args: Api.TransformOptions,
         log: *logger.Log,
@@ -1180,34 +1191,28 @@ pub const Command = struct {
             minify_identifiers: bool = false,
         };
 
-        const _ctx = Command.Context{
-            .args = std.mem.zeroes(Api.TransformOptions),
-            .log = undefined,
-            .start_time = 0,
-            .allocator = undefined,
-        };
-
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
-            var ctx = _ctx;
-            ctx.log = log;
-            ctx.start_time = start_time;
-            ctx.allocator = allocator;
+            global_cli_ctx = &context_data;
+            global_cli_ctx.log = log;
+            global_cli_ctx.start_time = start_time;
+            global_cli_ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
-                ctx.args = try Arguments.parse(allocator, &ctx, command);
+                global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);
             }
 
             if (comptime Environment.isWindows) {
-                if (ctx.debug.hot_reload == .watch and !bun.isWatcherChild()) {
+                if (global_cli_ctx.debug.hot_reload == .watch and !bun.isWatcherChild()) {
                     // this is noreturn
                     bun.becomeWatcherManager(allocator);
                 }
             }
 
-            return ctx;
+            return global_cli_ctx;
         }
     };
+    pub const Context = *ContextData;
 
     // std.process.args allocates!
     const ArgsIterator = struct {
@@ -1378,12 +1383,14 @@ pub const Command = struct {
 
         // bun build --compile entry point
         if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-            var ctx = Command.Context{
+            context_data = .{
                 .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,
                 .start_time = start_time,
                 .allocator = bun.default_allocator,
             };
+            global_cli_ctx = &context_data;
+            var ctx = global_cli_ctx;
 
             ctx.args.target = Api.Target.bun;
             if (bun.argv.len > 1) {
@@ -1411,7 +1418,7 @@ pub const Command = struct {
             .InitCommand => return try InitCommand.exec(allocator, bun.argv),
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .BuildCommand);
+                const ctx = try Command.init(allocator, log, .BuildCommand);
                 try BuildCommand.exec(ctx);
             },
             .InstallCompletionsCommand => {
@@ -1421,28 +1428,28 @@ pub const Command = struct {
             },
             .InstallCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .InstallCommand);
+                const ctx = try Command.init(allocator, log, .InstallCommand);
 
                 try InstallCommand.exec(ctx);
                 return;
             },
             .AddCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AddCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .AddCommand);
+                const ctx = try Command.init(allocator, log, .AddCommand);
 
                 try AddCommand.exec(ctx);
                 return;
             },
             .UpdateCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpdateCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UpdateCommand);
+                const ctx = try Command.init(allocator, log, .UpdateCommand);
 
                 try UpdateCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .BunxCommand);
+                const ctx = try Command.init(allocator, log, .BunxCommand);
 
                 try BunxCommand.exec(ctx, bun.argv[if (is_bunx_exe) 0 else 1..]);
                 return;
@@ -1450,7 +1457,7 @@ pub const Command = struct {
             .ReplCommand => {
                 // TODO: Put this in native code.
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
-                var ctx = try Command.Context.create(allocator, log, .BunxCommand);
+                var ctx = try Command.init(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
                 var args = bun.argv[0..];
                 args[1] = "bun-repl";
@@ -1459,42 +1466,42 @@ pub const Command = struct {
             },
             .RemoveCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RemoveCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .RemoveCommand);
+                const ctx = try Command.init(allocator, log, .RemoveCommand);
 
                 try RemoveCommand.exec(ctx);
                 return;
             },
             .LinkCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .LinkCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .LinkCommand);
+                const ctx = try Command.init(allocator, log, .LinkCommand);
 
                 try LinkCommand.exec(ctx);
                 return;
             },
             .UnlinkCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UnlinkCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UnlinkCommand);
+                const ctx = try Command.init(allocator, log, .UnlinkCommand);
 
                 try UnlinkCommand.exec(ctx);
                 return;
             },
             .PackageManagerCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackageManagerCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
+                const ctx = try Command.init(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
                 return;
             },
             .TestCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .TestCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .TestCommand);
+                const ctx = try Command.init(allocator, log, .TestCommand);
 
                 try TestCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .GetCompletionsCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .GetCompletionsCommand);
+                const ctx = try Command.init(allocator, log, .GetCompletionsCommand);
                 var filter = ctx.positionals;
 
                 for (filter, 0..) |item, i| {
@@ -1590,7 +1597,7 @@ pub const Command = struct {
                 });
 
                 // Create command wraps bunx
-                const ctx = try Command.Context.create(allocator, log, .CreateCommand);
+                const ctx = try Command.init(allocator, log, .CreateCommand);
 
                 var args = try std.process.argsAlloc(allocator);
 
@@ -1706,7 +1713,7 @@ pub const Command = struct {
             },
             .RunCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .RunCommand);
+                const ctx = try Command.init(allocator, log, .RunCommand);
 
                 if (ctx.filters.len > 0) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
@@ -1725,20 +1732,20 @@ pub const Command = struct {
             },
             .RunAsNodeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunAsNodeCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .RunAsNodeCommand);
+                const ctx = try Command.init(allocator, log, .RunAsNodeCommand);
                 bun.assert(pretend_to_be_node);
                 try RunCommand.execAsIfNode(ctx);
             },
             .UpgradeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UpgradeCommand);
+                const ctx = try Command.init(allocator, log, .UpgradeCommand);
                 try UpgradeCommand.exec(ctx);
                 return;
             },
             .AutoCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
 
-                var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
+                const ctx = Command.init(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {
                             HelpCommand.execWithReason(allocator, .explicit);
@@ -1812,7 +1819,7 @@ pub const Command = struct {
                         }
 
                         if (!ctx.debug.loaded_bunfig) {
-                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
                         }
 
                         if (ctx.preloads.len > 0)
@@ -1827,7 +1834,7 @@ pub const Command = struct {
                 if (default_loader) |loader| {
                     if (loader.canBeRunByBun()) {
                         was_js_like = true;
-                        if (maybeOpenWithBunJS(&ctx)) {
+                        if (maybeOpenWithBunJS(ctx)) {
                             return;
                         }
                         did_check = true;
@@ -1835,7 +1842,7 @@ pub const Command = struct {
                 }
 
                 if (force_using_bun and !did_check) {
-                    if (maybeOpenWithBunJS(&ctx)) {
+                    if (maybeOpenWithBunJS(ctx)) {
                         return;
                     }
                 }
@@ -1880,16 +1887,16 @@ pub const Command = struct {
                 try HelpCommand.exec(allocator);
             },
             .ExecCommand => {
-                var ctx = try Command.Context.create(allocator, log, .RunCommand);
+                const ctx = try Command.init(allocator, log, .RunCommand);
 
                 if (ctx.positionals.len > 1) {
-                    try ExecCommand.exec(&ctx);
+                    try ExecCommand.exec(ctx);
                 } else Tag.printHelp(.ExecCommand, true);
             },
         }
     }
 
-    fn maybeOpenWithBunJS(ctx: *Command.Context) bool {
+    fn maybeOpenWithBunJS(ctx: Command.Context) bool {
         if (ctx.args.entry_points.len == 0)
             return false;
 
@@ -1966,7 +1973,7 @@ pub const Command = struct {
         }
 
         BunJS.Run.boot(
-            ctx.*,
+            ctx,
             absolute_script_path.?,
         ) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());

@@ -2632,11 +2632,15 @@ pub const File = struct {
     pub const ReadError = anyerror;
 
     pub fn closeAndMoveTo(this: File, src: [:0]const u8, dest: [:0]const u8) !void {
+        return closeAndMoveAt(this, std.fs.cwd(), src, std.fs.cwd(), dest);
+    }
+
+    pub fn closeAndMoveAt(this: File, src_dir: anytype, src: [:0]const u8, dest_dir: anytype, dest: [:0]const u8) !void {
         // On POSIX, close the file after moving it.
         defer if (Environment.isPosix) this.close();
         // On Windows, close the file before moving it.
         if (Environment.isWindows) this.close();
-        try bun.C.moveFileZWithHandle(this.handle, bun.toFD(std.fs.cwd()), src, bun.toFD(std.fs.cwd()), dest);
+        try bun.C.moveFileZWithHandle(this.handle, bun.toFD(src_dir), src, bun.toFD(dest_dir), dest);
     }
 
     fn stdIoRead(this: File, buf: []u8) ReadError!usize {

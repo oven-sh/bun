@@ -153,7 +153,14 @@ describe("bind()", () => {
           },
         });
 
-        client.send(data, server.port, server.hostname);
+        // handle unreliable transmission in UDP
+        function sendRec() {
+          if (!client.closed) {
+            send(data, server.port, server.hostname);
+            setTimeout(sendRec, 100);
+          }
+        }
+        sendRec();
       });
     }
   }
@@ -226,12 +233,20 @@ describe("bind()", () => {
             expect(port).toBeWithin(1, 65535 + 1);
             expect(port).not.toBe(socket.port);
             expect(address).toBeString();
-            socket.close();
+            client.close();
+            server.close();
             done();
           },
         },
       });
-      client.send(data, server.port, "127.0.0.1");
+      // handle unreliable transmission in UDP
+      function sendRec() {
+        if (!client.closed) {
+          send(data, server.port, "127.0.0.1");
+          setTimeout(sendRec, 100);
+        }
+      }
+      sendRec();
     });
   }
 });

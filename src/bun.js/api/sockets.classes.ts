@@ -265,6 +265,9 @@ export default [
         getter: "getBinaryType",
         cache: true,
       },
+      closed: {
+        getter: "getClosed",
+      }
     },
     klass: {},
   }),

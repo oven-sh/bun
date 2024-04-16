@@ -46,15 +46,11 @@ int us_udp_socket_send(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t 
     int fd = us_poll_fd((struct us_poll_t *) s);
 
     int sent = bsd_sendmmsg(fd, buf, num, 0);
-    if (sent < 0) {
-        // TODO return appropriate error
-        return 0;
-    } else if (sent < num) {
+    if (0 <= sent && sent < num) {
+        // if we couldn't send all packets, register a writable event so we can call the drain callback
         us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-        return sent;
-    } else {
-        return sent;
     }
+    return sent;
 }
 
 int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf) {
@@ -68,6 +64,10 @@ void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, i
 
 struct us_udp_packet_buffer_t *us_create_udp_packet_buffer() {
     return (struct us_udp_packet_buffer_t *) bsd_create_udp_packet_buffer();
+}
+
+void us_destroy_udp_packet_buffer(struct us_udp_packet_buffer_t *buffer) {
+    bsd_destroy_udp_packet_buffer(buffer);
 }
 
 int us_udp_socket_bound_port(struct us_udp_socket_t *s) {
@@ -112,7 +112,7 @@ struct us_udp_socket_t *us_create_udp_socket(
     unsigned short port, 
     void *user
 ) {
-    
+
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port);
     if (fd == LIBUS_SOCKET_ERROR) {
         return 0;

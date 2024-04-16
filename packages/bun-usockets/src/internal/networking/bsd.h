@@ -63,6 +63,7 @@ char *bsd_udp_packet_buffer_peer(void *msgvec, int index);
 int bsd_udp_packet_buffer_local_ip(void *msgvec, int index, char *ip);
 int bsd_udp_packet_buffer_ecn(void *msgvec, int index);
 void *bsd_create_udp_packet_buffer();
+void bsd_destroy_udp_packet_buffer(void * buffer);
 void bsd_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr);
 
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);

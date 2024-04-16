@@ -231,6 +231,10 @@ void *bsd_create_udp_packet_buffer() {
 #endif
 }
 
+void bsd_destroy_udp_packet_buffer(void *buf) {
+    free(buf);
+}
+
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef __APPLE__
     if (fd != LIBUS_SOCKET_ERROR) {

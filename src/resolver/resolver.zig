@@ -1935,7 +1935,7 @@ pub const Resolver = struct {
                 const dir_path_for_resolution = manager.pathForResolution(resolved_package_id, resolution, bufs(.path_in_global_disk_cache)) catch |err| {
                     // if it's missing, we need to install it
                     if (err == error.FileNotFound) {
-                        switch (manager.getPreinstallState(resolved_package_id, manager.lockfile)) {
+                        switch (manager.getPreinstallState(resolved_package_id)) {
                             .done => {
                                 var path = Fs.Path.init(import_path);
                                 path.is_disabled = true;

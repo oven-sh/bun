@@ -28,6 +28,7 @@ else
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
+pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
@@ -3089,7 +3090,7 @@ pub inline fn debugAssert(cheap_value_only_plz: bool) void {
     }
 }
 
-pub inline fn assert(value: bool) void {
+pub fn assert(value: bool) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }

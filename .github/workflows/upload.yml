@@ -1,4 +1,4 @@
-name: Release Canary
+name: Upload Artifacts
 
 on:
   workflow_run:
@@ -10,7 +10,7 @@ on:
       - main
 
 jobs:
-  release:
+  upload:
     if: ${{ github.repository_owner == 'oven-sh' }}
     runs-on: ubuntu-latest
     steps:

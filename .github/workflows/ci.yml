@@ -1,5 +1,9 @@
 name: CI
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 on:
   workflow_dispatch:
   pull_request:
@@ -153,47 +157,3 @@ jobs:
       pr-number: ${{ github.event.number }}
       runs-on: windows-latest
       tag: windows-x64-baseline
-  summary:
-    if: ${{ always() && github.repository_owner == 'oven-sh' }}
-    name: Summarize
-    needs:
-      - linux-x64-test
-      - linux-x64-baseline-test
-      - linux-aarch64-test
-      - darwin-x64-test
-      - darwin-x64-baseline-test
-      - darwin-aarch64-test
-      - windows-x64-test
-      - windows-x64-baseline-test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Results
-        uses: actions/download-artifact@v4
-        with:
-          pattern: bun-*-tests
-      - name: Parse Results
-        id: results
-        run: |
-          cat bun-*-tests/comment.md > comment.md
-          if [ -s comment.md ]; then
-            echo -e "❌ @${{ github.actor }}, there are failing tests: \n$(cat comment.md)" > comment.md
-          else
-            echo -e "✅ @${{ github.actor }}, all tests passed!" > comment.md
-          fi
-          echo -e "\n**[View logs](https://github.com/oven-sh/bun/actions/runs/${{ github.run_id }})**" >> comment.md
-          echo -e "<!-- generated-comment run-id=${{ github.run_id }} -->" >> comment.md
-          echo "pr-number=$(<bun-linux-x64-tests/pr-number.txt)" >> $GITHUB_OUTPUT
-      - name: Find Comment
-        id: comment
-        uses: peter-evans/find-comment@v3
-        with:
-          issue-number: ${{ steps.results.outputs.pr-number }}
-          comment-author: github-actions[bot]
-          body-includes: <!-- generated-comment run-id=${{ github.run_id }} -->
-      - name: Post Comment
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          comment-id: ${{ steps.comment.outputs.comment-id }}
-          issue-number: ${{ steps.results.outputs.pr-number }}
-          body-path: comment.md
-          edit-mode: replace

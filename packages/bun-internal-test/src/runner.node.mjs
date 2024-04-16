@@ -1,10 +1,9 @@
 import * as action from "@actions/core";
 import { spawn, spawnSync } from "child_process";
-import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, close, closeSync } from "fs";
-import { readFile, rm } from "fs/promises";
+import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, closeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
-import { constants, cpus, hostname, tmpdir, totalmem, userInfo } from "os";
+import { cpus, hostname, tmpdir, totalmem, userInfo } from "os";
 import { join, normalize } from "path";
 import { fileURLToPath } from "url";
 import PQueue from "p-queue";
@@ -24,7 +23,6 @@ function defaultConcurrency() {
 }
 
 const windows = process.platform === "win32";
-const KEEP_TMPDIR = process.env["BUN_KEEP_TMPDIR"] === "1";
 const nativeMemory = totalmem();
 const force_ram_size_input = parseInt(process.env["BUN_JSC_forceRAMSize"] || "0", 10);
 let force_ram_size = Number(BigInt(nativeMemory) >> BigInt(2)) + "";
@@ -409,7 +407,6 @@ for (const path of allTests) {
         process.exit(1);
       }),
   );
-  break; // HACK
 }
 await queue.onIdle();
 console.log(`

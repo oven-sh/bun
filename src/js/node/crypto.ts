@@ -78,7 +78,7 @@ function getArrayBufferOrView(buffer, name, encoding) {
 const crypto = globalThis.crypto;
 const globalCrypto = crypto;
 
-var __commonJS = (cb, mod) =>
+var __commonJS = (cb, mod: typeof module | undefined = undefined) =>
   function () {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };

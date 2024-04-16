@@ -363,6 +363,8 @@ export function createTestBuilder(path: string) {
       }
     }
   }
+
+  return TestBuilder;
 }
 
 function generateRandomString(length: number): string {

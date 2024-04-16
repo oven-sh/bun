@@ -398,8 +398,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             break;
         }
         case POLL_TYPE_DGRAM: {
+            struct us_dgram_t *s = (struct us_dgram_t *) p;
+            struct us_loop_t *loop = s->loop;
             if (events & LIBUS_SOCKET_READABLE) {
-                // int length = bsd_recvmmsg()
+                int length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, 0);
+                if (length > 0) {
+                    // s->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                }
             }
             break;
         }

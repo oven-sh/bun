@@ -3100,6 +3100,16 @@ pub inline fn assert(value: bool) void {
     }
 }
 
+/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+pub inline fn assert_eql(a: anytype, b: anytype) void {
+    return assert(a == b);
+}
+
+/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+pub inline fn assert_neql(a: anytype, b: anytype) void {
+    return assert(a != b);
+}
+
 pub inline fn unsafeAssert(condition: bool) void {
     if (!condition) {
         unreachable;

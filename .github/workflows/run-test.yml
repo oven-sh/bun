@@ -120,7 +120,7 @@ jobs:
 
             **[View logs](https://github.com/oven-sh/bun/actions/runs/${{ github.run_id }})**
       - name: Fail
-        if: ${{ steps.test.outputs.failing_tests != ''}}
+        if: ${{ steps.test.outputs.failing_tests != '' }}
         run: |
-          echo "Failing tests: ${{ steps.test.outputs.failing_tests }}"
+          echo "There are ${{ steps.test.outputs.failing_tests_count }} failing tests on bun-${{ inputs.tag }}."
           exit 1

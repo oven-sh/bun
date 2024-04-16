@@ -1425,13 +1425,19 @@ pub fn GlobWalker_(
                 switch (c) {
                     '\\' => {
                         if (comptime isWindows) {
-                            const end_cp = cp_len;
+                            var end_cp = cp_len;
+                            var end_byte = cursor.i;
+                            // is last char
+                            if (cursor.i + cursor.width == pattern.len) {
+                                end_cp += 1;
+                                end_byte += cursor.width;
+                            }
                             if (makeComponent(
                                 pattern,
                                 start_cp,
                                 end_cp,
                                 start_byte,
-                                cursor.i,
+                                end_byte,
                                 has_relative_patterns,
                             )) |component| {
                                 saw_special = saw_special or component.syntax_hint.isSpecialSyntax();

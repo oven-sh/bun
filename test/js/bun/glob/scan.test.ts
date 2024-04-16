@@ -330,14 +330,14 @@ describe("fast-glob e2e tests", async () => {
   // const stripAbsoluteDir = (path: string): string => path;
 
   regular.regular.forEach(pattern => {
-    console.log("ABSOLUTE PATTERN DIR", absolute_pattern_dir);
+    // console.log("ABSOLUTE PATTERN DIR", absolute_pattern_dir);
     const absolutePattern = path.join(absolute_pattern_dir, pattern);
     test(`(absolute) patterns regular ${pattern}`, () => {
       let entries = buildsnapshot
         ? prepareEntries(fg.globSync(absolutePattern, { cwd }))
         : prepareEntries(Array.from(new Glob(absolutePattern).scanSync({ cwd, followSymlinks: true })));
 
-      console.log("PATTERN", absolutePattern, entries);
+      // console.log("PATTERN", absolutePattern, entries);
       expect(entries.map(stripAbsoluteDir)).toMatchSnapshot(`absolute: ${pattern}`);
     });
 
@@ -540,7 +540,7 @@ test("glob.scan('.')", async () => {
 describe("trailing directory separator", async () => {
   test("matches directories absolute", async () => {
     const tmpdir = TestBuilder.tmpdir();
-    const files = [`${tmpdir}/bunx-foo`, `${tmpdir}/bunx-bar`, `${tmpdir}/bunx-baz`];
+    const files = [`${tmpdir}${path.sep}bunx-foo`, `${tmpdir}${path.sep}bunx-bar`, `${tmpdir}${path.sep}bunx-baz`];
     await Bun.$`touch ${files[0]}; touch ${files[1]}; mkdir ${files[2]}`;
     const glob = new Glob(`${path.join(tmpdir, "bunx-*")}${path.sep}`);
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
@@ -560,7 +560,7 @@ describe("trailing directory separator", async () => {
 describe("absolute path pattern", async () => {
   test("works *", async () => {
     const tmpdir = TestBuilder.tmpdir();
-    const files = [`${tmpdir}/bunx-foo`, `${tmpdir}/bunx-bar`, `${tmpdir}/bunx-baz`];
+    const files = [`${tmpdir}${path.sep}bunx-foo`, `${tmpdir}${path.sep}bunx-bar`, `${tmpdir}${path.sep}bunx-baz`];
     await Bun.$`touch ${files[0]}; touch ${files[1]}; mkdir ${files[2]}`;
     const glob = new Glob(`${path.join(tmpdir, "bunx-*")}`);
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
@@ -570,12 +570,12 @@ describe("absolute path pattern", async () => {
   test("works **", async () => {
     const tmpdir = TestBuilder.tmpdir();
     const files = [
-      `${tmpdir}/bunx-foo`,
-      `${tmpdir}/bunx-bar`,
-      `${tmpdir}/bunx-baz`,
-      `${tmpdir}/bunx-foo/foo`,
-      `${tmpdir}/bunx-foo/bar`,
-      `${tmpdir}/bunx-baz/bar`,
+      `${tmpdir}${path.sep}bunx-foo`,
+      `${tmpdir}${path.sep}bunx-bar`,
+      `${tmpdir}${path.sep}bunx-baz`,
+      `${tmpdir}${path.sep}foo`,
+      `${tmpdir}${path.sep}bar`,
+      `${tmpdir}${path.sep}bar`,
     ];
     await Bun.$`mkdir -p ${files.slice(0, 3)}; touch ${files.slice(3)}`;
     const glob = new Glob(`${path.join(tmpdir, "**")}${path.sep}`);

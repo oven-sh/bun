@@ -16,4 +16,11 @@ test("a panic dumps a trace string", async () => {
       ...bunEnv,
     },
   });
+
+  try {
+    expect(result.stderr.toString('utf-8')).toInclude('https://bun.report/');
+  } catch (e) {
+    console.log(result.stderr.toString('utf-8'));
+    throw e;
+  }
 });

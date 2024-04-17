@@ -28,7 +28,7 @@ function isReadableStream(value) {
 }
 
 function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
+  if (typeof value !== "boolean") throw ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
 $debug("node:stream loaded");
@@ -54,7 +54,7 @@ const validateObject = (value, name, options = null) => {
     (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
-    throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
+    throw ERR_INVALID_ARG_TYPE(name, "Object", value);
   }
 };
 
@@ -67,7 +67,7 @@ const validateObject = (value, name, options = null) => {
 
 /** @type {validateString} */
 function validateString(value, name) {
-  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
+  if (typeof value !== "string") throw ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
 //------------------------------------------------------------------------------
@@ -901,7 +901,7 @@ var require_utils = __commonJS({
       if (typeof (rState === null || rState === void 0 ? void 0 : rState.ended) !== "boolean") return null;
       return rState.ended;
     }
-    function isReadableFinished(stream, strict) {
+    function isReadableFinished(stream, strict?: boolean) {
       if (!isReadableNodeStream(stream)) return null;
       const rState = stream._readableState;
       if (rState !== null && rState !== void 0 && rState.errored) return false;
@@ -1879,7 +1879,7 @@ var require_destroy = __commonJS({
         w.finished = w.writable === false;
       }
     }
-    function errorOrDestroy(stream, err, sync) {
+    function errorOrDestroy(stream, err, sync?: boolean) {
       const r = stream?._readableState;
       const w = stream?._writableState;
       if ((w && w.destroyed) || (r && r.destroyed)) {
@@ -2128,7 +2128,6 @@ var require_add_abort_signal = __commonJS({
 
 // node_modules/readable-stream/lib/internal/streams/state.js
 var { MathFloor, NumberIsInteger } = require_primordials();
-var { ERR_INVALID_ARG_VALUE } = require_errors().codes;
 function highWaterMarkFrom(options, isDuplex, duplexKey) {
   return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
 }

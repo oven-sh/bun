@@ -1621,6 +1621,10 @@ function validateString(value, name) {
   if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
+function isInt32(value) {
+  return value === (value | 0);
+}
+
 function nullCheck(path, propName, throwError = true) {
   const pathIsString = typeof path === "string";
   const pathIsUint8Array = isUint8Array(path);

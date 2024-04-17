@@ -427,7 +427,7 @@ Url.prototype.format = function () {
   var protocol = this.protocol || "",
     pathname = this.pathname || "",
     hash = this.hash || "",
-    host = false,
+    host = "",
     query = "";
 
   if (this.host) {

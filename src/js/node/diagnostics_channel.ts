@@ -3,10 +3,10 @@
 const SafeMap = Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
 
-const ArrayPrototypeAt = (array, index) => array[index];
-const ArrayPrototypeIndexOf = (array, value) => array.indexOf(value);
-const ArrayPrototypePush = (array, value) => array.push(value);
-const ArrayPrototypeSplice = (array, start, deleteCount) => array.splice(start, deleteCount);
+const ArrayPrototypeAt = Array.prototype.at;
+const ArrayPrototypeIndexOf = Array.prototype.indexOf;
+const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const SymbolHasInstance = Symbol.hasInstance;
@@ -16,7 +16,7 @@ const PromiseReject = Promise.reject;
 const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
 
 // TODO: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/src/node_util.h#L13
-class WeakReference extends WeakRef {
+class WeakReference<T extends WeakKey> extends WeakRef<T> {
   #refs = 0;
 
   get() {

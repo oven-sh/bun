@@ -2729,9 +2729,7 @@ pub const Dirname = struct {
 
 pub noinline fn outOfMemory() noreturn {
     @setCold(true);
-
-    // TODO: In the future, we should print jsc + mimalloc heap statistics
-    @panic("Bun ran out of memory!");
+    crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
 pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
@@ -3107,7 +3105,7 @@ noinline fn assertionFailure() noreturn {
     }
 
     @setCold(true);
-    Output.panic("Internal assertion failure. This is a bug in Bun.", .{});
+    Output.panic("Internal assertion failure", .{});
 }
 
 pub inline fn debugAssert(cheap_value_only_plz: bool) void {

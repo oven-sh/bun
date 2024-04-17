@@ -72,17 +72,20 @@ pub const CrashReason = union(enum) {
     /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
     zig_error: anyerror,
 
+    out_of_memory,
+
     pub fn format(self: CrashReason, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self) {
             .panic => try writer.print("{s}", .{self.panic}),
             .@"unreachable" => try writer.writeAll("reached unreachable code"),
-            .segmentation_fault => |addr| try writer.print("Segmentation fault at address 0x{x}", .{addr}),
-            .illegal_instruction => |addr| try writer.print("Illegal instruction at address 0x{x}", .{addr}),
-            .bus_error => |addr| try writer.print("Bus error at address 0x{x}", .{addr}),
-            .floating_point_error => |addr| try writer.print("Floating point error at address 0x{x}", .{addr}),
+            .segmentation_fault => |addr| try writer.print("Segmentation fault at address 0x{X}", .{addr}),
+            .illegal_instruction => |addr| try writer.print("Illegal instruction at address 0x{X}", .{addr}),
+            .bus_error => |addr| try writer.print("Bus error at address 0x{X}", .{addr}),
+            .floating_point_error => |addr| try writer.print("Floating point error at address 0x{X}", .{addr}),
             .datatype_misalignment => try writer.writeAll("Unaligned memory access"),
             .stack_overflow => try writer.writeAll("Stack overflow"),
             .zig_error => |err| try writer.print("error.{s}", .{@errorName(err)}),
+            .out_of_memory => try writer.writeAll("Bun ran out of memory"),
         }
     }
 };
@@ -140,33 +143,36 @@ pub fn crashHandler(
                     Output.err("oh no", "multiple threads are crashing", .{});
                 }
 
-                if (Output.enable_ansi_colors) {
-                    writer.writeAll(Output.prettyFmt("<red>", true)) catch std.os.abort();
+                if (reason != .out_of_memory or debug_trace) {
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<red>", true)) catch std.os.abort();
+                    }
+
+                    writer.writeAll("panic") catch std.os.abort();
+
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.os.abort();
+                    }
+
+                    if (bun.CLI.Cli.is_main_thread) {
+                        writer.writeAll("(main thread)") catch std.os.abort();
+                    } else switch (bun.Environment.os) {
+                        .windows => {
+                            var name: std.os.windows.PWSTR = undefined;
+                            const result = bun.windows.GetThreadDescription(std.os.windows.kernel32.GetCurrentThread(), &name);
+                            if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
+                                writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.os.abort();
+                            } else {
+                                writer.print("(thread {d})", .{std.os.windows.kernel32.GetCurrentThreadId()}) catch std.os.abort();
+                            }
+                        },
+                        .mac, .linux => {},
+                        else => @compileError("TODO"),
+                    }
+
+                    Output.prettyErrorln(":<r> {}", .{reason});
                 }
 
-                writer.writeAll("panic") catch std.os.abort();
-
-                if (Output.enable_ansi_colors) {
-                    writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.os.abort();
-                }
-
-                if (bun.CLI.Cli.is_main_thread) {
-                    writer.writeAll("(main thread)") catch std.os.abort();
-                } else switch (bun.Environment.os) {
-                    .windows => {
-                        var name: std.os.windows.PWSTR = undefined;
-                        const result = bun.windows.GetThreadDescription(std.os.windows.kernel32.GetCurrentThread(), &name);
-                        if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
-                            writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.os.abort();
-                        } else {
-                            writer.print("(thread {d})", .{std.os.windows.kernel32.GetCurrentThreadId()}) catch std.os.abort();
-                        }
-                    },
-                    .mac, .linux => {},
-                    else => @compileError("TODO"),
-                }
-
-                Output.prettyErrorln(":<r> {}", .{reason});
                 Output.flush();
 
                 var addr_buf: [10]usize = undefined;
@@ -187,14 +193,25 @@ pub fn crashHandler(
                 } else {
                     if (!has_printed_message) {
                         has_printed_message = true;
-                        Output.err("oh no",
-                            \\Bun has crashed. This indicates a bug in Bun, not your code.
-                            \\
-                            \\To send a redacted crash report to Bun's team,
-                            \\please file a GitHub issue using the link below:
-                            \\
-                            \\
-                        , .{});
+                        if (reason == .out_of_memory) {
+                            Output.err("oh no",
+                                \\Bun has ran out of memory.
+                                \\
+                                \\To send a redacted crash report to Bun's team,
+                                \\please file a GitHub issue using the link below:
+                                \\
+                                \\
+                            , .{});
+                        } else {
+                            Output.err("oh no",
+                                \\Bun has crashed. This indicates a bug in Bun, not your code.
+                                \\
+                                \\To send a redacted crash report to Bun's team,
+                                \\please file a GitHub issue using the link below:
+                                \\
+                                \\
+                            , .{});
+                        }
                         Output.flush();
                     }
 
@@ -1015,6 +1032,8 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
             try writer.writeByte('8');
             try writer.writeAll(@errorName(err));
         },
+
+        .out_of_memory => try writer.writeByte('9'),
     }
 
     if (opts.action == .view_trace) {

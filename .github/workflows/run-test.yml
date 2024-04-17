@@ -65,11 +65,7 @@ jobs:
         run: |
           unzip bun/bun-*.zip
           cd bun-*
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            pwd >> $env:GITHUB_PATH
-          else
-            pwd >> ${GITHUB_PATH}
-          fi
+          pwd >> $GITHUB_PATH
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:

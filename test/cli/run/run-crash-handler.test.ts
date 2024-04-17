@@ -11,16 +11,19 @@ test.if(process.platform === "darwin")("macOS has the assumed image offset", () 
 });
 
 test("a panic dumps a trace string", async () => {
-  const result = Bun.spawnSync([bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"], {
-    env: {
-      ...bunEnv,
+  const result = Bun.spawnSync(
+    [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    {
+      env: {
+        ...bunEnv,
+      },
     },
-  });
+  );
 
   try {
-    expect(result.stderr.toString('utf-8')).toInclude('https://bun.report/');
+    expect(result.stderr.toString("utf-8")).toInclude("https://bun.report/");
   } catch (e) {
-    console.log(result.stderr.toString('utf-8'));
+    console.log(result.stderr.toString("utf-8"));
     throw e;
   }
 });

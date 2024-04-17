@@ -1,5 +1,5 @@
 const sequence = [1, 2, 3];
-sequence.toReversed(); // => [3, 2, 1]
+const reversedSequence = [...sequence].reverse();
 sequence; // => [1, 2, 3]
 
 const outOfOrder = new Uint8Array([3, 1, 2]);

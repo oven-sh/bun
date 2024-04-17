@@ -7,5 +7,6 @@ const sortedOutOfOrder = Uint8Array.from([...outOfOrder].sort());
 outOfOrder; // => Uint8Array [3, 1, 2]
 
 const correctionNeeded = [1, 1, 3];
-correctionNeeded.with(1, 2); // => [1, 2, 3]
+const correctedArray = [...correctionNeeded];
+correctedArray[1] = 2;
 correctionNeeded; // => [1, 1, 3]

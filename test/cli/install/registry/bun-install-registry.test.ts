@@ -2070,6 +2070,62 @@ describe("workspaces", async () => {
   }
 });
 
+test("it should install transitive folder dependencies", async () => {
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        // hoisted
+        "dep-file-dep": "1.0.0",
+        // root
+        "file-dep": "1.0.0",
+        // dangling symlink
+        "missing-file-dep": "1.0.0",
+      },
+    }),
+  );
+
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  var err = await Bun.readableStreamToText(stderr);
+  var out = await Bun.readableStreamToText(stdout);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + dep-file-dep@1.0.0",
+    " + file-dep@1.0.0",
+    " + missing-file-dep@1.0.0",
+    "",
+    " 5 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+    ".cache",
+    "dep-file-dep",
+    "file-dep",
+    "missing-file-dep",
+  ]);
+  expect(
+    await exists(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json")),
+  ).toBeTrue();
+  expect(await readdirSorted(join(packageDir, "node_modules", "missing-file-dep", "node_modules"))).toEqual(["files"]);
+  expect(
+    await exists(join(packageDir, "node_modules", "missing-file-dep", "node_modules", "files", "package.json")),
+  ).toBeFalse();
+});
+
 test("it should re-populate .bin folder if package is reinstalled", async () => {
   await writeFile(
     join(packageDir, "package.json"),

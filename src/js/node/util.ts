@@ -289,7 +289,7 @@ export default Object.assign(cjs_exports, {
   _extend,
   inspect,
   types,
-  isArray: $isJSArray,
+  isArray: $isArray,
   isBoolean,
   isNull,
   isNullOrUndefined,

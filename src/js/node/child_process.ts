@@ -1200,7 +1200,7 @@ class ChildProcess extends EventEmitter {
     const argv0 = file || options.argv0;
 
     // TODO: better ipc support
-    const ipc = $isJSArray(stdio) && stdio[3] === "ipc";
+    const ipc = $isArray(stdio) && stdio[3] === "ipc";
     var env = options.envPairs || undefined;
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;

@@ -2083,6 +2083,8 @@ test("it should install transitive folder dependencies", async () => {
         "file-dep": "1.0.0",
         // dangling symlink
         "missing-file-dep": "1.0.0",
+        // aliased. has `"file-dep": "file:."`
+        "aliased-file-dep": "npm:file-dep@1.0.1",
       },
     }),
   );
@@ -2104,15 +2106,17 @@ test("it should install transitive folder dependencies", async () => {
   expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
+    " + aliased-file-dep@1.0.1",
     " + dep-file-dep@1.0.0",
     " + file-dep@1.0.0",
     " + missing-file-dep@1.0.0",
     "",
-    " 5 packages installed",
+    " 7 packages installed",
   ]);
   expect(await exited).toBe(0);
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
     ".cache",
+    "aliased-file-dep",
     "dep-file-dep",
     "file-dep",
     "missing-file-dep",
@@ -2124,6 +2128,12 @@ test("it should install transitive folder dependencies", async () => {
   expect(
     await exists(join(packageDir, "node_modules", "missing-file-dep", "node_modules", "files", "package.json")),
   ).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "aliased-file-dep", "package.json"))).toBeTrue();
+  expect(
+    await exists(
+      join(packageDir, "node_modules", "aliased-file-dep", "node_modules", "files", "node_modules", "files"),
+    ),
+  ).toBeTrue();
 });
 
 test("it should re-populate .bin folder if package is reinstalled", async () => {

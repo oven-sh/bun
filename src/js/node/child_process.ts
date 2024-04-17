@@ -20,7 +20,6 @@ var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
-var ArrayIsArray = Array.isArray;
 
 // var ArrayBuffer = ArrayBuffer;
 var ArrayBufferIsView = ArrayBuffer.isView;
@@ -708,7 +707,7 @@ function fork(modulePath, args = [], options) {
 
   if (args == null) {
     args = [];
-  } else if (typeof args === "object" && !ArrayIsArray(args)) {
+  } else if (typeof args === "object" && !$isJSArray(args)) {
     options = args;
     args = [];
   } else {
@@ -739,7 +738,7 @@ function fork(modulePath, args = [], options) {
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
-  } else if (!ArrayIsArray(options.stdio)) {
+  } else if (!$isJSArray(options.stdio)) {
     // Use a separate fd=3 for the IPC channel. Inherit stdin, stdout,
     // and stderr from the parent if silent isn't set.
     options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
@@ -785,7 +784,7 @@ function getSignalsToNamesMapping() {
 }
 
 function normalizeExecFileArgs(file, args, options, callback) {
-  if (ArrayIsArray(args)) {
+  if ($isJSArray(args)) {
     args = ArrayPrototypeSlice.$call(args);
   } else if (args != null && typeof args === "object") {
     callback = options;
@@ -850,7 +849,7 @@ function normalizeSpawnArguments(file, args, options) {
 
   if (file.length === 0) throw new ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
-  if (ArrayIsArray(args)) {
+  if ($isJSArray(args)) {
     args = ArrayPrototypeSlice.$call(args);
   } else if (args == null) {
     args = [];
@@ -1420,7 +1419,7 @@ function normalizeStdio(stdio) {
       default:
         throw new ERR_INVALID_OPT_VALUE("stdio", stdio);
     }
-  } else if (ArrayIsArray(stdio)) {
+  } else if ($isJSArray(stdio)) {
     // Validate if each is a valid stdio type
     // TODO: Support wrapped types here
 
@@ -1600,7 +1599,7 @@ const validateObject = (value, name, options = null) => {
 /** @type {validateArray} */
 const validateArray = (value, name, minLength = 0) => {
   // const validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!ArrayIsArray(value)) {
+  if (!$isJSArray(value)) {
     throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
   }
   if (value.length < minLength) {
@@ -1745,7 +1744,7 @@ function genericNodeError(message, options) {
 //   "ERR_INVALID_ARG_TYPE",
 //   (name, expected, actual) => {
 //     assert(typeof name === "string", "'name' must be a string");
-//     if (!ArrayIsArray(expected)) {
+//     if (!$isJSArray(expected)) {
 //       expected = [expected];
 //     }
 

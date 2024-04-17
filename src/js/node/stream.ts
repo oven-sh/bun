@@ -87,9 +87,6 @@ var require_primordials = __commonJS({
   "node_modules/readable-stream/lib/ours/primordials.js"(exports, module) {
     "use strict";
     module.exports = {
-      ArrayIsArray(self) {
-        return Array.isArray(self);
-      },
       ArrayPrototypeIncludes(self, el) {
         return self.includes(el);
       },
@@ -622,7 +619,6 @@ var require_validators = __commonJS({
   "node_modules/readable-stream/lib/internal/validators.js"(exports, module) {
     "use strict";
     var {
-      ArrayIsArray,
       ArrayPrototypeIncludes,
       ArrayPrototypeJoin,
       ArrayPrototypeMap,
@@ -2004,7 +2000,7 @@ var require_destroy = __commonJS({
 var require_legacy = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/legacy.js"(exports, module) {
     "use strict";
-    var { ArrayIsArray, ObjectSetPrototypeOf } = require_primordials();
+    var { ObjectSetPrototypeOf } = require_primordials();
 
     function Stream(options) {
       if (!(this instanceof Stream)) return new Stream(options);
@@ -4635,7 +4631,7 @@ var require_passthrough = __commonJS({
 var require_pipeline = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/pipeline.js"(exports, module) {
     "use strict";
-    var { ArrayIsArray, Promise: Promise2, SymbolAsyncIterator } = require_primordials();
+    var { Promise: Promise2, SymbolAsyncIterator } = require_primordials();
     var eos = require_end_of_stream();
     var { once } = require_util();
     var destroyImpl = require_destroy();

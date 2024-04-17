@@ -48,7 +48,6 @@ const SymbolIterator = Symbol.iterator;
 const SymbolFor = Symbol.for;
 const SymbolReplace = Symbol.replace;
 const ArrayFrom = Array.from;
-const ArrayIsArray = Array.isArray;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
@@ -340,7 +339,7 @@ function validateAbortSignal(signal, name) {
  */
 function validateArray(value, name, minLength = 0) {
   // var validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!ArrayIsArray(value)) {
+  if (!$isJSArray(value)) {
     throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
   }
   if (value.length < minLength) {
@@ -386,7 +385,7 @@ function validateObject(value, name, options = null) {
   var nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray.$call(null, value)) ||
+    (!allowArray && $isJSArray.$call(null, value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "object", value);

@@ -20,6 +20,7 @@ const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
+const builtin = @import("builtin");
 
 const debug = Output.scoped(.CLI, true);
 
@@ -41,7 +42,6 @@ const Router = @import("./router.zig");
 
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
-const Reporter = @import("./report.zig");
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 
@@ -49,26 +49,24 @@ pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
     pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
-    pub fn start(allocator: std.mem.Allocator, comptime MainPanicHandler: type) void {
+    pub fn start(allocator: std.mem.Allocator) void {
+        is_main_thread = true;
         start_time = std.time.nanoTimestamp();
         log_ = logger.Log.init(allocator);
 
         var log = &log_;
 
-        var panicker = MainPanicHandler.init(log);
-        MainPanicHandler.Singleton = &panicker;
+        // var panicker = MainPanicHandler.init(log);
+        // MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
             log.printForLogLevel(Output.errorWriter()) catch {};
 
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
-
-            Reporter.globalError(err, null);
+            bun.crash_handler.handleRootError(err, @errorReturnTrace());
         };
     }
 
     pub var cmd: ?Command.Tag = null;
+    pub threadlocal var is_main_thread: bool = false;
 };
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
@@ -151,7 +149,10 @@ pub const Arguments = struct {
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
         clap.parseParam("<POS>...") catch unreachable,
-    };
+    } ++ if (builtin.have_error_return_tracing) [_]ParamType{
+        // This will print more error return traces, as a debug aid
+        clap.parseParam("--verbose-error-trace") catch unreachable,
+    } else [_]ParamType{};
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
@@ -406,6 +407,12 @@ pub const Arguments = struct {
 
             if (args.flag("--revision")) {
                 printRevisionAndExit();
+            }
+        }
+
+        if (builtin.have_error_return_tracing) {
+            if (args.flag("--verbose-error-trace")) {
+                bun.crash_handler.verbose_error_trace = true;
             }
         }
 
@@ -1048,7 +1055,7 @@ pub const HelpCommand = struct {
 pub const ReservedCommand = struct {
     pub fn exec(_: std.mem.Allocator) !void {
         @setCold(true);
-        const command_name = bun.argv()[1];
+        const command_name = bun.argv[1];
         Output.prettyError(
             \\<r><red>Uh-oh<r>. <b><yellow>bun {s}<r> is a subcommand reserved for future use by Bun.
             \\
@@ -1241,7 +1248,7 @@ pub const Command = struct {
     }
 
     pub fn which() Tag {
-        var args_iter = ArgsIterator{ .buf = bun.argv() };
+        var args_iter = ArgsIterator{ .buf = bun.argv };
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
@@ -1386,8 +1393,8 @@ pub const Command = struct {
             var ctx = global_cli_ctx;
 
             ctx.args.target = Api.Target.bun;
-            if (bun.argv().len > 1) {
-                ctx.passthrough = bun.argv()[1..];
+            if (bun.argv.len > 1) {
+                ctx.passthrough = bun.argv[1..];
             } else {
                 ctx.passthrough = &[_]string{};
             }
@@ -1400,7 +1407,7 @@ pub const Command = struct {
             return;
         }
 
-        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv(), ", ")});
+        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
 
         const tag = which();
 
@@ -1408,7 +1415,7 @@ pub const Command = struct {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
             .ReservedCommand => return try ReservedCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
+            .InitCommand => return try InitCommand.exec(allocator, bun.argv),
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BuildCommand);
@@ -1444,7 +1451,7 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BunxCommand);
 
-                try BunxCommand.exec(ctx, bun.argv()[if (is_bunx_exe) 0 else 1..]);
+                try BunxCommand.exec(ctx, bun.argv[if (is_bunx_exe) 0 else 1..]);
                 return;
             },
             .ReplCommand => {
@@ -1452,7 +1459,7 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 var ctx = try Command.init(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
-                var args = bun.argv()[0..];
+                var args = bun.argv[0..];
                 args[1] = "bun-repl";
                 try BunxCommand.exec(ctx, args);
                 return;
@@ -1773,7 +1780,7 @@ pub const Command = struct {
                 // KEYWORDS: open file argv argv0
                 if (ctx.args.entry_points.len == 1) {
                     if (strings.eqlComptime(extension, ".lockb")) {
-                        for (bun.argv()) |arg| {
+                        for (bun.argv) |arg| {
                             if (strings.eqlComptime(arg, "--hash")) {
                                 try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
                                 return;
@@ -1969,6 +1976,8 @@ pub const Command = struct {
             ctx,
             absolute_script_path.?,
         ) catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
@@ -1979,9 +1988,6 @@ pub const Command = struct {
                 std.fs.path.basename(file_path),
                 @errorName(err),
             });
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
             Global.exit(1);
         };
         return true;

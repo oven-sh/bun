@@ -72,6 +72,7 @@ pub const Features = struct {
     pub fn formatter() Formatter {
         return Formatter{};
     }
+
     pub const Formatter = struct {
         pub fn format(_: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const fields = comptime brk: {
@@ -91,9 +92,14 @@ pub const Features = struct {
                 break :brk buffer[0..count];
             };
 
+            var is_first_feature = true;
             inline for (fields) |field| {
                 const count = @field(Features, field);
                 if (count > 0) {
+                    if (is_first_feature) {
+                        try writer.writeAll("Features: ");
+                        is_first_feature = false;
+                    }
                     try writer.writeAll(field);
                     if (count > 1) {
                         try writer.print("({d}) ", .{count});
@@ -102,10 +108,13 @@ pub const Features = struct {
                     }
                 }
             }
+            if (!is_first_feature) {
+                try writer.writeAll("\n");
+            }
 
             var builtins = builtin_modules.iterator();
             if (builtins.next()) |first| {
-                try writer.writeAll("\nBuiltins: \"");
+                try writer.writeAll("Builtins: \"");
                 try writer.writeAll(@tagName(first));
                 try writer.writeAll("\" ");
 
@@ -115,8 +124,6 @@ pub const Features = struct {
                     try writer.writeAll("\" ");
                 }
 
-                try writer.writeAll("\n");
-            } else {
                 try writer.writeAll("\n");
             }
         }

@@ -1,5 +1,8 @@
 name: Upload Artifacts
 
+permissions:
+  contents: write
+
 on:
   workflow_run:
     workflows:
@@ -12,6 +15,7 @@ on:
 jobs:
   upload:
     if: ${{ github.repository_owner == 'oven-sh' }}
+    name: Upload Artifacts
     runs-on: ubuntu-latest
     steps:
       - name: Download Artifacts
@@ -23,12 +27,18 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
       - name: Upload to GitHub Releases
-        uses: softprops/action-gh-release@v2
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: canary
-          make_latest: false
-          generate_release_notes: false
-          files: bun/*
+          tag: canary
+          name: Canary (${{ github.sha }})
+          prerelease: true
+          body: This canary release of Bun corresponds to the commit [${{ github.sha }}]
+          allowUpdates: true
+          replacesArtifacts: true
+          generateReleaseNotes: true
+          artifactErrorsFailBuild: true
+          artifacts: bun/**/bun-*.zip
+          token: ${{ github.token }}
       - name: Upload to S3 (using SHA)
         uses: shallwefootball/s3-upload-action@4350529f410221787ccf424e50133cbc1b52704e
         with:
@@ -37,7 +47,7 @@ jobs:
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
           aws_bucket: ${{ secrets.AWS_BUCKET }}
           source_dir: bun
-          destination_dir: releases/${{ github.event.workflow_run.head_sha }}
+          destination_dir: releases/${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Upload to S3 (using tag)
         uses: shallwefootball/s3-upload-action@4350529f410221787ccf424e50133cbc1b52704e
         with:

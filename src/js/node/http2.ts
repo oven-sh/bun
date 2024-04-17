@@ -781,7 +781,7 @@ class ClientHttp2Session extends Http2Session {
       }
 
       let cookie = headers["cookie"];
-      if ($isArray(cookie)) {
+      if ($isJSArray(cookie)) {
         headers["cookie"] = (headers["cookie"] as string[]).join(";");
       }
       if (stream[bunHTTP2StreamResponded]) {
@@ -1179,7 +1179,7 @@ class ClientHttp2Session extends Http2Session {
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
-      if (!$isArray(sensitives)) {
+      if (!$isJSArray(sensitives)) {
         const error = new TypeError("ERR_INVALID_ARG_VALUE: The arguments headers[http2.neverIndex] is invalid");
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;

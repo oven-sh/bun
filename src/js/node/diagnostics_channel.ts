@@ -5,7 +5,6 @@ const SafeFinalizationRegistry = FinalizationRegistry;
 
 const ArrayPrototypeAt = Array.prototype.at;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
-const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -58,7 +57,7 @@ class WeakRefMap extends SafeMap {
 }
 
 function markActive(channel) {
-  ObjectSetPrototypeOf(channel, ActiveChannel.prototype);
+  ObjectSetPrototypeOf.$call(null, channel, ActiveChannel.prototype);
   channel._subscribers = [];
   channel._stores = new SafeMap();
 }
@@ -66,7 +65,7 @@ function markActive(channel) {
 function maybeMarkInactive(channel) {
   // When there are no more active subscribers or bound, restore to fast prototype.
   if (!channel._subscribers.length && !channel._stores.size) {
-    ObjectSetPrototypeOf(channel, Channel.prototype);
+    ObjectSetPrototypeOf.$call(null, channel, Channel.prototype);
     channel._subscribers = undefined;
     channel._stores = undefined;
   }
@@ -94,15 +93,15 @@ class ActiveChannel {
   subscribe(subscription) {
     validateFunction(subscription, "subscription");
 
-    ArrayPrototypePush(this._subscribers, subscription);
+    $arrayPush(this._subscribers, subscription);
     channels.incRef(this.name);
   }
 
   unsubscribe(subscription) {
-    const index = ArrayPrototypeIndexOf(this._subscribers, subscription);
+    const index = ArrayPrototypeIndexOf.$call(this._subscribers, subscription);
     if (index === -1) return false;
 
-    ArrayPrototypeSplice(this._subscribers, index, 1);
+    ArrayPrototypeSplice.$call(this._subscribers, index, 1);
 
     channels.decRef(this.name);
     maybeMarkInactive(this);
@@ -170,7 +169,7 @@ class Channel {
   }
 
   static [SymbolHasInstance](instance) {
-    const prototype = ObjectGetPrototypeOf(instance);
+    const prototype = ObjectGetPrototypeOf.$call(null, instance);
     return prototype === Channel.prototype || prototype === ActiveChannel.prototype;
   }
 
@@ -367,11 +366,11 @@ class TracingChannel {
       });
     }
 
-    const callback = ArrayPrototypeAt(args, position);
+    const callback = ArrayPrototypeAt.$call(args, position);
     if (typeof callback !== "function") {
       throw new ERR_INVALID_ARG_TYPE("callback", ["function"], callback);
     }
-    ArrayPrototypeSplice(args, position, 1, wrappedCallback);
+    ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
 
     return start.runStores(context, () => {
       try {

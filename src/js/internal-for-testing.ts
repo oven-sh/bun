@@ -21,3 +21,11 @@ export const shellInternals = {
   lex: $newZigFunction("shell.zig", "TestingAPIs.shellLex", 1),
   parse: $newZigFunction("shell.zig", "TestingAPIs.shellParse", 1),
 };
+
+export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
+  getMachOImageZeroOffset: () => number;
+  segfault: () => void;
+  panic: () => void;
+  rootError: () => void;
+  outOfMemory: () => void;
+};

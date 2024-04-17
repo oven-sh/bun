@@ -850,7 +850,11 @@ pub const VirtualMachine = struct {
         Output.debug("Reloading...", .{});
         if (this.hot_reload == .watch) {
             Output.flush();
-            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
+            bun.reloadProcess(
+                bun.default_allocator,
+                !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"),
+                false,
+            );
         }
 
         if (!strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
@@ -3462,7 +3466,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     if (comptime Ctx == ImportWatcher) {
                         this.reloader.ctx.rareData().closeAllListenSocketsForWatchMode();
                     }
-                    bun.reloadProcess(bun.default_allocator, clear_screen);
+                    bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
                 }
 

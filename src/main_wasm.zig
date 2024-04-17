@@ -479,11 +479,10 @@ export fn getTests(opts_array: u64) u64 {
     parser.options.features.top_level_await = true;
 
     parser.analyze(&anaylzer, @ptrCast(&TestAnalyzer.visitParts)) catch |err| {
+        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
         Output.print("Error: {s}\n", .{@errorName(err)});
 
-        if (@errorReturnTrace()) |trace| {
-            Output.print("{}\n", .{trace});
-        }
         log_.printForLogLevel(Output.writer()) catch unreachable;
         return 0;
     };

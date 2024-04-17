@@ -1897,8 +1897,8 @@ pub fn NewGlobalObject(comptime Type: type) type {
             }
 
             Output.flush();
-            const Reporter = @import("../../report.zig");
-            Reporter.fatal(null, "A C++ exception occurred");
+
+            @panic("A C++ exception occurred");
         }
     };
 }

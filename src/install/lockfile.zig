@@ -1671,15 +1671,12 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     }
 
     file.closeAndMoveTo(tmpname, filename) catch |err| {
+        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
         // note: file is already closed here.
         _ = bun.sys.unlink(tmpname);
 
-        if (comptime Environment.allow_assert) {
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
-        }
-        Output.err(err, "failed to replace old lockfile with new lockfile on disk", .{});
+        Output.err(err, "Failed to replace old lockfile with new lockfile on disk", .{});
         Global.crash();
     };
 }

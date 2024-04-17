@@ -146,7 +146,7 @@ const fs = std.fs;
 pub fn build(b: *Build) !void {
     build_(b) catch |err| {
         if (@errorReturnTrace()) |trace| {
-            std.debug.dumpStackTrace(trace.*);
+            (std.debug).dumpStackTrace(trace.*);
         }
 
         return err;
@@ -394,7 +394,7 @@ pub fn build_(b: *Build) !void {
         obj.linkLibC();
         obj.dll_export_fns = true;
         obj.strip = false;
-        obj.omit_frame_pointer = optimize != .Debug;
+        obj.omit_frame_pointer = false;
         obj.subsystem = .Console;
 
         // Disable stack probing on x86 so we don't need to include compiler_rt

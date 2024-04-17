@@ -1,5 +1,8 @@
 name: Upload Artifacts
 
+permissions:
+  contents: write
+
 on:
   workflow_run:
     workflows:

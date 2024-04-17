@@ -83,6 +83,7 @@ jobs:
         shell: bash
         env:
           TMPDIR: ${{ runner.temp }}
+          BUN_TAG: ${{ inputs.tag }}
           BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
           SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}

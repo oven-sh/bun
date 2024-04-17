@@ -33,7 +33,7 @@ jobs:
           else
             echo -e "✅ @${{ github.actor }}, all tests passed!" > comment.md
           fi
-          echo -e "\n**[View logs](https://github.com/oven-sh/bun/actions/runs/${{ github.event.workflow_run.id }})**" >> comment.md
+          echo -e "\n**[View logs](${{ github.event.workflow_run.logs_url }})**" >> comment.md
           echo -e "<!-- generated-comment run-id=${{ github.event.workflow_run.id }} -->" >> comment.md
       - name: Find Comment
         id: comment

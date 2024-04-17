@@ -88,7 +88,7 @@ jobs:
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         run: |
-          node packages/bun-internal-test/src/runner.node.mjs || true
+          node packages/bun-internal-test/src/runner.node.mjs $(which bun)
       - if: ${{ always()}}
         name: Upload Results
         uses: actions/upload-artifact@v4
@@ -110,11 +110,11 @@ jobs:
           description: |
             ### ❌ [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
 
-            @${{ github.actor }}, there are ${{ steps.test.outputs.failing_tests_count }} failing tests on bun-${{ inputs.tag }}.
+            @${{ github.actor }}, there are ${{ steps.test.outputs.failing_tests_count || 'some' }} failing tests on bun-${{ inputs.tag }}.
 
             ${{ steps.test.outputs.failing_tests }}
 
-            **[View logs](https://github.com/oven-sh/bun/actions/runs/${{ github.run_id }})**
+            **[View logs](${{ github.event.workflow_run.logs_url }})**
       - name: Fail
         if: ${{ failure() }}
         run: |

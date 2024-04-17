@@ -1,5 +1,5 @@
 name: Crash
-description: CRASH
+description: Crash report
 labels: [bug, crash]
 body:
   - type: markdown

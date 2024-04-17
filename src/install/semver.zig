@@ -47,22 +47,6 @@ pub const String = extern struct {
         };
     }
 
-    pub inline fn init(
-        buf: string,
-        in: string,
-    ) String {
-        if (comptime Environment.isDebug) {
-            const out = realInit(buf, in);
-            if (!out.isInline()) {
-                assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
-            }
-
-            return out;
-        } else {
-            return realInit(buf, in);
-        }
-    }
-
     pub const Formatter = struct {
         str: *const String,
         buf: string,
@@ -150,7 +134,7 @@ pub const String = extern struct {
         }
     };
 
-    fn realInit(
+    pub fn init(
         buf: string,
         in: string,
     ) String {

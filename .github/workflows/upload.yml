@@ -1,0 +1,59 @@
+name: Upload Artifacts
+
+permissions:
+  contents: write
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  upload:
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    name: Upload Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: bun
+          pattern: bun-*
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Upload to GitHub Releases
+        uses: ncipollo/release-action@v1
+        with:
+          tag: canary
+          name: Canary (${{ github.sha }})
+          prerelease: true
+          body: This canary release of Bun corresponds to the commit [${{ github.sha }}]
+          allowUpdates: true
+          replacesArtifacts: true
+          generateReleaseNotes: true
+          artifactErrorsFailBuild: true
+          artifacts: bun/**/bun-*.zip
+          token: ${{ github.token }}
+      - name: Upload to S3 (using SHA)
+        uses: shallwefootball/s3-upload-action@4350529f410221787ccf424e50133cbc1b52704e
+        with:
+          endpoint: ${{ secrets.AWS_ENDPOINT }}
+          aws_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
+          aws_bucket: ${{ secrets.AWS_BUCKET }}
+          source_dir: bun
+          destination_dir: releases/${{ github.event.workflow_run.head_sha }}
+      - name: Upload to S3 (using tag)
+        uses: shallwefootball/s3-upload-action@4350529f410221787ccf424e50133cbc1b52704e
+        with:
+          endpoint: ${{ secrets.AWS_ENDPOINT }}
+          aws_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
+          aws_bucket: ${{ secrets.AWS_BUCKET }}
+          source_dir: bun
+          destination_dir: releases/canary

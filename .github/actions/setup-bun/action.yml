@@ -30,7 +30,7 @@ runs:
           *)       os=windows;;
         esac
         case "$(uname -m)" in
-          arm64 | aarch64)  arch=arm64;;
+          arm64 | aarch64)  arch=aarch64;;
           *)                arch=x64;;
         esac
         case "${{ inputs.baseline }}" in

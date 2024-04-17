@@ -27,7 +27,7 @@ jobs:
           echo "pr-number=$(<bun-linux-x64-tests/pr-number.txt)" >> $GITHUB_OUTPUT
       - name: Generate Comment
         run: |
-          cat bun-*-tests/comment.md > comment.md
+          cat **/*/bun-*-tests/comment.md > comment.md
           if [ -s comment.md ]; then
             echo -e "❌ @${{ github.actor }}, there are failing tests: \n$(cat comment.md)" > comment.md
           else

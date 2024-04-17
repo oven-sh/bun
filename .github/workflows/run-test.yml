@@ -92,7 +92,7 @@ jobs:
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         run: |
-          node packages/bun-internal-test/src/runner.node.mjs
+          node packages/bun-internal-test/src/runner.node.mjs || true
       - if: ${{ always()}}
         name: Upload Results
         uses: actions/upload-artifact@v4

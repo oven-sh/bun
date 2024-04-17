@@ -1150,6 +1150,7 @@ pub const PackageInstall = struct {
         opening_dest_dir,
         copying_files,
         linking,
+        linking_dependency,
 
         pub fn name(this: Step) []const u8 {
             return switch (this) {
@@ -1157,6 +1158,7 @@ pub const PackageInstall = struct {
                 .opening_cache_dir => "opening cache/package/version dir",
                 .opening_dest_dir => "opening node_modules/package dir",
                 .linking => "linking bins",
+                .linking_dependency => "linking dependency/workspace to node_modules",
             };
         }
     };
@@ -1757,6 +1759,33 @@ pub const PackageInstall = struct {
         };
     }
 
+    fn installWithDirectorySymlink(this: *PackageInstall, dest_dir: std.fs.Dir) Result {
+        const target = this.cache_dir_subpath;
+
+        if (comptime Environment.isWindows) {
+            const dest_parent_dirname = strings.withoutTrailingSlash(this.node_modules.path.items);
+
+            var dest_buf: bun.PathBuffer = undefined;
+            @memcpy(dest_buf[0..dest_parent_dirname.len], dest_parent_dirname);
+            dest_buf[dest_parent_dirname.len] = std.fs.path.sep;
+            @memcpy(dest_buf[dest_parent_dirname.len + 1 ..][0..this.destination_dir_subpath.len], this.destination_dir_subpath);
+            dest_buf[dest_parent_dirname.len + 1 + this.destination_dir_subpath.len] = 0;
+            const dest = dest_buf[0 .. dest_parent_dirname.len + 1 + this.destination_dir_subpath.len :0];
+
+            bun.sys.symlinkOrJunctionOnWindows(dest, target).unwrap() catch |err| {
+                return Result.fail(err, .linking_dependency);
+            };
+
+            return Result.success();
+        }
+
+        bun.sys.symlinkat(target, bun.toFD(dest_dir.fd), this.destination_dir_subpath).unwrap() catch |err| {
+            return Result.fail(err, .linking_dependency);
+        };
+
+        return Result.success();
+    }
+
     fn installWithSymlink(this: *PackageInstall, dest_dir: std.fs.Dir) !Result {
         var state = InstallDirState{};
         const res = this.initInstallDir(&state, dest_dir);
@@ -2051,12 +2080,7 @@ pub const PackageInstall = struct {
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         const symlinked_path = this.cache_dir_subpath;
         var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err| return Result{
-            .fail = .{
-                .err = err,
-                .step = .linking,
-            },
-        };
+        const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err| return Result.fail(err, .linking_dependency);
 
         const dest = std.fs.path.basename(dest_path);
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
@@ -2066,7 +2090,7 @@ pub const PackageInstall = struct {
             if (dest_path_length == 0) {
                 const e = bun.windows.Win32Error.get();
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                return Result.fail(err, .linking);
+                return Result.fail(err, .linking_dependency);
             }
 
             var i: usize = dest_path_length;
@@ -2083,7 +2107,7 @@ pub const PackageInstall = struct {
                 const fullpath = wbuf[0..i :0];
 
                 _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
-                    return Result.fail(err, .linking);
+                    return Result.fail(err, .linking_dependency);
                 };
             }
 
@@ -2115,54 +2139,27 @@ pub const PackageInstall = struct {
                         }
                     }
 
-                    return Result{
-                        .fail = .{
-                            .err = bun.errnoToZigErr(err.errno),
-                            .step = .linking,
-                        },
-                    };
+                    return Result.fail(bun.errnoToZigErr(err.errno), .linking_dependency);
                 },
                 .result => {},
             }
         } else {
             var dest_dir = if (subdir) |dir| brk: {
-                break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result{
-                    .fail = .{
-                        .err = err,
-                        .step = .linking,
-                    },
-                };
+                break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result.fail(err, .linking_dependency);
             } else destination_dir;
             defer {
                 if (subdir != null) dest_dir.close();
             }
 
-            const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result{
-                .fail = .{
-                    .err = err,
-                    .step = .linking,
-                },
-            };
+            const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result.fail(err, .linking_dependency);
 
             const target = Path.relative(dest_dir_path, to_path);
-            std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
-                .fail = .{
-                    .err = err,
-                    .step = .linking,
-                },
-            };
+            std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result.fail(err, .linking_dependency);
         }
 
-        if (isDanglingSymlink(symlinked_path)) return Result{
-            .fail = .{
-                .err = error.DanglingSymlink,
-                .step = .linking,
-            },
-        };
+        if (isDanglingSymlink(symlinked_path)) return Result.fail(error.DanglingSymlink, .linking_dependency);
 
-        return Result{
-            .success = {},
-        };
+        return Result.success();
     }
 
     pub fn getInstallMethod(this: *const PackageInstall) Method {
@@ -3789,13 +3786,52 @@ pub const PackageManager = struct {
             },
 
             .folder => {
-                // relative to cwd
-                const folder_path = this.lockfile.str(&version.value.folder);
-                var buf2: bun.PathBuffer = undefined;
-                const folder_path_abs = if (std.fs.path.isAbsolute(folder_path)) folder_path else blk: {
-                    break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{folder_path}, .auto);
+                const res: FolderResolution = brk: {
+                    const folder_path = this.lockfile.str(&version.value.folder);
+
+                    if (comptime successFn == assignRootResolution) {
+                        // relative to cwd
+                        var buf2: bun.PathBuffer = undefined;
+                        const folder_path_abs = if (std.fs.path.isAbsolute(folder_path)) folder_path else blk: {
+                            break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{folder_path}, .auto);
+                        };
+                        break :brk FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
+                    }
+
+                    // transitive folder dependencies create a symlink relative to the package and don't resolve dependencies
+                    const buf = this.lockfile.buffers.string_bytes.items;
+                    const name_slice = name.slice(buf);
+                    var package = Lockfile.Package{};
+
+                    {
+                        // only need name and path
+                        var builder = this.lockfile.stringBuilder();
+
+                        builder.count(name_slice);
+                        builder.count(folder_path);
+
+                        builder.allocate() catch bun.outOfMemory();
+
+                        package.name = builder.append(String, name_slice);
+                        package.name_hash = name_hash;
+
+                        package.resolution = Resolution.init(.{
+                            .folder = builder.append(String, folder_path),
+                        });
+
+                        package.scripts.filled = true;
+                        package.meta.setHasInstallScript(false);
+
+                        builder.clamp();
+                    }
+
+                    // these are always new
+                    package = this.lockfile.appendPackage(package) catch bun.outOfMemory();
+
+                    break :brk .{
+                        .new_package_id = package.meta.id,
+                    };
                 };
-                const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -9161,17 +9197,38 @@ pub const PackageManager = struct {
                 },
                 .folder => {
                     const folder = resolution.value.folder.slice(buf);
-                    // Handle when a package depends on itself via file:
-                    // example:
-                    //   "mineflayer": "file:."
-                    if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
-                        installer.cache_dir_subpath = ".";
+
+                    if (this.current_tree_id == 0) {
+                        // Handle when a package depends on itself via file:
+                        // example:
+                        //   "mineflayer": "file:."
+                        if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                            installer.cache_dir_subpath = ".";
+                        } else {
+                            @memcpy(this.folder_path_buf[0..folder.len], folder);
+                            this.folder_path_buf[folder.len] = 0;
+                            installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
+                        }
+                        installer.cache_dir = std.fs.cwd();
                     } else {
-                        @memcpy(this.folder_path_buf[0..folder.len], folder);
-                        this.folder_path_buf[folder.len] = 0;
-                        installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
+                        // transitive folder dependencies are relative to their parent. they are not hoisted
+                        const dirname = strings.withoutTrailingSlash(std.fs.path.dirname(this.node_modules.path.items) orelse this.node_modules.path.items);
+
+                        if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                            @memcpy(this.folder_path_buf[0..dirname.len], dirname);
+                            this.folder_path_buf[dirname.len] = 0;
+                            installer.cache_dir_subpath = this.folder_path_buf[0..dirname.len :0];
+                        } else {
+                            const abs_target = Path.joinAbsStringBuf(dirname, &this.folder_path_buf, &[_]string{folder}, .auto);
+
+                            const target = FileSystem.instance.relative(this.node_modules.path.items, abs_target);
+
+                            @memcpy(this.folder_path_buf[0..target.len], target);
+                            this.folder_path_buf[target.len] = 0;
+                            installer.cache_dir_subpath = this.folder_path_buf[0..target.len :0];
+                        }
+                        installer.cache_dir = std.fs.cwd();
                     }
-                    installer.cache_dir = std.fs.cwd();
                 },
                 .local_tarball => {
                     installer.cache_dir_subpath = this.manager.cachedTarballFolderName(resolution.value.local_tarball);
@@ -9365,7 +9422,14 @@ pub const PackageManager = struct {
 
                 const install_result = switch (resolution.tag) {
                     .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
-                    else => installer.install(this.skip_delete, destination_dir),
+                    else => brk: {
+                        if (resolution.tag == .folder and this.current_tree_id != 0) {
+                            // transitive folder dependencies become symlinks
+                            break :brk installer.installWithDirectorySymlink(destination_dir);
+                        }
+
+                        break :brk installer.install(this.skip_delete, destination_dir);
+                    },
                 };
 
                 switch (install_result) {

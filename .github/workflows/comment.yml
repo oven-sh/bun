@@ -18,7 +18,6 @@ jobs:
         with:
           path: bun
           pattern: bun-*-tests
-          merge-multiple: true
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
       - name: Setup Environment

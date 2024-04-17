@@ -21,7 +21,7 @@ const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const ParseResult = bun.bundler.ParseResult;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Bundler = bun.Bundler;
@@ -33,46 +33,46 @@ const js_ast = bun.JSAst;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
-const ZigString = @import("root").bun.JSC.ZigString;
+const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../runtime.zig");
 const Router = @import("./api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const WebCore = @import("root").bun.JSC.WebCore;
+const WebCore = bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
-const js = @import("root").bun.JSC.C;
-const JSC = @import("root").bun.JSC;
+const js = bun.JSC.C;
+const JSC = bun.JSC;
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
-const JSValue = @import("root").bun.JSC.JSValue;
+const JSValue = bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
 
-const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
-const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
-const Node = @import("root").bun.JSC.Node;
-const ZigException = @import("root").bun.JSC.ZigException;
-const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = @import("root").bun.JSC.ErrorableResolvedSource;
-const ResolvedSource = @import("root").bun.JSC.ResolvedSource;
-const JSPromise = @import("root").bun.JSC.JSPromise;
-const JSInternalPromise = @import("root").bun.JSC.JSInternalPromise;
-const JSModuleLoader = @import("root").bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = @import("root").bun.JSC.JSPromiseRejectionOperation;
-const Exception = @import("root").bun.JSC.Exception;
-const ErrorableZigString = @import("root").bun.JSC.ErrorableZigString;
-const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
-const VM = @import("root").bun.JSC.VM;
-const JSFunction = @import("root").bun.JSC.JSFunction;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const ExceptionValueRef = bun.JSC.ExceptionValueRef;
+const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
+const ConsoleObject = bun.JSC.ConsoleObject;
+const Node = bun.JSC.Node;
+const ZigException = bun.JSC.ZigException;
+const ZigStackTrace = bun.JSC.ZigStackTrace;
+const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
+const ResolvedSource = bun.JSC.ResolvedSource;
+const JSPromise = bun.JSC.JSPromise;
+const JSInternalPromise = bun.JSC.JSInternalPromise;
+const JSModuleLoader = bun.JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
+const Exception = bun.JSC.Exception;
+const ErrorableZigString = bun.JSC.ErrorableZigString;
+const ZigGlobalObject = bun.JSC.ZigGlobalObject;
+const VM = bun.JSC.VM;
+const JSFunction = bun.JSC.JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
@@ -711,7 +711,7 @@ pub const ModuleLoader = struct {
 
     /// This must be called after calling transpileSourceCode
     pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
-        std.debug.assert(&jsc_vm.module_loader == this);
+        bun.assert(&jsc_vm.module_loader == this);
         if (this.transpile_source_code_arena) |arena| {
             if (jsc_vm.smol) {
                 _ = arena.reset(.free_all);
@@ -912,7 +912,7 @@ pub const ModuleLoader = struct {
                 this: *Queue,
                 package_id: Install.PackageID,
                 name: []const u8,
-                resolution: Install.Resolution,
+                resolution: *const Install.Resolution,
                 err: anyerror,
                 url: []const u8,
             ) void {
@@ -932,7 +932,7 @@ pub const ModuleLoader = struct {
                             record_ids[import_id],
                             .{
                                 .name = name,
-                                .resolution = resolution,
+                                .resolution = resolution.*,
                                 .err = err,
                                 .url = url,
                             },
@@ -948,7 +948,7 @@ pub const ModuleLoader = struct {
 
             pub fn pollModules(this: *Queue) void {
                 var pm = this.vm().packageManager();
-                if (pm.pending_tasks > 0) return;
+                if (pm.pending_tasks.load(.Monotonic) > 0) return;
 
                 var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
@@ -991,7 +991,7 @@ pub const ModuleLoader = struct {
                         }
 
                         const package = pm.lockfile.packages.get(package_id);
-                        std.debug.assert(package.resolution.tag != .root);
+                        bun.assert(package.resolution.tag != .root);
 
                         switch (pm.determinePreinstallState(package, pm.lockfile)) {
                             .done => {
@@ -2277,7 +2277,7 @@ pub const ModuleLoader = struct {
                 FetchFlags.transpile,
             ) catch |err| {
                 if (err == error.AsyncModule) {
-                    std.debug.assert(promise != null);
+                    bun.assert(promise != null);
                     return promise;
                 }
 
@@ -2483,7 +2483,7 @@ pub const ModuleLoader = struct {
     ) bool {
         JSC.markBinding(@src());
         const jsc_vm = globalObject.bunVM();
-        std.debug.assert(jsc_vm.plugin_runner != null);
+        bun.assert(jsc_vm.plugin_runner != null);
 
         var specifier_slice = specifier_ptr.toUTF8(jsc_vm.allocator);
         const specifier = specifier_slice.slice();

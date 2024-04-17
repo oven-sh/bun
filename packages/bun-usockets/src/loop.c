@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
@@ -338,7 +338,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
 
                 do {
                     const struct us_loop_t* loop = s->context->loop;
-                    int length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, MSG_DONTWAIT);
+                    #ifdef _WIN32
+                      const int recv_flags = MSG_PUSH_IMMEDIATE;
+                    #else
+                      const int recv_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
+                    #endif
+
+                    int length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
 
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
@@ -380,7 +386,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     }
 
                     break;
-                } while (1);
+                } while (s);
             }
 
             /* Such as epollerr epollhup */

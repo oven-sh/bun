@@ -31,7 +31,7 @@ pub const PercentEncoding = struct {
 
     /// returns true if str starts with a valid path character or a percent encoded octet
     pub fn isPchar(str: []const u8) bool {
-        if (comptime Environment.allow_assert) std.debug.assert(str.len > 0);
+        if (comptime Environment.allow_assert) bun.assert(str.len > 0);
         return switch (str[0]) {
             'a'...'z', 'A'...'Z', '0'...'9', '-', '.', '_', '~', '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', ':', '@' => true,
             '%' => str.len >= 3 and isHex(str[1]) and isHex(str[2]),

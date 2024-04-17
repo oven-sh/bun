@@ -155,7 +155,7 @@ pub const BunObject = struct {
 };
 
 const Bun = @This();
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const uv = bun.windows.libuv;
 const Environment = bun.Environment;
@@ -163,8 +163,8 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
@@ -173,7 +173,7 @@ const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
 const Bundler = bun.Bundler;
@@ -184,7 +184,7 @@ const js_ast = bun.JSAst;
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
-const ZigString = @import("root").bun.JSC.ZigString;
+const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../../runtime.zig");
 const Router = @import("./filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
@@ -192,37 +192,37 @@ const DotEnv = @import("../../env_loader.zig");
 const ParseResult = bun.bundler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
-const WebCore = @import("root").bun.JSC.WebCore;
+const WebCore = bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
-const js = @import("root").bun.JSC.C;
-const JSC = @import("root").bun.JSC;
+const js = bun.JSC.C;
+const JSC = bun.JSC;
 const JSError = @import("../base.zig").JSError;
 
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
-const JSValue = @import("root").bun.JSC.JSValue;
+const JSValue = bun.JSC.JSValue;
 
-const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
-const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
-const Node = @import("root").bun.JSC.Node;
-const ZigException = @import("root").bun.JSC.ZigException;
-const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = @import("root").bun.JSC.ErrorableResolvedSource;
-const ResolvedSource = @import("root").bun.JSC.ResolvedSource;
-const JSPromise = @import("root").bun.JSC.JSPromise;
-const JSInternalPromise = @import("root").bun.JSC.JSInternalPromise;
-const JSModuleLoader = @import("root").bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = @import("root").bun.JSC.JSPromiseRejectionOperation;
-const Exception = @import("root").bun.JSC.Exception;
-const ErrorableZigString = @import("root").bun.JSC.ErrorableZigString;
-const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
-const VM = @import("root").bun.JSC.VM;
-const JSFunction = @import("root").bun.JSC.JSFunction;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const ExceptionValueRef = bun.JSC.ExceptionValueRef;
+const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
+const ConsoleObject = bun.JSC.ConsoleObject;
+const Node = bun.JSC.Node;
+const ZigException = bun.JSC.ZigException;
+const ZigStackTrace = bun.JSC.ZigStackTrace;
+const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
+const ResolvedSource = bun.JSC.ResolvedSource;
+const JSPromise = bun.JSC.JSPromise;
+const JSInternalPromise = bun.JSC.JSInternalPromise;
+const JSModuleLoader = bun.JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
+const Exception = bun.JSC.Exception;
+const ErrorableZigString = bun.JSC.ErrorableZigString;
+const ZigGlobalObject = bun.JSC.ZigGlobalObject;
+const VM = bun.JSC.VM;
+const JSFunction = bun.JSC.JSFunction;
 const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const Transpiler = bun.JSC.API.JSTranspiler;
@@ -563,11 +563,18 @@ pub fn which(
     path_str = ZigString.Slice.fromUTF8NeverFree(
         globalThis.bunVM().bundler.env.get("PATH") orelse "",
     );
+    cwd_str = ZigString.Slice.fromUTF8NeverFree(
+        globalThis.bunVM().bundler.fs.top_level_dir,
+    );
 
     if (arguments.nextEat()) |arg| {
         if (!arg.isEmptyOrUndefinedOrNull() and arg.isObject()) {
             if (arg.get(globalThis, "PATH")) |str_| {
                 path_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
+            }
+
+            if (arg.get(globalThis, "cwd")) |str_| {
+                cwd_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
             }
         }
     }
@@ -575,6 +582,7 @@ pub fn which(
     if (Which.which(
         &path_buf,
         path_str.slice(),
+        cwd_str.slice(),
         bin_str.slice(),
     )) |bin_path| {
         return ZigString.init(bin_path).withEncoding().toValueGC(globalThis);
@@ -1203,6 +1211,19 @@ export fn Bun__resolveSync(
     };
 }
 
+export fn Bun__resolveSyncWithStrings(
+    global: *JSGlobalObject,
+    specifier: *bun.String,
+    source: *bun.String,
+    is_esm: bool,
+) JSC.JSValue {
+    Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
+    var exception = [1]JSC.JSValueRef{null};
+    return doResolveWithArgs(global, specifier.*, source.*, &exception, is_esm, true) orelse {
+        return JSC.JSValue.fromRef(exception[0]);
+    };
+}
+
 export fn Bun__resolveSyncWithSource(
     global: *JSGlobalObject,
     specifier: JSValue,
@@ -1217,14 +1238,6 @@ export fn Bun__resolveSyncWithSource(
     return doResolveWithArgs(global, specifier_str, source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
-}
-
-comptime {
-    if (!is_bindgen) {
-        _ = Bun__resolve;
-        _ = Bun__resolveSync;
-        _ = Bun__resolveSyncWithSource;
-    }
 }
 
 pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1946,7 +1959,7 @@ pub const Crypto = struct {
             algorithm: PasswordObject.Algorithm.Value,
             comptime sync: bool,
         ) JSC.JSValue {
-            std.debug.assert(password.len > 0); // caller must check
+            assert(password.len > 0); // caller must check
 
             if (comptime sync) {
                 const value = HashJob.getValue(password, algorithm);
@@ -1988,7 +2001,7 @@ pub const Crypto = struct {
             algorithm: ?PasswordObject.Algorithm,
             comptime sync: bool,
         ) JSC.JSValue {
-            std.debug.assert(password.len > 0); // caller must check
+            assert(password.len > 0); // caller must check
 
             if (comptime sync) {
                 const value = VerifyJob.getValue(password, prev_hash, algorithm);
@@ -2954,7 +2967,7 @@ pub fn serve(
 }
 
 pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u16, len: usize) JSValue {
-    std.debug.assert(len > 0);
+    assert(len > 0);
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
@@ -2969,7 +2982,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
         .allocated => |escaped_html| {
             if (comptime Environment.allow_assert) {
                 // assert that re-encoding the string produces the same result
-                std.debug.assert(
+                assert(
                     std.mem.eql(
                         u16,
                         (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false, false) catch unreachable).?,
@@ -2978,7 +2991,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
                 );
 
                 // assert we do not allocate a new string unnecessarily
-                std.debug.assert(
+                assert(
                     !std.mem.eql(
                         u16,
                         input_slice,
@@ -2987,7 +3000,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
                 );
 
                 // the output should always be longer than the input
-                std.debug.assert(escaped_html.len > input_slice.len);
+                assert(escaped_html.len > input_slice.len);
             }
 
             return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
@@ -2996,7 +3009,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
 }
 
 pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u8, len: usize) JSValue {
-    std.debug.assert(len > 0);
+    assert(len > 0);
 
     const input_slice = ptr[0..len];
     var stack_allocator = std.heap.stackFallback(256, globalObject.bunVM().allocator);
@@ -3015,10 +3028,10 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
         .allocated => |escaped_html| {
             if (comptime Environment.allow_assert) {
                 // the output should always be longer than the input
-                std.debug.assert(escaped_html.len > input_slice.len);
+                assert(escaped_html.len > input_slice.len);
 
                 // assert we do not allocate a new string unnecessarily
-                std.debug.assert(
+                assert(
                     !std.mem.eql(
                         u8,
                         input_slice,
@@ -3283,7 +3296,7 @@ pub fn getShellConstructor(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
-    return JSC.API.Shell.eval.Interpreter.getConstructor(globalThis);
+    return JSC.API.Shell.Interpreter.getConstructor(globalThis);
 }
 
 pub fn getGlobConstructor(
@@ -3397,7 +3410,7 @@ const TOMLObject = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        var arena = @import("root").bun.ArenaAllocator.init(globalThis.allocator());
+        var arena = bun.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
         defer arena.deinit();
         var log = logger.Log.init(default_allocator);
@@ -3468,7 +3481,7 @@ pub const Timer = struct {
         return VirtualMachine.get().timer.last_id;
     }
 
-    const uws = @import("root").bun.uws;
+    const uws = bun.uws;
 
     // TODO: reference count to avoid multiple Strong references to the same
     // object in setInterval
@@ -3900,7 +3913,7 @@ pub const Timer = struct {
                 if (comptime Environment.allow_assert)
                     // If this is ever -1, it's invalid.
                     // It should always be at least 1.
-                    std.debug.assert(this.interval > 0);
+                    assert(this.interval > 0);
 
                 if (!Timeout.runFromConcurrentTask(timer_id, vm, this, reschedule) or this.cancelled) {
                     this.deinit();
@@ -3931,7 +3944,7 @@ pub const Timer = struct {
             }
 
             pub fn schedule(this: *TimerReference, interval: ?i32) void {
-                std.debug.assert(!this.cancelled);
+                assert(!this.cancelled);
                 _ = this.scheduled_count.fetchAdd(1, .Monotonic);
                 const ms: usize = @max(interval orelse this.interval, 1);
                 if (Environment.isWindows) {
@@ -4761,7 +4774,7 @@ pub const FFIObject = struct {
 
         var addr: usize = @intFromPtr(array_buffer.ptr);
         // const Sizes = @import("../bindings/sizes.zig");
-        // std.debug.assert(addr == @intFromPtr(value.asEncoded().ptr) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector);
+        // assert(addr == @intFromPtr(value.asEncoded().ptr) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector);
 
         if (byteOffset) |off| {
             if (!off.isEmptyOrUndefinedOrNull()) {
@@ -4795,7 +4808,7 @@ pub const FFIObject = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(JSC.JSValue.fromPtrAddress(addr).asPtrAddress() == addr);
+            assert(JSC.JSValue.fromPtrAddress(addr).asPtrAddress() == addr);
         }
 
         return JSC.JSValue.fromPtrAddress(addr);
@@ -5268,3 +5281,5 @@ comptime {
     _ = Crypto.JSPasswordObject.JSPasswordObject__create;
     BunObject.exportAll();
 }
+
+const assert = bun.assert;

@@ -1,7 +1,7 @@
 /// This file is mostly the API schema but with all the options normalized.
 /// Normalization is necessary because most fields in the API schema are optional
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Fs = @import("fs.zig");
 
 const resolver = @import("./resolver/resolver.zig");
@@ -23,14 +23,14 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 pub const WriteDestination = enum {
     stdout,
@@ -712,7 +712,7 @@ pub const Loader = enum(u8) {
         map.set(Loader.wasm, "input.wasm");
         map.set(Loader.napi, "input.node");
         map.set(Loader.text, "input.txt");
-        map.set(Loader.bunsh, "input.bunsh");
+        map.set(Loader.bunsh, "input.sh");
         break :brk map;
     };
 
@@ -757,7 +757,7 @@ pub const Loader = enum(u8) {
         .{ "base64", Loader.base64 },
         .{ "txt", Loader.text },
         .{ "text", Loader.text },
-        .{ "bunsh", Loader.bunsh },
+        .{ "sh", Loader.bunsh },
         .{ "sqlite", Loader.sqlite },
         .{ "sqlite_embedded", Loader.sqlite_embedded },
     });
@@ -781,7 +781,7 @@ pub const Loader = enum(u8) {
         .{ "base64", Api.Loader.base64 },
         .{ "txt", Api.Loader.text },
         .{ "text", Api.Loader.text },
-        .{ "bunsh", Api.Loader.file },
+        .{ "sh", Api.Loader.file },
         .{ "sqlite", Api.Loader.sqlite },
     });
 
@@ -822,6 +822,7 @@ pub const Loader = enum(u8) {
 
     pub fn fromAPI(loader: Api.Loader) Loader {
         return switch (loader) {
+            ._none => .file,
             .jsx => .jsx,
             .js => .js,
             .ts => .ts,
@@ -836,7 +837,7 @@ pub const Loader = enum(u8) {
             .dataurl => .dataurl,
             .text => .text,
             .sqlite => .sqlite,
-            else => .file,
+            _ => .file,
         };
     }
 
@@ -1187,7 +1188,7 @@ pub fn definesFromTransformOptions(
         const framework = framework_env orelse break :load_env;
 
         if (Environment.allow_assert) {
-            std.debug.assert(framework.behavior != ._none);
+            bun.assert(framework.behavior != ._none);
         }
 
         behavior = framework.behavior;
@@ -2305,7 +2306,7 @@ pub const EntryPoint = struct {
     }
 
     fn normalizedPath(this: *const EntryPoint, allocator: std.mem.Allocator, toplevel_path: string) !string {
-        std.debug.assert(std.fs.path.isAbsolute(this.path));
+        bun.assert(std.fs.path.isAbsolute(this.path));
         var str = this.path;
         if (strings.indexOf(str, toplevel_path)) |top| {
             str = str[top + toplevel_path.len ..];
@@ -2644,7 +2645,7 @@ pub const PathTemplate = struct {
 
                 if (count == 0) {
                     end_len = @intFromPtr(c) - @intFromPtr(remain.ptr);
-                    std.debug.assert(end_len <= remain.len);
+                    bun.assert(end_len <= remain.len);
                     break;
                 }
             }

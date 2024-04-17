@@ -3,8 +3,8 @@ const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.http;
-const JSC = @import("root").bun.JSC;
+const HTTPClient = bun.http;
+const JSC = bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
@@ -12,12 +12,12 @@ const FetchHeaders = JSC.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
@@ -37,9 +37,9 @@ const NullableAllocator = @import("../../nullable_allocator.zig").NullableAlloca
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 const InlineBlob = JSC.WebCore.InlineBlob;
 const AnyBlob = JSC.WebCore.AnyBlob;
@@ -372,7 +372,7 @@ pub const Request = struct {
                     });
 
                     if (comptime Environment.allow_assert) {
-                        std.debug.assert(this.sizeOfURL() == url_bytelength);
+                        bun.assert(this.sizeOfURL() == url_bytelength);
                     }
 
                     if (url_bytelength < 128) {
@@ -384,7 +384,7 @@ pub const Request = struct {
                         }) catch @panic("Unexpected error while printing URL");
 
                         if (comptime Environment.allow_assert) {
-                            std.debug.assert(this.sizeOfURL() == url.len);
+                            bun.assert(this.sizeOfURL() == url.len);
                         }
 
                         var href = bun.JSC.URL.hrefFromString(bun.String.fromBytes(url));
@@ -434,7 +434,7 @@ pub const Request = struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.sizeOfURL() == req_url.len);
+                bun.assert(this.sizeOfURL() == req_url.len);
             }
             this.url = bun.String.createUTF8(req_url);
         }

@@ -144,7 +144,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
         size_t len = Bun__getEnvKey(list, i, &chars);
-        auto name = String::fromUTF8(chars, len);
+        auto name = String::fromUTF8(std::span { chars, len });
 #if OS(WINDOWS)
         keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
 #endif

@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const C = bun.C;
 const string = bun.string;
 const strings = bun.strings;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
@@ -865,7 +865,7 @@ pub const OS = struct {
 /// `@TypeOf(mask)` must be one of u32 (IPv4) or u128 (IPv6)
 fn netmaskToCIDRSuffix(mask: anytype) ?u8 {
     const T = @TypeOf(mask);
-    comptime std.debug.assert(T == u32 or T == u128);
+    comptime bun.assert(T == u32 or T == u128);
 
     const mask_bits = @byteSwap(mask);
 

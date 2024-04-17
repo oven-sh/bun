@@ -1,13 +1,13 @@
 {
-    "name": "napitests",
-    "version": "1.0.0",
-    "gypfile": true,
-    "scripts": {
-        "build": "node-gyp rebuild",
-        "clean": "node-gyp clean"
-    },
-    "devDependencies": {
-        "node-gyp": "^10.0.1",
-        "node-addon-api": "^7.0.0"
-    }
+  "name": "napitests",
+  "version": "1.0.0",
+  "gypfile": true,
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.1.0",
+    "node-addon-api": "^8.0.0"
+  }
 }

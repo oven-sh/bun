@@ -1,0 +1,11 @@
+{
+  "std.debug.assert": "Use bun.assert instead",
+  "@import(\"root\").bun.": "Only import 'bun' once",
+  "std.mem.indexOfAny": "Use bun.strings.indexAny or bun.strings.indexAnyComptime",
+  "std.debug.print": "Don't let this be committed",
+  " == undefined": "This is by definition Undefined Behavior.",
+  " != undefined": "This is by definition Undefined Behavior.",
+  "undefined == ": "This is by definition Undefined Behavior.",
+  "undefined != ": "This is by definition Undefined Behavior.",
+  "": ""
+}

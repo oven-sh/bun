@@ -47,22 +47,6 @@ pub const String = extern struct {
         };
     }
 
-    pub inline fn init(
-        buf: string,
-        in: string,
-    ) String {
-        if (comptime Environment.allow_assert) {
-            const out = realInit(buf, in);
-            if (!out.isInline()) {
-                std.debug.assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
-            }
-
-            return out;
-        } else {
-            return realInit(buf, in);
-        }
-    }
-
     pub const Formatter = struct {
         str: *const String,
         buf: string,
@@ -150,7 +134,7 @@ pub const String = extern struct {
         }
     };
 
-    fn realInit(
+    pub fn init(
         buf: string,
         in: string,
     ) String {
@@ -254,7 +238,7 @@ pub const String = extern struct {
             in: string,
         ) Pointer {
             if (Environment.allow_assert) {
-                std.debug.assert(bun.isSliceInBuffer(in, buf));
+                assert(bun.isSliceInBuffer(in, buf));
             }
 
             return Pointer{
@@ -350,15 +334,15 @@ pub const String = extern struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
             bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
             this.len += slice_.len;
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -385,15 +369,15 @@ pub const String = extern struct {
                 }
             }
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
             bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
             this.len += slice_.len;
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -420,8 +404,8 @@ pub const String = extern struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
             const string_entry = this.string_pool.getOrPut(hash) catch unreachable;
@@ -433,7 +417,7 @@ pub const String = extern struct {
                 string_entry.value_ptr.* = String.init(this.allocatedSlice(), final_slice);
             }
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -550,7 +534,7 @@ pub const BigExternalString = extern struct {
     }
 
     pub inline fn init(buf: string, in: string, hash: u64) BigExternalString {
-        std.debug.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
+        assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
 
         return BigExternalString{
             .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
@@ -579,7 +563,7 @@ pub const SlicedString = struct {
 
     pub inline fn external(this: SlicedString) ExternalString {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+            assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
         }
 
         return ExternalString.init(this.buf, this.slice, bun.Wyhash11.hash(0, this.slice));
@@ -587,7 +571,7 @@ pub const SlicedString = struct {
 
     pub inline fn value(this: SlicedString) String {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+            assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
         }
 
         return String.init(this.buf, this.slice);
@@ -961,14 +945,14 @@ pub const Version = extern struct {
                             .pre => {
                                 result.tag.pre = sliced_string.sub(input[start..i]).external();
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
+                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
                                 }
                                 state = State.none;
                             },
                             .build => {
                                 result.tag.build = sliced_string.sub(input[start..i]).external();
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
+                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
                                 }
                                 state = State.none;
                             },
@@ -1244,7 +1228,7 @@ pub const Version = extern struct {
         var bytes: [10]u8 = undefined;
         var byte_i: u8 = 0;
 
-        std.debug.assert(input[0] != '.');
+        assert(input[0] != '.');
 
         for (input) |char| {
             switch (char) {
@@ -1436,7 +1420,7 @@ pub const Range = struct {
 
     pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_buf: string, pre_matched: *bool) bool {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(version.tag.hasPre());
+            assert(version.tag.hasPre());
         }
         const has_left = range.hasLeft();
         const has_right = range.hasRight();
@@ -1511,7 +1495,7 @@ pub const Query = struct {
 
         pub fn satisfiesPre(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(version.tag.hasPre());
+                assert(version.tag.hasPre());
             }
 
             // `version` has a prerelease tag:
@@ -1595,7 +1579,7 @@ pub const Query = struct {
                 !range.hasRight())
             {
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(this.tail == null);
+                    assert(this.tail == null);
                 }
                 return range.left.version;
             }
@@ -1630,7 +1614,7 @@ pub const Query = struct {
         }
 
         pub fn toVersion(this: Group) Version {
-            std.debug.assert(this.isExact() or this.head.head.range.left.op == .unset);
+            assert(this.isExact() or this.head.head.range.left.op == .unset);
             return this.head.head.range.left.version;
         }
 
@@ -1707,7 +1691,7 @@ pub const Query = struct {
 
     pub fn satisfiesPre(query: *const Query, version: Version, query_buf: string, version_buf: string, pre_matched: *bool) bool {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(version.tag.hasPre());
+            assert(version.tag.hasPre());
         }
         return query.range.satisfiesPre(
             version,
@@ -2299,8 +2283,8 @@ const expect = if (Environment.isTest) struct {
     pub var counter: usize = 0;
     pub fn isRangeMatch(input: string, version_str: string) bool {
         var parsed = Version.parse(SlicedString.init(version_str, version_str));
-        std.debug.assert(parsed.valid);
-        // std.debug.assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
+        assert(parsed.valid);
+        // assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
 
         var list = Query.parse(
             default_allocator,
@@ -2350,7 +2334,7 @@ const expect = if (Environment.isTest) struct {
         Output.initTest();
         defer counter += 1;
         const result = Version.parse(SlicedString.init(input, input));
-        std.debug.assert(result.valid);
+        assert(result.valid);
 
         if (v[0] != result.version.major or v[1] != result.version.minor or v[2] != result.version.patch) {
             Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
@@ -2673,3 +2657,5 @@ test "Range parsing" {
     expect.range("5.0 || 1.2 - 1.3", "5.0.2", @src());
     expect.range("5.0 || 1.2 - 1.3 || >8", "9.0.2", @src());
 }
+
+const assert = bun.assert;

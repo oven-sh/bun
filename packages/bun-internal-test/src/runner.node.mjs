@@ -1,10 +1,9 @@
 import * as action from "@actions/core";
 import { spawn, spawnSync } from "child_process";
-import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, close, closeSync } from "fs";
-import { readFile, rm } from "fs/promises";
+import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, closeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
-import { constants, cpus, hostname, tmpdir, totalmem, userInfo } from "os";
+import { cpus, hostname, tmpdir, totalmem, userInfo } from "os";
 import { join, normalize } from "path";
 import { fileURLToPath } from "url";
 import PQueue from "p-queue";
@@ -24,7 +23,6 @@ function defaultConcurrency() {
 }
 
 const windows = process.platform === "win32";
-const KEEP_TMPDIR = process.env["BUN_KEEP_TMPDIR"] === "1";
 const nativeMemory = totalmem();
 const force_ram_size_input = parseInt(process.env["BUN_JSC_forceRAMSize"] || "0", 10);
 let force_ram_size = Number(BigInt(nativeMemory) >> BigInt(2)) + "";
@@ -240,6 +238,7 @@ Starting "${name}"
           BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
           GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
           BUN_DEBUG_QUIET_LOGS: "1",
+          BUN_INSTALL_CACHE_DIR: join(TMPDIR, ".bun-install-cache"),
           [windows ? "TEMP" : "TMPDIR"]: TMPDIR,
         },
       });
@@ -360,9 +359,9 @@ Starting "${name}"
   }
 
   console.log(
-    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
-      passed ? "\x1b[32m✔" : "\x1b[31m✖"
-    } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
+    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${passed ? "\x1b[32m✔" : "\x1b[31m✖"} ${name}\x1b[0m${
+      reason ? ` (${reason})` : ""
+    }`,
   );
 
   finished++;
@@ -496,9 +495,17 @@ if (failing_tests.length) {
     report += "[Link to file](" + linkToGH(path) + ")\n\n";
     report += `${reason}\n\n`;
     report += "```\n";
-    report += output
+
+    let failing_output = output
       .replace(/\x1b\[[0-9;]*m/g, "")
       .replace(/^::(group|endgroup|error|warning|set-output|add-matcher|remove-matcher).*$/gm, "");
+
+    if (failing_output.length > 1024 * 64) {
+      failing_output = failing_output.slice(0, 1024 * 64) + `\n\n[truncated output (length: ${failing_output.length})]`;
+    }
+
+    report += failing_output;
+
     report += "```\n\n";
   }
 }
@@ -520,6 +527,14 @@ if (ci) {
   }
   action.setOutput("failing_tests", failingTestDisplay);
   action.setOutput("failing_tests_count", failing_tests.length);
+  if (failing_tests.length) {
+    const tag = action.getInput("tag") || "unknown";
+    let comment = `There are ${failing_tests.length} failing tests on bun-${tag}.
+
+${failingTestDisplay}
+`;
+    writeFileSync("comment.md", comment);
+  }
   let truncated_report = report;
   if (truncated_report.length > 512 * 1000) {
     truncated_report = truncated_report.slice(0, 512 * 1000) + "\n\n...truncated...";

@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -28,7 +28,7 @@ const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("root").bun.http;
+const HTTP = bun.http;
 
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
@@ -37,9 +37,9 @@ const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
-const clap = @import("root").bun.clap;
+const clap = bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("root").bun.http.Headers;
+const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
@@ -378,7 +378,7 @@ pub const CreateCommand = struct {
                 progress.refresh();
 
                 var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
-                    [1]Archive.Plucker{try Archive.Plucker.init("package.json", 2048, ctx.allocator)}
+                    [1]Archive.Plucker{try Archive.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
                 else
                     [1]Archive.Plucker{undefined};
 
@@ -597,7 +597,7 @@ pub const CreateCommand = struct {
             var parent_dir = try std.fs.openDirAbsolute(destination, .{});
             defer parent_dir.close();
             if (comptime Environment.isWindows) {
-                try parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{});
+                parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{}) catch {};
             } else {
                 std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
             }
@@ -1564,7 +1564,7 @@ pub const CreateCommand = struct {
         Output.flush();
 
         if (create_options.open) {
-            if (which(&bun_path_buf, PATH, "bun")) |bin| {
+            if (which(&bun_path_buf, PATH, destination, "bun")) |bin| {
                 var argv = [_]string{bun.asByteSlice(bin)};
                 var child = std.ChildProcess.init(&argv, ctx.allocator);
                 child.cwd = destination;
@@ -1693,7 +1693,7 @@ const Commands = .{
     &[_]string{""},
     &[_]string{""},
 };
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,
@@ -2289,7 +2289,7 @@ const GitHandler = struct {
         //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
         //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
 
-        if (which(&bun_path_buf, PATH, "git")) |git| {
+        if (which(&bun_path_buf, PATH, destination, "git")) |git| {
             const git_commands = .{
                 &[_]string{ git, "init", "--quiet" },
                 &[_]string{ git, "add", destination, "--ignore-errors" },

@@ -186,6 +186,10 @@ private:
     }
 };
 
+#if OS(WINDOWS)
+extern "C" void Bun__setCTRLHandler(BOOL add);
+#endif
+
 const ClassInfo TTYWrapObject::s_info = {
     "LibuvStreamWrap"_s,
 
@@ -198,6 +202,9 @@ extern "C" int Bun__ttySetMode(int fd, int mode);
 
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+#if OS(WINDOWS)
+    RELEASE_ASSERT_NOT_REACHED();
+#else
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -217,15 +224,6 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     auto fdToUse = fd.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-#if OS(WINDOWS)
-    if (fdToUse > -1 && fdToUse < 3) {
-        int err = uv_tty_set_mode(getSharedHandle(fdToUse, static_cast<Zig::GlobalObject*>(globalObject)->uvLoop()), mode.isTrue() ? UV_TTY_MODE_RAW : UV_TTY_MODE_NORMAL);
-        return JSValue::encode(jsNumber(err));
-    } else {
-        // TODO:
-        return JSValue::encode(jsNumber(0));
-    }
-#else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fdToUse, mode.toInt32(globalObject));
     return JSValue::encode(jsNumber(err));
@@ -257,6 +255,10 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     }
 
 #if OS(WINDOWS)
+    if (mode.toInt32(globalObject) == 0) {
+        Bun__setCTRLHandler(1);
+    }
+
     int err = uv_tty_set_mode(ttyWrap->handle->tty(), mode.toInt32(globalObject));
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.

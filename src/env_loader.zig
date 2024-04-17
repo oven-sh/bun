@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -66,14 +66,14 @@ pub const Loader = struct {
         return strings.eqlComptime(env, "test");
     }
 
-    pub fn getNodePath(this: *Loader, buf: *bun.PathBuffer) ?[:0]const u8 {
+    pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *bun.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
             @memcpy(buf[0..node.len], node);
             buf[node.len] = 0;
             return buf[0..node.len :0];
         }
 
-        if (which(buf, this.get("PATH") orelse return null, "node")) |node| {
+        if (which(buf, this.get("PATH") orelse return null, fs.top_level_dir, "node")) |node| {
             return node;
         }
 
@@ -180,15 +180,15 @@ pub const Loader = struct {
 
     var did_load_ccache_path: bool = false;
 
-    pub fn loadCCachePath(this: *Loader) void {
+    pub fn loadCCachePath(this: *Loader, fs: *Fs.FileSystem) void {
         if (did_load_ccache_path) {
             return;
         }
         did_load_ccache_path = true;
-        loadCCachePathImpl(this) catch {};
+        loadCCachePathImpl(this, fs) catch {};
     }
 
-    fn loadCCachePathImpl(this: *Loader) !void {
+    fn loadCCachePathImpl(this: *Loader, fs: *Fs.FileSystem) !void {
 
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
@@ -196,6 +196,7 @@ pub const Loader = struct {
         const ccache_path = bun.which(
             &buf,
             this.get("PATH") orelse return,
+            fs.top_level_dir,
             "ccache",
         ) orelse "";
 
@@ -228,7 +229,7 @@ pub const Loader = struct {
             if (node_path_to_use_set_once.len > 0) {
                 node_path_to_use = node_path_to_use_set_once;
             } else {
-                const node = this.getNodePath(&buf) orelse return false;
+                const node = this.getNodePath(fs, &buf) orelse return false;
                 node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
             }
         }
@@ -299,14 +300,14 @@ pub const Loader = struct {
 
         if (behavior != .disable and behavior != .load_all_without_inlining) {
             if (behavior == .prefix) {
-                std.debug.assert(prefix.len > 0);
+                bun.assert(prefix.len > 0);
 
                 while (iter.next()) |entry| {
                     if (strings.startsWith(entry.key_ptr.*, prefix)) {
                         key_buf_len += entry.key_ptr.len;
                         key_count += 1;
                         e_strings_to_allocate += 1;
-                        std.debug.assert(entry.key_ptr.len > 0);
+                        bun.assert(entry.key_ptr.len > 0);
                     }
                 }
             } else {
@@ -316,7 +317,7 @@ pub const Loader = struct {
                         key_count += 1;
                         e_strings_to_allocate += 1;
 
-                        std.debug.assert(entry.key_ptr.len > 0);
+                        bun.assert(entry.key_ptr.len > 0);
                     }
                 }
             }
@@ -359,7 +360,7 @@ pub const Loader = struct {
                         } else {
                             const hash = bun.hash(entry.key_ptr.*);
 
-                            std.debug.assert(hash != invalid_hash);
+                            bun.assert(hash != invalid_hash);
 
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
                                 e_strings[0] = js_ast.E.String{
@@ -861,7 +862,7 @@ const Parser = struct {
     }
 
     fn parseQuoted(this: *Parser, comptime quote: u8) ?string {
-        if (comptime Environment.allow_assert) std.debug.assert(this.src[this.pos] == quote);
+        if (comptime Environment.allow_assert) bun.assert(this.src[this.pos] == quote);
         const start = this.pos;
         const max_len = value_buffer.len;
         var end = start + 1;
@@ -882,7 +883,7 @@ const Parser = struct {
                         while (i < end and ptr < max_len) {
                             switch (this.src[i]) {
                                 '\\' => if (comptime quote == '"') {
-                                    if (comptime Environment.allow_assert) std.debug.assert(i + 1 < end);
+                                    if (comptime Environment.allow_assert) bun.assert(i + 1 < end);
                                     switch (this.src[i + 1]) {
                                         'n' => {
                                             value_buffer[ptr] = '\n';
@@ -1096,7 +1097,7 @@ pub const Map = struct {
                 bun.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
                 envp_buf[i] = env_buf.ptr;
             }
-            if (comptime Environment.allow_assert) std.debug.assert(i == envp_count);
+            if (comptime Environment.allow_assert) bun.assert(i == envp_count);
         }
         return envp_buf;
     }
@@ -1165,7 +1166,7 @@ pub const Map = struct {
 
     pub inline fn put(this: *Map, key: string, value: string) !void {
         if (Environment.isWindows and Environment.allow_assert) {
-            std.debug.assert(bun.strings.indexOfChar(key, '\x00') == null);
+            bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
         }
         try this.map.put(key, .{
             .value = value,

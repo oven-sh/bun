@@ -220,7 +220,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
 
         pub inline fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
             if (comptime Environment.isWindows) {
-                if (rc != 0) return null;
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
             }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
@@ -246,7 +248,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
 
         pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             if (comptime Environment.isWindows) {
-                if (rc != 0) return null;
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
             }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
@@ -266,7 +270,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                 @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
             }
             if (comptime Environment.isWindows) {
-                if (rc != 0) return null;
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
             }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
@@ -924,12 +930,9 @@ pub const Valid = struct {
             0...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
-                    .{},
-                    ctx,
-                    exception,
-                );
+                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(zig_str.slice()).toSystemError();
+                system_error.syscall = bun.String.dead;
+                exception.* = system_error.toErrorInstance(ctx).asObjectRef();
                 return false;
             },
         }
@@ -942,12 +945,9 @@ pub const Valid = struct {
             0...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
-                    .{},
-                    ctx,
-                    exception,
-                );
+                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
+                system_error.syscall = bun.String.dead;
+                exception.* = system_error.toErrorInstance(ctx).asObjectRef();
                 return false;
             },
         }
@@ -968,14 +968,9 @@ pub const Valid = struct {
             },
 
             else => {
-
-                // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path buffer: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
-                    .{},
-                    ctx,
-                    exception,
-                );
+                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
+                system_error.syscall = bun.String.dead;
+                exception.* = system_error.toErrorInstance(ctx).asObjectRef();
                 return false;
             },
             1...bun.MAX_PATH_BYTES => return true,

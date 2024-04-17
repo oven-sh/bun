@@ -29,7 +29,7 @@ on:
 
 jobs:
   test:
-    name: Test
+    name: Run Tests
     runs-on: ${{ inputs.runs-on }}
     steps:
       - name: Checkout
@@ -75,7 +75,15 @@ jobs:
         shell: bash
         run: |
           bun install
+      - name: Install Dependencies (test)
+        timeout-minutes: 5
+        shell: bash
+        run: |
           bun install --cwd test
+      - name: Install Dependencies (runner)
+        timeout-minutes: 5
+        shell: bash
+        run: |
           bun install --cwd packages/bun-internal-test
       - name: Run Tests
         id: test
@@ -115,7 +123,7 @@ jobs:
 
             ${{ steps.test.outputs.failing_tests }}
 
-            **[View logs](${{ github.event.workflow_run.logs_url }})**
+            **[View logs](${{ github.event.workflow_run.html_url }})**
       - name: Fail
         if: ${{ failure() }}
         run: |

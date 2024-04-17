@@ -774,6 +774,36 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     return listenFd;
 }
 
+int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(struct addrinfo));
+
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    char port_string[16];
+    snprintf(port_string, 16, "%d", port);
+
+    if (getaddrinfo(host, port_string, &hints, &result)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
+    struct addrinfo *listenAddr = NULL;
+    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
+        if (a->ai_family == AF_INET6) {
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            listenAddr = a;
+        }
+    }
+
+    if (listenFd == LIBUS_SOCKET_ERROR) {
+        freeaddrinfo(result);
+        return LIBUS_SOCKET_ERROR;
+    }
+}
+
 int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
 
 #if defined(_WIN32) || defined(__APPLE__)

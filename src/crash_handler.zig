@@ -119,7 +119,7 @@ pub fn crashHandler(
                 //
                 // To make the release-mode behavior easier to demo, debug mode
                 // checks for this CLI flag.
-                const debug_trace = check_flag: {
+                const debug_trace = bun.Environment.isDebug or check_flag: {
                     for (bun.argv) |arg| {
                         if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
                             break :check_flag false;
@@ -1069,7 +1069,7 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
         //
         // To make the release-mode behavior easier to demo, debug mode
         // checks for this CLI flag.
-        const is_debug = check_flag: {
+        const is_debug = bun.Environment.isDebug or check_flag: {
             for (bun.argv) |arg| {
                 if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
                     break :check_flag false;
@@ -1107,11 +1107,10 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
             if (is_root) {
                 Output.prettyErrorln(
                     \\
-                    \\The trace for the above error has been captured as a URL,
-                    \\which will direct you to fill out a GitHub issue for Bun.
-                    \\This trace only includes functions in Bun, and contains none
-                    \\of your code data:
-                    \\<cyan>{}<r>
+                    \\To send a redacted crash report to Bun's team,
+                    \\please file a GitHub issue using the link below:
+                    \\
+                    \\ <cyan>{}<r>
                     \\
                 ,
                     .{ts},

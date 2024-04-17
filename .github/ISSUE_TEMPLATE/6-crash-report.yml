@@ -6,17 +6,15 @@ body:
     attributes:
       value: |
         Thank you for submitting a crash report. It helps make Bun better.
-        someone should write better text in here please
 
   - type: textarea
     id: remapped_trace
     attributes:
       label: Stack Trace
-      description: auto fill
     validations:
       required: true
 
   - type: textarea
     attributes:
-      label: fsdfasdfasdfa
+      label: Any extra info?
       description: If this is a reproducible bug, please provide a code snippet or list of steps that can reproduce it.

@@ -2354,13 +2354,6 @@ pub const ModuleLoader = struct {
                     if (!Environment.isDebug) {
                         if (!is_allowed_to_use_internal_testing_apis)
                             return null;
-                        const is_outside_our_ci = brk: {
-                            const repo = jsc_vm.bundler.env.get("GITHUB_REPOSITORY") orelse break :brk true;
-                            break :brk !strings.endsWithComptime(repo, "/bun");
-                        };
-                        if (is_outside_our_ci) {
-                            return null;
-                        }
                     }
 
                     return jsSyntheticModule(.InternalForTesting, specifier);

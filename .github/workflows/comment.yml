@@ -1,4 +1,4 @@
-name: Comment on PR
+name: Comment
 
 on:
   workflow_run:
@@ -20,6 +20,11 @@ jobs:
           pattern: bun-*-tests
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
+      - name: Setup SSH
+        if: ${{ github.triggering_actor == 'Electroid' }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
       - name: Setup Environment
         id: env
         shell: bash

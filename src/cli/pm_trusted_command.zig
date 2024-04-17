@@ -5,6 +5,7 @@ const logger = bun.logger;
 const Environment = bun.Environment;
 const Command = @import("../cli.zig").Command;
 const Install = @import("../install/install.zig");
+const LifecycleScriptSubprocess = Install.LifecycleScriptSubprocess;
 const PackageID = Install.PackageID;
 const String = @import("../install/semver.zig").String;
 const PackageManager = Install.PackageManager;
@@ -263,7 +264,7 @@ pub const TrustCommand = struct {
                     const alias = dep.name.slice(buf);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
                     if (comptime Environment.allow_assert) {
-                        std.debug.assert(package_id != Install.invalid_package_id);
+                        bun.assert(package_id != Install.invalid_package_id);
                     }
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
@@ -333,14 +334,23 @@ pub const TrustCommand = struct {
             depth -= 1;
             const _entry = scripts_at_depth.get(depth);
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(_entry != null);
+                bun.assert(_entry != null);
             }
             if (_entry) |entry| {
                 for (entry.items) |info| {
                     if (info.skip) continue;
 
+                    while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= pm.options.max_concurrent_lifecycle_scripts) {
+                        if (pm.options.log_level.isVerbose()) {
+                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.Monotonic)});
+                        }
+
+                        pm.sleep();
+                    }
+
+                    const output_in_foreground = false;
                     switch (pm.options.log_level) {
-                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, info.scripts_list, log_level),
+                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, info.scripts_list, log_level, output_in_foreground),
                     }
 
                     if (pm.options.log_level.showProgress()) {
@@ -350,7 +360,7 @@ pub const TrustCommand = struct {
                 }
 
                 while (pm.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                    pm.event_loop.loop().tick();
+                    pm.sleep();
                 }
             }
         }
@@ -377,7 +387,7 @@ pub const TrustCommand = struct {
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         const names = package_names_to_add.keys();
         if (comptime Environment.allow_assert) {
-            std.debug.assert(names.len > 0);
+            bun.assert(names.len > 0);
         }
 
         // could be null if these are the first packages to be trusted
@@ -433,7 +443,7 @@ pub const TrustCommand = struct {
         pm.root_package_json_file.close();
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(total_scripts_ran > 0);
+            bun.assert(total_scripts_ran > 0);
         }
 
         Output.pretty(" <green>{d}<r> script{s} ran across {d} package{s} ", .{

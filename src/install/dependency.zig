@@ -289,7 +289,7 @@ pub const Version = struct {
     }
 
     pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
-        if (comptime Environment.allow_assert) std.debug.assert(lhs.tag == rhs.tag);
+        if (comptime Environment.allow_assert) bun.assert(lhs.tag == rhs.tag);
         return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
@@ -832,7 +832,7 @@ pub fn parseWithTag(
                 alias;
 
             // name should never be empty
-            if (comptime Environment.allow_assert) std.debug.assert(!actual.isEmpty());
+            if (comptime Environment.allow_assert) bun.assert(!actual.isEmpty());
 
             return .{
                 .literal = sliced.value(),
@@ -900,7 +900,7 @@ pub fn parseWithTag(
                 }
             }
 
-            if (comptime Environment.allow_assert) std.debug.assert(isGitHubRepoPath(input));
+            if (comptime Environment.allow_assert) bun.assert(isGitHubRepoPath(input));
 
             var hash_index: usize = 0;
             var slash_index: usize = 0;
@@ -968,12 +968,13 @@ pub fn parseWithTag(
             if (strings.indexOfChar(dependency, ':')) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
                     const folder = brk: {
-                        if (dependency[protocol + 1] == '/') {
-                            if (dependency.len >= protocol + 2 and dependency[protocol + 2] == '/') {
+                        if (dependency.len > protocol + 1 and dependency[protocol + 1] == '/') {
+                            if (dependency.len > protocol + 2 and dependency[protocol + 2] == '/') {
                                 break :brk dependency[protocol + 3 ..];
                             }
                             break :brk dependency[protocol + 2 ..];
                         }
+
                         break :brk dependency[protocol + 1 ..];
                     };
 
@@ -1185,10 +1186,10 @@ pub const Behavior = packed struct(u8) {
     }
 
     comptime {
-        std.debug.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
-        std.debug.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
-        std.debug.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
-        std.debug.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
-        std.debug.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
+        bun.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
+        bun.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
+        bun.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
+        bun.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
+        bun.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
     }
 };

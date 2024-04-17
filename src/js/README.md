@@ -67,7 +67,7 @@ To actually wire up one of these modules to the resolver, that is done separatel
 
 In function files, these are accessible in C++ by using `<file><function>CodeGenerator(vm)`, for example:
 
-```cpp
+```c
 object->putDirectBuiltinFunction(
   vm,
   globalObject,

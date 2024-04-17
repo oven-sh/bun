@@ -12,7 +12,7 @@ const generic = opaque {
         return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValue.Type, @bitCast(@intFromPtr(this)))));
     }
 
-    pub inline fn bunVM(this: *@This()) *@import("root").bun.JSC.VirtualMachine {
+    pub inline fn bunVM(this: *@This()) *bun.JSC.VirtualMachine {
         return this.ptr().bunVM();
     }
 };
@@ -33,14 +33,14 @@ pub const OpaqueJSString = opaque {
 
     pub fn characters16(this: *OpaqueJSString) UTF16Ptr {
         if (comptime bun.Environment.allow_assert)
-            std.debug.assert(this.is16Bit());
+            bun.assert(this.is16Bit());
 
         return JSStringGetCharactersPtr(this);
     }
 
     pub fn characters8(this: *OpaqueJSString) UTF8Ptr {
         if (comptime bun.Environment.allow_assert)
-            std.debug.assert(!this.is16Bit());
+            bun.assert(!this.is16Bit());
 
         return JSStringGetCharacters8Ptr(this);
     }
@@ -180,13 +180,13 @@ pub extern fn JSValueToNumber(ctx: JSContextRef, value: JSValueRef, exception: E
 pub extern fn JSValueToStringCopy(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSStringRef;
 pub extern fn JSValueToObject(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSObjectRef;
 
-const log_protection = @import("root").bun.Environment.allow_assert and false;
+const log_protection = bun.Environment.allow_assert and false;
 pub inline fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void {
     const Wrapped = struct {
         pub extern fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void;
     };
     if (comptime log_protection) {
-        const Output = @import("root").bun.Output;
+        const Output = bun.Output;
         Output.debug("[unprotect] {d}\n", .{@intFromPtr(value)});
     }
     // wrapper exists to make it easier to set a breakpoint
@@ -198,7 +198,7 @@ pub inline fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void {
         pub extern fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void;
     };
     if (comptime log_protection) {
-        const Output = @import("root").bun.Output;
+        const Output = bun.Output;
         Output.debug("[protect] {d}\n", .{@intFromPtr(value)});
     }
     // wrapper exists to make it easier to set a breakpoint
@@ -500,7 +500,6 @@ pub const ExternalStringFinalizer = *const fn (finalize_ptr: ?*anyopaque, ref: J
 pub extern fn JSStringCreate(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateStatic(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateExternal(string: UTF8Ptr, length: usize, finalize_ptr: ?*anyopaque, finalizer: ExternalStringFinalizer) JSStringRef;
-pub extern fn JSStringIsEqualToString(a: JSStringRef, string: UTF8Ptr, length: usize) bool;
 pub extern fn JSStringEncoding(string: JSStringRef) Encoding;
 pub extern fn JSStringGetCharacters8Ptr(string: JSStringRef) UTF8Ptr;
 pub extern fn JSCellType(cell: JSCellValue) CellType;

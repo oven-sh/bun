@@ -18,7 +18,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-🟡 Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC has partial support and only current only works with other `bun` processes.
+🟡 Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC cannot send socket handles and only works with other `bun` processes.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
@@ -56,7 +56,7 @@ Some methods are not optimized yet.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟡 Missing `Dir` `openAsBlob` `opendir` `opendirSync` `statfs` `statfsSync`
+🟡 Missing `statfs` `statfsSync`, `opendirSync`. `Dir` is partially implemented.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 

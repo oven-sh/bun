@@ -7,7 +7,7 @@ const bun = @import("root").bun;
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
-        (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
+        (@intFromPtr(slice.ptr) + slice.len * @sizeOf(T)) <= (@intFromPtr(buffer.ptr) + buffer.len * @sizeOf(T)));
 }
 
 /// Checks if a slice's pointer is contained within another slice.
@@ -80,7 +80,7 @@ fn OverflowGroup(comptime Block: type) type {
         // ...right?
         const max = 4095;
         const UsedSize = std.math.IntFittingRange(0, max + 1);
-        const default_allocator = @import("root").bun.default_allocator;
+        const default_allocator = bun.default_allocator;
         used: UsedSize = 0,
         allocated: UsedSize = 0,
         ptrs: [max]*Block = undefined,
@@ -122,7 +122,7 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             }
 
             pub fn append(block: *Block, value: ValueType) *ValueType {
-                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
+                if (comptime Environment.allow_assert) bun.assert(block.used < count);
                 const index = block.used;
                 block.items[index] = value;
                 block.used +%= 1;
@@ -155,9 +155,9 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             else
                 0;
 
-            if (comptime Environment.allow_assert) std.debug.assert(index.is_overflow);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.used >= block_id);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.ptrs[block_id].used > (index.index % count));
+            if (comptime Environment.allow_assert) bun.assert(index.is_overflow);
+            if (comptime Environment.allow_assert) bun.assert(this.list.used >= block_id);
+            if (comptime Environment.allow_assert) bun.assert(this.list.ptrs[block_id].used > (index.index % count));
 
             return &this.list.ptrs[block_id].items[index.index % count];
         }
@@ -168,9 +168,9 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             else
                 0;
 
-            if (comptime Environment.allow_assert) std.debug.assert(index.is_overflow);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.used >= block_id);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.ptrs[block_id].used > (index.index % count));
+            if (comptime Environment.allow_assert) bun.assert(index.is_overflow);
+            if (comptime Environment.allow_assert) bun.assert(this.list.used >= block_id);
+            if (comptime Environment.allow_assert) bun.assert(this.list.ptrs[block_id].used > (index.index % count));
 
             return &this.list.ptrs[block_id].items[index.index % count];
         }

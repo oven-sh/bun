@@ -10,13 +10,13 @@ const std = @import("std");
 const os = std.os;
 
 const Dir = std.fs.Dir;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const PathString = JSC.PathString;
 const bun = @import("root").bun;
 
 const IteratorError = error{ AccessDenied, SystemResources } || os.UnexpectedError;
 const mem = std.mem;
-const strings = @import("root").bun.strings;
+const strings = bun.strings;
 const Maybe = JSC.Maybe;
 const File = std.fs.File;
 
@@ -391,7 +391,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
     };
 }
 
-const PathType = enum { u8, u16 };
+pub const PathType = enum { u8, u16 };
 
 pub fn NewWrappedIterator(comptime path_type: PathType) type {
     const IteratorType = if (path_type == .u16) IteratorW else Iterator;

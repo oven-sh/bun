@@ -28,7 +28,6 @@ beforeEach(async () => {
   await dummyBeforeEach();
 });
 afterEach(async () => {
-  await rm(link_dir, { force: true, recursive: true });
   await dummyAfterEach();
 });
 
@@ -513,5 +512,7 @@ it("should link dependency without crashing", async () => {
     "[] done",
     "",
   ]);
-  expect(await exited4).toBe(0);
+
+  // This should fail with a non-zero exit code.
+  expect(await exited4).toBe(1);
 });

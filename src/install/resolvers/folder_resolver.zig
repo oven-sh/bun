@@ -5,14 +5,14 @@ const initializeStore = @import("../install.zig").initializeStore;
 const json_parser = bun.JSON;
 const PackageManager = @import("../install.zig").PackageManager;
 const Npm = @import("../npm.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const FileSystem = @import("../../fs.zig").FileSystem;
 const JSAst = bun.JSAst;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const Features = @import("../install.zig").Features;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const strings = @import("root").bun.strings;
+const strings = bun.strings;
 const Resolution = @import("../resolution.zig").Resolution;
 const String = @import("../semver.zig").String;
 const Semver = @import("../semver.zig");
@@ -167,19 +167,24 @@ pub const FolderResolution = union(Tag) {
         comptime ResolverType: type,
         resolver: ResolverType,
     ) !Lockfile.Package {
-        var package_json: std.fs.File = try std.fs.cwd().openFileZ(abs, .{ .mode = .read_only });
-        defer package_json.close();
-        var package = Lockfile.Package{};
         var body = Npm.Registry.BodyPool.get(manager.allocator);
         defer Npm.Registry.BodyPool.release(body);
-        const len = try package_json.getEndPos();
 
-        body.data.reset();
-        body.data.inflate(@max(len, 2048)) catch unreachable;
-        body.data.list.expandToCapacity();
-        const source_buf = try package_json.readAll(body.data.list.items);
+        const source = brk: {
+            var file = bun.sys.File.from(try bun.sys.openatA(bun.toFD(std.fs.cwd().fd), abs, std.os.O.RDONLY, 0).unwrap());
+            defer file.close();
 
-        const source = logger.Source.initPathString(abs, body.data.list.items[0..source_buf]);
+            {
+                body.data.reset();
+                var man = body.data.list.toManaged(manager.allocator);
+                defer body.data.list = man.moveToUnmanaged();
+                _ = try file.readToEndWithArrayList(&man).unwrap();
+            }
+
+            break :brk logger.Source.initPathString(abs, body.data.list.items);
+        };
+
+        var package = Lockfile.Package{};
 
         try package.parse(
             manager.lockfile,
@@ -226,8 +231,8 @@ pub const FolderResolution = union(Tag) {
 
         // replace before getting hash. rel may or may not be contained in abs
         if (comptime bun.Environment.isWindows) {
-            bun.path.pathToPosixInPlace(u8, @constCast(abs));
-            bun.path.pathToPosixInPlace(u8, @constCast(rel));
+            bun.path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(abs));
+            bun.path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(rel));
         }
         const abs_hash = hash(abs);
 
@@ -275,7 +280,7 @@ pub const FolderResolution = union(Tag) {
                 CacheFolderResolver{ .version = version.value.npm.version.toVersion() },
             ),
         } catch |err| {
-            if (err == error.FileNotFound) {
+            if (err == error.FileNotFound or err == error.ENOENT) {
                 entry.value_ptr.* = .{ .err = error.MissingPackageJSON };
             } else {
                 entry.value_ptr.* = .{ .err = err };

@@ -5,7 +5,7 @@ const js_ast = bun.JSAst;
 const Api = @import("../../api/schema.zig").Api;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.http;
+const HTTPClient = bun.http;
 const Environment = bun.Environment;
 
 const Snapshots = @import("./snapshot.zig").Snapshots;
@@ -15,20 +15,20 @@ const Expect = expect.Expect;
 
 const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
 
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const js = JSC.C;
 
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Method = @import("../../http/method.zig").Method;
 
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const getAllocator = @import("../base.zig").getAllocator;
@@ -350,6 +350,11 @@ pub const Jest = struct {
         );
         test_fn.put(
             globalObject,
+            ZigString.static("todoIf"),
+            JSC.NewFunction(globalObject, ZigString.static("todoIf"), 2, ThisTestScope.todoIf, false),
+        );
+        test_fn.put(
+            globalObject,
             ZigString.static("each"),
             JSC.NewFunction(globalObject, ZigString.static("each"), 2, ThisTestScope.each, false),
         );
@@ -384,6 +389,11 @@ pub const Jest = struct {
             globalObject,
             ZigString.static("skipIf"),
             JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, ThisDescribeScope.skipIf, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("todoIf"),
+            JSC.NewFunction(globalObject, ZigString.static("todoIf"), 2, ThisDescribeScope.todoIf, false),
         );
         describe.put(
             globalObject,
@@ -577,11 +587,15 @@ pub const TestScope = struct {
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, false);
+        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, .pass);
     }
 
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, true);
+        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, .skip);
+    }
+
+    pub fn todoIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "test.todoIf()", "todoIf", TestScope, .todo);
     }
 
     pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -810,8 +824,8 @@ pub const DescribeScope = struct {
         if (comptime is_bindgen) return;
         if (new.parent) |scope| {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(DescribeScope.active != new);
-                std.debug.assert(scope == DescribeScope.active);
+                assert(DescribeScope.active != new);
+                assert(scope == DescribeScope.active);
             }
         } else if (DescribeScope.active) |scope| {
             // calling Bun.jest() within (already active) module
@@ -822,7 +836,7 @@ pub const DescribeScope = struct {
 
     pub fn pop(this: *DescribeScope) void {
         if (comptime is_bindgen) return;
-        if (comptime Environment.allow_assert) std.debug.assert(DescribeScope.active == this);
+        if (comptime Environment.allow_assert) assert(DescribeScope.active == this);
         DescribeScope.active = this.parent;
     }
 
@@ -903,8 +917,8 @@ pub const DescribeScope = struct {
 
         for (hooks.items) |cb| {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(cb.isObject());
-                std.debug.assert(cb.isCallable(globalObject.vm()));
+                assert(cb.isObject());
+                assert(cb.isCallable(globalObject.vm()));
             }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -960,8 +974,8 @@ pub const DescribeScope = struct {
 
         for (hooks.items) |cb| {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(cb.isObject());
-                std.debug.assert(cb.isCallable(globalThis.vm()));
+                assert(cb.isObject());
+                assert(cb.isCallable(globalThis.vm()));
             }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -1043,11 +1057,15 @@ pub const DescribeScope = struct {
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, false);
+        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, .pass);
     }
 
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, true);
+        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, .skip);
+    }
+
+    pub fn todoIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "describe.todoIf()", "todoIf", DescribeScope, .todo);
     }
 
     pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
@@ -1214,6 +1232,7 @@ pub const WrappedTestScope = struct {
     pub const todo = wrapTestFunction("test", TestScope.todo);
     pub const callIf = wrapTestFunction("test", TestScope.callIf);
     pub const skipIf = wrapTestFunction("test", TestScope.skipIf);
+    pub const todoIf = wrapTestFunction("test", TestScope.todoIf);
     pub const each = wrapTestFunction("test", TestScope.each);
 };
 
@@ -1224,6 +1243,7 @@ pub const WrappedDescribeScope = struct {
     pub const todo = wrapTestFunction("describe", DescribeScope.todo);
     pub const callIf = wrapTestFunction("describe", DescribeScope.callIf);
     pub const skipIf = wrapTestFunction("describe", DescribeScope.skipIf);
+    pub const todoIf = wrapTestFunction("describe", DescribeScope.todoIf);
     pub const each = wrapTestFunction("describe", DescribeScope.each);
 };
 
@@ -1359,7 +1379,7 @@ pub const TestRunnerTask = struct {
     }
 
     pub fn timeout(this: *TestRunnerTask) void {
-        if (comptime Environment.allow_assert) std.debug.assert(!this.reported);
+        if (comptime Environment.allow_assert) assert(!this.reported);
 
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.throwTerminationException();
@@ -1369,7 +1389,7 @@ pub const TestRunnerTask = struct {
     pub fn handleResult(this: *TestRunnerTask, result: Result, comptime from: @Type(.EnumLiteral)) void {
         switch (comptime from) {
             .promise => {
-                if (comptime Environment.allow_assert) std.debug.assert(this.promise_state == .pending);
+                if (comptime Environment.allow_assert) assert(this.promise_state == .pending);
                 this.promise_state = .fulfilled;
 
                 if (this.done_callback_state == .pending and result == .pass) {
@@ -1377,7 +1397,7 @@ pub const TestRunnerTask = struct {
                 }
             },
             .callback => {
-                if (comptime Environment.allow_assert) std.debug.assert(this.done_callback_state == .pending);
+                if (comptime Environment.allow_assert) assert(this.done_callback_state == .pending);
                 this.done_callback_state = .fulfilled;
 
                 if (this.promise_state == .pending and result == .pass) {
@@ -1385,7 +1405,7 @@ pub const TestRunnerTask = struct {
                 }
             },
             .sync => {
-                if (comptime Environment.allow_assert) std.debug.assert(this.sync_state == .pending);
+                if (comptime Environment.allow_assert) assert(this.sync_state == .pending);
                 this.sync_state = .fulfilled;
             },
             .timeout, .unhandledRejection => {},
@@ -1662,7 +1682,7 @@ inline fn createIfScope(
     comptime property: string,
     comptime signature: string,
     comptime Scope: type,
-    comptime is_skip: bool,
+    comptime tag: Tag,
 ) JSValue {
     const arguments = callframe.arguments(1);
     const args = arguments.slice();
@@ -1674,13 +1694,16 @@ inline fn createIfScope(
 
     const name = ZigString.static(property);
     const value = args[0].toBooleanSlow(globalThis);
-    const skip = if (is_skip) Scope.skip else Scope.call;
-    const call = if (is_skip) Scope.call else Scope.skip;
 
-    if (value) {
-        return JSC.NewFunction(globalThis, name, 2, skip, false);
-    }
+    const truthy_falsey: [2]JSC.JSHostFunctionPtr = switch (tag) {
+        .pass => .{ Scope.call, Scope.skip },
+        .fail => @compileError("unreachable"),
+        .only => @compileError("unreachable"),
+        .skip => .{ Scope.skip, Scope.call },
+        .todo => .{ Scope.todo, Scope.call },
+    };
 
+    const call = truthy_falsey[if (value) 0 else 1];
     return JSC.NewFunction(globalThis, name, 2, call, false);
 }
 
@@ -1996,3 +2019,5 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlo
 
     return result;
 }
+
+const assert = bun.assert;

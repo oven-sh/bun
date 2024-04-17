@@ -23,11 +23,8 @@ expect.extend({
   toHaveWorkspaceLink: async function (package_dir: string, [link, real]: [string, string]) {
     const isWindows = process.platform === "win32";
     if (!isWindows) {
-      // expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBeWorkspaceLink(join("..", "bar"));
-      // expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
     } else {
-      // expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, real));
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, real));
     }
   },
@@ -6040,9 +6037,34 @@ it("should handle --cwd", async () => {
 });
 
 it("should handle --frozen-lockfile", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));
+
   await writeFile(
     join(package_dir, "package.json"),
-    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+  );
+
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
+  // change version of baz in package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { baz: "0.0.5" },
+    }),
   );
 
   const { stderr, exited } = spawn({
@@ -6061,16 +6083,43 @@ it("should handle --frozen-lockfile", async () => {
 });
 
 it("should handle frozenLockfile in config file", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));
+
   await writeFile(
     join(package_dir, "package.json"),
-    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
   );
+
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
   await writeFile(
     join(package_dir, "bunfig.toml"),
     `
 [install]
 frozenLockfile = true
+registry = "${root_url}"
 `,
+  );
+
+  // change version of baz in package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { baz: "0.0.5" },
+    }),
   );
 
   const { stderr, exited } = spawn({
@@ -6131,7 +6180,7 @@ cache = false
     " + tsd@0.22.0",
     " + typescript@5.0.4",
     "",
-    " 119 packages installed",
+    " 120 packages installed",
   ]);
   expect(await exited1).toBe(0);
   expect(await readdirSorted(package_dir)).toEqual(["bun.lockb", "bunfig.toml", "node_modules", "package.json"]);
@@ -6206,6 +6255,7 @@ cache = false
     "path-exists",
     "path-parse",
     "path-type",
+    "picocolors",
     "picomatch",
     "plur",
     "prettier",
@@ -7868,7 +7918,7 @@ it("should install correct version of peer dependency from root package", async 
 describe("Registry URLs", () => {
   // Some of the non failing URLs are invalid, but bun's URL parser ignores
   // the validation error and returns a valid serialized URL anyway.
-  const registryURLs: [url: string, fails: boolean][] = [
+  const registryURLs: [url: string, fails: boolean | -1][] = [
     ["asdfghjklqwertyuiop", true],
     ["                ", true],
     ["::::::::::::::::", true],
@@ -7887,7 +7937,7 @@ describe("Registry URLs", () => {
     ["https://example.com/[]?[]#[]", false],
     ["http://example/%?%#%", false],
     ["c:", true],
-    ["c:/", false],
+    ["c:/", -1],
     ["http://點看", false], // gets converted to punycode
     ["http://xn--c1yn36f/", false],
   ];
@@ -7926,7 +7976,10 @@ describe("Registry URLs", () => {
         expect(stderr).toBeDefined();
         const err = await new Response(stderr).text();
 
-        if (fails) {
+        if (fails === -1) {
+          expect(err).toContain(`Registry URL must be http:// or https://`);
+          expect(err).toContain("error: InvalidURL");
+        } else if (fails) {
           expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
           expect(err).toContain("error: InvalidURL");
         } else {

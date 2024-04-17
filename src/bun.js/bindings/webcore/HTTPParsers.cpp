@@ -29,7 +29,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 #include "config.h"
 #include "HTTPParsers.h"
 
@@ -334,8 +333,8 @@ template<typename CharType>
 static String trimInputSample(CharType* p, size_t length)
 {
     if (length <= maxInputSampleSize)
-        return String(p, length);
-    return makeString(StringView(p, length).left(maxInputSampleSize), horizontalEllipsis);
+        return String({ p, length });
+    return makeString(StringView(std::span { p, length }).left(maxInputSampleSize), horizontalEllipsis);
 }
 
 std::optional<WallTime> parseHTTPDate(const String& value)
@@ -773,7 +772,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
     }
 
     nameSize = name.size();
-    nameStr = StringView(namePtr, nameSize);
+    nameStr = StringView(std::span { namePtr, nameSize });
 
     for (; p < end && *p == 0x20; p++) {
     }
@@ -800,7 +799,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
         failureReason = makeString("CR doesn't follow LF after header value at ", trimInputSample(p, end - p));
         return 0;
     }
-    valueStr = String::fromUTF8(value.data(), value.size());
+    valueStr = String::fromUTF8({ value.data(), value.size() });
     if (valueStr.isNull()) {
         failureReason = "Invalid UTF-8 sequence in header value"_s;
         return 0;
@@ -811,7 +810,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
 size_t parseHTTPRequestBody(const uint8_t* data, size_t length, Vector<uint8_t>& body)
 {
     body.clear();
-    body.append(data, length);
+    body.append(std::span { data, length });
 
     return length;
 }

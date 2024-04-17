@@ -1,15 +1,15 @@
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
-const NetworkThread = @import("root").bun.http.NetworkThread;
+const NetworkThread = bun.http.NetworkThread;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../which.zig");
@@ -226,7 +226,7 @@ pub const ShellSubprocess = struct {
                     };
                 },
                 .memfd => |memfd| {
-                    std.debug.assert(memfd != bun.invalid_fd);
+                    assert(memfd != bun.invalid_fd);
                     return Writable{ .memfd = memfd };
                 },
                 .fd => {
@@ -755,7 +755,7 @@ pub const ShellSubprocess = struct {
         spawn_args_: SpawnArgs,
         out: **@This(),
     ) bun.shell.Result(void) {
-        var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
+        var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
         var spawn_args = spawn_args_;
@@ -1206,7 +1206,7 @@ pub const PipeReader = struct {
         const owned = this.toOwnedSlice();
         this.state = .{ .done = owned };
         if (!this.isDone()) return;
-        // we need to ref because the process might be done and deref inside signalDoneToCmd before we call onCloseIO
+        // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
         this.ref();
         defer this.deref();
         this.trySignalDoneToCmd();
@@ -1223,7 +1223,7 @@ pub const PipeReader = struct {
     ) void {
         if (!this.isDone()) return;
         log("signalDoneToCmd ({x}: {s}) isDone={any}", .{ @intFromPtr(this), @tagName(this.out_type), this.isDone() });
-        if (bun.Environment.allow_assert) std.debug.assert(this.process != null);
+        if (bun.Environment.allow_assert) assert(this.process != null);
         if (this.process) |proc| {
             if (proc.cmd_parent) |cmd| {
                 if (this.captured_writer.err) |e| {
@@ -1325,6 +1325,9 @@ pub const PipeReader = struct {
             bun.default_allocator.free(this.state.done);
         }
         this.state = .{ .err = err.toSystemError() };
+        // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
+        this.ref();
+        defer this.deref();
         this.trySignalDoneToCmd();
         if (this.process) |process| {
             // this.process = null;
@@ -1354,11 +1357,11 @@ pub const PipeReader = struct {
     pub fn deinit(this: *PipeReader) void {
         log("PipeReader(0x{x}, {s}) deinit()", .{ @intFromPtr(this), @tagName(this.out_type) });
         if (comptime Environment.isPosix) {
-            std.debug.assert(this.reader.isDone() or this.state == .err);
+            assert(this.reader.isDone() or this.state == .err);
         }
 
         if (comptime Environment.isWindows) {
-            std.debug.assert(this.reader.source == null or this.reader.source.?.isClosed());
+            assert(this.reader.source == null or this.reader.source.?.isClosed());
         }
 
         if (this.state == .done) {
@@ -1393,8 +1396,10 @@ pub inline fn assertStdioResult(result: StdioResult) void {
     if (comptime Environment.allow_assert) {
         if (Environment.isPosix) {
             if (result) |fd| {
-                std.debug.assert(fd != bun.invalid_fd);
+                assert(fd != bun.invalid_fd);
             }
         }
     }
 }
+
+const assert = bun.assert;

@@ -12,13 +12,13 @@ const C = bun.C;
 
 const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTP = @import("root").bun.http;
+const HTTP = bun.http;
 
 const URL = @import("../url.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = @import("root").bun.http.Headers;
+const Headers = bun.http.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
 
@@ -32,153 +32,95 @@ fn NewUint64(val: u64) Analytics.Uint64 {
 
 // This answers, "What parts of bun are people actually using?"
 pub const Features = struct {
-    pub var single_page_app_routing = false;
-    pub var tsconfig_paths = false;
-    pub var fast_refresh = false;
-    pub var hot_module_reloading = false;
-    pub var jsx = false;
-    pub var always_bundle = false;
-    pub var tsconfig = false;
-    pub var bun_bun = false;
-    pub var filesystem_router = false;
-    pub var framework = false;
-    pub var bunjs = false;
-    pub var macros = false;
-    pub var public_folder = false;
-    pub var dotenv = false;
-    pub var define = false;
-    pub var loaders = false;
-    pub var origin = false;
-    pub var external = false;
-    pub var fetch = false;
-    pub var bunfig = false;
-    pub var extracted_packages = false;
-    pub var transpiler_cache = false;
+    pub var tsconfig_paths: usize = 0;
+    pub var fast_refresh: usize = 0;
+    pub var hot_module_reloading: usize = 0;
+    pub var jsx: usize = 0;
+    pub var always_bundle: usize = 0;
+    pub var tsconfig: usize = 0;
+    pub var bun_bun: usize = 0;
+    pub var filesystem_router: usize = 0;
+    pub var framework: usize = 0;
+    pub var bunjs: usize = 0;
+    pub var macros: usize = 0;
+    pub var dotenv: usize = 0;
+    pub var define: usize = 0;
+    pub var loaders: usize = 0;
+    pub var origin: usize = 0;
+    pub var external: usize = 0;
+    pub var fetch: usize = 0;
+    pub var bunfig: usize = 0;
+    pub var spawn: usize = 0;
+    pub var extracted_packages: usize = 0;
+    pub var transpiler_cache: usize = 0;
+    pub var shell: usize = 0;
+    pub var standalone_shell: usize = 0;
+    pub var lifecycle_scripts: usize = 0;
+    pub var virtual_modules: usize = 0;
+    pub var html_rewriter: usize = 0;
+    pub var http_server: usize = 0;
+    pub var https_server: usize = 0;
+    pub var abort_signal: usize = 0;
+    pub var lockfile_migration_from_package_lock: usize = 0;
+    pub var git_dependencies: usize = 0;
+    pub var WebSocket: usize = 0;
+    pub var @"Bun.stdin": usize = 0;
+    pub var @"Bun.stdout": usize = 0;
+    pub var @"Bun.stderr": usize = 0;
+    pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
 
     pub fn formatter() Formatter {
         return Formatter{};
     }
     pub const Formatter = struct {
         pub fn format(_: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            const fields = comptime .{
-                "single_page_app_routing",
-                "tsconfig_paths",
-                "fast_refresh",
-                "hot_module_reloading",
-                "jsx",
-                "always_bundle",
-                "tsconfig",
-                "bun_bun",
-                "filesystem_router",
-                "framework",
-                "bunjs",
-                "macros",
-                "public_folder",
-                "dotenv",
-                "define",
-                "loaders",
-                "origin",
-                "external",
-                "fetch",
-                "bunfig",
-                "extracted_packages",
-                "transpiler_cache",
-            };
-            inline for (fields) |field| {
-                if (@field(Features, field)) {
-                    try writer.writeAll(field);
-                    try writer.writeAll(" ");
+            const fields = comptime brk: {
+                const info: std.builtin.Type = @typeInfo(Features);
+                var buffer: [info.Struct.decls.len][]const u8 = .{""} ** info.Struct.decls.len;
+                var count: usize = 0;
+                for (info.Struct.decls) |decl| {
+                    var f = &@field(Features, decl.name);
+                    _ = &f;
+                    const Field = @TypeOf(f);
+                    const FieldT: std.builtin.Type = @typeInfo(Field);
+                    if (FieldT.Pointer.child != usize) continue;
+                    buffer[count] = decl.name;
+                    count += 1;
                 }
+
+                break :brk buffer[0..count];
+            };
+
+            inline for (fields) |field| {
+                const count = @field(Features, field);
+                if (count > 0) {
+                    try writer.writeAll(field);
+                    if (count > 1) {
+                        try writer.print("({d}) ", .{count});
+                    } else {
+                        try writer.writeAll(" ");
+                    }
+                }
+            }
+
+            var builtins = builtin_modules.iterator();
+            if (builtins.next()) |first| {
+                try writer.writeAll("\nBuiltins: \"");
+                try writer.writeAll(@tagName(first));
+                try writer.writeAll("\" ");
+
+                while (builtins.next()) |key| {
+                    try writer.writeAll("\"");
+                    try writer.writeAll(@tagName(key));
+                    try writer.writeAll("\" ");
+                }
+
+                try writer.writeAll("\n");
+            } else {
+                try writer.writeAll("\n");
             }
         }
     };
-
-    const Bitset = std.bit_set.IntegerBitSet(32);
-
-    pub const Serializer = struct {
-        inline fn shiftIndex(index: u32) !u32 {
-            return @as(u32, @intCast(@as(Bitset.MaskInt, 1) << @as(Bitset.ShiftInt, @intCast(index))));
-        }
-
-        fn writeField(comptime WriterType: type, writer: WriterType, field_name: string, index: u32) !void {
-            var output: [64]u8 = undefined;
-            const name = std.ascii.upperString(&output, field_name);
-
-            try writer.print("const Features_{s} = {d}\n", .{ name, shiftIndex(index) });
-        }
-
-        pub fn writeAll(comptime WriterType: type, writer: WriterType) !void {
-            try writer.writeAll("package analytics\n\n");
-            try writeField(WriterType, writer, "single_page_app_routing", 1);
-            try writeField(WriterType, writer, "tsconfig_paths", 2);
-            try writeField(WriterType, writer, "fast_refresh", 3);
-            try writeField(WriterType, writer, "hot_module_reloading", 4);
-            try writeField(WriterType, writer, "jsx", 5);
-            try writeField(WriterType, writer, "always_bundle", 6);
-            try writeField(WriterType, writer, "tsconfig", 7);
-            try writeField(WriterType, writer, "bun_bun", 8);
-            try writeField(WriterType, writer, "filesystem_router", 9);
-            try writeField(WriterType, writer, "framework", 10);
-            try writeField(WriterType, writer, "bunjs", 11);
-            try writeField(WriterType, writer, "macros", 12);
-            try writeField(WriterType, writer, "public_folder", 13);
-            try writeField(WriterType, writer, "dotenv", 14);
-            try writeField(WriterType, writer, "define", 15);
-            try writeField(WriterType, writer, "loaders", 16);
-            try writeField(WriterType, writer, "origin", 17);
-            try writeField(WriterType, writer, "external", 18);
-            try writeField(WriterType, writer, "fetch", 19);
-            try writer.writeAll("\n");
-        }
-    };
-
-    pub fn toInt() u32 {
-        var list = Bitset.initEmpty();
-        list.setValue(1, Features.single_page_app_routing);
-        list.setValue(2, Features.tsconfig_paths);
-        list.setValue(3, Features.fast_refresh);
-        list.setValue(4, Features.hot_module_reloading);
-        list.setValue(5, Features.jsx);
-        list.setValue(6, Features.always_bundle);
-        list.setValue(7, Features.tsconfig);
-        list.setValue(8, Features.bun_bun);
-        list.setValue(9, Features.filesystem_router);
-        list.setValue(10, Features.framework);
-        list.setValue(11, Features.bunjs);
-        list.setValue(12, Features.macros);
-        list.setValue(13, Features.public_folder);
-        list.setValue(14, Features.dotenv);
-        list.setValue(15, Features.define);
-        list.setValue(16, Features.loaders);
-        list.setValue(17, Features.origin);
-        list.setValue(18, Features.external);
-        list.setValue(19, Features.fetch);
-
-        if (comptime FeatureFlags.verbose_analytics) {
-            if (Features.single_page_app_routing) Output.pretty("<r><d>single_page_app_routing<r>,", .{});
-            if (Features.tsconfig_paths) Output.pretty("<r><d>tsconfig_paths<r>,", .{});
-            if (Features.fast_refresh) Output.pretty("<r><d>fast_refresh<r>,", .{});
-            if (Features.hot_module_reloading) Output.pretty("<r><d>hot_module_reloading<r>,", .{});
-            if (Features.jsx) Output.pretty("<r><d>jsx<r>,", .{});
-            if (Features.always_bundle) Output.pretty("<r><d>always_bundle<r>,", .{});
-            if (Features.tsconfig) Output.pretty("<r><d>tsconfig<r>,", .{});
-            if (Features.bun_bun) Output.pretty("<r><d>bun_bun<r>,", .{});
-            if (Features.filesystem_router) Output.pretty("<r><d>filesystem_router<r>,", .{});
-            if (Features.framework) Output.pretty("<r><d>framework<r>,", .{});
-            if (Features.bunjs) Output.pretty("<r><d>bunjs<r>,", .{});
-            if (Features.macros) Output.pretty("<r><d>macros<r>,", .{});
-            if (Features.public_folder) Output.pretty("<r><d>public_folder<r>,", .{});
-            if (Features.dotenv) Output.pretty("<r><d>dotenv<r>,", .{});
-            if (Features.define) Output.pretty("<r><d>define<r>,", .{});
-            if (Features.loaders) Output.pretty("<r><d>loaders<r>,", .{});
-            if (Features.origin) Output.pretty("<r><d>origin<r>,", .{});
-            if (Features.external) Output.pretty("<r><d>external<r>,", .{});
-            if (Features.fetch) Output.pretty("<r><d>fetch<r>,", .{});
-            Output.prettyln("\n", .{});
-        }
-
-        return @as(u32, list.mask);
-    }
 };
 
 pub const EventName = enum(u8) {

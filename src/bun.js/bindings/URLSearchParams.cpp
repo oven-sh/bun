@@ -165,7 +165,7 @@ String URLSearchParams::toString() const
 void URLSearchParams::updateURL()
 {
     if (m_associatedURL)
-        m_associatedURL->setQuery(WTF::URLParser::serialize(m_pairs));
+        m_associatedURL->setSearch(WTF::URLParser::serialize(m_pairs));
 }
 
 void URLSearchParams::updateFromAssociatedURL()

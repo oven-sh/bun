@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
-import { mkdtemp, realpath, rm, mkdir, stat } from "fs/promises";
+import { mkdtemp, realpath, rm, mkdir, stat, exists } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -9,9 +9,6 @@ let x_dir: string;
 
 beforeEach(async () => {
   x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test")));
-});
-afterEach(async () => {
-  await rm(x_dir, { force: true, recursive: true });
 });
 
 describe("should not crash", async () => {
@@ -103,3 +100,23 @@ it("should create template from local folder", async () => {
   const dirStat = await stat(`${x_dir}/${testTemplate}`);
   expect(dirStat.isDirectory()).toBe(true);
 });
+
+for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/dylan-conway/create-test"]) {
+  it(`should create and install github template from ${repo}`, async () => {
+    const { stderr, stdout, exited } = spawn({
+      cmd: [bunExe(), "create", repo],
+      cwd: x_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toContain("Success! dylan-conway/create-test loaded into create-test");
+    expect(await exists(join(x_dir, "create-test", "node_modules", "jquery"))).toBe(true);
+
+    expect(await exited).toBe(0);
+  });
+}

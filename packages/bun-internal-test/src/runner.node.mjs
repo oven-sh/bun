@@ -1,10 +1,9 @@
 import * as action from "@actions/core";
 import { spawn, spawnSync } from "child_process";
-import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, close, closeSync } from "fs";
-import { readFile, rm } from "fs/promises";
+import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, closeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
-import { constants, cpus, hostname, tmpdir, totalmem, userInfo } from "os";
+import { cpus, hostname, tmpdir, totalmem, userInfo } from "os";
 import { join, normalize } from "path";
 import { fileURLToPath } from "url";
 import PQueue from "p-queue";
@@ -24,7 +23,6 @@ function defaultConcurrency() {
 }
 
 const windows = process.platform === "win32";
-const KEEP_TMPDIR = process.env["BUN_KEEP_TMPDIR"] === "1";
 const nativeMemory = totalmem();
 const force_ram_size_input = parseInt(process.env["BUN_JSC_forceRAMSize"] || "0", 10);
 let force_ram_size = Number(BigInt(nativeMemory) >> BigInt(2)) + "";
@@ -147,8 +145,6 @@ function lookupWindowsError(code) {
 
 const failing_tests = [];
 const passing_tests = [];
-const fixes = [];
-const regressions = [];
 let maxFd = -1;
 function getMaxFileDescriptor(path) {
   if (process.platform === "win32") {
@@ -214,13 +210,6 @@ async function runTest(path) {
   const name = path.replace(cwd, "").slice(1);
   let exitCode, signal, err, output;
 
-  const expected_crash_reason = windows
-    ? await readFile(resolve(path), "utf-8").then(data => {
-        const match = data.match(/@known-failing-on-windows:(.*)\n/);
-        return match ? match[1].trim() : null;
-      })
-    : null;
-
   const start = Date.now();
 
   const activeTestObject = { start, proc: undefined };
@@ -249,6 +238,7 @@ Starting "${name}"
           BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
           GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
           BUN_DEBUG_QUIET_LOGS: "1",
+          BUN_INSTALL_CACHE_DIR: join(TMPDIR, ".bun-install-cache"),
           [windows ? "TEMP" : "TMPDIR"]: TMPDIR,
         },
       });
@@ -369,9 +359,9 @@ Starting "${name}"
   }
 
   console.log(
-    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
-      passed ? "\x1b[32m✔" : expected_crash_reason ? "\x1b[33m⚠" : "\x1b[31m✖"
-    } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
+    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${passed ? "\x1b[32m✔" : "\x1b[31m✖"} ${name}\x1b[0m${
+      reason ? ` (${reason})` : ""
+    }`,
   );
 
   finished++;
@@ -385,20 +375,10 @@ Starting "${name}"
   }
 
   if (!passed) {
-    if (reason) {
-      if (windows && !expected_crash_reason) {
-        regressions.push({ path: name, reason, output });
-      }
-    }
-
-    failing_tests.push({ path: name, reason, output, expected_crash_reason });
+    failing_tests.push({ path: name, reason, output });
     process.exitCode = 1;
     if (err) console.error(err);
   } else {
-    if (windows && expected_crash_reason !== null) {
-      fixes.push({ path: name, output, expected_crash_reason });
-    }
-
     passing_tests.push(name);
   }
 
@@ -496,30 +476,6 @@ ${header}
 
 `;
 
-if (fixes.length > 0) {
-  report += `## Fixes\n\n`;
-  report += "The following tests had @known-failing-on-windows but now pass:\n\n";
-  report += fixes
-    .map(
-      ({ path, expected_crash_reason }) => `- [\`${path}\`](${sectionLink(path)}) (before: ${expected_crash_reason})`,
-    )
-    .join("\n");
-  report += "\n\n";
-}
-
-if (regressions.length > 0) {
-  report += `## Regressions\n\n`;
-  report += regressions
-    .map(
-      ({ path, reason, expected_crash_reason }) =>
-        `- [\`${path}\`](${sectionLink(path)}) ${reason}${
-          expected_crash_reason ? ` (expected: ${expected_crash_reason})` : ""
-        }`,
-    )
-    .join("\n");
-  report += "\n\n";
-}
-
 if (failingTestDisplay.length > 0) {
   report += `## Failing tests\n\n`;
   report += failingTestDisplay;
@@ -534,21 +490,22 @@ if (failingTestDisplay.length > 0) {
 
 if (failing_tests.length) {
   report += `## Failing tests log output\n\n`;
-  for (const { path, output, reason, expected_crash_reason } of failing_tests) {
+  for (const { path, output, reason } of failing_tests) {
     report += `### ${path}\n\n`;
     report += "[Link to file](" + linkToGH(path) + ")\n\n";
-    if (windows && reason !== expected_crash_reason) {
-      report += `To mark this as a known failing test, add this to the start of the file:\n`;
-      report += `\`\`\`ts\n`;
-      report += `// @known-failing-on-windows: ${reason}\n`;
-      report += `\`\`\`\n\n`;
-    } else {
-      report += `${reason}\n\n`;
-    }
+    report += `${reason}\n\n`;
     report += "```\n";
-    report += output
+
+    let failing_output = output
       .replace(/\x1b\[[0-9;]*m/g, "")
       .replace(/^::(group|endgroup|error|warning|set-output|add-matcher|remove-matcher).*$/gm, "");
+
+    if (failing_output.length > 1024 * 64) {
+      failing_output = failing_output.slice(0, 1024 * 64) + `\n\n[truncated output (length: ${failing_output.length})]`;
+    }
+
+    report += failing_output;
+
     report += "```\n\n";
   }
 }
@@ -559,35 +516,31 @@ writeFileSync(
   JSON.stringify({
     failing_tests,
     passing_tests,
-    fixes,
-    regressions,
   }),
 );
 
 console.log("-> test-report.md, test-report.json");
 
 if (ci) {
-  if (windows) {
-    action.setOutput("regressing_tests", regressions.map(({ path }) => `- \`${path}\``).join("\n"));
-    action.setOutput("regressing_test_count", regressions.length);
-  }
   if (failing_tests.length > 0) {
     action.setFailed(`${failing_tests.length} files with failing tests`);
   }
   action.setOutput("failing_tests", failingTestDisplay);
   action.setOutput("failing_tests_count", failing_tests.length);
+  if (failing_tests.length) {
+    const tag = action.getInput("tag") || "unknown";
+    let comment = `There are ${failing_tests.length} failing tests on bun-${tag}.
+
+${failingTestDisplay}
+`;
+    writeFileSync("comment.md", comment);
+  }
   let truncated_report = report;
   if (truncated_report.length > 512 * 1000) {
     truncated_report = truncated_report.slice(0, 512 * 1000) + "\n\n...truncated...";
   }
   action.summary.addRaw(truncated_report);
   await action.summary.write();
-} else {
-  if (windows && (regressions.length > 0 || fixes.length > 0)) {
-    console.log(
-      "\n\x1b[34mnote\x1b[0;2m:\x1b[0m If you would like to update the @known-failing-on-windows annotations, run `bun update-known-failures`",
-    );
-  }
 }
 
 process.exit(failing_tests.length ? 1 : process.exitCode);

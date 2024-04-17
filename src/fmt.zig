@@ -99,7 +99,6 @@ pub inline fn utf16(slice_: []const u16) FormatUTF16 {
 
 pub const FormatUTF16 = struct {
     buf: []const u16,
-    escape_backslashes: bool = false,
     path_fmt_opts: ?PathFormatOptions = null,
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         if (self.path_fmt_opts) |opts| {
@@ -945,6 +944,35 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
             }
         }
     }
+
+    /// Function for testing in highlighter.test.ts
+    pub fn jsFunctionSyntaxHighlight(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+        const args = callframe.arguments(1);
+        if (args.len < 1) {
+            globalThis.throwNotEnoughArguments("code", 1, 0);
+        }
+
+        const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
+        defer code.deinit();
+        var buffer = bun.MutableString.initEmpty(bun.default_allocator);
+        defer buffer.deinit();
+        var writer = buffer.bufferedWriter();
+        var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
+        formatter.limited = false;
+        std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+            globalThis.throwError(err, "Error formatting code");
+            return .zero;
+        };
+
+        writer.flush() catch |err| {
+            globalThis.throwError(err, "Error formatting code");
+            return .zero;
+        };
+
+        var str = bun.String.createUTF8(buffer.list.items);
+        defer str.deref();
+        return str.toJS(globalThis);
+    }
 };
 
 pub fn quote(self: string) bun.fmt.QuotedFormatter {
@@ -1224,15 +1252,12 @@ fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, op
 pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Formatter(formatDurationOneDecimal) {
     return .{ .data = FormatDurationData{ .ns = ns } };
 }
-// };
 
 pub fn fmtSlice(data: anytype, comptime delim: []const u8) FormatSlice(@TypeOf(data), delim) {
     return .{ .slice = data };
 }
 
 fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
-    std.debug.assert(@typeInfo(T).Pointer.size == .Slice);
-
     return struct {
         slice: T,
 
@@ -1247,3 +1272,34 @@ fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
         }
     };
 }
+
+/// Uses WebKit's double formatter
+pub fn fmtDouble(number: f64) FormatDouble {
+    return .{ .number = number };
+}
+
+pub const FormatDouble = struct {
+    number: f64,
+
+    extern "C" fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) void;
+
+    pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
+        WTF__dtoa(buf, number);
+        return bun.sliceTo(buf, 0);
+    }
+
+    pub fn dtoaWithNegativeZero(buf: *[124]u8, number: f64) []const u8 {
+        if (std.math.isNegativeZero(number)) {
+            return "-0";
+        }
+
+        WTF__dtoa(buf, number);
+        return bun.sliceTo(buf, 0);
+    }
+
+    pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        var buf: [124]u8 = undefined;
+        const slice = dtoa(&buf, self.number);
+        try writer.writeAll(slice);
+    }
+};

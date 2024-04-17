@@ -293,13 +293,8 @@ bool JSCStackFrame::calculateSourcePositions()
      * Note that we're using m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeOffset rather than m_codeBlock->expressionRangeForBytecodeOffset
      * in order get the "raw" offsets and avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column numbers,
      * (we don't need the column number from it, and we'll calculate the line "fixes" ourselves). */
-    unsigned startOffset = 0;
-    unsigned endOffset = 0;
-    unsigned divotPoint = 0;
-    unsigned line = 0;
-    unsigned unusedColumn = 0;
-    m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeIndex(bytecodeIndex, divotPoint, startOffset, endOffset, line, unusedColumn);
-    divotPoint += m_codeBlock->sourceOffset();
+    ExpressionInfo::Entry info = m_codeBlock->unlinkedCodeBlock()->expressionInfoForBytecodeIndex(bytecodeIndex);
+    info.divot += m_codeBlock->sourceOffset();
 
     /* On the first line of the source code, it seems that we need to "fix" the column with the starting
      * offset. We currently use codeBlock->source()->startPosition().m_column.oneBasedInt() as the
@@ -307,15 +302,15 @@ bool JSCStackFrame::calculateSourcePositions()
      * (and what CodeBlock::expressionRangeForBytecodeOffset does). This is because firstLineColumnOffset
      * values seems different from what we expect (according to v8's tests) and I haven't dove into the
      * relevant parts in JSC (yet) to figure out why. */
-    unsigned columnOffset = line ? 0 : m_codeBlock->source().startColumn().zeroBasedInt();
+    unsigned columnOffset = info.lineColumn.line ? 0 : m_codeBlock->source().startColumn().zeroBasedInt();
 
     // "Fix" the line number
     JSC::ScriptExecutable* executable = m_codeBlock->ownerExecutable();
-    line = executable->overrideLineNumber(m_vm).value_or(line + executable->firstLine());
+    info.lineColumn.line = executable->overrideLineNumber(m_vm).value_or(info.lineColumn.line + executable->firstLine());
 
     // Calculate the staring\ending offsets of the entire expression
-    int expressionStart = divotPoint - startOffset;
-    int expressionStop = divotPoint + endOffset;
+    int expressionStart = info.divot - info.startOffset;
+    int expressionStop = info.divot + info.endOffset;
 
     // Make sure the range is valid
     StringView sourceString = m_codeBlock->source().provider()->source();
@@ -345,7 +340,7 @@ bool JSCStackFrame::calculateSourcePositions()
      */
     m_sourcePositions.expressionStart = WTF::OrdinalNumber::fromZeroBasedInt(expressionStart);
     m_sourcePositions.expressionStop = WTF::OrdinalNumber::fromZeroBasedInt(expressionStop);
-    m_sourcePositions.line = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int>(line));
+    m_sourcePositions.line = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int>(info.lineColumn.line));
     m_sourcePositions.startColumn = WTF::OrdinalNumber::fromZeroBasedInt((expressionStart - lineStart) + columnOffset);
     m_sourcePositions.endColumn = WTF::OrdinalNumber::fromZeroBasedInt(m_sourcePositions.startColumn.zeroBasedInt() + (expressionStop - expressionStart));
     m_sourcePositions.lineStart = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int>(lineStart));

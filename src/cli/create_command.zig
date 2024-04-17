@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -28,7 +28,7 @@ const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("root").bun.http;
+const HTTP = bun.http;
 
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
@@ -37,9 +37,9 @@ const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
-const clap = @import("root").bun.clap;
+const clap = bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("root").bun.http.Headers;
+const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
@@ -109,8 +109,6 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     const npm_args = 2 * @as(usize, @intCast(@intFromBool(npm_client != null)));
     const total = count + npm_args;
     var argv = allocator.alloc(string, total) catch return;
-    var proc: std.ChildProcess = undefined;
-    defer if (argv.len > 32) allocator.free(argv);
 
     if (npm_client) |client| {
         argv[0] = client.bin;
@@ -146,19 +144,19 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     Output.disableBuffering();
     defer Output.enableBuffering();
 
-    proc = std.ChildProcess.init(argv, allocator);
-    proc.stdin_behavior = .Inherit;
-    proc.stdout_behavior = .Inherit;
-    proc.stderr_behavior = .Inherit;
-    proc.cwd = cwd;
+    _ = bun.spawnSync(&.{
+        .argv = argv,
+        .envp = null,
 
-    if (Environment.isWindows) {
-        bun.WindowsSpawnWorkaround.spawnWindows(&proc) catch return;
-    } else {
-        proc.spawn() catch return;
-    }
+        .cwd = cwd,
+        .stderr = .inherit,
+        .stdout = .inherit,
+        .stdin = .inherit,
 
-    _ = proc.wait() catch {};
+        .windows = if (Environment.isWindows) .{
+            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+        } else {},
+    }) catch return;
 }
 
 // We don't want to allocate memory each time
@@ -380,7 +378,7 @@ pub const CreateCommand = struct {
                 progress.refresh();
 
                 var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
-                    [1]Archive.Plucker{try Archive.Plucker.init("package.json", 2048, ctx.allocator)}
+                    [1]Archive.Plucker{try Archive.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
                 else
                     [1]Archive.Plucker{undefined};
 
@@ -599,7 +597,7 @@ pub const CreateCommand = struct {
             var parent_dir = try std.fs.openDirAbsolute(destination, .{});
             defer parent_dir.close();
             if (comptime Environment.isWindows) {
-                try parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{});
+                parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{}) catch {};
             } else {
                 std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
             }
@@ -1402,7 +1400,7 @@ pub const CreateCommand = struct {
         if (!create_options.skip_install) {
             npm_client_ = NPMClient{
                 .tag = .bun,
-                .bin = try std.fs.selfExePathAlloc(ctx.allocator),
+                .bin = try bun.selfExePath(),
             };
         }
 
@@ -1427,10 +1425,6 @@ pub const CreateCommand = struct {
 
             Output.pretty("<r>\n", .{});
             Output.flush();
-
-            var process = std.ChildProcess.init(install_args, ctx.allocator);
-            process.cwd = destination;
-
             defer {
                 Output.printErrorln("\n", .{});
                 Output.printStartEnd(start_time, std.time.nanoTimestamp());
@@ -1441,13 +1435,19 @@ pub const CreateCommand = struct {
                 Output.flush();
             }
 
-            if (Environment.isWindows) {
-                try bun.WindowsSpawnWorkaround.spawnWindows(&process);
-            } else {
-                try process.spawn();
-            }
-            _ = try process.wait();
-            _ = try process.kill();
+            const process = try bun.spawnSync(&.{
+                .argv = install_args,
+                .envp = null,
+                .cwd = destination,
+                .stderr = .inherit,
+                .stdout = .inherit,
+                .stdin = .inherit,
+
+                .windows = if (Environment.isWindows) .{
+                    .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                } else {},
+            });
+            _ = try process.unwrap();
         }
 
         if (postinstall_tasks.items.len > 0) {
@@ -1693,7 +1693,7 @@ const Commands = .{
     &[_]string{""},
     &[_]string{""},
 };
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,

@@ -3,21 +3,21 @@ const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const http = @import("root").bun.http;
+const http = bun.http;
 const FetchRedirect = http.FetchRedirect;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
@@ -38,9 +38,9 @@ const DataURL = @import("../../resolver/data_url.zig").DataURL;
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 const Mutex = @import("../../lock.zig").Lock;
 
 const InlineBlob = JSC.WebCore.InlineBlob;
@@ -470,7 +470,7 @@ pub const Response = struct {
                         break :brk Init.init(bun.default_allocator, globalThis, arguments[1]) catch null;
                     }
 
-                    std.debug.assert(!arguments[1].isEmptyOrUndefinedOrNull());
+                    bun.assert(!arguments[1].isEmptyOrUndefinedOrNull());
 
                     const err = globalThis.createTypeErrorInstance("Expected options to be one of: null, undefined, or object", .{});
                     globalThis.throwValue(err);
@@ -1204,7 +1204,7 @@ pub const Fetch = struct {
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
-            std.debug.assert(this.result.fail != null);
+            bun.assert(this.result.fail != null);
             log("onReject", .{});
 
             if (this.getAbortError()) |err| {
@@ -1304,7 +1304,11 @@ pub const Fetch = struct {
                     error.STORE_LOOKUP => bun.String.static("Issuer certificate lookup error"),
                     error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
                     error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
-                    else => bun.String.static("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
+
+                    else => |e| bun.String.createFormat("{s} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
+                        @errorName(e),
+                        path,
+                    }) catch bun.outOfMemory(),
                 },
                 .path = path,
             };
@@ -1402,7 +1406,7 @@ pub const Fetch = struct {
 
         fn toResponse(this: *FetchTasklet) Response {
             log("toResponse", .{});
-            std.debug.assert(this.metadata != null);
+            bun.assert(this.metadata != null);
             // at this point we always should have metadata
             const metadata = this.metadata.?;
             const http_response = metadata.response;
@@ -1535,8 +1539,8 @@ pub const Fetch = struct {
             fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
 
             if (fetch_tasklet.request_body == .Sendfile) {
-                std.debug.assert(fetch_options.url.isHTTP());
-                std.debug.assert(fetch_options.proxy == null);
+                bun.assert(fetch_options.url.isHTTP());
+                bun.assert(fetch_options.proxy == null);
                 fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
             }
 
@@ -1614,7 +1618,7 @@ pub const Fetch = struct {
             // metadata should be provided only once so we preserve it until we consume it
             if (result.metadata) |metadata| {
                 log("added callback metadata", .{});
-                std.debug.assert(task.metadata == null);
+                bun.assert(task.metadata == null);
                 task.metadata = metadata;
             }
             task.body_size = result.body_size;
@@ -1683,6 +1687,7 @@ pub const Fetch = struct {
         JSC.markBinding(@src());
         const globalThis = ctx.ptr();
         const arguments = callframe.arguments(2);
+        bun.Analytics.Features.fetch += 1;
 
         var exception_val = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_val;

@@ -25,7 +25,7 @@ const sockaddr_un = std.os.linux.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
 
-pub const log = bun.Output.scoped(.uv, false);
+pub const log = bun.Output.scoped(.uv, true);
 
 pub const CHAR = u8;
 pub const SHORT = c_short;
@@ -408,7 +408,7 @@ pub const Handle = extern struct {
 fn HandleMixin(comptime Type: type) type {
     return struct {
         pub fn getData(this: *const Type, comptime DataType: type) ?*DataType {
-            return @ptrCast(uv_handle_get_data(@ptrCast(this)));
+            return @alignCast(@ptrCast(uv_handle_get_data(@ptrCast(this))));
         }
         pub fn getLoop(this: *const Type) *Loop {
             return uv_handle_get_loop(@ptrCast(this));
@@ -597,10 +597,12 @@ pub const Loop = extern struct {
     wq_async: uv_async_t,
 
     pub fn subActive(this: *Loop, value: u32) void {
+        log("subActive({d}) - {d}", .{ value, this.active_handles });
         this.active_handles -= value;
     }
 
     pub fn addActive(this: *Loop, value: u32) void {
+        log("addActive({d})", .{value});
         this.active_handles += value;
     }
 
@@ -608,15 +610,28 @@ pub const Loop = extern struct {
     pub const unref = dec;
 
     pub fn inc(this: *Loop) void {
+        log("inc - {d}", .{this.active_handles + 1});
+
+        // This log may be helpful if you are curious where KeepAlives are being created from
+        // if (Env.isDebug) {
+        //     std.debug.dumpCurrentStackTrace(@returnAddress());
+        // }
         this.active_handles += 1;
     }
 
     pub fn dec(this: *Loop) void {
+        log("dec", .{});
         this.active_handles -= 1;
     }
 
-    pub fn isActive(this: *const Loop) bool {
-        return uv_loop_alive(this) != 0;
+    pub fn isActive(this: *Loop) bool {
+        const loop_alive = uv_loop_alive(this) != 0;
+        // This log may be helpful if you are curious what exact handles are active
+        // if (Env.isDebug and loop_alive) {
+        //     bun.Output.debug("Active Handles:", .{});
+        //     dumpActiveHandles(this, null);
+        // }
+        return loop_alive;
     }
 
     pub fn init(ptr: *Loop) ?bun.C.E {
@@ -668,15 +683,22 @@ pub const Loop = extern struct {
     }
 
     pub fn refConcurrently(this: *Loop) void {
+        log("refConcurrently", .{});
         _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Add, 1, .Monotonic);
     }
 
     pub fn unrefConcurrently(this: *Loop) void {
+        log("unrefConcurrently", .{});
         _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Sub, 1, .Monotonic);
     }
 
     pub fn unrefCount(this: *Loop, count: i32) void {
+        log("unrefCount({d})", .{count});
         this.active_handles -= @intCast(count);
+    }
+
+    pub fn dumpActiveHandles(this: *Loop, stream: ?*FILE) void {
+        uv_print_active_handles(this, stream);
     }
 };
 pub const struct_uv__work = extern struct {
@@ -707,7 +729,7 @@ pub const uv_buf_t = extern struct {
     base: [*]u8,
 
     pub fn init(input: []const u8) uv_buf_t {
-        std.debug.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
+        bun.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
         return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
     }
 
@@ -1510,15 +1532,32 @@ pub const struct_uv_fs_event_s = extern struct {
     u: union_unnamed_428,
     endgame_next: [*c]uv_handle_t,
     flags: c_uint,
-    path: [*]u8,
+    path: ?[*:0]u8,
     req: struct_uv_fs_event_req_s,
     dir_handle: HANDLE,
     req_pending: c_int,
     cb: uv_fs_event_cb,
-    filew: [*]WCHAR,
-    short_filew: [*]WCHAR,
-    dirw: [*]WCHAR,
+    filew: ?[*]WCHAR = null,
+    short_filew: ?[*]WCHAR = null,
+    dirw: ?[*]WCHAR = null,
     buffer: [*]u8,
+
+    pub fn isDir(this: *const uv_fs_event_t) bool {
+        return this.dirw != null;
+    }
+
+    pub fn hash(this: *const uv_fs_event_t, filename: []const u8, events: c_int, status: c_int) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        if (this.path) |path| {
+            hasher.update(bun.sliceTo(path, 0));
+        } else {
+            hasher.update("null");
+        }
+        hasher.update(std.mem.asBytes(&events));
+        hasher.update(filename);
+        hasher.update(std.mem.asBytes(&status));
+        return hasher.final();
+    }
 };
 const union_unnamed_432 = extern union {
     fd: c_int,
@@ -1898,7 +1937,7 @@ pub const struct_uv_utsname_s = extern struct {
     machine: [255:0]u8,
 
     comptime {
-        std.debug.assert(@sizeOf(struct_uv_utsname_s) == 256 * 4);
+        bun.assert(@sizeOf(struct_uv_utsname_s) == 256 * 4);
     }
 };
 pub const uv_utsname_t = struct_uv_utsname_s;
@@ -2034,8 +2073,8 @@ pub extern fn uv_req_get_type(req: [*c]const uv_req_t) uv_req_type;
 pub extern fn uv_req_type_name(@"type": uv_req_type) [*]const u8;
 pub extern fn uv_is_active(handle: *const uv_handle_t) c_int;
 pub extern fn uv_walk(loop: *uv_loop_t, walk_cb: uv_walk_cb, arg: ?*anyopaque) void;
-pub extern fn uv_print_all_handles(loop: *uv_loop_t, stream: [*c]FILE) void;
-pub extern fn uv_print_active_handles(loop: *uv_loop_t, stream: [*c]FILE) void;
+pub extern fn uv_print_all_handles(loop: *uv_loop_t, stream: ?*FILE) void;
+pub extern fn uv_print_active_handles(loop: *uv_loop_t, stream: ?*FILE) void;
 pub extern fn uv_close(handle: *uv_handle_t, close_cb: uv_close_cb) void;
 pub extern fn uv_send_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;
 pub extern fn uv_recv_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;

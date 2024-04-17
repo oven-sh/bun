@@ -12,7 +12,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 
 const js_ast = bun.JSAst;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
 const options = @import("./options.zig");

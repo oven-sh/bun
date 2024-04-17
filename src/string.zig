@@ -72,19 +72,19 @@ pub const WTFStringImplStruct = extern struct {
     }
 
     pub inline fn utf16Slice(self: WTFStringImpl) []const u16 {
-        std.debug.assert(!is8Bit(self));
+        bun.assert(!is8Bit(self));
         return self.m_ptr.utf16[0..length(self)];
     }
 
     pub inline fn latin1Slice(self: WTFStringImpl) []const u8 {
-        std.debug.assert(is8Bit(self));
+        bun.assert(is8Bit(self));
         return self.m_ptr.latin1[0..length(self)];
     }
 
     /// Caller must ensure that the string is 8-bit and ASCII.
     pub inline fn utf8Slice(self: WTFStringImpl) []const u8 {
         if (comptime bun.Environment.allow_assert)
-            std.debug.assert(canUseAsUTF8(self));
+            bun.assert(canUseAsUTF8(self));
         return self.m_ptr.latin1[0..length(self)];
     }
 
@@ -99,11 +99,11 @@ pub const WTFStringImplStruct = extern struct {
     pub inline fn deref(self: WTFStringImpl) void {
         JSC.markBinding(@src());
         const current_count = self.refCount();
-        std.debug.assert(current_count > 0);
+        bun.assert(current_count > 0);
         Bun__WTFStringImpl__deref(self);
         if (comptime bun.Environment.allow_assert) {
             if (current_count > 1) {
-                std.debug.assert(self.refCount() < current_count or self.isStatic());
+                bun.assert(self.refCount() < current_count or self.isStatic());
             }
         }
     }
@@ -111,14 +111,21 @@ pub const WTFStringImplStruct = extern struct {
     pub inline fn ref(self: WTFStringImpl) void {
         JSC.markBinding(@src());
         const current_count = self.refCount();
-        std.debug.assert(current_count > 0);
+        bun.assert(current_count > 0);
         Bun__WTFStringImpl__ref(self);
-        std.debug.assert(self.refCount() > current_count or self.isStatic());
+        bun.assert(self.refCount() > current_count or self.isStatic());
     }
 
     pub fn toLatin1Slice(this: WTFStringImpl) ZigString.Slice {
         this.ref();
         return ZigString.Slice.init(this.refCountAllocator(), this.latin1Slice());
+    }
+
+    extern fn Bun__WTFStringImpl__ensureHash(this: WTFStringImpl) void;
+    /// Compute the hash() if necessary
+    pub fn ensureHash(this: WTFStringImpl) void {
+        JSC.markBinding(@src());
+        Bun__WTFStringImpl__ensureHash(this);
     }
 
     pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
@@ -233,8 +240,8 @@ pub const StringImplAllocator = struct {
         _: usize,
     ) void {
         var this = bun.cast(WTFStringImpl, ptr);
-        std.debug.assert(this.latin1Slice().ptr == buf.ptr);
-        std.debug.assert(this.latin1Slice().len == buf.len);
+        bun.assert(this.latin1Slice().ptr == buf.ptr);
+        bun.assert(this.latin1Slice().len == buf.len);
         this.deref();
     }
 
@@ -288,6 +295,17 @@ pub const String = extern struct {
         return this.tag == Tag.ZigString and this.value.ZigString.isGloballyAllocated();
     }
 
+    pub fn ensureHash(this: String) void {
+        if (this.tag == .WTFStringImpl) this.value.WTFStringImpl.ensureHash();
+    }
+
+    pub fn transferToJS(this: *String, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const js_value = this.toJS(globalThis);
+        this.deref();
+        this.* = dead;
+        return js_value;
+    }
+
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
         switch (this.tag) {
             .ZigString => return try this.value.ZigString.toOwnedSlice(allocator),
@@ -308,8 +326,18 @@ pub const String = extern struct {
         }
     }
 
+    pub fn createIfDifferent(other: String, utf8_slice: []const u8) String {
+        if (other.tag == .WTFStringImpl) {
+            if (other.eqlUTF8(utf8_slice)) {
+                return other.dupeRef();
+            }
+        }
+
+        return createUTF8(utf8_slice);
+    }
+
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
-        std.debug.assert(len > 0);
+        bun.assert(len > 0);
         const string = BunString__fromLatin1Unitialized(len);
         const wtf = string.value.WTFStringImpl;
         return .{
@@ -319,7 +347,7 @@ pub const String = extern struct {
     }
 
     fn createUninitializedUTF16(len: usize) struct { String, []u16 } {
-        std.debug.assert(len > 0);
+        bun.assert(len > 0);
         const string = BunString__fromUTF16Unitialized(len);
         const wtf = string.value.WTFStringImpl;
         return .{
@@ -349,7 +377,7 @@ pub const String = extern struct {
         comptime kind: WTFStringEncoding,
         len: usize,
     ) struct { String, [](kind.Byte()) } {
-        std.debug.assert(len > 0);
+        bun.assert(len > 0);
         return switch (comptime kind) {
             .latin1 => createUninitializedLatin1(len),
             .utf16 => createUninitializedUTF16(len),
@@ -374,6 +402,14 @@ pub const String = extern struct {
             return BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len);
         }
         return BunString__fromUTF16(bytes.ptr, bytes.len);
+    }
+
+    pub fn createFormat(comptime fmt: []const u8, args: anytype) !String {
+        var sba = std.heap.stackFallback(16384, bun.default_allocator);
+        const alloc = sba.get();
+        const buf = try std.fmt.allocPrint(alloc, fmt, args);
+        defer alloc.free(buf);
+        return createUTF8(buf);
     }
 
     pub fn createFromOSPath(os_path: bun.OSPathSlice) String {
@@ -512,9 +548,14 @@ pub const String = extern struct {
         callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void,
     ) String;
 
-    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void) String {
+    /// ctx is the pointer passed into `createExternal`
+    /// buffer is the pointer to the buffer, either [*]u8 or [*]u16
+    /// len is the number of characters in that buffer.
+    pub const ExternalStringImplFreeFunction = fn (ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void;
+
+    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
         JSC.markBinding(@src());
-        std.debug.assert(bytes.len > 0);
+        bun.assert(bytes.len > 0);
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
     }
 
@@ -530,7 +571,7 @@ pub const String = extern struct {
 
     pub fn createExternalGloballyAllocated(comptime kind: WTFStringEncoding, bytes: []kind.Byte()) String {
         JSC.markBinding(@src());
-        std.debug.assert(bytes.len > 0);
+        bun.assert(bytes.len > 0);
 
         return switch (comptime kind) {
             .latin1 => BunString__createExternalGloballyAllocatedLatin1(bytes.ptr, bytes.len),
@@ -734,8 +775,8 @@ pub const String = extern struct {
 
     pub inline fn utf8(self: String) []const u8 {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(self.tag == .ZigString or self.tag == .StaticZigString);
-            std.debug.assert(self.canBeUTF8());
+            bun.assert(self.tag == .ZigString or self.tag == .StaticZigString);
+            bun.assert(self.canBeUTF8());
         }
         return self.value.ZigString.slice();
     }
@@ -831,8 +872,8 @@ pub const String = extern struct {
                 }
 
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(!isWTFAllocator(slice.allocator.get().?)); // toUTF8WithoutRef() should never return a WTF allocator
-                    std.debug.assert(slice.allocator.get().?.vtable == allocator.vtable); // assert that the allocator is the same
+                    bun.assert(!isWTFAllocator(slice.allocator.get().?)); // toUTF8WithoutRef() should never return a WTF allocator
+                    bun.assert(slice.allocator.get().?.vtable == allocator.vtable); // assert that the allocator is the same
                 }
 
                 // We've already cloned the string, so let's just return the slice.
@@ -860,8 +901,8 @@ pub const String = extern struct {
                 }
 
                 if (comptime bun.Environment.allow_assert) {
-                    std.debug.assert(!isWTFAllocator(slice.allocator.get().?)); // toUTF8WithoutRef() should never return a WTF allocator
-                    std.debug.assert(slice.allocator.get().?.vtable == allocator.vtable); // assert that the allocator is the same
+                    bun.assert(!isWTFAllocator(slice.allocator.get().?)); // toUTF8WithoutRef() should never return a WTF allocator
+                    bun.assert(slice.allocator.get().?.vtable == allocator.vtable); // assert that the allocator is the same
                 }
 
                 // We did have to clone the string. Let's avoid keeping the WTFStringImpl around
@@ -896,8 +937,6 @@ pub const String = extern struct {
         }
     }
 
-    pub const unref = deref;
-
     pub fn eqlComptime(this: String, comptime value: []const u8) bool {
         return this.toZigString().eqlComptime(value);
     }
@@ -912,7 +951,7 @@ pub const String = extern struct {
 
     pub fn charAt(this: String, index: usize) u16 {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(index < this.length());
+            bun.assert(index < this.length());
         }
         return switch (this.tag) {
             .WTFStringImpl => if (this.value.WTFStringImpl.is8Bit()) @intCast(this.value.WTFStringImpl.utf8Slice()[index]) else this.value.WTFStringImpl.utf16Slice()[index],
@@ -923,7 +962,7 @@ pub const String = extern struct {
 
     pub fn charAtU8(this: String, index: usize) u8 {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(index < this.length());
+            bun.assert(index < this.length());
         }
         return switch (this.tag) {
             .WTFStringImpl => if (this.value.WTFStringImpl.is8Bit()) this.value.WTFStringImpl.utf8Slice()[index] else @truncate(this.value.WTFStringImpl.utf16Slice()[index]),
@@ -933,7 +972,7 @@ pub const String = extern struct {
     }
 
     pub fn indexOfAsciiChar(this: String, chr: u8) ?usize {
-        std.debug.assert(chr < 128);
+        bun.assert(chr < 128);
         return switch (this.isUTF16()) {
             true => std.mem.indexOfScalar(u16, this.utf16(), @intCast(chr)),
             false => bun.strings.indexOfCharUsize(this.byteSlice(), chr),
@@ -987,7 +1026,7 @@ pub const String = extern struct {
             const bytes = this.byteSlice();
 
             inline for (0..values.len) |i| {
-                std.debug.assert(bytes.len == values[i].len);
+                bun.assert(bytes.len == values[i].len);
                 if (bun.strings.eqlComptimeCheckLenWithType(u8, bytes, values[i], false)) {
                     return i;
                 }
@@ -1028,7 +1067,7 @@ pub const String = extern struct {
             const bytes = this.byteSlice();
 
             inline for (0..values.len) |i| {
-                std.debug.assert(bytes.len == values[i].len);
+                bun.assert(bytes.len == values[i].len);
                 if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(bytes, values[i])) {
                     return i;
                 }
@@ -1154,7 +1193,7 @@ pub const String = extern struct {
         return try concat(strings.len, allocator, strings);
     }
 
-    pub export fn BunString__getStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub export fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
@@ -1181,7 +1220,7 @@ pub const SliceWithUnderlyingString = struct {
 
     pub inline fn reportExtraMemory(this: *SliceWithUnderlyingString, vm: *JSC.VM) void {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(!this.did_report_extra_memory_debug);
+            bun.assert(!this.did_report_extra_memory_debug);
             this.did_report_extra_memory_debug = true;
         }
         this.utf8.reportExtraMemory(vm);
@@ -1267,7 +1306,7 @@ pub const SliceWithUnderlyingString = struct {
         if ((this.underlying.tag == .Dead or this.underlying.tag == .Empty) and this.utf8.length() > 0) {
             if (comptime bun.Environment.allow_assert) {
                 if (this.utf8.allocator.get()) |allocator| {
-                    std.debug.assert(!String.isWTFAllocator(allocator)); // We should never enter this state.
+                    bun.assert(!String.isWTFAllocator(allocator)); // We should never enter this state.
                 }
             }
 

@@ -8,19 +8,13 @@
 /// - Run "make dev"
 pub const BunObject = struct {
     // --- Callbacks ---
-    pub const DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = dump_mimalloc;
-    pub const _Os = Bun._Os;
-    pub const _Path = Bun._Path;
     pub const allocUnsafe = Bun.allocUnsafe;
     pub const build = Bun.JSBundler.buildFn;
     pub const connect = JSC.wrapStaticMethod(JSC.API.Listener, "connect", false);
     pub const deflateSync = JSC.wrapStaticMethod(JSZlib, "deflateSync", true);
     pub const file = WebCore.Blob.constructBunFile;
-    pub const fs = Bun.fs;
     pub const gc = Bun.runGC;
     pub const generateHeapSnapshot = Bun.generateHeapSnapshot;
-    pub const getImportedStyles = Bun.getImportedStyles;
-    pub const getPublicPath = Bun.getPublicPathJS;
     pub const gunzipSync = JSC.wrapStaticMethod(JSZlib, "gunzipSync", true);
     pub const gzipSync = JSC.wrapStaticMethod(JSZlib, "gzipSync", true);
     pub const indexOfLine = Bun.indexOfLine;
@@ -42,8 +36,6 @@ pub const BunObject = struct {
     pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
     pub const stringWidth = Bun.stringWidth;
-    pub const shellParse = Bun.shellParse;
-    pub const shellLex = Bun.shellLex;
     pub const braces = Bun.braces;
     pub const shellEscape = Bun.shellEscape;
     // --- Callbacks ---
@@ -128,19 +120,14 @@ pub const BunObject = struct {
         // --- Getters --
 
         // -- Callbacks --
-        @export(BunObject.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump, .{ .name = callbackName("DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump") });
-        @export(BunObject._Os, .{ .name = callbackName("_Os") });
-        @export(BunObject._Path, .{ .name = callbackName("_Path") });
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
         @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
         @export(BunObject.connect, .{ .name = callbackName("connect") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
         @export(BunObject.file, .{ .name = callbackName("file") });
-        @export(BunObject.fs, .{ .name = callbackName("fs") });
         @export(BunObject.gc, .{ .name = callbackName("gc") });
         @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
-        @export(BunObject.getImportedStyles, .{ .name = callbackName("getImportedStyles") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
@@ -162,15 +149,13 @@ pub const BunObject = struct {
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
         @export(BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
-        @export(BunObject.shellParse, .{ .name = callbackName("shellParse") });
-        @export(BunObject.shellLex, .{ .name = callbackName("shellLex") });
         @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         // -- Callbacks --
     }
 };
 
 const Bun = @This();
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const uv = bun.windows.libuv;
 const Environment = bun.Environment;
@@ -178,8 +163,8 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
@@ -188,7 +173,7 @@ const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
 const Bundler = bun.Bundler;
@@ -199,7 +184,7 @@ const js_ast = bun.JSAst;
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
-const ZigString = @import("root").bun.JSC.ZigString;
+const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../../runtime.zig");
 const Router = @import("./filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
@@ -207,37 +192,37 @@ const DotEnv = @import("../../env_loader.zig");
 const ParseResult = bun.bundler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
-const WebCore = @import("root").bun.JSC.WebCore;
+const WebCore = bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
-const js = @import("root").bun.JSC.C;
-const JSC = @import("root").bun.JSC;
+const js = bun.JSC.C;
+const JSC = bun.JSC;
 const JSError = @import("../base.zig").JSError;
 
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
-const JSValue = @import("root").bun.JSC.JSValue;
+const JSValue = bun.JSC.JSValue;
 
-const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
-const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
-const Node = @import("root").bun.JSC.Node;
-const ZigException = @import("root").bun.JSC.ZigException;
-const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = @import("root").bun.JSC.ErrorableResolvedSource;
-const ResolvedSource = @import("root").bun.JSC.ResolvedSource;
-const JSPromise = @import("root").bun.JSC.JSPromise;
-const JSInternalPromise = @import("root").bun.JSC.JSInternalPromise;
-const JSModuleLoader = @import("root").bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = @import("root").bun.JSC.JSPromiseRejectionOperation;
-const Exception = @import("root").bun.JSC.Exception;
-const ErrorableZigString = @import("root").bun.JSC.ErrorableZigString;
-const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
-const VM = @import("root").bun.JSC.VM;
-const JSFunction = @import("root").bun.JSC.JSFunction;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const ExceptionValueRef = bun.JSC.ExceptionValueRef;
+const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
+const ConsoleObject = bun.JSC.ConsoleObject;
+const Node = bun.JSC.Node;
+const ZigException = bun.JSC.ZigException;
+const ZigStackTrace = bun.JSC.ZigStackTrace;
+const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
+const ResolvedSource = bun.JSC.ResolvedSource;
+const JSPromise = bun.JSC.JSPromise;
+const JSInternalPromise = bun.JSC.JSInternalPromise;
+const JSModuleLoader = bun.JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
+const Exception = bun.JSC.Exception;
+const ErrorableZigString = bun.JSC.ErrorableZigString;
+const ZigGlobalObject = bun.JSC.ZigGlobalObject;
+const VM = bun.JSC.VM;
+const JSFunction = bun.JSC.JSFunction;
 const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const Transpiler = bun.JSC.API.JSTranspiler;
@@ -301,163 +286,6 @@ pub fn getCSSImports() []ZigString {
         ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
     }
     return css_imports_list_strings[0..tail];
-}
-
-pub fn shellLex(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
-    const arguments_ = callframe.arguments(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-    const string_args = arguments.nextEat() orelse {
-        globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
-        return JSC.JSValue.jsUndefined();
-    };
-
-    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-    defer arena.deinit();
-
-    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-    var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-    var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-        globalThis.throwOutOfMemory();
-        return .undefined;
-    };
-    defer {
-        for (jsstrings.items[0..]) |bunstr| {
-            bunstr.deref();
-        }
-        jsstrings.deinit();
-    }
-    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-    defer {
-        for (jsobjs.items) |jsval| {
-            jsval.unprotect();
-        }
-    }
-
-    var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    })) {
-        return .undefined;
-    }
-
-    const lex_result = brk: {
-        if (bun.strings.isAllASCII(script.items[0..])) {
-            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
-            lexer.lex() catch |err| {
-                globalThis.throwError(err, "failed to lex shell");
-                return JSValue.undefined;
-            };
-            break :brk lexer.get_result();
-        }
-        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
-        lexer.lex() catch |err| {
-            globalThis.throwError(err, "failed to lex shell");
-            return JSValue.undefined;
-        };
-        break :brk lexer.get_result();
-    };
-
-    if (lex_result.errors.len > 0) {
-        const str = lex_result.combineErrors(arena.allocator());
-        globalThis.throwPretty("{s}", .{str});
-        return .undefined;
-    }
-
-    var test_tokens = std.ArrayList(Shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    };
-    for (lex_result.tokens) |tok| {
-        const test_tok = Shell.Test.TestToken.from_real(tok, lex_result.strpool);
-        test_tokens.append(test_tok) catch {
-            globalThis.throwOutOfMemory();
-            return JSValue.undefined;
-        };
-    }
-
-    const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{}) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    };
-
-    defer globalThis.bunVM().allocator.free(str);
-    var bun_str = bun.String.fromBytes(str);
-    return bun_str.toJS(globalThis);
-}
-
-pub fn shellParse(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
-    const arguments_ = callframe.arguments(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-    const string_args = arguments.nextEat() orelse {
-        globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
-        return JSC.JSValue.jsUndefined();
-    };
-
-    var arena = bun.ArenaAllocator.init(bun.default_allocator);
-    defer arena.deinit();
-
-    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-    var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-    var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-        globalThis.throwOutOfMemory();
-        return .undefined;
-    };
-    defer {
-        for (jsstrings.items[0..]) |bunstr| {
-            bunstr.deref();
-        }
-        jsstrings.deinit();
-    }
-    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-    defer {
-        for (jsobjs.items) |jsval| {
-            jsval.unprotect();
-        }
-    }
-    var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    })) {
-        return .undefined;
-    }
-
-    var out_parser: ?bun.shell.Parser = null;
-    var out_lex_result: ?bun.shell.LexResult = null;
-
-    const script_ast = bun.shell.Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], jsstrings.items[0..], &out_parser, &out_lex_result) catch |err| {
-        if (err == bun.shell.ParseError.Lex) {
-            std.debug.assert(out_lex_result != null);
-            const str = out_lex_result.?.combineErrors(arena.allocator());
-            globalThis.throwPretty("{s}", .{str});
-            return .undefined;
-        }
-
-        if (out_parser) |*p| {
-            const errstr = p.combineErrors();
-            globalThis.throwPretty("{s}", .{errstr});
-            return .undefined;
-        }
-
-        globalThis.throwError(err, "failed to lex/parse shell");
-        return .undefined;
-    };
-
-    const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    };
-
-    defer globalThis.bunVM().allocator.free(str);
-    var bun_str = bun.String.fromBytes(str);
-    return bun_str.toJS(globalThis);
 }
 
 const ShellTask = struct {
@@ -1383,6 +1211,19 @@ export fn Bun__resolveSync(
     };
 }
 
+export fn Bun__resolveSyncWithStrings(
+    global: *JSGlobalObject,
+    specifier: *bun.String,
+    source: *bun.String,
+    is_esm: bool,
+) JSC.JSValue {
+    Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
+    var exception = [1]JSC.JSValueRef{null};
+    return doResolveWithArgs(global, specifier.*, source.*, &exception, is_esm, true) orelse {
+        return JSC.JSValue.fromRef(exception[0]);
+    };
+}
+
 export fn Bun__resolveSyncWithSource(
     global: *JSGlobalObject,
     specifier: JSValue,
@@ -1397,14 +1238,6 @@ export fn Bun__resolveSyncWithSource(
     return doResolveWithArgs(global, specifier_str, source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
-}
-
-comptime {
-    if (!is_bindgen) {
-        _ = Bun__resolve;
-        _ = Bun__resolveSync;
-        _ = Bun__resolveSyncWithSource;
-    }
 }
 
 pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1423,41 +1256,9 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(globalObject);
 }
 
-fn fs(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    var module = JSC.Node.NodeJSFS.new(.{
-        .node_fs = .{
-            .vm = globalObject.bunVM(),
-        },
-    });
-
-    return module.toJS(globalObject);
-}
-
-fn _Os(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    return Node.Os.create(globalObject);
-}
-
-fn _Path(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    const arguments = callframe.arguments(1);
-    const args = arguments.slice();
-    const is_windows = args.len == 1 and args[0].toBoolean();
-    return Node.Path.create(globalObject, is_windows);
-}
-
-/// @deprecated
-fn getImportedStyles(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    defer flushCSSImports();
-    const styles = getCSSImports();
-    if (styles.len == 0) {
-        return JSC.JSValue.createEmptyArray(globalObject, 0);
-    }
-
-    return JSValue.createStringArray(globalObject, styles.ptr, styles.len, true);
-}
-
 extern fn dump_zone_malloc_stats() void;
 
-pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+export fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     globalObject.bunVM().arena.dumpStats();
     if (comptime bun.is_heap_breakdown_enabled) {
         dump_zone_malloc_stats();
@@ -2158,7 +1959,7 @@ pub const Crypto = struct {
             algorithm: PasswordObject.Algorithm.Value,
             comptime sync: bool,
         ) JSC.JSValue {
-            std.debug.assert(password.len > 0); // caller must check
+            assert(password.len > 0); // caller must check
 
             if (comptime sync) {
                 const value = HashJob.getValue(password, algorithm);
@@ -2200,7 +2001,7 @@ pub const Crypto = struct {
             algorithm: ?PasswordObject.Algorithm,
             comptime sync: bool,
         ) JSC.JSValue {
-            std.debug.assert(password.len > 0); // caller must check
+            assert(password.len > 0); // caller must check
 
             if (comptime sync) {
                 const value = VerifyJob.getValue(password, prev_hash, algorithm);
@@ -3166,7 +2967,7 @@ pub fn serve(
 }
 
 pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u16, len: usize) JSValue {
-    std.debug.assert(len > 0);
+    assert(len > 0);
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
@@ -3181,7 +2982,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
         .allocated => |escaped_html| {
             if (comptime Environment.allow_assert) {
                 // assert that re-encoding the string produces the same result
-                std.debug.assert(
+                assert(
                     std.mem.eql(
                         u16,
                         (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false, false) catch unreachable).?,
@@ -3190,7 +2991,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
                 );
 
                 // assert we do not allocate a new string unnecessarily
-                std.debug.assert(
+                assert(
                     !std.mem.eql(
                         u16,
                         input_slice,
@@ -3199,7 +3000,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
                 );
 
                 // the output should always be longer than the input
-                std.debug.assert(escaped_html.len > input_slice.len);
+                assert(escaped_html.len > input_slice.len);
             }
 
             return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
@@ -3208,7 +3009,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
 }
 
 pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u8, len: usize) JSValue {
-    std.debug.assert(len > 0);
+    assert(len > 0);
 
     const input_slice = ptr[0..len];
     var stack_allocator = std.heap.stackFallback(256, globalObject.bunVM().allocator);
@@ -3227,10 +3028,10 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
         .allocated => |escaped_html| {
             if (comptime Environment.allow_assert) {
                 // the output should always be longer than the input
-                std.debug.assert(escaped_html.len > input_slice.len);
+                assert(escaped_html.len > input_slice.len);
 
                 // assert we do not allocate a new string unnecessarily
-                std.debug.assert(
+                assert(
                     !std.mem.eql(
                         u8,
                         input_slice,
@@ -3495,7 +3296,7 @@ pub fn getShellConstructor(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
-    return JSC.API.Shell.eval.Interpreter.getConstructor(globalThis);
+    return JSC.API.Shell.Interpreter.getConstructor(globalThis);
 }
 
 pub fn getGlobConstructor(
@@ -3526,6 +3327,7 @@ const UnsafeObject = struct {
             .gcAggressionLevel = &gcAggressionLevel,
             .segfault = &__debug__doSegfault,
             .arrayBufferToString = &arrayBufferToString,
+            .mimallocDump = &dump_mimalloc,
         };
         inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |name| {
             object.put(
@@ -3608,7 +3410,7 @@ const TOMLObject = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        var arena = @import("root").bun.ArenaAllocator.init(globalThis.allocator());
+        var arena = bun.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
         defer arena.deinit();
         var log = logger.Log.init(default_allocator);
@@ -3679,7 +3481,7 @@ pub const Timer = struct {
         return VirtualMachine.get().timer.last_id;
     }
 
-    const uws = @import("root").bun.uws;
+    const uws = bun.uws;
 
     // TODO: reference count to avoid multiple Strong references to the same
     // object in setInterval
@@ -3797,7 +3599,8 @@ pub const Timer = struct {
             if (vm.isInspectorEnabled()) {
                 Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
             }
-
+            vm.eventLoop().enter();
+            defer vm.eventLoop().exit();
             const result = callback.callWithGlobalThis(
                 globalThis,
                 args,
@@ -4053,8 +3856,7 @@ pub const Timer = struct {
                 if (this.cancelled) {
                     _ = uv.uv_timer_stop(&this.timer);
                 }
-                // libuv runs on the same thread
-                return this.runFromJSThread();
+                this.runFromJSThread();
             }
 
             fn onRequest(req: *bun.io.Request) bun.io.Action {
@@ -4111,7 +3913,7 @@ pub const Timer = struct {
                 if (comptime Environment.allow_assert)
                     // If this is ever -1, it's invalid.
                     // It should always be at least 1.
-                    std.debug.assert(this.interval > 0);
+                    assert(this.interval > 0);
 
                 if (!Timeout.runFromConcurrentTask(timer_id, vm, this, reschedule) or this.cancelled) {
                     this.deinit();
@@ -4142,10 +3944,12 @@ pub const Timer = struct {
             }
 
             pub fn schedule(this: *TimerReference, interval: ?i32) void {
-                std.debug.assert(!this.cancelled);
+                assert(!this.cancelled);
                 _ = this.scheduled_count.fetchAdd(1, .Monotonic);
                 const ms: usize = @max(interval orelse this.interval, 1);
                 if (Environment.isWindows) {
+                    // we MUST update the timer so we avoid early firing
+                    uv.uv_update_time(uv.Loop.get());
                     if (uv.uv_timer_start(&this.timer, TimerReference.onUVRequest, @intCast(ms), 0) != 0) @panic("unable to start timer");
                     return;
                 }
@@ -4970,7 +4774,7 @@ pub const FFIObject = struct {
 
         var addr: usize = @intFromPtr(array_buffer.ptr);
         // const Sizes = @import("../bindings/sizes.zig");
-        // std.debug.assert(addr == @intFromPtr(value.asEncoded().ptr) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector);
+        // assert(addr == @intFromPtr(value.asEncoded().ptr) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector);
 
         if (byteOffset) |off| {
             if (!off.isEmptyOrUndefinedOrNull()) {
@@ -5004,7 +4808,7 @@ pub const FFIObject = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(JSC.JSValue.fromPtrAddress(addr).asPtrAddress() == addr);
+            assert(JSC.JSValue.fromPtrAddress(addr).asPtrAddress() == addr);
         }
 
         return JSC.JSValue.fromPtrAddress(addr);
@@ -5474,9 +5278,8 @@ const InternalTestingAPIs = struct {
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
-        _ = Crypto.JSPasswordObject.JSPasswordObject__create;
-        BunObject.exportAll();
-        @export(InternalTestingAPIs.BunInternalFunction__syntaxHighlighter, .{ .name = "BunInternalFunction__syntaxHighlighter" });
-    }
+    _ = Crypto.JSPasswordObject.JSPasswordObject__create;
+    BunObject.exportAll();
 }
+
+const assert = bun.assert;

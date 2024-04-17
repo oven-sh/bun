@@ -232,7 +232,7 @@ pub const FilePoll = struct {
         log("onKQueueEvent: {}", .{poll});
 
         if (KQueueGenerationNumber != u0)
-            std.debug.assert(poll.generation_number == kqueue_event.ext[0]);
+            bun.assert(poll.generation_number == kqueue_event.ext[0]);
 
         poll.onUpdate(kqueue_event.data);
     }
@@ -335,7 +335,7 @@ pub const FilePoll = struct {
         }
 
         const ptr = poll.owner;
-        std.debug.assert(!ptr.isNull());
+        bun.assert(!ptr.isNull());
 
         switch (ptr.tag()) {
             // @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FIFO))) => {
@@ -567,22 +567,22 @@ pub const FilePoll = struct {
                 return;
             }
 
-            std.debug.assert(poll.next_to_free == null);
+            bun.assert(poll.next_to_free == null);
 
             if (this.pending_free_tail) |tail| {
-                std.debug.assert(this.pending_free_head != null);
-                std.debug.assert(tail.next_to_free == null);
+                bun.assert(this.pending_free_head != null);
+                bun.assert(tail.next_to_free == null);
                 tail.next_to_free = poll;
             }
 
             if (this.pending_free_head == null) {
                 this.pending_free_head = poll;
-                std.debug.assert(this.pending_free_tail == null);
+                bun.assert(this.pending_free_tail == null);
             }
 
             poll.flags.insert(.ignore_updates);
             this.pending_free_tail = poll;
-            std.debug.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
+            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
             vm.after_event_loop_callback = @ptrCast(&processDeferredFrees);
             vm.after_event_loop_callback_ctx = this;
         }
@@ -790,7 +790,7 @@ pub const FilePoll = struct {
 
         log("register: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
 
-        std.debug.assert(fd != invalid_fd);
+        bun.assert(fd != invalid_fd);
 
         if (one_shot != .none) {
             this.flags.insert(.one_shot);
@@ -945,7 +945,7 @@ pub const FilePoll = struct {
 
     pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) JSC.Maybe(void) {
         if (Environment.allow_assert) {
-            std.debug.assert(fd.int() >= 0 and fd != bun.invalid_fd);
+            bun.assert(fd.int() >= 0 and fd != bun.invalid_fd);
         }
         defer this.deactivate(loop);
 
@@ -955,7 +955,7 @@ pub const FilePoll = struct {
             return JSC.Maybe(void).success;
         }
 
-        std.debug.assert(fd != invalid_fd);
+        bun.assert(fd != invalid_fd);
         const watcher_fd = loop.fd;
         const flag: Flags = brk: {
             if (this.flags.contains(.poll_readable))
@@ -1073,7 +1073,7 @@ pub const FilePoll = struct {
         this.flags.remove(.needs_rearm);
         this.flags.remove(.one_shot);
         // we don't support both right now
-        std.debug.assert(!(this.flags.contains(.poll_readable) and this.flags.contains(.poll_writable)));
+        bun.assert(!(this.flags.contains(.poll_readable) and this.flags.contains(.poll_writable)));
         this.flags.remove(.poll_readable);
         this.flags.remove(.poll_writable);
         this.flags.remove(.poll_process);
@@ -1096,7 +1096,7 @@ pub const Closer = struct {
         /// for compatibiltiy with windows version
         _: anytype,
     ) void {
-        std.debug.assert(fd != bun.invalid_fd);
+        bun.assert(fd != bun.invalid_fd);
         JSC.WorkPool.schedule(&Closer.new(.{ .fd = fd }).task);
     }
 

@@ -6,7 +6,7 @@ const mimalloc = @import("./allocators/mimalloc.zig");
 const Environment = @import("./env.zig");
 const FeatureFlags = @import("./feature_flags.zig");
 const Allocator = mem.Allocator;
-const assert = std.debug.assert;
+const assert = bun.assert;
 const bun = @import("root").bun;
 
 pub const GlobalArena = struct {
@@ -80,7 +80,7 @@ const ArenaRegistry = struct {
     var registry = ArenaRegistry{};
 
     pub fn register(arena: Arena) void {
-        if (comptime Environment.allow_assert and Environment.isNative) {
+        if (comptime Environment.isDebug and Environment.isNative) {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             const entry = registry.arenas.getOrPut(arena.heap.?) catch unreachable;
@@ -100,7 +100,7 @@ const ArenaRegistry = struct {
     }
 
     pub fn assert(arena: Arena) void {
-        if (comptime Environment.allow_assert and Environment.isNative) {
+        if (comptime Environment.isDebug and Environment.isNative) {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             const expected = registry.arenas.get(arena.heap.?) orelse {
@@ -117,7 +117,7 @@ const ArenaRegistry = struct {
     }
 
     pub fn unregister(arena: Arena) void {
-        if (comptime Environment.allow_assert and Environment.isNative) {
+        if (comptime Environment.isDebug and Environment.isNative) {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             if (!registry.arenas.swapRemove(arena.heap.?)) {
@@ -149,7 +149,7 @@ pub const Arena = struct {
     }
 
     pub fn deinit(this: *Arena) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             ArenaRegistry.unregister(this.*);
         }
         mimalloc.mi_heap_destroy(this.heap.?);
@@ -186,7 +186,7 @@ pub const Arena = struct {
 
     pub fn init() !Arena {
         const arena = Arena{ .heap = mimalloc.mi_heap_new() orelse return error.OutOfMemory };
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             ArenaRegistry.register(arena);
         }
         return arena;
@@ -209,7 +209,7 @@ pub const Arena = struct {
         else
             mimalloc.mi_heap_malloc(heap, len);
 
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             const usable = mimalloc.mi_malloc_usable_size(ptr);
             if (usable < len) {
                 std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
@@ -228,7 +228,7 @@ pub const Arena = struct {
 
     fn alloc(arena: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
         const this = bun.cast(*mimalloc.Heap, arena);
-        // if (comptime Environment.allow_assert)
+        // if (comptime Environment.isDebug)
         //     ArenaRegistry.assert(.{ .heap = this });
         if (comptime FeatureFlags.alignment_tweak) {
             return alignedAlloc(this, len, log2_align);
@@ -265,7 +265,7 @@ pub const Arena = struct {
         // mi_free_size internally just asserts the size
         // so it's faster if we don't pass that value through
         // but its good to have that assertion
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             assert(mimalloc.mi_is_in_heap_region(buf.ptr));
             if (mimalloc.canUseAlignedAlloc(buf.len, buf_align))
                 mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align)

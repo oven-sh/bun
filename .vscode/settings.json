@@ -13,7 +13,7 @@
     "node_modules": true,
     ".git": true,
     "src/bun.js/WebKit": true,
-    "src/deps/*/**": true
+    "src/deps/*/**": true,
   },
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
@@ -34,40 +34,41 @@
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
-    "editor.defaultFormatter": "ziglang.vscode-zig"
+    "editor.defaultFormatter": "ziglang.vscode-zig",
   },
 
   // C++
   "lldb.verboseLogging": false,
   "cmake.configureOnOpen": false,
-  "C_Cpp.errorSquiggles": "enabled",  
+  "C_Cpp.errorSquiggles": "enabled",
   "[cpp]": {
-    "editor.defaultFormatter": "xaver.clang-format"
+    "editor.defaultFormatter": "xaver.clang-format",
   },
   "[c]": {
-    "editor.defaultFormatter": "xaver.clang-format"
+    "editor.defaultFormatter": "xaver.clang-format",
   },
   "[h]": {
-    "editor.defaultFormatter": "xaver.clang-format"
+    "editor.defaultFormatter": "xaver.clang-format",
   },
 
   // JavaScript
   "prettier.enable": true,
+  "prettier.configPath": ".prettierrc",
   "eslint.workingDirectories": ["${workspaceFolder}/packages/bun-types"],
   "[javascript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   "[javascriptreact]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
 
   // TypeScript
   "typescript.tsdk": "${workspaceFolder}/node_modules/typescript/lib",
   "[typescript]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   "[typescriptreact]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
 
   // JSON
@@ -77,7 +78,7 @@
   "[jsonc]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
-  
+
   // Markdown
   "[markdown]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
@@ -88,8 +89,8 @@
     "editor.quickSuggestions": {
       "comments": "off",
       "strings": "off",
-      "other": "off"
-    }
+      "other": "off",
+    },
   },
 
   // TOML
@@ -100,6 +101,11 @@
   // YAML
   "[yaml]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+
+  // Docker
+  "[dockerfile]": {
+    "editor.formatOnSave": false,
   },
 
   // Files
@@ -113,23 +119,10 @@
     "**/*.xcworkspacedata": true,
     "**/*.xcscheme": true,
     "**/*.xcodeproj": true,
-    "src/bun.js/WebKit": true,
-    "src/deps/libarchive": true,
-    "src/deps/mimalloc": true,
-    "src/deps/s2n-tls": true,
-    "src/deps/boringssl": true,
-    "src/deps/openssl": true,
-    "src/deps/uws": true,
-    "src/deps/zlib": true,
-    "src/deps/lol-html": true,
-    "src/deps/c-ares": true,
-    "src/deps/tinycc": true,
-    "src/deps/zstd": true,
     "**/*.i": true,
-    "packages/bun-uws/fuzzing/seed-corpus": true
   },
   "files.associations": {
-    "*.idl": "cpp"
+    "*.idl": "cpp",
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,
@@ -147,6 +140,6 @@
     "WebKit/WebCore": true,
     "WebKit/WebDriver": true,
     "WebKit/WebKitBuild": true,
-    "WebKit/WebInspectorUI": true
+    "WebKit/WebInspectorUI": true,
   },
 }

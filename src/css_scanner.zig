@@ -15,7 +15,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const options = @import("./options.zig");
 const import_record = @import("import_record.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Options = options;
 const resolver = @import("./resolver/resolver.zig");
 const _linker = @import("./linker.zig");
@@ -806,7 +806,7 @@ pub const Scanner = struct {
     inline fn nextCodepointSlice(it: *Scanner, comptime advance: bool) []const u8 {
         @setRuntimeSafety(false);
         if (comptime Environment.allow_assert) {
-            std.debug.assert(it.source.contents.len > 0);
+            bun.assert(it.source.contents.len > 0);
         }
 
         const cp_len = strings.utf8ByteSequenceLength(it.source.contents[it.current]);
@@ -900,7 +900,7 @@ pub fn NewWriter(
             log: *logger.Log,
             allocator: std.mem.Allocator,
         ) anyerror!void {
-            std.debug.assert(writer.source.contents.len > 0);
+            bun.assert(writer.source.contents.len > 0);
 
             var scanner = Scanner.init(
                 log,
@@ -918,7 +918,7 @@ pub fn NewWriter(
             log: *logger.Log,
             allocator: std.mem.Allocator,
         ) !usize {
-            std.debug.assert(writer.source.contents.len > 0);
+            bun.assert(writer.source.contents.len > 0);
 
             var scanner = Scanner.init(
                 log,
@@ -938,7 +938,7 @@ pub fn NewWriter(
             log: *logger.Log,
             allocator: std.mem.Allocator,
         ) anyerror!void {
-            std.debug.assert(writer.source.contents.len > 0);
+            bun.assert(writer.source.contents.len > 0);
 
             var scanner = Scanner.init(
                 log,

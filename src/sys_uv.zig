@@ -22,7 +22,7 @@ const Maybe = JSC.Maybe;
 const SystemError = JSC.SystemError;
 
 comptime {
-    std.debug.assert(Environment.isWindows);
+    bun.assert(Environment.isWindows);
 }
 
 pub const log = bun.sys.syslog;
@@ -177,7 +177,7 @@ pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe(usize) {
         return .{ .err = .{ .errno = errno, .syscall = .readlink } };
     } else {
         // Seems like `rc` does not contain the errno?
-        std.debug.assert(rc.int() == 0);
+        bun.assert(rc.int() == 0);
         const slice = bun.span(req.ptrAs([*:0]u8));
         if (slice.len > buf.len) {
             log("uv readlink({s}) = {d}, {s} TRUNCATED", .{ file_path, rc.int(), slice });
@@ -319,7 +319,7 @@ pub fn closeAllowingStdoutAndStderr(fd: FileDescriptor) ?bun.sys.Error {
 
 pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
     const uv_fd = bun.uvfdcast(fd);
-    comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
+    comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
     const debug_timer = bun.Output.DebugTimer.start();
 
@@ -350,10 +350,10 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
         return .{ .result = @as(usize, @intCast(rc.int())) };
     }
 }
+
 pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, position: i64) Maybe(usize) {
-    // TODO: @paperdave is this bad?
-    const uv_fd = bun.uvfdcast(bun.toLibUVOwnedFD(fd));
-    comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
+    const uv_fd = bun.uvfdcast(fd);
+    comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
     const debug_timer = bun.Output.DebugTimer.start();
 

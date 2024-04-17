@@ -28,6 +28,7 @@ else
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
+pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
@@ -129,7 +130,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     }
 
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
-        std.debug.assert(FDImpl.decode(fd).kind == kind);
+        assert(FDImpl.decode(fd).kind == kind);
     }
 
     pub fn cwd() FileDescriptor {
@@ -262,7 +263,7 @@ pub fn len(value: anytype) usize {
                 return indexOfSentinel(info.child, sentinel, value);
             },
             .C => {
-                std.debug.assert(value != null);
+                assert(value != null);
                 return indexOfSentinel(info.child, 0, value);
             },
             .Slice => value.len,
@@ -398,14 +399,14 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    if (comptime Environment.allow_assert) std.debug.assert(dest.len >= src.len);
+    if (comptime Environment.allow_assert) assert(dest.len >= src.len);
     if (@intFromPtr(src.ptr) == @intFromPtr(dest.ptr) or src.len == 0) return;
 
     const input: []const u8 = std.mem.sliceAsBytes(src);
     const output: []u8 = std.mem.sliceAsBytes(dest);
 
-    std.debug.assert(input.len > 0);
-    std.debug.assert(output.len > 0);
+    assert(input.len > 0);
+    assert(output.len > 0);
 
     const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
         @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
@@ -458,6 +459,45 @@ pub fn hash(content: []const u8) u64 {
     return std.hash.Wyhash.hash(0, content);
 }
 
+/// Get a random-ish value
+pub fn fastRandom() u64 {
+    const pcrng = struct {
+        const random_seed = struct {
+            var seed_value: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+            pub fn get() u64 {
+                // This is slightly racy but its fine because this memoization is done as a performance optimization
+                // and we only need to do it once per process
+                var value = seed_value.load(.Monotonic);
+                while (value == 0) : (value = seed_value.load(.Monotonic)) {
+                    if (comptime Environment.isDebug) outer: {
+                        if (getenvZ("BUN_DEBUG_HASH_RANDOM_SEED")) |env| {
+                            value = std.fmt.parseInt(u64, env, 10) catch break :outer;
+                            seed_value.store(value, .Monotonic);
+                            return value;
+                        }
+                    }
+                    rand(std.mem.asBytes(&value));
+                    seed_value.store(value, .Monotonic);
+                }
+
+                return value;
+            }
+        };
+
+        var prng_: ?std.rand.DefaultPrng = null;
+
+        pub fn get() u64 {
+            if (prng_ == null) {
+                prng_ = std.rand.DefaultPrng.init(random_seed.get());
+            }
+
+            return prng_.?.random().uintAtMost(u64, std.math.maxInt(u64));
+        }
+    };
+
+    return pcrng.get();
+}
+
 pub fn hashWithSeed(seed: u64, content: []const u8) u64 {
     return std.hash.Wyhash.hash(seed, content);
 }
@@ -476,7 +516,7 @@ pub fn rand(bytes: []u8) void {
 pub const ObjectPool = @import("./pool.zig").ObjectPool;
 
 pub fn assertNonBlocking(fd: anytype) void {
-    std.debug.assert(
+    assert(
         (std.os.fcntl(fd, std.os.F.GETFL, 0) catch unreachable) & std.os.O.NONBLOCK != 0,
     );
 }
@@ -491,7 +531,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
         @panic("TODO on Windows");
     }
-    std.debug.assert(fd != invalid_fd);
+    assert(fd != invalid_fd);
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd.cast(),
@@ -538,7 +578,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         }
         return;
     }
-    std.debug.assert(fd != invalid_fd);
+    assert(fd != invalid_fd);
 
     var polls = [_]std.os.pollfd{
         .{
@@ -636,7 +676,7 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
         @as(u32, @truncate(slice.len)),
     };
     if (comptime Environment.allow_assert)
-        std.debug.assert(strings.eqlLong(slice, buffer[r[0]..][0..r[1]], false));
+        assert(strings.eqlLong(slice, buffer[r[0]..][0..r[1]], false));
     return r;
 }
 
@@ -691,7 +731,7 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
 
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -701,7 +741,17 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
 
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
+        return res.asDir();
+    } else {
+        const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return fd.asDir();
+    }
+}
+
+pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
+    if (comptime Environment.isWindows) {
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -711,7 +761,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
 
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(invalid_fd, path_, true, false).unwrap();
+        const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
         return res.asDir();
     } else {
         const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
@@ -750,7 +800,7 @@ pub const FDHashMapContext = struct {
         // a file descriptor is i32 on linux, u64 on windows
         // the goal here is to do zero work and widen the 32 bit type to 64
         // this should compile error if FileDescriptor somehow is larger than 64 bits.
-        comptime std.debug.assert(@bitSizeOf(FileDescriptor) <= 64);
+        comptime assert(@bitSizeOf(FileDescriptor) <= 64);
         return @intCast(fd.int());
     }
     pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
@@ -968,6 +1018,8 @@ pub const disableCopyFileRangeSyscall = CopyFile.disableCopyFileRangeSyscall;
 pub const can_use_ioctl_ficlone = CopyFile.can_use_ioctl_ficlone;
 pub const disable_ioctl_ficlone = CopyFile.disable_ioctl_ficlone;
 pub const copyFile = CopyFile.copyFile;
+pub const copyFileWithState = CopyFile.copyFileWithState;
+pub const CopyFileState = CopyFile.CopyFileState;
 
 pub fn parseDouble(input: []const u8) !f64 {
     if (comptime Environment.isWasm) {
@@ -1020,6 +1072,10 @@ pub const SignalCode = enum(u8) {
         }
 
         return null;
+    }
+
+    pub fn valid(value: SignalCode) bool {
+        return @intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS) and @intFromEnum(value) >= @intFromEnum(SignalCode.SIGHUP);
     }
 
     /// Shell scripts use exit codes 128 + signal number
@@ -1208,7 +1264,7 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
-        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]);
+        const wide_slice = try windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]);
         const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
         return buf[0..res.written];
     }
@@ -1246,7 +1302,8 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
-        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, buf);
+        const wide_slice = try windows.GetFinalPathNameByHandle(fd, .{}, buf);
+
         return wide_slice;
     }
 
@@ -1278,7 +1335,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
                 return i;
             },
             .C => {
-                std.debug.assert(ptr != null);
+                assert(ptr != null);
                 return indexOfSentinel(ptr_info.child, end, ptr);
             },
             .Slice => {
@@ -1339,7 +1396,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
                 .C => {
                     new_ptr_info.sentinel = &end;
                     // C pointers are always allowzero, but we don't want the return type to be.
-                    std.debug.assert(new_ptr_info.is_allowzero);
+                    assert(new_ptr_info.is_allowzero);
                     new_ptr_info.is_allowzero = false;
                 },
             }
@@ -1378,7 +1435,7 @@ pub fn cstring(input: []const u8) [:0]const u8 {
         return "";
 
     if (comptime Environment.allow_assert) {
-        std.debug.assert(
+        assert(
             input.ptr[input.len] == 0,
         );
     }
@@ -1525,6 +1582,7 @@ pub fn reloadProcess(
         Output.disableBuffering();
         Output.resetTerminalAll();
     }
+    Output.Source.Stdio.restore();
     const bun = @This();
 
     if (comptime Environment.isWindows) {
@@ -1555,7 +1613,7 @@ pub fn reloadProcess(
     }
 
     // we must clone selfExePath incase the argv[0] was not an absolute path (what appears in the terminal)
-    const exec_path = (allocator.dupeZ(u8, std.fs.selfExePathAlloc(allocator) catch unreachable) catch unreachable).ptr;
+    const exec_path = (bun.selfExePath() catch unreachable).ptr;
 
     // we clone argv so that the memory address isn't the same as the libc one
     const newargv = @as([*:null]?[*:0]const u8, @ptrCast(dupe_argv.ptr));
@@ -1863,6 +1921,8 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
             FDImpl.System => FDImpl.fromSystem(fd),
             FDImpl.UV, i32, comptime_int => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd),
+            std.fs.Dir => FDImpl.fromSystem(fd.fd),
+            sys.File, std.fs.File => FDImpl.fromSystem(fd.handle),
             // TODO: remove u32
             u32 => FDImpl.fromUV(@intCast(fd)),
             else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
@@ -1872,6 +1932,8 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         // even though file descriptors are always positive, linux/mac repesents them as signed integers
         return switch (T) {
             FileDescriptor => fd, // TODO: remove the toFD call from these places and make this a @compileError
+            std.fs.File, sys.File => toFD(fd.handle),
+            std.fs.Dir => @enumFromInt(@as(i32, @intCast(fd.fd))),
             c_int, i32, u32, comptime_int => @enumFromInt(fd),
             usize, i64 => @enumFromInt(@as(i32, @intCast(fd))),
             else => @compileError("bun.toFD() not implemented for: " ++ @typeName(T)),
@@ -1884,13 +1946,13 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
 ///
 /// On windows, this file descriptor will always be backed by libuv, so calling .close() is safe.
-pub inline fn toLibUVOwnedFD(fd: anytype) FileDescriptor {
+pub inline fn toLibUVOwnedFD(fd: anytype) !FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
-            FDImpl.System => FDImpl.fromSystem(fd).makeLibUVOwned(),
+            FDImpl.System => try FDImpl.fromSystem(fd).makeLibUVOwned(),
             FDImpl.UV => FDImpl.fromUV(fd),
-            FileDescriptor => FDImpl.decode(fd).makeLibUVOwned(),
+            FileDescriptor => try FDImpl.decode(fd).makeLibUVOwned(),
             FDImpl => fd.makeLibUVOwned(),
             else => @compileError("toLibUVOwnedFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
@@ -2030,6 +2092,31 @@ pub const win32 = struct {
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
 
+    /// Returns the original mode
+    pub fn unsetStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+        const fd = stdio(i);
+        var original_mode: w.DWORD = 0;
+        if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
+            if (windows.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
+                return windows.getLastError();
+            }
+        } else return windows.getLastError();
+
+        return original_mode;
+    }
+
+    /// Returns the original mode
+    pub fn setStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+        const fd = stdio(i);
+        var original_mode: w.DWORD = 0;
+        if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
+            if (windows.SetConsoleMode(fd.cast(), original_mode | flags) == 0) {
+                return windows.getLastError();
+            }
+        } else return windows.getLastError();
+        return original_mode;
+    }
+
     const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
     // magic exit code to indicate to the watcher manager that the child process should be re-spawned
     // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
@@ -2054,6 +2141,7 @@ pub const win32 = struct {
     pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
         // this process will be the parent of the child process that actually runs the script
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
+        C.windows_enable_stdio_inheritance();
         while (true) {
             spawnWatcherChild(allocator, &procinfo) catch |err| {
                 Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
@@ -2064,8 +2152,11 @@ pub const win32 = struct {
             var exit_code: w.DWORD = 0;
             if (w.kernel32.GetExitCodeProcess(procinfo.hProcess, &exit_code) == 0) {
                 const err = windows.GetLastError();
+                _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
                 Output.panic("Failed to get exit code of child process: {s}\n", .{@tagName(err)});
             }
+            _ = std.os.windows.ntdll.NtClose(procinfo.hProcess);
+
             // magic exit code to indicate that the child process should be re-spawned
             if (exit_code == watcher_reload_exit) {
                 continue;
@@ -2137,6 +2228,7 @@ pub const win32 = struct {
             .hStdOutput = std.io.getStdOut().handle,
             .hStdError = std.io.getStdErr().handle,
         };
+        @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(
             image_pathZ.ptr,
             w.kernel32.GetCommandLineW(),
@@ -2152,6 +2244,7 @@ pub const win32 = struct {
         if (rc == 0) {
             Output.panic("Unexpected error while reloading process\n", .{});
         }
+        _ = std.os.windows.ntdll.NtClose(procinfo.hThread);
     }
 };
 
@@ -2334,14 +2427,139 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
 const builtin = @import("builtin");
 
 pub const MakePath = struct {
+    const w = std.os.windows;
+
+    // TODO(@paperdave): upstream making this public into zig std
+    // there is zero reason this must be copied
+    //
+    /// Calls makeOpenDirAccessMaskW iteratively to make an entire path
+    /// (i.e. creating any parent directories that do not exist).
+    /// Opens the dir if the path already exists and is a directory.
+    /// This function is not atomic, and if it returns an error, the file system may
+    /// have been modified regardless.
+    fn makeOpenPathAccessMaskW(self: std.fs.Dir, comptime T: type, sub_path: []const T, access_mask: u32, no_follow: bool) !std.fs.Dir {
+        const Iterator = std.fs.path.ComponentIterator(.windows, T);
+        var it = try Iterator.init(sub_path);
+        // If there are no components in the path, then create a dummy component with the full path.
+        var component = it.last() orelse Iterator.Component{
+            .name = &.{},
+            .path = sub_path,
+        };
+
+        while (true) {
+            const sub_path_w = if (comptime T == u16)
+                try w.wToPrefixedFileW(self.fd,
+                // TODO: report this bug
+                // they always copy it
+                // it doesn't need to be [:0]const u16
+                @ptrCast(component.path))
+            else
+                try w.sliceToPrefixedFileW(self.fd, component.path);
+            const is_last = it.peekNext() == null;
+            _ = is_last; // autofix
+            var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{
+                .no_follow = no_follow,
+                .create_disposition = w.FILE_OPEN_IF,
+            }) catch |err| switch (err) {
+                error.FileNotFound => |e| {
+                    component = it.previous() orelse return e;
+                    continue;
+                },
+                else => |e| return e,
+            };
+
+            component = it.next() orelse return result;
+            // Don't leak the intermediate file handles
+            result.close();
+        }
+    }
+    const MakeOpenDirAccessMaskWOptions = struct {
+        no_follow: bool,
+        create_disposition: u32,
+    };
+
+    fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_mask: u32, flags: MakeOpenDirAccessMaskWOptions) !std.fs.Dir {
+        var result = std.fs.Dir{
+            .fd = undefined,
+        };
+
+        const path_len_bytes = @as(u16, @intCast(std.mem.sliceTo(sub_path_w, 0).len * 2));
+        var nt_name = w.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(sub_path_w),
+        };
+        var attr = w.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(sub_path_w)) null else self.fd,
+            .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        };
+        const open_reparse_point: w.DWORD = if (flags.no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
+        var status: w.IO_STATUS_BLOCK = undefined;
+        const rc = w.ntdll.NtCreateFile(
+            &result.fd,
+            access_mask,
+            &attr,
+            &status,
+            null,
+            w.FILE_ATTRIBUTE_NORMAL,
+            w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
+            flags.create_disposition,
+            w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | w.FILE_WRITE_THROUGH | open_reparse_point,
+            null,
+            0,
+        );
+
+        switch (rc) {
+            .SUCCESS => return result,
+            .OBJECT_NAME_INVALID => return error.BadPathName,
+            .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+            .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+            .NOT_A_DIRECTORY => return error.NotDir,
+            // This can happen if the directory has 'List folder contents' permission set to 'Deny'
+            // and the directory is trying to be opened for iteration.
+            .ACCESS_DENIED => return error.AccessDenied,
+            .INVALID_PARAMETER => return error.BadPathName,
+            .SHARING_VIOLATION => return error.SharingViolation,
+            else => return w.unexpectedStatus(rc),
+        }
+    }
+
+    pub fn makeOpenPath(self: std.fs.Dir, sub_path: anytype, opts: std.fs.Dir.OpenDirOptions) !std.fs.Dir {
+        if (comptime Environment.isWindows) {
+            return makeOpenPathAccessMaskW(
+                self,
+                std.meta.Elem(@TypeOf(sub_path)),
+                sub_path,
+                w.STANDARD_RIGHTS_READ |
+                    w.FILE_READ_ATTRIBUTES |
+                    w.FILE_READ_EA |
+                    w.SYNCHRONIZE |
+                    w.FILE_TRAVERSE,
+                false,
+            );
+        }
+
+        return self.makeOpenPath(sub_path, opts);
+    }
+
     /// copy/paste of `std.fs.Dir.makePath` and related functions and modified to support u16 slices.
     /// inside `MakePath` scope to make deleting later easier.
     /// TODO(dylan-conway) delete `MakePath`
     pub fn makePath(comptime T: type, self: std.fs.Dir, sub_path: []const T) !void {
+        if (Environment.isWindows) {
+            var dir = try makeOpenPath(self, sub_path, .{});
+            dir.close();
+            return;
+        }
+
         var it = try componentIterator(T, sub_path);
         var component = it.last() orelse return;
         while (true) {
-            (if (T == u16) makeDirW else std.fs.Dir.makeDir)(self, component.path) catch |err| switch (err) {
+            std.fs.Dir.makeDir(self, component.path) catch |err| switch (err) {
                 error.PathAlreadyExists => {
                     // TODO stat the file and return an error if it's not a directory
                     // this is important because otherwise a dangling symlink
@@ -2355,10 +2573,6 @@ pub const MakePath = struct {
             };
             component = it.next() orelse return;
         }
-    }
-
-    fn makeDirW(self: std.fs.Dir, sub_path: []const u16) !void {
-        try std.os.mkdiratW(self.fd, sub_path, 0o755);
     }
 
     fn componentIterator(comptime T: type, path_: []const T) !std.fs.path.ComponentIterator(switch (builtin.target.os.tag) {
@@ -2502,7 +2716,7 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 /// When used, you must call `bun.destroy` to free the memory.
 /// default_allocator.destroy should not be used.
 ///
-/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn new(comptime T: type, t: T) *T {
     if (comptime is_heap_breakdown_enabled) {
@@ -2518,7 +2732,7 @@ pub inline fn new(comptime T: type, t: T) *T {
 
 /// Free a globally-allocated a value
 ///
-/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
     if (comptime is_heap_breakdown_enabled) {
@@ -2593,7 +2807,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
 
         pub fn destroy(self: *T) void {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(self.ref_count == 0);
+                assert(self.ref_count == 0);
                 allocation_logger("destroy() = {*}", .{self});
             }
 
@@ -2641,7 +2855,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
             ptr.* = t;
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(ptr.ref_count == 1);
+                assert(ptr.ref_count == 1);
                 allocation_logger("new() = {*}", .{ptr});
             }
 
@@ -2654,7 +2868,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
 ///
 /// Must have used `new` to allocate the value.
 ///
-/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn destroy(t: anytype) void {
     if (comptime is_heap_breakdown_enabled) {
@@ -2715,7 +2929,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
         err;
 
     if (Environment.allow_assert) {
-        std.debug.assert(num != 0);
+        assert(num != 0);
     }
 
     if (Environment.os == .windows) {
@@ -2723,7 +2937,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
         num = @abs(num);
     } else {
         if (Environment.allow_assert) {
-            std.debug.assert(num > 0);
+            assert(num > 0);
         }
     }
 
@@ -2803,6 +3017,102 @@ pub fn linuxKernelVersion() Semver.Version {
     return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
 }
 
-pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");
+pub fn selfExePath() ![:0]u8 {
+    const memo = struct {
+        var set = false;
+        // TODO open zig issue to make 'std.fs.selfExePath' return [:0]u8 directly
+        // note: this doesn't use MAX_PATH_BYTES because on windows that's 32767*3+1 yet normal paths are 255.
+        // should this fail it will still do so gracefully. 4096 is MAX_PATH_BYTES on posix.
+        var value: [
+            4096 + 1 // + 1 for the null terminator
+        ]u8 = undefined;
+        var len: usize = 0;
+        var lock = Lock.init();
 
+        pub fn load() ![:0]u8 {
+            const init = try std.fs.selfExePath(&value);
+            @This().len = init.len;
+            value[@This().len] = 0;
+            set = true;
+            return value[0..@This().len :0];
+        }
+    };
+
+    // try without a lock
+    if (memo.set) return memo.value[0..memo.len :0];
+
+    // make it thread-safe
+    memo.lock.lock();
+    defer memo.lock.unlock();
+    // two calls could happen concurrently, so we must check again
+    if (memo.set) return memo.value[0..memo.len :0];
+    return memo.load();
+}
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
+
+pub const spawnSync = @This().spawn.sync.spawn;
+
+pub fn SliceIterator(comptime T: type) type {
+    return struct {
+        items: []const T,
+        index: usize = 0,
+
+        pub fn init(items: []const T) @This() {
+            return .{ .items = items };
+        }
+
+        pub fn next(this: *@This()) ?T {
+            if (this.index >= this.items.len) return null;
+            defer this.index += 1;
+            return this.items[this.index];
+        }
+    };
+}
+
+pub const Futex = @import("./futex.zig");
+
+noinline fn assertionFailure() noreturn {
+    if (@inComptime()) {
+        @compileError("assertion failure");
+    }
+
+    @setCold(true);
+    Output.panic("Internal assertion failure. This is a bug in Bun.", .{});
+}
+
+pub inline fn debugAssert(cheap_value_only_plz: bool) void {
+    if (comptime !Environment.isDebug) {
+        return;
+    }
+
+    if (!cheap_value_only_plz) {
+        unreachable;
+    }
+}
+
+pub fn assert(value: bool) callconv(callconv_inline) void {
+    if (comptime !Environment.allow_assert) {
+        return;
+    }
+
+    if (!value) {
+        if (comptime Environment.isDebug) unreachable;
+        assertionFailure();
+    }
+}
+
+/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+pub inline fn assert_eql(a: anytype, b: anytype) void {
+    return assert(a == b);
+}
+
+/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+pub inline fn assert_neql(a: anytype, b: anytype) void {
+    return assert(a != b);
+}
+
+pub inline fn unsafeAssert(condition: bool) void {
+    if (!condition) {
+        unreachable;
+    }
+}

@@ -18,6 +18,8 @@ jobs:
     secrets: inherit
     with:
       zig-version: 0.12.0-dev.1828+225fe6ddb
+    permissions:
+      contents: write
   lint:
     name: Lint
     uses: ./.github/workflows/run-lint.yml

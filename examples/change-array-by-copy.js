@@ -3,7 +3,7 @@ const reversedSequence = [...sequence].reverse();
 sequence; // => [1, 2, 3]
 
 const outOfOrder = new Uint8Array([3, 1, 2]);
-outOfOrder.toSorted(); // => Uint8Array [1, 2, 3]
+const sortedOutOfOrder = Uint8Array.from([...outOfOrder].sort());
 outOfOrder; // => Uint8Array [3, 1, 2]
 
 const correctionNeeded = [1, 1, 3];

@@ -77,6 +77,7 @@ pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
 pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
 
 pub const HANDLE = win32.HANDLE;
+pub const HMODULE = win32.HMODULE;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 pub extern "kernel32" fn GetFileInformationByHandle(
@@ -3366,6 +3367,42 @@ pub fn GetFinalPathNameByHandle(
     bun.sys.syslog("GetFinalPathNameByHandle({*p})", .{hFile});
     return std.os.windows.GetFinalPathNameByHandle(hFile, fmt, out_buffer);
 }
+
+extern "kernel32" fn GetModuleHandleExW(
+    dwFlags: u32, // [in]
+    lpModuleName: ?*anyopaque, // [in, optional]
+    phModule: *HMODULE, // [out]
+) BOOL;
+
+extern "kernel32" fn GetModuleFileNameW(
+    hModule: HMODULE, // [in]
+    lpFilename: LPWSTR, // [out]
+    nSize: DWORD, // [in]
+) BOOL;
+
+const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS = 0x00000004;
+
+pub fn getModuleHandleFromAddress(addr: usize) ?HMODULE {
+    var module: HMODULE = undefined;
+    const rc = GetModuleHandleExW(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        @ptrFromInt(addr),
+        &module,
+    );
+    // If the function succeeds, the return value is nonzero.
+    return if (rc != 0) module else null;
+}
+
+pub fn getModuleNameW(module: HMODULE, buf: []u16) ?[]const u16 {
+    const rc = GetModuleFileNameW(module, @ptrCast(buf.ptr), @intCast(buf.len));
+    if (rc == 0) return null;
+    return buf[0..@intCast(rc)];
+}
+
+pub extern "kernel32" fn GetThreadDescription(
+    thread: ?*anyopaque, // [in]
+    *PWSTR, // [out]
+) std.os.windows.HRESULT;
 
 pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;

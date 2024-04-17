@@ -528,10 +528,11 @@ if (ci) {
   action.setOutput("failing_tests", failingTestDisplay);
   action.setOutput("failing_tests_count", failing_tests.length);
   if (failing_tests.length) {
-    const tag = action.getInput("tag") || "unknown";
+    const tag = process.env.BUN_TAG || "unknown";
     let comment = `There are ${failing_tests.length} failing tests on bun-${tag}.
 
 ${failingTestDisplay}
+
 `;
     writeFileSync("comment.md", comment);
   }

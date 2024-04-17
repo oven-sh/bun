@@ -1,5 +1,8 @@
 name: Upload Artifacts
 
+permissions:
+  contents: write
+
 on:
   workflow_run:
     workflows:
@@ -44,7 +47,7 @@ jobs:
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
           aws_bucket: ${{ secrets.AWS_BUCKET }}
           source_dir: bun
-          destination_dir: releases/${{ github.event.workflow_run.head_sha }}
+          destination_dir: releases/${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Upload to S3 (using tag)
         uses: shallwefootball/s3-upload-action@4350529f410221787ccf424e50133cbc1b52704e
         with:

@@ -10,7 +10,7 @@ const nodeFsConstants = $processBindingConstants.fs;
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
-var __commonJS = (cb, mod) =>
+var __commonJS = (cb, mod: typeof module | undefined = undefined) =>
   function __require2() {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };

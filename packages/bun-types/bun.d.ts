@@ -3978,6 +3978,31 @@ declare module "bun" {
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
 
+  export interface UDPSocketOptions<Type extends BinaryType = "nodebuffer"> {
+    hostname?: string;
+    port?: number;
+    binaryType?: Type;
+    socket?: {
+      data?(socket: UDPSocket, data: BinaryTypeList[Type], port: number, address: string): void | Promise<void>;
+      drain?(socket: UDPSocket): void | Promise<void>;
+      error?(socket: UDPSocket, error: Error): void | Promise<void>;
+    };
+  }
+
+  export interface UDPSocket {
+    readonly hostname: string;
+    readonly port: number;
+    readonly address: SocketAddress;
+    readonly binaryType: BinaryType;
+    send(data: string | ArrayBufferView | ArrayBufferLike, port: number, address: string): void;
+    reload(handler: UDPSocketOptions): void;
+    ref(): void;
+    unref(): void;
+    close(): void;
+  }
+
+  export function bind(options: UDPSocketOptions): UDPSocket;
+
   namespace SpawnOptions {
     /**
      * Option for stdout/stderr
@@ -4835,34 +4860,10 @@ declare module "bun" {
      */
     match(str: string): boolean;
   }
+
 }
 
 // extends lib.dom.d.ts
 interface BufferEncodingOption {
   encoding?: BufferEncoding;
 }
-
-export interface UDPSocketOptions<Type extends BinaryType = "nodebuffer"> {
-  hostname?: string;
-  port?: number;
-  binaryType?: Type;
-  socket?: {
-    data?(socket: UDPSocket, data: BinaryTypeList[Type], port: number, address: string): void | Promise<void>;
-    drain?(socket: UDPSocket): void | Promise<void>;
-    error?(socket: UDPSocket, error: Error): void | Promise<void>;
-  };
-}
-
-export interface UDPSocket {
-  readonly hostname: string;
-  readonly port: number;
-  readonly address: SocketAddress;
-  readonly binaryType: BinaryType;
-  send(data: string | ArrayBufferView | ArrayBufferLike, port: number, address: string): void;
-  reload(handler: UDPSocketOptions): void;
-  ref(): void;
-  unref(): void;
-  close(): void;
-}
-
-export function bind(options: UDPSocketOptions): UDPSocket;

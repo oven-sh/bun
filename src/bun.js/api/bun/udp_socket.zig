@@ -48,23 +48,24 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
     while (i < packets) : (i += 1) {
         const peer = buf.getPeer(i);
 
-        var addr: [INET6_ADDRSTRLEN + 1:0]u8 = undefined;
+        var addr_buf: [INET6_ADDRSTRLEN + 1:0]u8 = undefined;
         var hostname: ?[*:0]const u8 = null;
         var port: u16 = 0;
 
         switch (peer.family) {
             std.os.AF.INET => {
                 const peer4: *std.os.sockaddr.in = @ptrCast(peer);
-                hostname = inet_ntop(peer.family, &peer4.addr, &addr, addr.len);
+                hostname = inet_ntop(peer.family, &peer4.addr, &addr_buf, addr_buf.len);
                 port = ntohs(peer4.port);
             },
             std.os.AF.INET6 => {
                 const peer6: *std.os.sockaddr.in6 = @ptrCast(peer);
-                hostname = inet_ntop(peer.family, &peer6.addr, &addr, addr.len);
+                hostname = inet_ntop(peer.family, &peer6.addr, &addr_buf, addr_buf.len);
                 port = ntohs(peer6.port);
             },
             else => continue,
         }
+
 
         if (hostname == null or port == 0) {
             continue;

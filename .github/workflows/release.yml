@@ -1,8 +1,10 @@
-name: bun-release
+name: Release
 concurrency: release
+
 env:
   BUN_VERSION: ${{ github.event.inputs.tag || github.event.release.tag_name || 'canary' }}
   BUN_LATEST: ${{ (github.event.inputs.is-latest || github.event.release.tag_name) && 'true' || 'false' }}
+
 on:
   release:
     types:
@@ -39,6 +41,7 @@ on:
         description: Should types be released to npm?
         type: boolean
         default: false
+
 jobs:
   sign:
     name: Sign Release

@@ -213,7 +213,7 @@ pub fn crashHandler(
                         writer,
                     ) catch std.os.abort();
 
-                    writer.writeAll(" ") catch std.os.abort();
+                    writer.writeAll("\n") catch std.os.abort();
                 }
 
                 if (Output.enable_ansi_colors) {

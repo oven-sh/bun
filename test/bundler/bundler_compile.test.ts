@@ -188,7 +188,7 @@ describe("bundler", () => {
     compile: true,
   });
   // https://github.com/oven-sh/bun/issues/10344
-  itBundled("compile/#10344", {
+  itBundled("compile/10344", {
     minifyIdentifiers: true,
     minifySyntax: true,
     minifyWhitespace: true,

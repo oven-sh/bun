@@ -2,6 +2,7 @@ import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
 import { Database } from "bun:sqlite";
+import { fillRepeating } from "harness";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -185,6 +186,41 @@ describe("bundler", () => {
       setCwd: false,
     },
     compile: true,
+  });
+  // https://github.com/oven-sh/bun/issues/10344
+  itBundled("compile/#10344", {
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    target: "bun",
+    sourceMap: "external",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import big from './generated.big.binary' with {type: "file"};
+        import small from './generated.small.binary' with {type: "file"};
+        import fs from 'fs';
+        fs.readFileSync(big).toString("hex");
+        fs.readFileSync(small).toString("hex");
+        console.log("PASS");
+      `,
+      "/generated.big.binary": (() => {
+        // make sure the size is not divisible by 32
+        const buffer = new Uint8ClampedArray(4096 + (32 - 2));
+        for (let i = 0; i < buffer.length; i++) {
+          buffer[i] = i;
+        }
+        return buffer;
+      })(),
+      "/generated.small.binary": (() => {
+        const buffer = new Uint8ClampedArray(31);
+        for (let i = 0; i < buffer.length; i++) {
+          buffer[i] = i;
+        }
+        return buffer;
+      })(),
+    },
+    run: { stdout: "PASS" },
   });
   itBundled("compile/EmbeddedSqlite", {
     compile: true,

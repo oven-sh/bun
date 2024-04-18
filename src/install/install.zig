@@ -988,8 +988,23 @@ pub const PackageInstall = struct {
         return switch (resolution.tag) {
             .git => this.verifyGitResolution(&resolution.value.git, buf, root_node_modules_dir),
             .github => this.verifyGitResolution(&resolution.value.github, buf, root_node_modules_dir),
-            else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir),
+            else => {
+                if (resolution.tag == .folder and this.node_modules.tree_id != 0) {
+                    // transitive folder dependency is just a symlink. check if it's dangling
+                    return this.verifySymlink(root_node_modules_dir);
+                }
+                return this.verifyPackageJSONNameAndVersion(root_node_modules_dir);
+            },
         };
+    }
+
+    fn verifySymlink(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {
+        var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
+        defer {
+            if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
+        }
+
+        return !isDanglingSymlinkAt(bun.toFD(destination_dir.fd), this.destination_dir_subpath);
     }
 
     fn verifyPackageJSONNameAndVersion(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {
@@ -1745,37 +1760,6 @@ pub const PackageInstall = struct {
         };
     }
 
-    fn installWithDirectorySymlink(this: *PackageInstall, dest_dir: std.fs.Dir) Result {
-        const target = this.cache_dir_subpath;
-
-        if (comptime Environment.isWindows) {
-            const dest_parent_dirname = strings.withoutTrailingSlash(this.node_modules.path.items);
-
-            var dest_buf: bun.PathBuffer = undefined;
-            var remain: []u8 = &dest_buf;
-            @memcpy(remain[0..dest_parent_dirname.len], dest_parent_dirname);
-            remain = remain[dest_parent_dirname.len..];
-            remain[0] = std.fs.path.sep;
-            remain = remain[1..];
-            @memcpy(remain[0..this.destination_dir_subpath.len], this.destination_dir_subpath);
-            remain = remain[this.destination_dir_subpath.len..];
-            remain[0] = 0;
-            const dest = dest_buf[0 .. dest_parent_dirname.len + 1 + this.destination_dir_subpath.len :0];
-
-            bun.sys.symlinkOrJunction(dest, target).unwrap() catch |err| {
-                return Result.fail(err, .linking_dependency);
-            };
-
-            return Result.success();
-        }
-
-        bun.sys.symlinkat(target, bun.toFD(dest_dir.fd), this.destination_dir_subpath).unwrap() catch |err| {
-            return Result.fail(err, .linking_dependency);
-        };
-
-        return Result.success();
-    }
-
     fn installWithSymlink(this: *PackageInstall, dest_dir: std.fs.Dir) !Result {
         var state = InstallDirState{};
         const res = this.initInstallDir(&state, dest_dir);
@@ -2009,10 +1993,10 @@ pub const PackageInstall = struct {
 
     pub fn isDanglingSymlink(path: [:0]const u8) bool {
         if (comptime Environment.isLinux) {
-            const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
+            const rc = Syscall.system.open(path, std.os.O.PATH, 0);
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
-                    _ = Syscall.system.close(@intCast(rc));
+                    _ = bun.sys.close(bun.toFD(rc));
                     return false;
                 },
                 else => return true,
@@ -2028,10 +2012,40 @@ pub const PackageInstall = struct {
                 },
             }
         } else {
-            const rc = Syscall.system.open(path, @as(u32, 0), @as(u32, 0));
+            const rc = Syscall.system.open(path, 0, 0);
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
                     _ = Syscall.system.close(rc);
+                    return false;
+                },
+                else => return true,
+            }
+        }
+    }
+
+    pub fn isDanglingSymlinkAt(dirfd: bun.FileDescriptor, path: [:0]const u8) bool {
+        if (comptime Environment.isLinux) {
+            const rc = bun.sys.system.openat(dirfd.cast(), path, std.os.O.PATH, 0);
+            switch (bun.sys.getErrno(rc)) {
+                .SUCCESS => {
+                    _ = bun.sys.close(bun.toFD(rc));
+                    return false;
+                },
+                else => return true,
+            }
+        } else if (comptime Environment.isWindows) {
+            switch (bun.sys.sys_uv.openat(dirfd, path, 0, 0)) {
+                .err => return true,
+                .result => |fd| {
+                    _ = bun.sys.close(fd);
+                    return false;
+                },
+            }
+        } else {
+            const rc = bun.sys.system.openat(dirfd.cast(), path, 0, 0);
+            switch (bun.sys.getErrno(rc)) {
+                .SUCCESS => {
+                    _ = bun.sys.close(rc);
                     return false;
                 },
                 else => return true,
@@ -2056,6 +2070,39 @@ pub const PackageInstall = struct {
         }
 
         return false;
+    }
+
+    fn installWithDirectorySymlink(this: *PackageInstall, skip_delete: bool, dest_dir: std.fs.Dir) Result {
+        const target = this.cache_dir_subpath;
+
+        if (!skip_delete) this.uninstallBeforeInstall(dest_dir);
+
+        if (comptime Environment.isWindows) {
+            const dest_parent_dirname = strings.withoutTrailingSlash(this.node_modules.path.items);
+
+            var dest_buf: bun.PathBuffer = undefined;
+            var remain: []u8 = &dest_buf;
+            @memcpy(remain[0..dest_parent_dirname.len], dest_parent_dirname);
+            remain = remain[dest_parent_dirname.len..];
+            remain[0] = std.fs.path.sep;
+            remain = remain[1..];
+            @memcpy(remain[0..this.destination_dir_subpath.len], this.destination_dir_subpath);
+            remain = remain[this.destination_dir_subpath.len..];
+            remain[0] = 0;
+            const dest = dest_buf[0 .. dest_parent_dirname.len + 1 + this.destination_dir_subpath.len :0];
+
+            bun.sys.symlinkOrJunction(dest, target).unwrap() catch |err| {
+                return Result.fail(err, .linking_dependency);
+            };
+
+            return Result.success();
+        }
+
+        bun.sys.symlinkat(target, bun.toFD(dest_dir.fd), this.destination_dir_subpath).unwrap() catch |err| {
+            return Result.fail(err, .linking_dependency);
+        };
+
+        return Result.success();
     }
 
     pub fn installFromLink(this: *PackageInstall, skip_delete: bool, destination_dir: std.fs.Dir) Result {
@@ -8696,7 +8743,7 @@ pub const PackageManager = struct {
 
             return (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
                 .can_rename_or_delete = false,
-                .create = true,
+                .create = false,
                 .read_only = false,
             }).unwrap()).asDir();
         }
@@ -8707,6 +8754,7 @@ pub const PackageManager = struct {
                     break :brk try root.makeOpenPath(this.path.items, .{ .iterate = true, .access_sub_paths = true });
                 }
 
+                // TODO: is this `makePath` necessary with `.create = true` below
                 try bun.MakePath.makePath(u8, root, this.path.items);
                 break :brk (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
                     .can_rename_or_delete = false,
@@ -9417,7 +9465,7 @@ pub const PackageManager = struct {
                     else => brk: {
                         if (resolution.tag == .folder and this.current_tree_id != 0) {
                             // transitive folder dependencies become symlinks
-                            break :brk installer.installWithDirectorySymlink(destination_dir);
+                            break :brk installer.installWithDirectorySymlink(this.skip_delete, destination_dir);
                         }
 
                         break :brk installer.install(this.skip_delete, destination_dir);

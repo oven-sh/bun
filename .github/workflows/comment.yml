@@ -1,6 +1,7 @@
 name: Comment
 
 permissions:
+  actions: read
   pull-requests: write
 
 on:

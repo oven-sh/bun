@@ -19,10 +19,13 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+const { hideFromStack, throwNotImplemented } = require("internal/shared");
+
 const {
   Array,
   ArrayIsArray,
   ArrayPrototypePush,
+  ArrayBufferIsView,
   FunctionPrototypeBind,
   FunctionPrototypeCall,
   ObjectDefineProperty,
@@ -30,51 +33,74 @@ const {
   ReflectApply,
   SymbolAsyncDispose,
   SymbolDispose,
+  StringPrototypeTrim,
+  NumberIsNaN,
 } = require('internal/primordials');
+const isArrayBufferView = ArrayBufferIsView;
 
-const errors = require('internal/errors');
-const {
-  kStateSymbol,
-  _createSocketHandle,
-  newHandle,
-} = require('internal/dgram');
-const {
-  ERR_BUFFER_OUT_OF_BOUNDS,
-  ERR_INVALID_ARG_TYPE,
-  ERR_MISSING_ARGS,
-  ERR_SOCKET_ALREADY_BOUND,
-  ERR_SOCKET_BAD_BUFFER_SIZE,
-  ERR_SOCKET_BUFFER_SIZE,
-  ERR_SOCKET_DGRAM_IS_CONNECTED,
-  ERR_SOCKET_DGRAM_NOT_CONNECTED,
-  ERR_SOCKET_DGRAM_NOT_RUNNING,
-  ERR_INVALID_FD_TYPE,
-} = errors.codes;
-const {
-  isInt32,
-  validateAbortSignal,
-  validateString,
-  validateNumber,
-  validatePort,
-} = require('internal/validators');
-const { Buffer } = require('buffer');
-const { deprecate, guessHandleType, promisify } = require('internal/util');
-const { isArrayBufferView } = require('internal/util/types');
+const { promisify } = require('util');
 const EventEmitter = require('events');
-const {
-  defaultTriggerAsyncIdScope,
-  symbols: { async_id_symbol, owner_symbol },
-} = require('internal/async_hooks');
-const { UV_UDP_REUSEADDR } = internalBinding('constants').os;
-
-const {
-  constants: { UV_UDP_IPV6ONLY },
-  UDP,
-  SendWrap,
-} = internalBinding('udp_wrap');
 
 const dc = require('diagnostics_channel');
 const udpSocketChannel = dc.channel('udp.socket');
+
+// const errors = require('internal/errors');
+// const {
+//   ERR_BUFFER_OUT_OF_BOUNDS,
+//   ERR_INVALID_ARG_TYPE,
+//   ERR_MISSING_ARGS,
+//   ERR_SOCKET_ALREADY_BOUND,
+//   ERR_SOCKET_BAD_BUFFER_SIZE,
+//   ERR_SOCKET_BUFFER_SIZE,
+//   ERR_SOCKET_DGRAM_IS_CONNECTED,
+//   ERR_SOCKET_DGRAM_NOT_CONNECTED,
+//   ERR_SOCKET_DGRAM_NOT_RUNNING,
+//   ERR_INVALID_FD_TYPE,
+// } = errors.codes;
+
+// begin internal/validators
+
+function isInt32(value) {
+  return value === (value | 0);
+}
+
+function validateAbortSignal(signal, name) {}
+
+const validateString = hideFromStack((value, name) => {
+  if (typeof value !== 'string')
+    throw new ERR_INVALID_ARG_TYPE(name, 'string', value);
+});
+
+const validateNumber = hideFromStack((value, name, min = undefined, max) => {
+  if (typeof value !== 'number')
+    throw new ERR_INVALID_ARG_TYPE(name, 'number', value);
+
+  if ((min != null && value < min) || (max != null && value > max) ||
+    ((min != null || max != null) && NumberIsNaN(value))) {
+    throw new ERR_OUT_OF_RANGE(
+      name,
+      `${min != null ? `>= ${min}` : ''}${min != null && max != null ? ' && ' : ''}${max != null ? `<= ${max}` : ''}`,
+      value);
+  }
+});
+
+const validatePort = hideFromStack((port, name = 'Port', allowZero = true) => {
+  if ((typeof port !== 'number' && typeof port !== 'string') ||
+      (typeof port === 'string' && StringPrototypeTrim(port).length === 0) ||
+      +port !== (+port >>> 0) ||
+      port > 0xFFFF ||
+      (port === 0 && !allowZero)) {
+    throw new ERR_SOCKET_BAD_PORT(name, port, allowZero);
+  }
+  return port | 0;
+});
+
+const validateFunction = hideFromStack((value, name) => {
+  if (typeof value !== 'function')
+    throw new ERR_INVALID_ARG_TYPE(name, 'Function', value);
+});
+
+// end internal/validators
 
 const BIND_STATE_UNBOUND = 0;
 const BIND_STATE_BINDING = 1;
@@ -87,19 +113,17 @@ const CONNECT_STATE_CONNECTED = 2;
 const RECV_BUFFER = true;
 const SEND_BUFFER = false;
 
-// Lazily loaded
-let _cluster = null;
-function lazyLoadCluster() {
-  if (!_cluster) _cluster = require('cluster');
-  return _cluster;
-}
-
 const {
   ErrnoException,
   ExceptionWithHostPort,
 } = errors;
 
 const kStateSymbol = Symbol('state symbol');
+const owner_symbol = Symbol('owner_symbol');
+
+function defaultTriggerAsyncIdScope(triggerAsyncId, block, ...args) {
+  return block.apply(null, args);
+}
 
 function lookup4(lookup, address, callback) {
   return lookup(address || '127.0.0.1', 4, callback);
@@ -109,6 +133,8 @@ function lookup4(lookup, address, callback) {
 function lookup6(lookup, address, callback) {
   return lookup(address || '::1', 6, callback);
 }
+
+let dns;
 
 function newHandle(type, lookup) {
   if (lookup === undefined) {
@@ -121,49 +147,26 @@ function newHandle(type, lookup) {
     validateFunction(lookup, 'lookup');
   }
 
+  const handle = {};
   if (type === 'udp4') {
-    const handle = new UDP();
-
     handle.lookup = FunctionPrototypeBind(lookup4, handle, lookup);
-    return handle;
-  }
-
-  if (type === 'udp6') {
-    const handle = new UDP();
-
+  } else if (type === 'udp6') {
     handle.lookup = FunctionPrototypeBind(lookup6, handle, lookup);
-    handle.bind = handle.bind6;
-    handle.connect = handle.connect6;
-    handle.send = handle.send6;
     return handle;
+  } else {
+    throw new ERR_SOCKET_BAD_TYPE();
   }
 
-  throw new ERR_SOCKET_BAD_TYPE();
-}
-
-
-function _createSocketHandle(address, port, addressType, fd, flags) {
-  const handle = newHandle(addressType);
-  let err;
-
-  if (isInt32(fd) && fd > 0) {
-    const type = guessHandleType(fd);
-    if (type !== 'UDP') {
-      err = UV_EINVAL;
-    } else {
-      err = handle.open(fd);
-    }
-  } else if (port || address) {
-    err = handle.bind(address, port || 0, flags);
+  handle.connect = function() {
+    throwNotImplemented('connect');
   }
-
-  if (err) {
-    handle.close();
-    return err;
+  handle.disconnect = function() {
+    throwNotImplemented('disconnect');
   }
 
   return handle;
 }
+
 
 function Socket(type, listener) {
   FunctionPrototypeCall(EventEmitter, this);
@@ -183,14 +186,14 @@ function Socket(type, listener) {
   const handle = newHandle(type, lookup);
   handle[owner_symbol] = this;
 
-  this[async_id_symbol] = handle.getAsyncId();
+  // this[async_id_symbol] = handle.getAsyncId();
   this.type = type;
 
   if (typeof listener === 'function')
     this.on('message', listener);
 
   this[kStateSymbol] = {
-    handle,
+    handle: null,
     receiving: false,
     bindState: BIND_STATE_UNBOUND,
     connectState: CONNECT_STATE_DISCONNECTED,
@@ -228,7 +231,7 @@ function createSocket(type, listener) {
   return new Socket(type, listener);
 }
 
-
+/*
 function startListening(socket) {
   const state = socket[kStateSymbol];
 
@@ -264,39 +267,21 @@ function replaceHandle(self, newHandle) {
   oldHandle.close();
   state.handle = newHandle;
 }
+*/
 
 function bufferSize(self, size, buffer) {
   if (size >>> 0 !== size)
     throw new ERR_SOCKET_BAD_BUFFER_SIZE();
 
   const ctx = {};
-  const ret = self[kStateSymbol].handle.bufferSize(size, buffer, ctx);
+  // const ret = self[kStateSymbol].handle.bufferSize(size, buffer, ctx);
+  const ret = 64 * 1 << 20; // buffer size is 64MB (default value)
   if (ret === undefined) {
     throw new ERR_SOCKET_BUFFER_SIZE(ctx);
   }
   return ret;
 }
 
-// Query primary process to get the server handle and utilize it.
-function bindServerHandle(self, options, errCb) {
-  const cluster = lazyLoadCluster();
-
-  const state = self[kStateSymbol];
-  cluster._getServer(self, options, (err, handle) => {
-    if (err) {
-      errCb(err);
-      return;
-    }
-
-    if (!state.handle) {
-      // Handle has been closed in the mean time.
-      return handle.close();
-    }
-
-    replaceHandle(self, handle);
-    startListening(self);
-  });
-}
 
 Socket.prototype.bind = function(port_, address_ /* , callback */) {
   let port = port_;
@@ -328,35 +313,22 @@ Socket.prototype.bind = function(port_, address_ /* , callback */) {
   if (port !== null &&
       typeof port === 'object' &&
       typeof port.recvStart === 'function') {
+    throwNotImplemented('Socket.prototype.bind(handle)');
+    /*
     replaceHandle(this, port);
     startListening(this);
     return this;
+    */
   }
 
   // Open an existing fd instead of creating a new one.
   if (port !== null && typeof port === 'object' &&
       isInt32(port.fd) && port.fd > 0) {
+    throwNotImplemented('Socket.prototype.bind({ fd })');
+    /*
     const fd = port.fd;
     const exclusive = !!port.exclusive;
     const state = this[kStateSymbol];
-
-    const cluster = lazyLoadCluster();
-
-    if (cluster.isWorker && !exclusive) {
-      bindServerHandle(this, {
-        address: null,
-        port: null,
-        addressType: this.type,
-        fd,
-        flags: null,
-      }, (err) => {
-        // Callback to handle error.
-        const ex = new ErrnoException(err, 'open');
-        state.bindState = BIND_STATE_UNBOUND;
-        this.emit('error', ex);
-      });
-      return this;
-    }
 
     const type = guessHandleType(fd);
     if (type !== 'UDP')
@@ -368,6 +340,7 @@ Socket.prototype.bind = function(port_, address_ /* , callback */) {
 
     startListening(this);
     return this;
+    */
   }
 
   let address;
@@ -401,38 +374,30 @@ Socket.prototype.bind = function(port_, address_ /* , callback */) {
       return;
     }
 
-    const cluster = lazyLoadCluster();
-
     let flags = 0;
     if (state.reuseAddr)
       flags |= UV_UDP_REUSEADDR;
     if (state.ipv6Only)
       flags |= UV_UDP_IPV6ONLY;
 
-    if (cluster.isWorker && !exclusive) {
-      bindServerHandle(this, {
+    // TODO flags
+    try {
+      state.handle.socket = Bun.bind({
         address: ip,
-        port: port,
-        addressType: this.type,
-        fd: -1,
-        flags: flags,
-      }, (err) => {
-        // Callback to handle error.
-        const ex = new ExceptionWithHostPort(err, 'bind', ip, port);
-        state.bindState = BIND_STATE_UNBOUND;
-        this.emit('error', ex);
+        port: port || 0,
+        socket: {
+          data: onMessage,
+          error: onError,
+        },
       });
-    } else {
-      const err = state.handle.bind(ip, port || 0, flags);
-      if (err) {
-        const ex = new ExceptionWithHostPort(err, 'bind', ip, port);
-        state.bindState = BIND_STATE_UNBOUND;
-        this.emit('error', ex);
-        // Todo: close?
-        return;
-      }
+      state.receiving = true;
+      state.bindState = BIND_STATE_BOUND;
 
-      startListening(this);
+      this.emit('listening');
+    } catch (err) {
+      state.bindState = BIND_STATE_UNBOUND;
+      this.emit('error', err);
+      return;
     }
   });
 
@@ -750,10 +715,40 @@ function doSend(ex, self, ip, list, address, port, callback) {
 
     process.nextTick(() => self.emit('error', ex));
     return;
-  } else if (!state.handle) {
+  } 
+  if (!state.handle) {
+    return;
+  }
+  const socket = state.handle.socket;
+  if (!socket) {
     return;
   }
 
+  let err = null;
+  let sent = 0;
+  try {
+    // TODO use sendMany here
+    for (const buf of list) {
+        if (port) {
+          socket.send(buf, port, ip);
+        } else {
+          socket.send(buf);
+        }
+        sent += 1;
+    }
+  } catch (e) {
+    err = e;
+  }
+  // TODO check if this makes sense
+  if (callback) {
+    if (err) {
+      process.nextTick(callback, err);
+    } else {
+      process.nextTick(callback, null, sent);
+    }
+  }
+  
+  /*
   const req = new SendWrap();
   req.list = list;  // Keep reference alive.
   req.address = address;
@@ -782,8 +777,10 @@ function doSend(ex, self, ip, list, address, port, callback) {
     const ex = new ExceptionWithHostPort(err, 'send', address, port);
     process.nextTick(callback, ex);
   }
+  */
 }
 
+/*
 function afterSend(err, sent) {
   if (err) {
     err = new ExceptionWithHostPort(err, 'send', this.address, this.port);
@@ -793,6 +790,7 @@ function afterSend(err, sent) {
 
   this.callback(err, sent);
 }
+*/
 
 Socket.prototype.close = function(callback) {
   const state = this[kStateSymbol];
@@ -808,7 +806,7 @@ Socket.prototype.close = function(callback) {
 
   healthCheck(this);
   stopReceiving(this);
-  state.handle.close();
+  state.handle.socket?.close();
   state.handle = null;
   defaultTriggerAsyncIdScope(this[async_id_symbol],
                              process.nextTick,
@@ -992,7 +990,7 @@ function stopReceiving(socket) {
   if (!state.receiving)
     return;
 
-  state.handle.recvStop();
+  // state.handle.recvStop();
   state.receiving = false;
 }
 
@@ -1061,6 +1059,7 @@ Socket.prototype.getSendQueueCount = function() {
 };
 
 // Deprecated private APIs.
+/*
 ObjectDefineProperty(Socket.prototype, '_handle', {
   __proto__: null,
   get: deprecate(function() {
@@ -1125,6 +1124,29 @@ Socket.prototype._stopReceiving = deprecate(function() {
   stopReceiving(this);
 }, 'Socket.prototype._stopReceiving() is deprecated', 'DEP0112');
 
+function _createSocketHandle(address, port, addressType, fd, flags) {
+  const handle = newHandle(addressType);
+  let err;
+
+  if (isInt32(fd) && fd > 0) {
+    const type = guessHandleType(fd);
+    if (type !== 'UDP') {
+      err = UV_EINVAL;
+    } else {
+      err = handle.open(fd);
+    }
+  } else if (port || address) {
+    err = handle.bind(address, port || 0, flags);
+  }
+
+  if (err) {
+    handle.close();
+    return err;
+  }
+
+  return handle;
+}
+
 
 // Legacy alias on the C++ wrapper object. This is not public API, so we may
 // want to runtime-deprecate it at some point. There's no hurry, though.
@@ -1133,6 +1155,7 @@ ObjectDefineProperty(UDP.prototype, 'owner', {
   get() { return this[owner_symbol]; },
   set(v) { return this[owner_symbol] = v; },
 });
+*/
 
 
 module.exports = {

@@ -664,7 +664,7 @@ pub const CharFreq = struct {
     }
 
     pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier {
-        var array: CharAndCount.Array = brk: {
+        const array: CharAndCount.Array = brk: {
             var _array: CharAndCount.Array = undefined;
 
             for (&_array, NameMinifier.default_tail, this.freqs, 0..) |*dest, char, freq, i| {
@@ -674,10 +674,11 @@ pub const CharFreq = struct {
                     .count = freq,
                 };
             }
+
+            std.sort.pdq(CharAndCount, &_array, {}, CharAndCount.lessThan);
+
             break :brk _array;
         };
-
-        std.sort.pdq(CharAndCount, &array, {}, CharAndCount.lessThan);
 
         var minifier = NameMinifier.init(allocator);
         minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;

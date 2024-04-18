@@ -52,7 +52,7 @@ jobs:
       - name: Setup Bun
         shell: bash
         run: |
-          unzip bun/*/bun-*.zip
+          unzip bun/**/bun-*.zip
           cd bun-*
           pwd >> $GITHUB_PATH
       - name: Setup Node.js
@@ -98,7 +98,7 @@ jobs:
             pr-number.txt
           if-no-files-found: error
           overwrite: true
-      - if: ${{ failure() && github.repository_owner == 'oven-sh' }}
+      - if: ${{ failure() && github.event.pull_request && github.repository_owner == 'oven-sh' }}
         name: Send Message
         uses: sarisia/actions-status-discord@v1
         with:

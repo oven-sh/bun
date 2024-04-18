@@ -1149,7 +1149,9 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
                 stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
-            debug.writeStackTrace(trace, stderr, debug.getDebugInfoAllocator(), debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
+            var arena = bun.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
+            debug.writeStackTrace(trace, stderr, arena.allocator(), debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
                 stderr.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };

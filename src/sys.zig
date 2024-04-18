@@ -636,7 +636,7 @@ pub fn normalizePathWindows(
         };
     }
 
-    if (std.mem.indexOfAnyPos(T, path_, &.{ '\\', '/', '.' }) == null) {
+    if (std.mem.indexOfAny(T, path_, &.{ '\\', '/', '.' }) == null) {
         if (buf.len < path.len) {
             return .{
                 .err = .{

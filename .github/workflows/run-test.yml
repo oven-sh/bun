@@ -12,20 +12,6 @@ on:
       pr-number:
         type: string
         required: true
-  workflow_dispatch:
-    inputs:
-      runs-on:
-        type: string
-        description: The runner used to run the tests
-        required: true
-      tag:
-        type: string
-        description: The tag of the build to use
-        required: true
-      pr-number:
-        type: string
-        description: The pull request from where to download Bun
-        required: true
 
 jobs:
   test:
@@ -45,16 +31,12 @@ jobs:
         run: |
           echo "${{ inputs.pr-number }}" > pr-number.txt
       - name: Download Bun
-        uses: dawidd6/action-download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: bun-${{ inputs.tag }}
           path: bun
-          github_token: ${{ github.token }}
-          pr: ${{ inputs.pr-number }}
-          workflow_search: true
-          workflow_conclusion: "" # ignore conclusion
-          check_artifacts: true
-          search_artifacts: true
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
       - if: ${{ runner.os == 'Windows' }}
         name: Setup Cygwin
         uses: secondlife/setup-cygwin@v3
@@ -63,7 +45,7 @@ jobs:
       - name: Setup Bun
         shell: bash
         run: |
-          unzip bun/bun-*.zip
+          unzip bun/bun-*/bun-*.zip
           cd bun-*
           pwd >> $GITHUB_PATH
       - name: Setup Node.js

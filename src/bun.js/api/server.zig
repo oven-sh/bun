@@ -554,7 +554,8 @@ pub const ServerConfig = struct {
                     any = true;
                 }
             }
-            if (obj.getTruthy(global, "serverName")) |server_name| {
+
+            if (obj.getTruthy(global, "serverName") orelse obj.getTruthy(global, "servername")) |server_name| {
                 var sliced = server_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
@@ -5497,6 +5498,89 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
         }
 
+        pub fn addServerName(this: *ThisServer, global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            if (!ssl_enabled) {
+                global.throwInvalidArguments("addServerName requires SSL support", .{});
+                return .zero;
+            }
+            const arguments = callframe.arguments(2);
+            if (arguments.len < 1) {
+                global.throwNotEnoughArguments("addServerName", 1, 0);
+                return .zero;
+            }
+            const hostname = arguments.ptr[0];
+            if (!hostname.isString()) {
+                global.throwInvalidArguments("hostname pattern expects a string", .{});
+                return .zero;
+            }
+            const host_str = hostname.toSliceZ(
+                global,
+                bun.default_allocator,
+            );
+            defer host_str.deinit();
+            const server_name = host_str.sliceZ();
+            if (server_name.len == 0) {
+                global.throwInvalidArguments("hostname pattern cannot be empty", .{});
+                return .zero;
+            }
+            if (arguments.len > 1) {
+                const tls = arguments.ptr[1];
+                var exception_ref = [_]JSC.C.JSValueRef{null};
+                const exception: JSC.C.ExceptionRef = &exception_ref;
+
+                if (ServerConfig.SSLConfig.inJS(global, tls, exception)) |ssl_config| {
+                    // add serverName to the SSL context/options
+                    this.app.addServerNameWithOptions(server_name, ssl_config.asUSockets());
+                    this.app.domain(server_name);
+                    this.setRoutes();
+                }
+
+                if (exception.* != null) {
+                    global.throwValue(exception_ref[0].?.value());
+                    return .zero;
+                }
+            } else if (this.config.ssl_config) |ssl_config| {
+                this.app.addServerNameWithOptions(server_name, ssl_config.asUSockets());
+                this.app.domain(server_name);
+                this.setRoutes();
+            } else {
+                global.throwInvalidArguments("addServerName requires tls argument", .{});
+                return .zero;
+            }
+
+            return JSValue.jsUndefined();
+        }
+
+        pub fn removeServerName(this: *ThisServer, global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            if (!ssl_enabled) {
+                global.throwInvalidArguments("removeServerName requires SSL support", .{});
+                return .zero;
+            }
+            const arguments = callframe.arguments(1);
+            if (arguments.len < 1) {
+                global.throwNotEnoughArguments("removeServerName", 1, 0);
+                return .zero;
+            }
+            const hostname = arguments.ptr[0];
+            if (!hostname.isString()) {
+                global.throwInvalidArguments("hostname pattern expects a string", .{});
+                return .zero;
+            }
+            const host_str = hostname.toSliceZ(
+                global,
+                bun.default_allocator,
+            );
+            defer host_str.deinit();
+            const server_name = host_str.sliceZ();
+            if (server_name.len == 0) {
+                global.throwInvalidArguments("hostname pattern cannot be empty", .{});
+                return .zero;
+            }
+
+            this.app.removeServerName(server_name);
+
+            return JSValue.jsUndefined();
+        }
         pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             const fmt = switch (this.config.address) {
                 .unix => |unix| brk: {
@@ -6101,20 +6185,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.toAsync(req, request_object);
         }
 
-        pub fn listen(this: *ThisServer) void {
-            httplog("listen", .{});
-            if (ssl_enabled) {
-                BoringSSL.load();
-                const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
-                this.app = App.create(ssl_config.asUSockets());
-
-                if (ssl_config.server_name != null and std.mem.span(ssl_config.server_name).len > 0) {
-                    this.app.addServerName(ssl_config.server_name);
-                }
-            } else {
-                this.app = App.create(.{});
-            }
-
+        fn setRoutes(this: *ThisServer) void {
             if (this.config.websocket) |*websocket| {
                 websocket.globalObject = this.globalThis;
                 websocket.handler.app = this.app;
@@ -6137,6 +6208,33 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 }
 
                 this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
+            }
+        }
+
+        pub fn listen(this: *ThisServer) void {
+            httplog("listen", .{});
+            var custom_servername: ?[:0]const u8 = null;
+            if (ssl_enabled) {
+                BoringSSL.load();
+                const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
+                const ssl_options = ssl_config.asUSockets();
+                this.app = App.create(ssl_options);
+
+                if (ssl_config.server_name != null) {
+                    const servername_len = std.mem.span(ssl_config.server_name).len;
+                    if (servername_len > 0) {
+                        // add serverName to the SSL context using default ssl options
+                        this.app.addServerNameWithOptions(ssl_config.server_name, ssl_options);
+                        custom_servername = ssl_config.server_name[0..servername_len :0];
+                    }
+                }
+            } else {
+                this.app = App.create(.{});
+            }
+            this.setRoutes();
+            if (custom_servername) |serverName| {
+                this.app.domain(serverName);
+                this.setRoutes();
             }
 
             this.ref();

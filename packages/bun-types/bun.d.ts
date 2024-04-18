@@ -2708,6 +2708,18 @@ declare module "bun" {
     unref(): void;
 
     /**
+     * Add SNI server name to the server.
+     * @param pattern The SNI server name pattern to match
+     * @param tls The TLS options to use for this server name (optional if not provided, the default TLS options are used)
+     */
+    addServerName(pattern: string, tls?: TLSOptions): void;
+    /**
+     * Remove SNI server name from the server.
+     * @param pattern The SNI server name pattern to remove
+     */
+    removeServerName(pattern: string): void;
+
+    /**
      * How many requests are in-flight right now?
      */
     readonly pendingRequests: number;

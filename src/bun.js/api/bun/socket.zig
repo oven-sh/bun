@@ -814,18 +814,76 @@ pub const Listener = struct {
         socket.setTimeout(120000);
     }
 
-    // pub fn addServerName(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn addServerName(this: *Listener, global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        if (!this.ssl) {
+            global.throwInvalidArguments("addServerName requires SSL support", .{});
+            return .zero;
+        }
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 2) {
+            global.throwNotEnoughArguments("addServerName", 2, 0);
+            return .zero;
+        }
+        const hostname = arguments.ptr[0];
+        if (!hostname.isString()) {
+            global.throwInvalidArguments("hostname pattern expects a string", .{});
+            return .zero;
+        }
+        const host_str = hostname.toSliceZ(
+            global,
+            bun.default_allocator,
+        );
+        defer host_str.deinit();
+        const server_name = host_str.sliceZ();
+        if (server_name.len == 0) {
+            global.throwInvalidArguments("hostname pattern cannot be empty", .{});
+            return .zero;
+        }
+        const tls = arguments.ptr[1];
+        var exception_ref = [_]JSC.C.JSValueRef{null};
+        const exception: JSC.C.ExceptionRef = &exception_ref;
 
-    //     uws.us_socket_context_add_server_name
-    // }
+        if (JSC.API.ServerConfig.SSLConfig.inJS(global, tls, exception)) |ssl_config| {
+            // to keep nodejs compatibility, we allow to replace the server name
+            uws.us_socket_context_remove_server_name(1, this.socket_context, server_name);
+            uws.us_bun_socket_context_add_server_name(1, this.socket_context, server_name, ssl_config.asUSockets(), null);
+        }
 
-    // pub fn removeServerName(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-    //     uws.us_socket_context_add_server_name
-    // }
+        if (exception.* != null) {
+            global.throwValue(exception_ref[0].?.value());
+            return .zero;
+        }
+        return JSValue.jsUndefined();
+    }
 
-    // pub fn removeServerName(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-    //     uws.us_socket_context_add_server_name
-    // }
+    pub fn removeServerName(this: *Listener, global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        if (!this.ssl) {
+            global.throwInvalidArguments("removeServerName requires SSL support", .{});
+            return .zero;
+        }
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 2) {
+            global.throwNotEnoughArguments("removeServerName", 2, 0);
+            return .zero;
+        }
+        const hostname = arguments.ptr[0];
+        if (!hostname.isString()) {
+            global.throwInvalidArguments("hostname pattern expects a string", .{});
+            return .zero;
+        }
+        const host_str = hostname.toSliceZ(
+            global,
+            bun.default_allocator,
+        );
+        defer host_str.deinit();
+        const server_name = host_str.sliceZ();
+        if (server_name.len == 0) {
+            global.throwInvalidArguments("hostname pattern cannot be empty", .{});
+            return .zero;
+        }
+        uws.us_socket_context_remove_server_name(1, this.socket_context, server_name);
+        return JSValue.jsUndefined();
+    }
 
     pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const arguments = callframe.arguments(1);
@@ -2761,6 +2819,23 @@ fn NewSocket(comptime ssl: bool) type {
                 return X509.toJS(x509, globalObject);
             }
             return JSValue.jsUndefined();
+        }
+
+        pub fn getServername(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            const ssl_ptr = this.socket.ssl();
+
+            const servername = BoringSSL.SSL_get_servername(ssl_ptr, BoringSSL.TLSEXT_NAMETYPE_host_name);
+            if (servername == null) {
+                return JSValue.jsUndefined();
+            }
+            return ZigString.fromUTF8(servername[0..bun.len(servername)]).toValueGC(globalObject);
         }
         pub fn setServername(
             this: *This,

@@ -804,8 +804,8 @@ pub const ZigString = extern struct {
     pub fn toSliceZ(this: ZigString, allocator: std.mem.Allocator) Slice {
         if (this.len == 0)
             return Slice.empty;
-
-        if (is16Bit(&this)) {
+        // if is 16 bit or dont has a null terminator
+        if (is16Bit(&this) or this._unsafe_ptr_do_not_use[this.len] != 0) {
             const buffer = this.toOwnedSliceZ(allocator) catch unreachable;
             return Slice{
                 .ptr = buffer.ptr,

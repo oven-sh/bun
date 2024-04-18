@@ -16,6 +16,9 @@ on:
       pr-number:
         type: string
         required: true
+      run-id:
+        type: string
+        default: ${{ github.run_id }}
 
 jobs:
   test:
@@ -39,6 +42,8 @@ jobs:
         with:
           name: bun-${{ inputs.tag }}
           path: bun
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run-id || github.run_id }}
       - if: ${{ runner.os == 'Windows' }}
         name: Setup Cygwin
         uses: secondlife/setup-cygwin@v3
@@ -47,7 +52,7 @@ jobs:
       - name: Setup Bun
         shell: bash
         run: |
-          unzip bun/bun-*/bun-*.zip
+          unzip bun/*/bun-*.zip
           cd bun-*
           pwd >> $GITHUB_PATH
       - name: Setup Node.js
@@ -82,7 +87,7 @@ jobs:
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         run: |
           node packages/bun-internal-test/src/runner.node.mjs $(which bun)
-      - if: ${{ always()}}
+      - if: ${{ always() }}
         name: Upload Results
         uses: actions/upload-artifact@v4
         with:

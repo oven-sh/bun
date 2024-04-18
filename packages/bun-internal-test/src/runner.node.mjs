@@ -21,7 +21,6 @@ function defaultConcurrency() {
 
   return Math.min(Math.floor((cpus().length - 2) / 2), 2);
 }
-
 const windows = process.platform === "win32";
 const nativeMemory = totalmem();
 const force_ram_size_input = parseInt(process.env["BUN_JSC_forceRAMSize"] || "0", 10);
@@ -529,7 +528,7 @@ if (ci) {
   action.setOutput("failing_tests_count", failing_tests.length);
   if (failing_tests.length) {
     const tag = process.env.BUN_TAG || "unknown";
-    let comment = `There are ${failing_tests.length} failing tests on bun-${tag}.
+    let comment = `## ${emojiTag(tag)}${failing_tests.length} failing tests on bun-${tag}.
 
 ${failingTestDisplay}
 
@@ -542,6 +541,40 @@ ${failingTestDisplay}
   }
   action.summary.addRaw(truncated_report);
   await action.summary.write();
+}
+
+function emojiTag(tag) {
+  let emojiText = "";
+  tag = tag.toLowerCase();
+  if (tag.includes("win32") || tag.includes("windows")) {
+    emojiText += "🪟";
+  }
+
+  if (tag.includes("linux")) {
+    emojiText += "🐧";
+  }
+
+  if (tag.includes("macos") || tag.includes("darwin")) {
+    emojiText += "";
+  }
+
+  if (tag.includes("x86") || tag.includes("_64") || tag.includes("amd64")) {
+    if (!tag.includes("linux")) {
+      emojiText += "💻";
+    } else {
+      emojiText += "🖥";
+    }
+  }
+
+  if (tag.includes("arm64") || tag.includes("aarch64")) {
+    emojiText += "💪";
+  }
+
+  if (emojiText) {
+    emojiText += " ";
+  }
+
+  return emojiText;
 }
 
 process.exit(failing_tests.length ? 1 : process.exitCode);

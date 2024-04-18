@@ -1,6 +1,7 @@
 name: Comment
 
 permissions:
+  actions: read
   pull-requests: write
 
 on:
@@ -32,7 +33,7 @@ jobs:
         run: |
           cat bun/bun-*-tests/comment.md > comment.md
           if [ -s comment.md ]; then
-            echo -e "❌ @${{ github.actor }}, there are failing tests: \n\n$(cat comment.md)" > comment.md
+            echo -e "❌ @${{ github.actor }}, your commit has failing tests :(\n\n$(cat comment.md)" > comment.md
           else
             echo -e "✅ @${{ github.actor }}, all tests passed!" > comment.md
           fi

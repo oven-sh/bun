@@ -1,5 +1,9 @@
 name: Build Zig
 
+permissions:
+  contents: read
+  actions: write
+
 on:
   workflow_call:
     inputs:

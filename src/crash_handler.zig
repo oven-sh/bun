@@ -758,17 +758,18 @@ const Platform = enum(u8) {
         (if (bun.Environment.baseline) "_baseline" else ""));
 };
 
-const tracestr_version: u8 = '1';
+// const tracestr_version: u8 = '1';
 
-const tracestr_header = std.fmt.comptimePrint(
-    "{s}/{c}{s}{c}",
-    .{
-        bun.Environment.version_string,
-        @intFromEnum(Platform.current),
-        if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown",
-        tracestr_version,
-    },
-);
+// const tracestr_header = std.fmt.comptimePrint(
+//     "{s}/{c}{s}{c}",
+//     .{
+//         bun.Environment.version_string,
+//         @intFromEnum(Platform.current),
+//         tracestr_version,
+//     },
+// );
+
+const git_sha = if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown";
 
 const StackLine = union(enum) {
     unknown,
@@ -962,7 +963,13 @@ const TraceString = struct {
 };
 
 fn encodeTraceString(opts: TraceString, writer: anytype) !void {
-    try writer.writeAll(report_base_url ++ tracestr_header);
+    try writer.writeAll(
+        report_base_url ++
+            bun.Environment.version_string ++
+            "/" ++
+            .{@intFromEnum(Platform.current)},
+    );
+    try writer.writeByte(if (bun.CLI.Cli.cmd) |cmd| cmd.char() else '_');
 
     var name_bytes: [1024]u8 = undefined;
 

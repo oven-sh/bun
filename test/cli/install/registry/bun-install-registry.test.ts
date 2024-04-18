@@ -2089,6 +2089,24 @@ test("it should install transitive folder dependencies", async () => {
     }),
   );
 
+  async function checkFiles() {
+    expect(
+      await exists(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json")),
+    ).toBeTrue();
+    expect(await readdirSorted(join(packageDir, "node_modules", "missing-file-dep", "node_modules"))).toEqual([
+      "files",
+    ]);
+    expect(
+      await exists(join(packageDir, "node_modules", "missing-file-dep", "node_modules", "files", "package.json")),
+    ).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "aliased-file-dep", "package.json"))).toBeTrue();
+    expect(
+      await exists(
+        join(packageDir, "node_modules", "aliased-file-dep", "node_modules", "files", "node_modules", "files"),
+      ),
+    ).toBeTrue();
+  }
+
   var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
@@ -2121,19 +2139,56 @@ test("it should install transitive folder dependencies", async () => {
     "file-dep",
     "missing-file-dep",
   ]);
-  expect(
-    await exists(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json")),
-  ).toBeTrue();
-  expect(await readdirSorted(join(packageDir, "node_modules", "missing-file-dep", "node_modules"))).toEqual(["files"]);
-  expect(
-    await exists(join(packageDir, "node_modules", "missing-file-dep", "node_modules", "files", "package.json")),
-  ).toBeFalse();
-  expect(await exists(join(packageDir, "node_modules", "aliased-file-dep", "package.json"))).toBeTrue();
-  expect(
-    await exists(
-      join(packageDir, "node_modules", "aliased-file-dep", "node_modules", "files", "node_modules", "files"),
-    ),
-  ).toBeTrue();
+
+  checkFiles();
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await Bun.readableStreamToText(stderr);
+  out = await Bun.readableStreamToText(stdout);
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", " 1 package installed"]);
+  expect(await exited).toBe(0);
+
+  checkFiles();
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await Bun.readableStreamToText(stderr);
+  out = await Bun.readableStreamToText(stdout);
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+    ".cache",
+    "aliased-file-dep",
+    "dep-file-dep",
+    "file-dep",
+    "missing-file-dep",
+  ]);
+  expect(await exited).toBe(0);
+
+  checkFiles();
 });
 
 test("it should re-populate .bin folder if package is reinstalled", async () => {

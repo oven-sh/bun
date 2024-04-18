@@ -1752,13 +1752,17 @@ pub const PackageInstall = struct {
             const dest_parent_dirname = strings.withoutTrailingSlash(this.node_modules.path.items);
 
             var dest_buf: bun.PathBuffer = undefined;
-            @memcpy(dest_buf[0..dest_parent_dirname.len], dest_parent_dirname);
-            dest_buf[dest_parent_dirname.len] = std.fs.path.sep;
-            @memcpy(dest_buf[dest_parent_dirname.len + 1 ..][0..this.destination_dir_subpath.len], this.destination_dir_subpath);
-            dest_buf[dest_parent_dirname.len + 1 + this.destination_dir_subpath.len] = 0;
+            var remain: []u8 = &dest_buf;
+            @memcpy(remain[0..dest_parent_dirname.len], dest_parent_dirname);
+            remain = remain[dest_parent_dirname.len..];
+            remain[0] = std.fs.path.sep;
+            remain = remain[1..];
+            @memcpy(remain[0..this.destination_dir_subpath.len], this.destination_dir_subpath);
+            remain = remain[this.destination_dir_subpath.len..];
+            remain[0] = 0;
             const dest = dest_buf[0 .. dest_parent_dirname.len + 1 + this.destination_dir_subpath.len :0];
 
-            bun.sys.symlinkOrJunctionOnWindows(dest, target).unwrap() catch |err| {
+            bun.sys.symlinkOrJunction(dest, target).unwrap() catch |err| {
                 return Result.fail(err, .linking_dependency);
             };
 
@@ -2114,12 +2118,12 @@ pub const PackageInstall = struct {
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
-            switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, target_z)) {
+            switch (bun.sys.symlinkOrJunction(dest_z, target_z)) {
                 .err => |err_| brk: {
                     var err = err_;
                     if (err.getErrno() == .EXIST) {
                         _ = bun.sys.unlink(target_z);
-                        switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, target_z)) {
+                        switch (bun.sys.symlinkOrJunction(dest_z, target_z)) {
                             .err => |e| err = e,
                             .result => break :brk,
                         }
@@ -3773,10 +3777,9 @@ pub const PackageManager = struct {
 
             .folder => {
                 const res: FolderResolution = brk: {
-                    const folder_path = this.lockfile.str(&version.value.folder);
-
                     if (comptime successFn == assignRootResolution) {
                         // relative to cwd
+                        const folder_path = this.lockfile.str(&version.value.folder);
                         var buf2: bun.PathBuffer = undefined;
                         const folder_path_abs = if (std.fs.path.isAbsolute(folder_path)) folder_path else blk: {
                             break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{folder_path}, .auto);
@@ -3785,8 +3788,8 @@ pub const PackageManager = struct {
                     }
 
                     // transitive folder dependencies create a symlink relative to the package and don't resolve dependencies
-                    const buf = this.lockfile.buffers.string_bytes.items;
-                    const name_slice = name.slice(buf);
+                    var name_slice = this.lockfile.str(&name);
+                    var folder_path = this.lockfile.str(&version.value.folder);
                     var package = Lockfile.Package{};
 
                     {
@@ -3797,6 +3800,9 @@ pub const PackageManager = struct {
                         builder.count(folder_path);
 
                         builder.allocate() catch bun.outOfMemory();
+
+                        name_slice = this.lockfile.str(&name);
+                        folder_path = this.lockfile.str(&version.value.folder);
 
                         package.name = builder.append(String, name_slice);
                         package.name_hash = name_hash;

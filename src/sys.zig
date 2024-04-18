@@ -1744,14 +1744,14 @@ pub const WindowsSymlinkOptions = packed struct {
     pub var has_failed_to_create_symlink = false;
 };
 
-pub fn symlinkOrJunctionOnWindows(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
-    if (comptime !Environment.isWindows) @compileError("symlinkOrJunctionOnWindows is windows only");
+pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
+    if (comptime !Environment.isWindows) @compileError("symlinkOrJunction is windows only");
 
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
         var sym16: bun.WPathBuffer = undefined;
         var target16: bun.WPathBuffer = undefined;
-        const sym_path = bun.strings.toNTPath(&sym16, dest);
-        const target_path = bun.strings.toNTPath(&target16, target);
+        const sym_path = bun.strings.toWPathNormalizeAutoExtend(&sym16, dest);
+        const target_path = bun.strings.toWPathNormalizeAutoExtend(&target16, target);
         switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
             .result => {
                 return Maybe(void).success;

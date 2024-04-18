@@ -39,19 +39,14 @@ pub const BuildCommand = struct {
         "process.platform",
         "process.arch",
     };
+
     const compile_define_values = &.{
-        switch (Environment.os) {
-            .linux => "'linux'",
-            .mac => "'darwin'",
-            .windows => "'win32'",
-            else => "unknown",
-        },
-        switch (Environment.isX64) {
-            true => "'x64'",
-            else => if (Environment.isAarch64)
-                "'arm64'"
-            else
-                "'unknown'",
+        "\"" ++ Environment.os.nameString() ++ "\"",
+
+        switch (@import("builtin").target.cpu.arch) {
+            .x86_64 => "\"x64\"",
+            .aarch64 => "\"arm64\"",
+            else => @compileError("TODO"),
         },
     };
 

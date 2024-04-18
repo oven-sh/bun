@@ -49,6 +49,10 @@ jobs:
         uses: secondlife/setup-cygwin@v3
         with:
           packages: bash
+      - name: Setup SSH
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
       - name: Setup Bun
         shell: bash
         run: |

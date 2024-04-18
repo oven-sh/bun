@@ -30,12 +30,12 @@ jobs:
           echo "pr-number=$(<bun/bun-linux-x64-tests/pr-number.txt)" >> $GITHUB_OUTPUT
       - name: Generate Comment
         run: |
-          cat bun/bun-*-tests/comment.md > comment.md
           if [ -s comment.md ]; then
-            echo -e "❌ @${{ github.actor }}, there are failing tests: \n\n$(cat comment.md)" > comment.md
+            echo -e "❌ @${{ github.actor }}, your commit has failing tests :(\n\n$(cat comment.md)" > comment.md
           else
             echo -e "✅ @${{ github.actor }}, all tests passed!" > comment.md
           fi
+          cat bun/bun-*-tests/comment.md >> comment.md
           echo -e "\n**[View logs](${{ github.event.workflow_run.html_url }})**" >> comment.md
           echo -e "<!-- generated-comment run-id=${{ github.event.workflow_run.id }} -->" >> comment.md
       - name: Find Comment

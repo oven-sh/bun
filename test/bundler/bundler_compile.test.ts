@@ -187,8 +187,20 @@ describe("bundler", () => {
     },
     compile: true,
   });
-  for (const sourceMap of ["external", "inline", "none"] as const) {
-    for (const minify of [true, false] as const) {
+  for (const minify of [true, false] as const) {
+    itBundled("compile/platform-specific-binary" + (minify ? "-minify" : ""), {
+      minifySyntax: minify,
+      target: "bun",
+      compile: true,
+      files: {
+        "/entry.ts": /* js */ `
+        await import(\`./platform.\${process.platform}.\${process.arch}.js\`);
+    `,
+        [`/platform.${process.platform}.${process.arch}.js`]: `console.log("${process.platform}", "${process.arch}");`,
+      },
+      run: { stdout: `${process.platform} ${process.arch}` },
+    });
+    for (const sourceMap of ["external", "inline", "none"] as const) {
       // https://github.com/oven-sh/bun/issues/10344
       itBundled("compile/10344+sourcemap=" + sourceMap + (minify ? "+minify" : ""), {
         minifyIdentifiers: minify,

@@ -98,12 +98,13 @@ jobs:
             pr-number.txt
           if-no-files-found: error
           overwrite: true
-      - if: ${{ failure() && github.event.pull_request && github.repository_owner == 'oven-sh' }}
+      - if: ${{ always() && steps.test.outputs.failing_tests != '' && github.event.pull_request && github.repository_owner == 'oven-sh' }}
         name: Send Message
         uses: sarisia/actions-status-discord@v1
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           nodetail: true
+          color: "#FF0000"
           title: ""
           description: |
             ### ❌ [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
@@ -114,7 +115,7 @@ jobs:
 
             **[View logs](${{ github.event.workflow_run.html_url }})**
       - name: Fail
-        if: ${{ failure() }}
+        if: ${{ failure() || always() && steps.test.outputs.failing_tests != '' }}
         run: |
           echo "There are ${{ steps.test.outputs.failing_tests_count || 'some' }} failing tests on bun-${{ inputs.tag }}."
           exit 1

@@ -39,8 +39,6 @@ jobs:
         with:
           name: bun-${{ inputs.tag }}
           path: bun
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
       - if: ${{ runner.os == 'Windows' }}
         name: Setup Cygwin
         uses: secondlife/setup-cygwin@v3

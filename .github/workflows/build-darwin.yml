@@ -271,6 +271,7 @@ jobs:
           chmod +x bun-profile bun
           mkdir -p bun-${{ inputs.tag }}-profile/ bun-${{ inputs.tag }}/
           mv bun-profile bun-${{ inputs.tag }}-profile/bun-profile
+          mv features.txt bun-${{ inputs.tag }}-profile/features.txt
           mv bun bun-${{ inputs.tag }}/bun
           zip -r bun-${{ inputs.tag }}-profile.zip bun-${{ inputs.tag }}-profile
           zip -r bun-${{ inputs.tag }}.zip bun-${{ inputs.tag }}

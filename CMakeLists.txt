@@ -1198,6 +1198,14 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
         COMMENT "Stripping Symbols"
     )
 endif()
+#if (CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_custom_command(
+        TARGET ${bun}
+        POST_BUILD
+        COMMAND ${BUN_WORKDIR}/${bun} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/dump-features-txt.sh ${BUN_WORKDIR}/${bun} ${BUN_WORKDIR}/features.txt
+        COMMENT "Creating features.txt"
+    )
+#endif()
 
 if(WIN32)
     # Kill all instances of bun before linking.

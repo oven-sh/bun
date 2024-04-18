@@ -448,12 +448,6 @@ pub const Loader = struct {
             }
         }
         this.did_load_process = true;
-
-        if (this.get(bun.DotEnv.home_env)) |home_folder| {
-            Analytics.username_only_for_determining_project_id_and_never_sent = home_folder;
-        } else if (this.get("USER")) |home_folder| {
-            Analytics.username_only_for_determining_project_id_and_never_sent = home_folder;
-        }
     }
 
     // mostly for tests

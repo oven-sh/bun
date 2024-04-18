@@ -970,6 +970,9 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
     );
     try writer.writeByte(if (bun.CLI.Cli.cmd) |cmd| cmd.char() else '_');
 
+    const packed_features = bun.analytics.packedFeatures();
+    try writeU64AsTwoVLQs(writer, @bitCast(packed_features));
+
     var name_bytes: [1024]u8 = undefined;
 
     for (opts.trace.instruction_addresses[0..opts.trace.index]) |addr| {
@@ -1213,6 +1216,9 @@ pub const js_bindings = struct {
         const obj = JSC.JSValue.createEmptyObject(global, 3);
         inline for (.{
             .{ "getMachOImageZeroOffset", jsGetMachOImageZeroOffset },
+            .{ "getFeaturesAsVLQ", jsGetFeaturesAsVLQ },
+            .{ "getFeatureList", jsGetFeatureList },
+
             .{ "segfault", jsSegfault },
             .{ "panic", jsPanic },
             .{ "rootError", jsRootError },
@@ -1252,5 +1258,24 @@ pub const js_bindings = struct {
 
     pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         bun.outOfMemory();
+    }
+
+    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const bits = bun.Analytics.packedFeatures();
+        var buf = std.BoundedArray(u8, 16){};
+        writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
+            // there is definetly enough space in the bounded array
+            unreachable;
+        };
+        return bun.String.createLatin1(buf.slice()).toJS(global);
+    }
+
+    pub fn jsGetFeatureList(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const list = bun.Analytics.packed_features_list;
+        const array = JSValue.createEmptyArray(global, list.len);
+        for (list, 0..) |feature, i| {
+            array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
+        }
+        return array;
     }
 };

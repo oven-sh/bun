@@ -293,6 +293,7 @@ jobs:
           MkDir -Force "$Dist"
           cp -r build\bun.exe "$Dist\bun.exe"
           cp -r build\bun.pdb "$Dist\bun.pdb"
+          cp -r build\features.txt "$Dist\features.txt"
           Compress-Archive -Force "$Dist" "$Dist.zip"
       - name: Upload bun-${{ inputs.tag }}
         uses: actions/upload-artifact@v4

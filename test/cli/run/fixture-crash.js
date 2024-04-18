@@ -1,9 +1,9 @@
 let crash_handler;
-try{
-  crash_handler = require('bun:internal-for-testing');
+try {
+  crash_handler = require("bun:internal-for-testing").crash_handler;
 } catch {
-  console.error('This version of bun does not have internal-for-testing exposed');
-  console.error('BUN_GARBAGE_COLLECTOR_LEVEL=0 BUN_FEATURE_FLAG_INTERNALS_FOR_TESTING=1 bun')
+  console.error("This version of bun does not have internal-for-testing exposed");
+  console.error("BUN_GARBAGE_COLLECTOR_LEVEL=0 BUN_FEATURE_FLAG_INTERNALS_FOR_TESTING=1 bun");
   process.exit(1);
 }
 

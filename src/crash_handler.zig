@@ -119,7 +119,7 @@ pub fn crashHandler(
                 //
                 // To make the release-mode behavior easier to demo, debug mode
                 // checks for this CLI flag.
-                const debug_trace = bun.Environment.isDebug or check_flag: {
+                const debug_trace = bun.Environment.isDebug and check_flag: {
                     for (bun.argv) |arg| {
                         if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
                             break :check_flag false;
@@ -1069,7 +1069,7 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
         //
         // To make the release-mode behavior easier to demo, debug mode
         // checks for this CLI flag.
-        const is_debug = bun.Environment.isDebug or check_flag: {
+        const is_debug = bun.Environment.isDebug and check_flag: {
             for (bun.argv) |arg| {
                 if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
                     break :check_flag false;

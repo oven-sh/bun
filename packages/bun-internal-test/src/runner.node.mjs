@@ -558,7 +558,7 @@ function emojiTag(tag) {
     emojiText += "";
   }
 
-  if (tag.includes("x86") || tag.includes("_64") || tag.includes("amd64")) {
+  if (tag.includes("x86") || tag.includes("x64") || tag.includes("_64") || tag.includes("amd64")) {
     if (!tag.includes("linux")) {
       emojiText += "💻";
     } else {

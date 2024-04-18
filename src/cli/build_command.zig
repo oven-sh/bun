@@ -35,6 +35,21 @@ const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 var estimated_input_lines_of_code_: usize = undefined;
 
 pub const BuildCommand = struct {
+    const compile_define_keys = &.{
+        "process.platform",
+        "process.arch",
+    };
+
+    const compile_define_values = &.{
+        "\"" ++ Environment.os.nameString() ++ "\"",
+
+        switch (@import("builtin").target.cpu.arch) {
+            .x86_64 => "\"x64\"",
+            .aarch64 => "\"arm64\"",
+            else => @compileError("TODO"),
+        },
+    };
+
     pub fn exec(
         ctx: Command.Context,
     ) !void {
@@ -45,6 +60,25 @@ pub const BuildCommand = struct {
         if (ctx.bundler_options.compile) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
+        }
+
+        if (ctx.bundler_options.compile) {
+            if (ctx.args.define == null) {
+                ctx.args.define = .{
+                    .keys = compile_define_keys,
+                    .values = compile_define_values,
+                };
+            } else if (ctx.args.define) |*define| {
+                var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
+                keys.appendSliceAssumeCapacity(compile_define_keys);
+                keys.appendSliceAssumeCapacity(define.keys);
+                var values = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_values.len + define.values.len);
+                values.appendSliceAssumeCapacity(compile_define_values);
+                values.appendSliceAssumeCapacity(define.values);
+
+                define.keys = keys.items;
+                define.values = values.items;
+            }
         }
 
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);

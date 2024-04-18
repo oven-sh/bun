@@ -241,7 +241,6 @@ pub fn crashHandler(
 
                 Output.flush();
             }
-
             // Be aware that this function only lets one thread return from it.
             // This is important so that we do not try to run the following reload logic twice.
             waitForOtherThreadToFinishPanicking();

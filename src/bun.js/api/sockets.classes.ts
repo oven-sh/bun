@@ -228,11 +228,10 @@ export default [
         fn: "send",
         length: 3,
       },
-      // TODO
-      // sendMany: {
-      //   fn: "sendMany",
-      //   length: 1,
-      // },
+      sendMany: {
+        fn: "sendMany",
+        length: 3,
+      },
       close: {
         fn: "close",
         length: 0,

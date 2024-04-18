@@ -3978,30 +3978,68 @@ declare module "bun" {
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
 
-  export interface UDPSocketOptions<Type extends BinaryType = "nodebuffer"> {
-    hostname?: string;
-    port?: number;
-    binaryType?: Type;
-    socket?: {
-      data?(socket: UDPSocket, data: BinaryTypeList[Type], port: number, address: string): void | Promise<void>;
-      drain?(socket: UDPSocket): void | Promise<void>;
-      error?(socket: UDPSocket, error: Error): void | Promise<void>;
-    };
-  }
+  namespace udp {
+    export interface SocketOptions<DataBinaryType extends BinaryType = "nodebuffer"> {
+      hostname?: string;
+      port?: number;
+      binaryType?: DataBinaryType;
+      socket?: {
+        data?(socket: UDPSocket, data: BinaryTypeList[DataBinaryType], port: number, address: string): void | Promise<void>;
+        drain?(socket: UDPSocket): void | Promise<void>;
+        error?(socket: UDPSocket, error: Error): void | Promise<void>;
+      };
+    }
 
-  export interface UDPSocket {
-    readonly hostname: string;
-    readonly port: number;
-    readonly address: SocketAddress;
-    readonly binaryType: BinaryType;
-    send(data: string | ArrayBufferView | ArrayBufferLike, port: number, address: string): void;
-    reload(handler: UDPSocketOptions): void;
-    ref(): void;
-    unref(): void;
-    close(): void;
-  }
+    export interface ConnectSocketOptions<DataBinaryType extends BinaryType = "nodebuffer"> {
+      hostname?: string;
+      port?: number;
+      binaryType?: DataBinaryType;
+      socket?: {
+        data?(socket: ConnectedUDPSocket, data: BinaryTypeList[DataBinaryType], port: number, address: string): void | Promise<void>;
+        drain?(socket: ConnectedUDPSocket): void | Promise<void>;
+        error?(socket:ConnectedUDPSocket, error: Error): void | Promise<void>;
+      };
+      connect: {
+        hostname: string;
+        port: number;
+      }
+    }
 
-  export function bind(options: UDPSocketOptions): UDPSocket;
+    interface BasePacket {
+      data: string | ArrayBufferView | ArrayBufferLike;
+    }
+
+    interface FullPacket extends BasePacket {
+      port: number;
+      address: string;
+    }
+
+    type ConnectedPacket = BasePacket | FullPacket;
+
+    export interface BaseUDPSocket {
+      readonly hostname: string;
+      readonly port: number;
+      readonly address: SocketAddress;
+      readonly binaryType: BinaryType;
+      reload(handler: SocketOptions): void;
+      ref(): void;
+      unref(): void;
+      close(): void;
+    }
+
+    export interface ConnectedUDPSocket extends BaseUDPSocket {
+      sendMany(packets: ConnectedPacket[]): void;
+      send(data: string | ArrayBufferView | ArrayBufferLike, port: number | undefined, address: string | undefined): void;
+    }
+
+    export interface UDPSocket extends BaseUDPSocket {
+      sendMany(packets: FullPacket[]): void;
+      send(data: string | ArrayBufferView | ArrayBufferLike, port: number, address: string): void;
+    }
+
+    export function bind<DataBinaryType extends BinaryType = "nodebuffer">(options: SocketOptions<DataBinaryType>): UDPSocket;
+    export function bind<DataBinaryType extends BinaryType = "nodebuffer">(options: ConnectSocketOptions<DataBinaryType>): ConnectedUDPSocket;
+  }
 
   namespace SpawnOptions {
     /**

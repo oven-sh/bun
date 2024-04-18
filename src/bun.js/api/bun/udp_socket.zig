@@ -66,7 +66,6 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
             else => continue,
         }
 
-
         if (hostname == null or port == 0) {
             continue;
         }
@@ -100,7 +99,11 @@ pub const UDPSocketConfig = struct {
         .{ "error", "on_error" },
     };
 
-    hostname: []const u8,
+    hostname: bun.SliceWithUnderlyingString,
+    connect: ?struct {
+        port: u16,
+        address: bun.SliceWithUnderlyingString,
+    } = null,
     port: u16,
     binary_type: JSC.BinaryType = .Buffer,
     on_data: JSValue = .zero,
@@ -113,28 +116,32 @@ pub const UDPSocketConfig = struct {
             return null;
         }
 
-        var hostname: []const u8 = "0.0.0.0";
-        var port: u16 = 0;
-
-        if (options.getTruthy(globalThis, "hostname")) |value| {
-            if (!value.isString()) {
-                globalThis.throwInvalidArguments("Expected \"hostname\" to be a string", .{});
-                return null;
+        const hostname = brk: {
+            if (options.getTruthy(globalThis, "hostname")) |value| {
+                if (!value.isString()) {
+                    globalThis.throwInvalidArguments("Expected \"hostname\" to be a string", .{});
+                    return null;
+                }
+                const str = value.toBunString(globalThis);
+                const slice = str.toSlice(default_allocator);
+                break :brk slice;
+            } else {
+                break :brk bun.SliceWithUnderlyingString.fromUTF8("0.0.0.0");
             }
-            const str = value.toBunString(globalThis);
-            const slice = str.toSlice(default_allocator);
-            defer slice.deinit();
-            hostname = slice.slice();
-        }
+        };
 
-        if (options.getTruthy(globalThis, "port")) |value| {
-            if (!value.isInt32()) {
-                globalThis.throwInvalidArguments("Expected \"port\" to be an integer", .{});
-                return null;
+        const port: u16 = brk: {
+            if (options.getTruthy(globalThis, "port")) |value| {
+                if (!value.isInt32()) {
+                    globalThis.throwInvalidArguments("Expected \"port\" to be an integer", .{});
+                    return null;
+                }
+                const number = value.asInt32();
+                break :brk if (number < 1 or number > 0xffff) 0 else @intCast(number);
+            } else {
+                break :brk 0;
             }
-            const number = value.asInt32();
-            port = if (number < 1 or number > 0xffff) 0 else @intCast(number);
-        }
+        };
 
         var config = This{
             .hostname = hostname,
@@ -170,6 +177,48 @@ pub const UDPSocketConfig = struct {
             }
         }
 
+        const connect_config = brk: {
+            if (options.getTruthy(globalThis, "connect")) |connect| {
+                if (!connect.isObject()) {
+                    globalThis.throwInvalidArguments("Expected \"connect\" to be an object", .{});
+                    return null;
+                }
+
+                const connect_host_js = connect.getTruthy(globalThis, "hostname") orelse {
+                    globalThis.throwInvalidArguments("Expected \"connect.hostname\" to be a string", .{});
+                    return null;
+                };
+
+                if (!connect_host_js.isString()) {
+                    globalThis.throwInvalidArguments("Expected \"connect.hostname\" to be a string", .{});
+                    return null;
+                }
+
+                const connect_host = connect_host_js.toBunString(globalThis).toSlice(default_allocator);
+
+                const connect_port_js = connect.getTruthy(globalThis, "port") orelse {
+                    globalThis.throwInvalidArguments("Expected \"connect.port\" to be an integer", .{});
+                    return null;
+                };
+
+                if (!connect_port_js.isInt32()) {
+                    globalThis.throwInvalidArguments("Expected \"connect.port\" to be an integer", .{});
+                    return null;
+                }
+
+                const connect_port = connect_port_js.asInt32();
+
+                break :brk .{
+                    .port = if (connect_port < 1 or connect_port > 0xffff) 0 else @as(u16, @intCast(connect_port)),
+                    .address = connect_host,
+                };
+            } else {
+                break :brk null;
+            }
+        };
+
+        config.connect = connect_config;
+
         return config;
     }
 
@@ -182,6 +231,13 @@ pub const UDPSocketConfig = struct {
     pub fn unprotect(this: This) void {
         inline for (handlers) |handler| {
             @field(this, handler.@"1").unprotect();
+        }
+    }
+
+    pub fn deinit(this: This) void {
+        this.hostname.deinit();
+        if (this.connect) |val| {
+            val.address.deinit();
         }
     }
 };
@@ -201,6 +257,7 @@ pub const UDPSocket = struct {
     ref: JSC.Ref = JSC.Ref.init(),
     poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
     closed: bool = false,
+    connected: bool = false,
     vm: *JSC.VirtualMachine,
     js_refcount: usize = 1,
 
@@ -331,22 +388,71 @@ pub const UDPSocket = struct {
 
     // }
 
-    // pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-    //     const arguments = callframe.arguments(1);
-    //     if (arguments.len != 1) {
-    //         globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
-    //         return .zero;
-    //     }
+    pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(1);
+        if (arguments.len != 1) {
+            globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+            return .zero;
+        }
 
-    //     const arg0 = arguments.ptr[0];
-    //     if (!arg0.isArray()) {
-    //         globalThis.throwInvalidArguments("Expected an array", .{});
-    //         return .zero;
-    //     }
+        const arg0 = arguments.ptr[0];
+        if (!arg0.isArray()) {
+            globalThis.throwInvalidArguments("Expected an array", .{});
+            return .zero;
+        }
 
-    //     var iter = arg0.arrayIterator(globalThis);
-    //     while (iter.next()) |val| {}
-    // }
+        var iter = arg0.arrayIterator(globalThis);
+        var i: usize = 0;
+        while (iter.next()) |val| : (i += 1) {
+            if (i >= 1024) {
+                globalThis.throwInvalidArguments("Too many elements in array, maximum is 1024", .{});
+                return .zero;
+            }
+            const data = val.getTruthyComptime(globalThis, "data") orelse {
+                globalThis.throwInvalidArguments("Expected \"data\" property in array element", .{});
+                return .zero;
+            };
+            const dst = brk: {
+                if (this.connected) {
+                    const port = val.getTruthyComptime(globalThis, "port");
+                    const addr = val.getTruthyComptime(globalThis, "address");
+                    if (port != null and addr != null) {
+                        break :brk .{
+                            .port = port.?,
+                            .address = addr.?,
+                        };
+                    }
+                    if (port != null) {
+                        globalThis.throwInvalidArguments("Expected none or both of \"port\", \"address\", got \"port\"", .{});
+                        return .zero;
+                    }
+                    if (port != null) {
+                        globalThis.throwInvalidArguments("Expected none or both of \"port\", \"address\", got \"address\"", .{});
+                        return .zero;
+                    }
+                    break :brk null;
+                } else {
+                    const port = val.getTruthyComptime(globalThis, "port") orelse {
+                        globalThis.throwInvalidArguments("Expected \"port\" property in array element", .{});
+                        return .zero;
+                    };
+                    const addr = val.getTruthyComptime(globalThis, "address") orelse {
+                        globalThis.throwInvalidArguments("Expected \"address\" property in array element", .{});
+                        return .zero;
+                    };
+                    break :brk .{
+                        .port = port,
+                        .address = addr,
+                    };
+                }
+            };
+            if (this.setupPacket(globalThis, i, data, dst)) |ex| {
+                // we threw an exception
+                return ex;
+            }
+        }
+        return this.doSend(globalThis, callframe.globalThis());
+    }
 
     pub fn send(
         this: *This,
@@ -354,12 +460,63 @@ pub const UDPSocket = struct {
         callframe: *CallFrame,
     ) callconv(.C) JSValue {
         const arguments = callframe.arguments(3);
-        if (arguments.len != 3) {
-            globalThis.throwInvalidArguments("Expected 3 arguments, got {}", .{arguments.len});
+        const dst = brk: {
+            if (this.connected) {
+                if (arguments.len == 1) {
+                    break :brk null;
+                }
+                if (arguments.len == 3) {
+                    break :brk .{
+                        .port = arguments.ptr[1],
+                        .address = arguments.ptr[2],
+                    };
+                }
+                globalThis.throwInvalidArguments("Expected 1 or 3 arguments, got {}", .{arguments.len});
+                return .zero;
+            } else {
+                if (arguments.len != 3) {
+                    globalThis.throwInvalidArguments("Expected 3 arguments, got {}", .{arguments.len});
+                    return .zero;
+                }
+                break :brk .{
+                    .port = arguments.ptr[1],
+                    .address = arguments.ptr[2],
+                };
+            }
+        };
+
+        if (this.setupPacket(
+            globalThis,
+            0,
+            arguments.ptr[0],
+            dst,
+        )) |val| {
+            // we threw an exception
+            return val;
+        }
+
+        return this.doSend(globalThis, callframe.globalThis());
+    }
+
+    fn doSend(this: *This, globalThis: *JSGlobalObject) JSValue {
+        if (this.socket.send(this.send_buf, 1) == -1) {
+            const errno = @as(std.c.E, @enumFromInt(std.c._errno().*));
+            const err = bun.sys.Error.fromCode(errno, .sendmmsg);
+            globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
             return .zero;
         }
 
-        const arg0 = arguments.ptr[0];
+        return .undefined;
+    }
+
+    fn setupPacket(
+        this: *This,
+        globalThis: *JSGlobalObject,
+        index: usize,
+        data_val: JSValue,
+        dest: ?struct { port: JSValue, address: JSValue },
+    ) ?JSValue {
+        const arg0 = data_val;
         const payload = init: {
             if (arg0.asArrayBuffer(globalThis)) |arrayBuffer| {
                 break :init arrayBuffer.slice();
@@ -372,53 +529,55 @@ pub const UDPSocket = struct {
             }
         };
 
-        const arg1 = arguments.ptr[1];
         const port: u16 = init: {
-            if (arg1.isInt32()) {
-                const number = arg1.asInt32();
-                break :init if (number < 1 or number > 0xffff) 0 else @intCast(number);
+            if (dest) |destval| {
+                if (destval.port.isInt32()) {
+                    const number = destval.port.asInt32();
+                    break :init if (number < 1 or number > 0xffff) 0 else @intCast(number);
+                } else {
+                    globalThis.throwInvalidArguments("Expected integer as second argument", .{});
+                    return .zero;
+                }
             } else {
-                globalThis.throwInvalidArguments("Expected integer as second argument", .{});
-                return .zero;
+                break :init 0;
             }
         };
 
-        const arg2 = arguments.ptr[2];
         const address = init: {
-            if (bun.String.tryFromJS(arg2, globalThis)) |value| {
-                const slice = value.toUTF8(default_allocator);
-                break :init slice.slice();
+            if (dest) |destval| {
+                if (bun.String.tryFromJS(destval.address, globalThis)) |value| {
+                    const slice = value.toUTF8(default_allocator);
+                    break :init slice.slice();
+                } else {
+                    globalThis.throwInvalidArguments("Expected string as third argument", .{});
+                    return .zero;
+                }
             } else {
-                globalThis.throwInvalidArguments("Expected string as third argument", .{});
-                return .zero;
+                break :init null;
             }
         };
 
         var addr: std.os.sockaddr.storage = undefined;
-        var addr4: *std.os.sockaddr.in = @ptrCast(&addr);
-        if (inet_pton(std.os.AF.INET, address.ptr, &addr4.addr) == 1) {
-            addr4.port = htons(@truncate(port));
-            addr4.family = std.os.AF.INET;
-        } else {
-            var addr6: *std.os.sockaddr.in6 = @ptrCast(&addr);
-            if (inet_pton(std.os.AF.INET6, address.ptr, &addr6.addr) == 1) {
-                addr6.port = htons(@truncate(port));
-                addr6.family = std.os.AF.INET6;
+        if (address) {
+            var addr4: *std.os.sockaddr.in = @ptrCast(&addr);
+            if (inet_pton(std.os.AF.INET, address.ptr, &addr4.addr) == 1) {
+                addr4.port = htons(@truncate(port));
+                addr4.family = std.os.AF.INET;
             } else {
-                globalThis.throwInvalidArguments("Invalid address: {s}", .{address});
-                return .zero;
+                var addr6: *std.os.sockaddr.in6 = @ptrCast(&addr);
+                if (inet_pton(std.os.AF.INET6, address.ptr, &addr6.addr) == 1) {
+                    addr6.port = htons(@truncate(port));
+                    addr6.family = std.os.AF.INET6;
+                } else {
+                    globalThis.throwInvalidArguments("Invalid address: {s}", .{address});
+                    return .zero;
+                }
             }
+        } else {
+            addr = std.mem.zeroes(std.os.sockaddr.storage);
         }
-
-        this.send_buf.setPayload(0, 0, payload, &addr);
-        if (this.socket.send(this.send_buf, 1) == -1) {
-            const errno = @as(std.c.E, @enumFromInt(std.c._errno().*));
-            const err = bun.sys.Error.fromCode(errno, .sendmmsg);
-            globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
-            return .zero;
-        }
-
-        return .undefined;
+        this.send_buf.setPayload(@truncate(index), 0, payload, &addr);
+        return null;
     }
 
     pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
@@ -541,6 +700,8 @@ pub const UDPSocket = struct {
 
         // uws.us_destroy_udp_packet_buffer(this.send_buf);
         this.send_buf.destroy();
+
+        this.config.deinit();
 
         default_allocator.destroy(this);
     }

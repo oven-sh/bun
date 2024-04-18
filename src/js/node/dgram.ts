@@ -37,39 +37,97 @@ const EventEmitter = require('node:events');
 const dc = require('node:diagnostics_channel');
 const udpSocketChannel = dc.channel('udp.socket');
 
-// const errors = require('internal/errors');
-// const {
-//   ERR_BUFFER_OUT_OF_BOUNDS,
-//   ERR_INVALID_ARG_TYPE,
-//   ERR_MISSING_ARGS,
-//   ERR_SOCKET_ALREADY_BOUND,
-//   ERR_SOCKET_BAD_BUFFER_SIZE,
-//   ERR_SOCKET_BUFFER_SIZE,
-//   ERR_SOCKET_DGRAM_IS_CONNECTED,
-//   ERR_SOCKET_DGRAM_NOT_CONNECTED,
-//   ERR_SOCKET_DGRAM_NOT_RUNNING,
-//   ERR_INVALID_FD_TYPE,
-// } = errors.codes;
-// const {
-//   ErrnoException,
-//   ExceptionWithHostPort,
-// } = errors;
+class ERR_OUT_OF_RANGE extends Error {
+  constructor(argumentName, range, received) {
+    super(`The value of "${argumentName}" is out of range. It must be ${range}. Received ${received}`);
+    this.code = 'ERR_OUT_OF_RANGE';
+  }
+}
 
+class ERR_BUFFER_OUT_OF_BOUNDS extends Error {
+  constructor() {
+    super('Buffer offset or length is out of bounds');
+    this.code = 'ERR_BUFFER_OUT_OF_BOUNDS';
+  }
+}
 
-// begin internal/validators
+class ERR_INVALID_ARG_TYPE extends Error {
+  constructor(argName, expected, actual) {
+    super(`The "${argName}" argument must be of type ${expected}. Received type ${typeof actual}`);
+    this.code = 'ERR_INVALID_ARG_TYPE';
+  }
+}
+
+class ERR_MISSING_ARGS extends Error {
+  constructor(argName) {
+    super(`The "${argName}" argument is required`);
+    this.code = 'ERR_MISSING_ARGS';
+  }
+}
+
+class ERR_SOCKET_ALREADY_BOUND extends Error {
+  constructor() {
+    super('Socket is already bound');
+    this.code = 'ERR_SOCKET_ALREADY_BOUND';
+  }
+}
+
+class ERR_SOCKET_BAD_BUFFER_SIZE extends Error {
+  constructor() {
+    super('Buffer size must be a number');
+    this.code = 'ERR_SOCKET_BAD_BUFFER_SIZE';
+  }
+}
+
+class ERR_SOCKET_BUFFER_SIZE extends Error {
+  constructor(ctx) {
+    super(`Invalid buffer size: ${ctx}`);
+    this.code = 'ERR_SOCKET_BUFFER_SIZE';
+  }
+}
+
+class ERR_SOCKET_DGRAM_IS_CONNECTED extends Error {
+  constructor() {
+    super('Socket is connected');
+    this.code = 'ERR_SOCKET_DGRAM_IS_CONNECTED';
+  }
+}
+
+class ERR_SOCKET_DGRAM_NOT_CONNECTED extends Error {
+  constructor() {
+    super('Socket is not connected');
+    this.code = 'ERR_SOCKET_DGRAM_NOT_CONNECTED';
+  }
+}
+
+class ERR_SOCKET_BAD_PORT extends Error {
+  constructor(name, port, allowZero) {
+    super(`Invalid ${name}: ${port}. Ports must be >= 0 and <= 65535. ${allowZero ? '0' : ''}`);
+    this.code = 'ERR_SOCKET_BAD_PORT';
+  }
+}
 
 function isInt32(value) {
   return value === (value | 0);
 }
 
-function validateAbortSignal(signal, name) {}
+function validateAbortSignal(signal, name) {
+  if (signal !== undefined &&
+    (signal === null ||
+      typeof signal !== 'object' ||
+      !('aborted' in signal))) {
+    throw new ERR_INVALID_ARG_TYPE(name, 'AbortSignal', signal);
+  }
+}
+hideFromStack(validateAbortSignal);
 
-const validateString = hideFromStack((value, name) => {
+function validateString(value, name) {
   if (typeof value !== 'string')
     throw new ERR_INVALID_ARG_TYPE(name, 'string', value);
-});
+}
+hideFromStack(validateString);
 
-const validateNumber = hideFromStack((value, name, min = undefined, max) => {
+function validateNumber(value, name, min = undefined, max) {
   if (typeof value !== 'number')
     throw new ERR_INVALID_ARG_TYPE(name, 'number', value);
 
@@ -80,30 +138,26 @@ const validateNumber = hideFromStack((value, name, min = undefined, max) => {
       `${min != null ? `>= ${min}` : ''}${min != null && max != null ? ' && ' : ''}${max != null ? `<= ${max}` : ''}`,
       value);
   }
-});
+}
+hideFromStack(validateNumber);
 
-
-function validatePort(port) {
+function validatePort(port, name = 'Port', allowZero = true) {
+  if ((typeof port !== 'number' && typeof port !== 'string') ||
+    (typeof port === 'string' && StringPrototypeTrim(port).length === 0) ||
+    +port !== (+port >>> 0) ||
+    port > 0xFFFF ||
+    (port === 0 && !allowZero)) {
+    throw new ERR_SOCKET_BAD_PORT(name, port, allowZero);
+  }
   return port | 0;
 }
+hideFromStack(validatePort);
 
-// const validatePort = hideFromStack((port, name = 'Port', allowZero = true) => {
-//   if ((typeof port !== 'number' && typeof port !== 'string') ||
-//       (typeof port === 'string' && StringPrototypeTrim(port).length === 0) ||
-//       +port !== (+port >>> 0) ||
-//       port > 0xFFFF ||
-//       (port === 0 && !allowZero)) {
-//     throw new ERR_SOCKET_BAD_PORT(name, port, allowZero);
-//   }
-//   return port | 0;
-// });
-
-const validateFunction = hideFromStack((value, name) => {
+function validateFunction(value, name) {
   if (typeof value !== 'function')
     throw new ERR_INVALID_ARG_TYPE(name, 'Function', value);
-});
-
-// end internal/validators
+}
+hideFromStack(validateFunction);
 
 const BIND_STATE_UNBOUND = 0;
 const BIND_STATE_BINDING = 1;
@@ -117,9 +171,9 @@ const RECV_BUFFER = true;
 const SEND_BUFFER = false;
 
 const kStateSymbol = Symbol('state symbol');
-const owner_symbol = Symbol('owner_symbol');
 const async_id_symbol = Symbol('async_id_symbol');
 
+// placeholder
 function defaultTriggerAsyncIdScope(triggerAsyncId, block, ...args) {
   return block.$apply(null, args);
 }
@@ -151,7 +205,6 @@ function newHandle(type, lookup) {
     handle.lookup = FunctionPrototypeBind(lookup4, handle, lookup);
   } else if (type === 'udp6') {
     handle.lookup = FunctionPrototypeBind(lookup6, handle, lookup);
-    return handle;
   } else {
     throw new ERR_SOCKET_BAD_TYPE();
   }
@@ -176,7 +229,6 @@ function Socket(type, listener) {
   }
 
   const handle = newHandle(type, lookup);
-  handle[owner_symbol] = this;
 
   // this[async_id_symbol] = handle.getAsyncId();
   this.type = type;
@@ -224,44 +276,6 @@ function createSocket(type, listener) {
   return new Socket(type, listener);
 }
 
-/*
-function startListening(socket) {
-  const state = socket[kStateSymbol];
-
-  state.handle.onmessage = onMessage;
-  state.handle.onerror = onError;
-  state.handle.recvStart();
-  state.receiving = true;
-  state.bindState = BIND_STATE_BOUND;
-
-  if (state.recvBufferSize)
-    bufferSize(socket, state.recvBufferSize, RECV_BUFFER);
-
-  if (state.sendBufferSize)
-    bufferSize(socket, state.sendBufferSize, SEND_BUFFER);
-
-  socket.emit('listening');
-}
-
-function replaceHandle(self, newHandle) {
-  const state = self[kStateSymbol];
-  const oldHandle = state.handle;
-  // Sync the old handle state to new handle
-  if (!oldHandle.hasRef() && typeof newHandle.unref === 'function') {
-    newHandle.unref();
-  }
-  // Set up the handle that we got from primary.
-  newHandle.lookup = oldHandle.lookup;
-  newHandle.bind = oldHandle.bind;
-  newHandle.send = oldHandle.send;
-  newHandle[owner_symbol] = self;
-
-  // Replace the existing handle by the handle we got from primary.
-  oldHandle.close();
-  state.handle = newHandle;
-}
-*/
-
 function bufferSize(self, size, buffer) {
   if (size >>> 0 !== size)
     throw new ERR_SOCKET_BAD_BUFFER_SIZE();
@@ -286,7 +300,6 @@ Socket.prototype.bind = function(port_, address_ /* , callback */) {
     throw new ERR_SOCKET_ALREADY_BOUND();
 
   state.bindState = BIND_STATE_BINDING;
-
 
   const cb = arguments.length && arguments[arguments.length - 1];
   if (typeof cb === 'function') {
@@ -378,12 +391,23 @@ Socket.prototype.bind = function(port_, address_ /* , callback */) {
 
     // TODO flags
     try {
+      const family = this.type === 'udp4' ? 'IPv4' : 'IPv6';
       state.handle.socket = Bun.bind({
-        address: ip,
+        hostname: ip,
         port: port || 0,
         socket: {
-          data: onMessage,
-          error: onError,
+          data: (_socket, data, port, address) => {
+            this.emit('message', data, {
+              port: port,
+              address: address,
+              size: data.length,
+              // TODO check if this is correct
+              family, 
+            });
+          },
+          error: (_socket, error) => {
+            this.emit('error', error);
+          }
         },
       });
       state.receiving = true;
@@ -995,26 +1019,8 @@ function stopReceiving(socket) {
   if (!state.receiving)
     return;
 
-  // state.handle.recvStop();
   state.receiving = false;
 }
-
-
-function onMessage(nread, handle, buf, rinfo) {
-  const self = handle[owner_symbol];
-  if (nread < 0) {
-    return self.emit('error', new ErrnoException(nread, 'recvmsg'));
-  }
-  rinfo.size = buf.length; // compatibility
-  self.emit('message', buf, rinfo);
-}
-
-
-function onError(nread, handle, error) {
-  const self = handle[owner_symbol];
-  return self.emit('error', error);
-}
-
 
 Socket.prototype.ref = function() {
   const handle = this[kStateSymbol].handle;

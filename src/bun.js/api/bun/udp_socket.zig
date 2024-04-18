@@ -280,56 +280,56 @@ pub const UDPSocket = struct {
         return true;
     }
 
-    pub fn connect(
-        this: *This,
-        globalThis: *JSGlobalObject,
-        callframe: *CallFrame,
-    ) callconv(.C) JSValue {
-        const arguments = callframe.arguments(2);
-        if (arguments.len != 2) {
-            globalThis.throwInvalidArguments("Expected 2 arguments, got {}", .{arguments.len});
-            return .zero;
-        }
+    // pub fn connect(
+    //     this: *This,
+    //     globalThis: *JSGlobalObject,
+    //     callframe: *CallFrame,
+    // ) callconv(.C) JSValue {
+    //     const arguments = callframe.arguments(2);
+    //     if (arguments.len != 2) {
+    //         globalThis.throwInvalidArguments("Expected 2 arguments, got {}", .{arguments.len});
+    //         return .zero;
+    //     }
 
-        const arg1 = arguments.ptr[0];
-        const port: u16 = init: {
-            if (arg1.isInt32()) {
-                const number = arg1.asInt32();
-                break :init if (number < 1 or number > 0xffff) 0 else @intCast(number);
-            } else {
-                globalThis.throwInvalidArguments("Expected integer as second argument", .{});
-                return .zero;
-            }
-        };
+    //     const arg1 = arguments.ptr[0];
+    //     const port: u16 = init: {
+    //         if (arg1.isInt32()) {
+    //             const number = arg1.asInt32();
+    //             break :init if (number < 1 or number > 0xffff) 0 else @intCast(number);
+    //         } else {
+    //             globalThis.throwInvalidArguments("Expected integer as second argument", .{});
+    //             return .zero;
+    //         }
+    //     };
 
-        const arg2 = arguments.ptr[1];
-        const address = init: {
-            if (bun.String.tryFromJS(arg2, globalThis)) |value| {
-                const slice = value.toUTF8(default_allocator);
-                break :init slice.slice();
-            } else {
-                globalThis.throwInvalidArguments("Expected string as third argument", .{});
-                return .zero;
-            }
-        };
+    //     const arg2 = arguments.ptr[1];
+    //     const address = init: {
+    //         if (bun.String.tryFromJS(arg2, globalThis)) |value| {
+    //             const slice = value.toUTF8(default_allocator);
+    //             break :init slice.slice();
+    //         } else {
+    //             globalThis.throwInvalidArguments("Expected string as third argument", .{});
+    //             return .zero;
+    //         }
+    //     };
 
-        var addr: std.os.sockaddr.storage = undefined;
-        var addr4: *std.os.sockaddr.in = @ptrCast(&addr);
-        if (inet_pton(std.os.AF.INET, address.ptr, &addr4.addr) == 1) {
-            addr4.port = htons(@truncate(port));
-            addr4.family = std.os.AF.INET;
-        } else {
-            var addr6: *std.os.sockaddr.in6 = @ptrCast(&addr);
-            if (inet_pton(std.os.AF.INET6, address.ptr, &addr6.addr) == 1) {
-                addr6.port = htons(@truncate(port));
-                addr6.family = std.os.AF.INET6;
-            } else {
-                globalThis.throwInvalidArguments("Invalid address: {s}", .{address});
-                return .zero;
-            }
-        }
+    //     var addr: std.os.sockaddr.storage = undefined;
+    //     var addr4: *std.os.sockaddr.in = @ptrCast(&addr);
+    //     if (inet_pton(std.os.AF.INET, address.ptr, &addr4.addr) == 1) {
+    //         addr4.port = htons(@truncate(port));
+    //         addr4.family = std.os.AF.INET;
+    //     } else {
+    //         var addr6: *std.os.sockaddr.in6 = @ptrCast(&addr);
+    //         if (inet_pton(std.os.AF.INET6, address.ptr, &addr6.addr) == 1) {
+    //             addr6.port = htons(@truncate(port));
+    //             addr6.family = std.os.AF.INET6;
+    //         } else {
+    //             globalThis.throwInvalidArguments("Invalid address: {s}", .{address});
+    //             return .zero;
+    //         }
+    //     }
 
-    }
+    // }
 
     // pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
     //     const arguments = callframe.arguments(1);

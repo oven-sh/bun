@@ -213,6 +213,7 @@ describe("bundler", () => {
         return buffer;
       })(),
       "/generated.small.binary": (() => {
+        // make sure the size is less than 32
         const buffer = new Uint8ClampedArray(31);
         for (let i = 0; i < buffer.length; i++) {
           buffer[i] = i;

@@ -10,6 +10,10 @@ concurrency:
 
 on:
   workflow_dispatch:
+    inputs:
+      run-id:
+        type: string
+        description: The workflow ID to download artifacts (skips the build step)
   pull_request:
   push:
     branches:
@@ -17,6 +21,7 @@ on:
 
 jobs:
   format:
+    if: ${{ !github.event.inputs.run-id }}
     name: Format
     uses: ./.github/workflows/run-format.yml
     secrets: inherit
@@ -25,10 +30,12 @@ jobs:
     permissions:
       contents: write
   lint:
+    if: ${{ !github.event.inputs.run-id }}
     name: Lint
     uses: ./.github/workflows/run-lint.yml
     secrets: inherit
   linux-x64:
+    if: ${{ !github.event.inputs.run-id }}
     name: Build linux-x64
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -38,6 +45,7 @@ jobs:
       arch: x64
       cpu: haswell
   linux-x64-baseline:
+    if: ${{ !github.event.inputs.run-id }}
     name: Build linux-x64-baseline
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -47,7 +55,7 @@ jobs:
       arch: x64
       cpu: nehalem
   linux-aarch64:
-    if: ${{ github.repository_owner == 'oven-sh' }}
+    if: ${{ !github.event.inputs.run-id && github.repository_owner == 'oven-sh' }}
     name: Build linux-aarch64
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -57,6 +65,7 @@ jobs:
       arch: aarch64
       cpu: native
   darwin-x64:
+    if: ${{ !github.event.inputs.run-id }}
     name: Build darwin-x64
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
@@ -66,6 +75,7 @@ jobs:
       arch: x64
       cpu: haswell
   darwin-x64-baseline:
+    if: ${{ !github.event.inputs.run-id }}
     name: Build darwin-x64-baseline
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
@@ -75,6 +85,7 @@ jobs:
       arch: x64
       cpu: nehalem
   darwin-aarch64:
+    if: ${{ !github.event.inputs.run-id }}
     name: Build darwin-aarch64
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
@@ -84,6 +95,7 @@ jobs:
       arch: aarch64
       cpu: native
   windows-x64:
+    if: ${{ !github.event.inputs.run-id }}
     name: Build windows-x64
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
@@ -93,6 +105,7 @@ jobs:
       arch: x64
       cpu: haswell
   windows-x64-baseline:
+    if: ${{ !github.event.inputs.run-id }}
     name: Build windows-x64-baseline
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
@@ -102,82 +115,90 @@ jobs:
       arch: x64
       cpu: nehalem
   linux-x64-test:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test linux-x64
     needs: linux-x64
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
+      run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
       tag: linux-x64
   linux-x64-baseline-test:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test linux-x64-baseline
     needs: linux-x64-baseline
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
+      run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
       tag: linux-x64-baseline
   linux-aarch64-test:
-    if: ${{ github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'}}
+    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'}}
     name: Test linux-aarch64
     needs: linux-aarch64
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
+      run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
       runs-on: namespace-profile-bun-ci-linux-aarch64
       tag: linux-aarch64
   darwin-x64-test:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test darwin-x64
     needs: darwin-x64
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
+      run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
       tag: darwin-x64
   darwin-x64-baseline-test:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test darwin-x64-baseline
     needs: darwin-x64-baseline
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
+      run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
       tag: darwin-x64-baseline
   darwin-aarch64-test:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test darwin-aarch64
     needs: darwin-aarch64
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
+      run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-14' }}
       tag: darwin-aarch64
   windows-x64-test:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test windows-x64
     needs: windows-x64
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
+      run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
       runs-on: windows-latest
       tag: windows-x64
   windows-x64-baseline-test:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test windows-x64-baseline
     needs: windows-x64-baseline
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
+      run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
       runs-on: windows-latest
       tag: windows-x64-baseline

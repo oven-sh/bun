@@ -535,6 +535,7 @@ RUN --mount=type=cache,target=${CCACHE_DIR} \
   && ninja -v \
   && ./bun --revision \
   && mkdir -p /build/out \
+  && mv bun bun-profile /build/out \
   && rm -rf ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
 
 FROM scratch as artifact

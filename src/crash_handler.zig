@@ -1080,13 +1080,6 @@ fn report(url: []const u8) void {
     if (!bun.Analytics.isEnabled()) return;
     if (bun.Analytics.isCI()) return;
 
-    std.debug.print("REPORT TO {s}/ack\n", .{url});
-
-    if (bun.analytics.disabled) {
-        std.debug.print("REPORT DISABLED\n", .{});
-        return;
-    }
-
     switch (bun.Environment.os) {
         .windows => {
             var process: std.os.windows.PROCESS_INFORMATION = undefined;
@@ -1110,7 +1103,7 @@ fn report(url: []const u8) void {
                 .hStdOutput = null,
                 .hStdError = null,
             };
-            var cmd_line = std.BoundedArray(u16, 1024){};
+            var cmd_line = std.BoundedArray(u16, 4096){};
             cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell.exe -ExecutionPolicy Bypass -Command \"Invoke-RestMethod -Uri '"));
             {
                 const encoded = bun.strings.convertUTF8toUTF16InBuffer(cmd_line.unusedCapacitySlice(), url);
@@ -1134,29 +1127,38 @@ fn report(url: []const u8) void {
             // we don't care what happens with the process
             _ = spawn_result;
         },
-        .mac => {
+        .mac, .linux => {
             var buf: bun.PathBuffer = undefined;
+            var buf2: bun.PathBuffer = undefined;
             const curl = bun.which(
                 &buf,
                 bun.getenvZ("PATH") orelse return,
-                bun.getcwd() catch return,
+                bun.getcwd(&buf2) catch return,
                 "curl",
             ) orelse return;
-            var cmd_line = std.BoundedArray(u8, 1024){};
-            cmd_line.append(url) catch return;
-            cmd_line.append("/ack") catch return;
+            var cmd_line = std.BoundedArray(u8, 4096){};
+            cmd_line.appendSlice(url) catch return;
+            cmd_line.appendSlice("/ack") catch return;
             cmd_line.append(0) catch return;
 
-            var pid: std.os.pid_t = undefined;
-            const argv = [_:null]?[:0]const u8{
+            var argv = [_:null]?[*:0]const u8{
                 curl,
                 "-fsSL",
                 cmd_line.buffer[0..cmd_line.len :0],
             };
-            const spawn_result = std.c.posix_spawn(&pid, argv[0], null, null, &argv, std.c.environ);
-
-            // we don't care what happens with the process
-            _ = spawn_result;
+            const result = std.c.fork();
+            switch (result) {
+                // success and failure cases: ignore the result
+                else => return,
+                // child
+                0 => {
+                    inline for (0..2) |i| {
+                        _ = std.c.close(i);
+                    }
+                    _ = std.c.execve(argv[0].?, &argv, std.c.environ);
+                    std.c.exit(0);
+                },
+            }
         },
         else => @compileError("NOT IMPLEMENTED"),
     }

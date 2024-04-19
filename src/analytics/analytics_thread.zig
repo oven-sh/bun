@@ -22,14 +22,14 @@ const Headers = bun.http.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
 
-var enabled: enum { yes, no, unknown } = .unknown;
-var is_ci: enum { yes, no, unknown } = .unknown;
+pub var enabled: enum { yes, no, unknown } = .unknown;
+pub var is_ci: enum { yes, no, unknown } = .unknown;
 
 pub fn isEnabled() bool {
     return switch (enabled) {
         .yes => true,
         .no => false,
-        .not_sure => {
+        .unknown => {
             enabled = detect: {
                 if (bun.getenvZ("DO_NOT_TRACK") != null) {
                     break :detect .no;
@@ -49,7 +49,7 @@ pub fn isCI() bool {
     return switch (is_ci) {
         .yes => true,
         .no => false,
-        .not_sure => {
+        .unknown => {
             is_ci = detect: {
                 inline for (.{
                     "CI",

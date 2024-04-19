@@ -445,6 +445,50 @@ test("glob.scan('.')", async () => {
   expect(entries).toContain("README.md");
 });
 
+describe("DEBUG", async () => {
+  let tempdir = "";
+  beforeAll(() => {
+    tempdir = tempDirWithFiles("glob-scan-literal-fast-path", {
+      "packages": {
+        "a": {
+          "package.json": "hi",
+          "foo": "bar",
+        },
+        "b": {
+          "package.json": "hi",
+          "foo": "bar",
+        },
+        "c": {
+          "package.json": "hi",
+          "foo": "bar",
+        },
+        "foo": "bar",
+      },
+      "foo": "bar",
+    });
+  });
+
+  test("works", async () => {
+    const glob = new Glob("packages/*/package.json");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
+    expect(entries.sort()).toEqual(
+      ["packages/a/package.json", "packages/b/package.json", "packages/c/package.json"].sort(),
+    );
+  });
+
+  test("works 2", async () => {
+    const glob = new Glob("packages/*/foo");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
+    expect(entries.sort()).toEqual(["packages/a/foo", "packages/b/foo", "packages/c/foo"].sort());
+  });
+
+  test("ZACK", async () => {
+    const glob = new Glob("packages/foo");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
+    expect(entries.sort()).toEqual(["packages/foo"].sort());
+  });
+});
+
 describe("glob.scan wildcard fast path", async () => {
   test("works", async () => {
     const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", {

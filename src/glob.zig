@@ -161,6 +161,13 @@ pub const SyscallAccessor = struct {
         };
     }
 
+    pub fn statat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
+        return switch (Syscall.fstatat(handle.value, path)) {
+            .err => |err| .{ .err = err },
+            .result => |s| .{ .result = s },
+        };
+    }
+
     pub fn openat(handle: Handle, path: [:0]const u8) !Maybe(Handle) {
         return switch (Syscall.openat(handle.value, path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
             .err => |err| .{ .err = err },
@@ -240,6 +247,11 @@ pub const DirEntryAccessor = struct {
             return .{ .value = entry.data.iterator() };
         }
     };
+
+    pub fn statat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
+        const fd: bun.FileDescriptor = (handle.value orelse @panic("File descriptor is null")).fd; // TODO when is this null?
+        return Syscall.fstatat(fd, path);
+    }
 
     pub fn open(path: [:0]const u8) !Maybe(Handle) {
         return openat(Handle.zero, path);
@@ -332,6 +344,7 @@ pub fn GlobWalker_(
             get_next,
             /// Currently iterating over a directory
             directory: Directory,
+            matched: MatchedPath,
 
             const Directory = struct {
                 fd: Accessor.Handle,
@@ -465,14 +478,6 @@ pub fn GlobWalker_(
                 var had_dot_dot = false;
                 const component_idx = this.walker.skipSpecialComponents(work_item.idx, &dir_path, &this.iter_state.directory.path, &had_dot_dot);
 
-                this.iter_state.directory.dir_path = dir_path;
-                this.iter_state.directory.component_idx = component_idx;
-                this.iter_state.directory.pattern = &this.walker.patternComponents.items[component_idx];
-                this.iter_state.directory.next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
-                this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
-                this.iter_state.directory.at_cwd = false;
-                this.iter_state.directory.fd = Accessor.Handle.zero;
-
                 const fd: Accessor.Handle = fd: {
                     if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
@@ -501,6 +506,53 @@ pub fn GlobWalker_(
                     };
                 };
 
+                // Optimization:
+                // If we have a pattern like:
+                // `packages/*/package.json`
+                //              ^ and we are at this component, with let's say
+                //                a directory named: `packages/frontend/`
+                //
+                // Then we can just open `packages/frontend/package.json` without
+                // doing any iteration on the current directory.
+                //
+                // More generally, we can apply this optimization if we are on the
+                // last component and it is a literal with no special syntax.
+                if (component_idx == this.walker.patternComponents.items.len -| 1 and
+                    this.walker.patternComponents.items[component_idx].syntax_hint == .Literal)
+                {
+                    defer {
+                        this.closeDisallowingCwd(fd);
+                    }
+                    const pathz = try this.walker.arena.allocator().dupeZ(u8, this.walker.patternComponents.items[component_idx].patternSlice(this.walker.pattern));
+                    const stat_result: bun.Stat = switch (Accessor.statat(fd, pathz)) {
+                        .err => |e_| {
+                            var e: bun.sys.Error = e_;
+                            if (e.getErrno() == bun.C.E.NOENT) {
+                                this.iter_state = .get_next;
+                                return Maybe(void).success;
+                            }
+                            return .{ .err = e_ };
+                        },
+                        .result => |stat| stat,
+                    };
+                    const matches = (bun.S.ISDIR(stat_result.mode) and !this.walker.only_files) or bun.S.ISREG(stat_result.mode) or !this.walker.only_files;
+                    if (matches) {
+                        const path = try this.walker.prepareMatchedPath(pathz, dir_path);
+                        this.iter_state = .{ .matched = path };
+                    } else {
+                        this.iter_state = .get_next;
+                    }
+                    return Maybe(void).success;
+                }
+
+                this.iter_state.directory.dir_path = dir_path;
+                this.iter_state.directory.component_idx = component_idx;
+                this.iter_state.directory.pattern = &this.walker.patternComponents.items[component_idx];
+                this.iter_state.directory.next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
+                this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
+                this.iter_state.directory.at_cwd = false;
+                this.iter_state.directory.fd = Accessor.Handle.zero;
+
                 log("Transition(dirpath={s}, fd={}, component_idx={d})", .{ dir_path, fd, component_idx });
 
                 this.iter_state.directory.fd = fd;
@@ -514,6 +566,10 @@ pub fn GlobWalker_(
             pub fn next(this: *Iterator) !Maybe(?MatchedPath) {
                 while (true) {
                     switch (this.iter_state) {
+                        .matched => |path| {
+                            this.iter_state = .get_next;
+                            return .{ .result = path };
+                        },
                         .get_next => {
                             // Done
                             if (this.walker.workbuf.items.len == 0) return .{ .result = null };
@@ -593,10 +649,21 @@ pub fn GlobWalker_(
                                     const recursion_idx_bump_ = this.walker.matchPatternDir(&pattern, next_pattern, entry_name, component_idx, is_last, &add_dir);
 
                                     if (recursion_idx_bump_) |recursion_idx_bump| {
-                                        try this.walker.workbuf.append(
-                                            this.walker.arena.allocator(),
-                                            WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
-                                        );
+                                        if (recursion_idx_bump == 2) {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
+                                            );
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.newWithFd(work_item.path, component_idx, .directory, dir_fd),
+                                            );
+                                        } else {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
+                                            );
+                                        }
                                     }
 
                                     if (add_dir and !this.walker.only_files) {
@@ -647,10 +714,21 @@ pub fn GlobWalker_(
 
                                         const subdir_entry_name = try this.walker.join(subdir_parts);
 
-                                        try this.walker.workbuf.append(
-                                            this.walker.arena.allocator(),
-                                            WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
-                                        );
+                                        if (recursion_idx_bump == 2) {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
+                                            );
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx, .directory),
+                                            );
+                                        } else {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
+                                            );
+                                        }
                                     }
 
                                     if (add_dir and !this.walker.only_files) {
@@ -757,6 +835,10 @@ pub fn GlobWalker_(
             start_cp: u32 = 0,
             end_cp: u32 = 0,
 
+            pub fn patternSlice(this: *const Component, pattern: []const u8) []const u8 {
+                return pattern[this.start .. this.start + this.len];
+            }
+
             const SyntaxHint = enum {
                 None,
                 Single,
@@ -833,6 +915,7 @@ pub fn GlobWalker_(
             error_on_broken_symlinks: bool,
             only_files: bool,
         ) !Maybe(void) {
+            log("initWithCwd(cwd={s})", .{cwd});
             this.* = .{
                 .cwd = cwd,
                 .pattern = pattern,
@@ -864,6 +947,7 @@ pub fn GlobWalker_(
 
         /// NOTE This also calls deinit on the arena, if you don't want to do that then
         pub fn deinit(this: *GlobWalker, comptime clear_arena: bool) void {
+            log("GlobWalker.deinit", .{});
             if (comptime clear_arena) {
                 this.arena.deinit();
             }
@@ -1151,13 +1235,14 @@ pub fn GlobWalker_(
             return try this.arena.allocator().dupeZ(u8, symlink_full_path);
         }
 
-        fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: [:0]const u8) !MatchedPath {
+        fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: []const u8) !MatchedPath {
             const subdir_parts: []const []const u8 = &[_][]const u8{
                 dir_name[0..dir_name.len],
                 entry_name,
             };
             const name = try this.join(subdir_parts);
             // if (comptime sentinel) return name[0 .. name.len - 1 :0];
+            log("prepared match: {s}", .{name});
             return name;
         }
 
@@ -1840,4 +1925,37 @@ pub fn matchWildcardFilepath(glob: []const u8, path: []const u8) bool {
 
 pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
+}
+
+/// Returns true if the given string contains glob syntax,
+/// excluding those escaped with backslashes
+/// TODO: this doesn't play nicely with Windows directory separator and
+/// backslashing, should we just require the user to supply posix filepaths?
+pub fn detectGlobSyntax(potential_pattern: []const u8) bool {
+    // Negation only allowed in the beginning of the pattern
+    if (potential_pattern.len > 0 and potential_pattern[0] == '!') return true;
+
+    // In descending order of how popular the token is
+    const SPECIAL_SYNTAX: [4]u8 = comptime [_]u8{ '*', '{', '[', '?' };
+
+    inline for (SPECIAL_SYNTAX) |token| {
+        var slice = potential_pattern[0..];
+        while (slice.len > 0) {
+            if (std.mem.indexOfScalar(u8, slice, token)) |idx| {
+                // Check for even number of backslashes preceding the
+                // token to know that it's not escaped
+                var i: usize = idx -| 1;
+                var backslash_count: u16 = 0;
+
+                while (i >= 0 and potential_pattern[i] == '\\') : (i -= 1) {
+                    backslash_count += 1;
+                }
+
+                if (backslash_count % 2 == 0) return true;
+                slice = slice[idx + 1 ..];
+            } else break;
+        }
+    }
+
+    return false;
 }

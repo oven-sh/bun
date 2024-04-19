@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink } from "harness";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tempDirWithFiles } from "harness";
 import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
 import { join, sep } from "path";
 import {
@@ -6762,6 +6762,60 @@ it("should handle installing packages from inside a workspace without prefix", a
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle more complicated globs", async () => {
+  Bun.$.throws(true);
+  const package_dir = tempDirWithFiles("complicated-glob", {
+    "package.json": JSON.stringify({
+      name: "package3",
+      version: "0.0.1",
+      workspaces: ["packages/**/*"],
+    }),
+    "packages": {
+      "frontend": {
+        "package.json": JSON.stringify({
+          name: "frontend",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+            "components": "workspace:*",
+          },
+        }),
+        "components": {
+          "package.json": JSON.stringify({
+            name: "components",
+            version: "0.0.1",
+            dependencies: {
+              "types": "workspace:*",
+            },
+          }),
+        },
+      },
+      "backend": {
+        "package.json": JSON.stringify({
+          name: "backend",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+          },
+        }),
+      },
+      "types": {
+        "package.json": JSON.stringify({
+          name: "types",
+          version: "0.0.1",
+          dependencies: {},
+        }),
+      },
+    },
+  });
+
+  const { stdout, stderr, exitCode } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir);
+  expect(stderr).toBeDefined();
+  const err1 = stderr.toString();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout.toString()).toEqual("");
 });
 
 it("should handle installing packages inside workspaces with difference versions", async () => {

@@ -93,6 +93,14 @@ pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Ver
 const File = bun.sys.File;
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
+fn ignoredWorkspacePaths(path: []const u8) bool {
+    if (bun.strings.eqlComptime(path, "node_modules")) return true;
+    if (bun.strings.eqlComptime(path, ".git")) return true;
+    return false;
+}
+
+const GlobWalker = bun.glob.GlobWalker_(ignoredWorkspacePaths, bun.glob.SyscallAccessor, false);
+
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = FormatVersion.current,
@@ -3857,6 +3865,26 @@ pub const Package = extern struct {
 
         defer workspace_file.close();
 
+        return processWorkspaceNameImpl(
+            allocator,
+            workspace_allocator,
+            workspace_file,
+            path,
+            path_to_use,
+            name_to_copy,
+            log,
+        );
+    }
+
+    fn processWorkspaceNameImpl(
+        allocator: std.mem.Allocator,
+        workspace_allocator: std.mem.Allocator,
+        workspace_file: std.fs.File,
+        path: []const u8,
+        path_to_use: []const u8,
+        name_to_copy: *[1024]u8,
+        log: *logger.Log,
+    ) !WorkspaceEntry {
         const workspace_bytes = try workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize));
         defer workspace_allocator.free(workspace_bytes);
         const workspace_source = logger.Source.initPathString(path, workspace_bytes);
@@ -3897,13 +3925,14 @@ pub const Package = extern struct {
 
         const orig_msgs_len = log.msgs.items.len;
 
-        var asterisked_workspace_paths = std.ArrayList(string).init(allocator);
-        defer asterisked_workspace_paths.deinit();
+        var workspace_globs = std.ArrayList(string).init(allocator);
+        defer workspace_globs.deinit();
         const filepath_buf = allocator.create([bun.MAX_PATH_BYTES]u8) catch unreachable;
         defer allocator.destroy(filepath_buf);
 
         for (arr.slice()) |item| {
             defer fallback.fixed_buffer_allocator.reset();
+            // TODO: when does this get deallocated?
             var input_path = item.asString(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
                     \\Workspaces expects an array of strings, like:
@@ -3914,29 +3943,8 @@ pub const Package = extern struct {
                 return error.InvalidPackageJSON;
             };
 
-            if (strings.containsChar(input_path, '*')) {
-                if (strings.contains(input_path, "**")) {
-                    log.addError(source, item.loc,
-                        \\TODO multi level globs. For now, try something like "packages/*"
-                    ) catch {};
-                    continue;
-                }
-
-                const without_trailing_slash = strings.withoutTrailingSlash(input_path);
-
-                if (!strings.endsWithComptime(without_trailing_slash, "/*") and !strings.eqlComptime(without_trailing_slash, "*")) {
-                    log.addError(source, item.loc,
-                        \\TODO glob star * in the middle of a path. For now, try something like "packages/*", at the end of the path.
-                    ) catch {};
-                    continue;
-                }
-
-                asterisked_workspace_paths.append(without_trailing_slash) catch unreachable;
-                continue;
-            } else if (strings.containsAny(input_path, "!{}[]")) {
-                log.addError(source, item.loc,
-                    \\TODO fancy glob patterns. For now, try something like "packages/*"
-                ) catch {};
+            if (bun.glob.detectGlobSyntax(input_path)) {
+                workspace_globs.append(input_path) catch bun.outOfMemory();
                 continue;
             } else if (string_builder == null) {
                 input_path = Path.joinAbsStringBuf(source.path.name.dir, filepath_buf, &[_]string{input_path}, .auto);
@@ -4004,64 +4012,71 @@ pub const Package = extern struct {
             });
         }
 
-        if (asterisked_workspace_paths.items.len > 0) {
-            for (asterisked_workspace_paths.items) |user_path| {
-                var dir_prefix = if (string_builder) |_|
-                    strings.withoutLeadingSlash(user_path)
-                else
-                    Path.joinAbsStringBuf(source.path.name.dir, filepath_buf, &[_]string{user_path}, .auto);
+        if (workspace_globs.items.len > 0) {
+            var arena = std.heap.ArenaAllocator.init(allocator);
+            defer arena.deinit();
+            for (workspace_globs.items) |user_path| {
+                defer _ = arena.reset(.retain_capacity);
 
-                dir_prefix = dir_prefix[0 .. strings.indexOfChar(dir_prefix, '*') orelse continue];
-                if (dir_prefix.len == 0 or
-                    strings.eqlComptime(dir_prefix, ".") or
-                    strings.eqlComptime(dir_prefix, &.{ '.', std.fs.path.sep }))
-                {
-                    if (comptime Environment.isWindows)
-                        dir_prefix = Fs.FileSystem.instance.top_level_dir
-                    else
-                        dir_prefix = ".";
-                }
-
-                const entries_option = FileSystem.instance.fs.readDirectory(
-                    dir_prefix,
-                    null,
-                    0,
-                    true,
-                ) catch |err| switch (err) {
-                    error.ENOENT => {
-                        log.addWarningFmt(
-                            source,
-                            loc,
-                            allocator,
-                            "workspaces directory prefix not found \"{s}\"",
-                            .{dir_prefix},
-                        ) catch {};
-                        continue;
-                    },
-                    error.ENOTDIR => {
-                        log.addWarningFmt(
-                            source,
-                            loc,
-                            allocator,
-                            "workspaces directory prefix is not a directory \"{s}\"",
-                            .{dir_prefix},
-                        ) catch {};
-                        continue;
-                    },
-                    else => continue,
+                const path_to_use = if (user_path.len == 0) "package.json" else brk: {
+                    const parts = [_][]const u8{ user_path, "package.json" };
+                    break :brk arena.allocator().dupe(u8, bun.path.join(parts, .auto)) catch bun.outOfMemory();
                 };
-                if (entries_option.* != .entries) continue;
-                var entries = entries_option.entries.data.iterator();
-                const skipped_names = &[_][]const u8{ "node_modules", ".git" };
 
-                while (entries.next()) |entry_iter| {
-                    const name = entry_iter.key_ptr.*;
-                    if (strings.eqlAnyComptime(name, skipped_names))
-                        continue;
-                    var entry: *FileSystem.Entry = entry_iter.value_ptr.*;
-                    if (entry.kind(&Fs.FileSystem.instance.fs, true) != .dir) continue;
+                var walker: GlobWalker = .{};
+                const cwd = bun.path.dirname(source.path.textZ(), .auto);
+                if ((try walker.initWithCwd(&arena, path_to_use, cwd, false, false, false, false, true)).asErr()) |e| {
+                    log.addErrorFmt(
+                        source,
+                        loc,
+                        allocator,
+                        "<r><red>error<r>: Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                        .{ path_to_use, @tagName(e.getErrno()) },
+                    ) catch {};
+                    return error.GlobError;
+                }
+                defer walker.deinit(false);
 
-                    var parts = [2]string{ entry.dir, entry.base() };
+                var iter: GlobWalker.Iterator = .{
+                    .walker = &walker,
+                };
+                if ((try iter.init()).asErr()) |e| {
+                    log.addErrorFmt(
+                        source,
+                        loc,
+                        allocator,
+                        "<r><red>error<r>: Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                        .{ path_to_use, @tagName(e.getErrno()) },
+                    ) catch {};
+                    return error.GlobError;
+                }
+                defer iter.deinit();
+
+                while (switch (try iter.next()) {
+                    .result => |r| r,
+                    .err => |e| {
+                        log.addErrorFmt(
+                            source,
+                            loc,
+                            allocator,
+                            "<r><red>error<r>: Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                            .{ path_to_use, @tagName(e.getErrno()) },
+                        ) catch {};
+                        return error.GlobError;
+                    },
+                }) |matched_path_| {
+                    const file = std.fs.cwd().openFile(matched_path_, .{ .mode = .read_only }) catch |err| {
+                        debug("processWorkspaceName({s}) = {} ", .{ path_to_use, err });
+                        return err;
+                    };
+                    defer file.close();
+                    const matched_path = Path.dirname(matched_path_, .auto);
+                    debug("matched path: {s}, dirname: {s}\n", .{ matched_path_, matched_path });
+
+                    const entry_dir: []const u8 = Path.dirname(matched_path, .auto);
+                    const entry_base: []const u8 = Path.basename(matched_path);
+
+                    var parts = [2]string{ entry_dir, entry_base };
                     const entry_path = Path.joinAbsStringBufZ(
                         Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
                         filepath_buf,
@@ -4069,24 +4084,12 @@ pub const Package = extern struct {
                         .auto,
                     );
 
-                    if (entry.cache.fd == .zero) {
-                        entry.cache.fd = bun.toFD(bun.sys.open(
-                            entry_path,
-                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.RDONLY,
-                            0,
-                        ).unwrap() catch continue);
-                    }
-
-                    const dir_fd = entry.cache.fd;
-                    assert(dir_fd != bun.invalid_fd); // kind() should've opened
-                    defer fallback.fixed_buffer_allocator.reset();
-
-                    const workspace_entry = processWorkspaceName(
+                    const workspace_entry = processWorkspaceNameImpl(
                         allocator,
                         workspace_allocator,
-                        dir_fd.asDir(),
-                        "",
-                        filepath_buf,
+                        file,
+                        matched_path,
+                        matched_path,
                         workspace_name_buf,
                         log,
                     ) catch |err| {
@@ -4098,7 +4101,7 @@ pub const Package = extern struct {
                                     logger.Loc.Empty,
                                     allocator,
                                     "Missing \"name\" from package.json in {s}" ++ std.fs.path.sep_str ++ "{s}",
-                                    .{ entry.dir, entry.base() },
+                                    .{ entry_dir, entry_base },
                                 ) catch {};
                             },
                             else => {
@@ -4107,7 +4110,7 @@ pub const Package = extern struct {
                                     logger.Loc.Empty,
                                     allocator,
                                     "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
-                                    .{ @errorName(err), entry.dir, entry.base() },
+                                    .{ @errorName(err), entry_dir, entry_base },
                                 ) catch {};
                             },
                         }

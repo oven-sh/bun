@@ -9,7 +9,7 @@ on:
     inputs:
       runs-on:
         type: string
-        default: windows-latest
+        default: windows
       tag:
         type: string
         required: true

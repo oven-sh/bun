@@ -76,7 +76,7 @@ jobs:
           bun install --cwd packages/bun-internal-test
       - name: Run Tests
         id: test
-        timeout-minutes: 30
+        timeout-minutes: 60
         shell: bash
         env:
           TMPDIR: ${{ runner.temp }}

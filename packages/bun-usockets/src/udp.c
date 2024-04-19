@@ -99,8 +99,8 @@ void us_udp_socket_close(struct us_udp_socket_t *s) {
     us_poll_change(p, s->loop, LIBUS_SOCKET_WRITABLE);
 }
 
-void us_udp_socket_connect(struct us_udp_socket_t *s, struct bsd_addr_t *addr) {
-    
+int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {
+    return bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), host, port);
 }
 
 struct us_udp_socket_t *us_create_udp_socket(

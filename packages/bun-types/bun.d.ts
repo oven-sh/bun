@@ -3980,15 +3980,15 @@ declare module "bun" {
 
   namespace udp {
     export interface SocketHandler<DataBinaryType extends BinaryType> {
-      data?(socket: UDPSocket<DataBinaryType>, data: BinaryTypeList[DataBinaryType], port: number, address: string): void | Promise<void>;
-      drain?(socket: UDPSocket<DataBinaryType>): void | Promise<void>;
-      error?(socket: UDPSocket<DataBinaryType>, error: Error): void | Promise<void>;
+      data?(socket: Socket<DataBinaryType>, data: BinaryTypeList[DataBinaryType], port: number, address: string): void | Promise<void>;
+      drain?(socket: Socket<DataBinaryType>): void | Promise<void>;
+      error?(socket: Socket<DataBinaryType>, error: Error): void | Promise<void>;
     }
 
     export interface ConnectedSocketHandler<DataBinaryType extends BinaryType> {
-      data?(socket: ConnectedUDPSocket<DataBinaryType>, data: BinaryTypeList[DataBinaryType], port: number, address: string): void | Promise<void>;
-      drain?(socket: ConnectedUDPSocket<DataBinaryType>): void | Promise<void>;
-      error?(socket:ConnectedUDPSocket<DataBinaryType>, error: Error): void | Promise<void>;
+      data?(socket: ConnectedSocket<DataBinaryType>, data: BinaryTypeList[DataBinaryType], port: number, address: string): void | Promise<void>;
+      drain?(socket: ConnectedSocket<DataBinaryType>): void | Promise<void>;
+      error?(socket:ConnectedSocket<DataBinaryType>, error: Error): void | Promise<void>;
     }
 
 
@@ -4031,21 +4031,21 @@ declare module "bun" {
       close(): void;
     }
 
-    export interface ConnectedUDPSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
+    export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
       sendMany(packets: ConnectedPacket[]): void;
       send(data: string | ArrayBufferView | ArrayBufferLike, port: number | undefined, address: string | undefined): void;
       reload(handler: ConnectedSocketHandler<DataBinaryType>): void;
     }
 
-    export interface UDPSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
+    export interface Socket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
       sendMany(packets: FullPacket[]): void;
       send(data: string | ArrayBufferView | ArrayBufferLike, port: number, address: string): void;
       reload(handler: SocketHandler<DataBinaryType>): void;
     }
-
-    export function bind<DataBinaryType extends BinaryType = "buffer">(options: SocketOptions<DataBinaryType>): UDPSocket<DataBinaryType>;
-    export function bind<DataBinaryType extends BinaryType = "buffer">(options: ConnectSocketOptions<DataBinaryType>): ConnectedUDPSocket<DataBinaryType>;
   }
+
+  export function bindUDP<DataBinaryType extends BinaryType = "buffer">(options: udp.SocketOptions<DataBinaryType>): udp.Socket<DataBinaryType>;
+  export function bindUDP<DataBinaryType extends BinaryType = "buffer">(options: udp.ConnectSocketOptions<DataBinaryType>): udp.ConnectedSocket<DataBinaryType>;
 
   namespace SpawnOptions {
     /**

@@ -392,7 +392,7 @@ Socket.prototype.bind = function(port_, address_ /* , callback */) {
     // TODO flags
     try {
       const family = this.type === 'udp4' ? 'IPv4' : 'IPv6';
-      state.handle.socket = Bun.bind({
+      state.handle.socket = Bun.bindUDP({
         hostname: ip,
         port: port || 0,
         socket: {
@@ -754,14 +754,27 @@ function doSend(ex, self, ip, list, address, port, callback) {
   let err = null;
   let sent = 0;
   try {
-    // TODO use sendMany here
-    for (const buf of list) {
-        if (port) {
-          socket.send(buf, port, ip);
-        } else {
-          socket.send(buf);
+    if (list.length === 1) {
+      socket.send(list[0], port, ip);
+      sent = 1;
+    } else {
+      const packets = [];
+      if (port) {
+        for (const buf of list) {
+          packets.push({
+            data: buf,
+            port,
+            address: ip,
+          });
         }
-        sent += 1;
+      } else {
+        for (const buf of list) {
+          packets.push({
+            data: buf,
+          });
+        }
+      }
+      sent += socket.sendMany(packets);
     }
   } catch (e) {
     err = e;

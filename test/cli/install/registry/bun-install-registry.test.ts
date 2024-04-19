@@ -2093,18 +2093,22 @@ test("it should install transitive folder dependencies", async () => {
     expect(
       await exists(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json")),
     ).toBeTrue();
-    expect(await readdirSorted(join(packageDir, "node_modules", "missing-file-dep", "node_modules"))).toEqual([
-      "files",
-    ]);
+    expect(await readdirSorted(join(packageDir, "node_modules", "missing-file-dep", "node_modules"))).toEqual([]);
     expect(
       await exists(join(packageDir, "node_modules", "missing-file-dep", "node_modules", "files", "package.json")),
     ).toBeFalse();
     expect(await exists(join(packageDir, "node_modules", "aliased-file-dep", "package.json"))).toBeTrue();
     expect(
-      await exists(
-        join(packageDir, "node_modules", "aliased-file-dep", "node_modules", "files", "node_modules", "files"),
-      ),
-    ).toBeTrue();
+      await file(
+        join(packageDir, "node_modules", "aliased-file-dep", "node_modules", "files", "the-files", "package.json"),
+      ).json(),
+    ).toEqual({
+      "name": "files",
+      "version": "1.1.1",
+      "dependencies": {
+        "no-deps": "2.0.0",
+      },
+    });
   }
 
   var { stdout, stderr, exited } = spawn({

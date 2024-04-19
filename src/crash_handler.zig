@@ -980,6 +980,8 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
     );
     try writer.writeByte(if (bun.CLI.Cli.cmd) |cmd| cmd.char() else '_');
 
+    try writer.writeAll("1" ++ git_sha);
+
     const packed_features = bun.analytics.packedFeatures();
     try writeU64AsTwoVLQs(writer, @bitCast(packed_features));
 
@@ -1067,11 +1069,28 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
     try second.writeTo(writer);
 }
 
+/// Bun automatically reports crashes on Windows and macOS
+///
+/// These URLs contain no source code or personally-identifiable
+/// information (PII). The stackframes point to Bun's open-source native code
+/// (not user code), and are safe to share publicly and with the Bun team.
 fn report(url: []const u8) void {
+    {
+        return;
+    }
+
+    // if (bun.Environment.isDebug) return;
+    if (bun.Environment.os == .linux) return;
+
+    std.debug.print("REPORT TO {s}/ack\n", .{url});
+
+    if (bun.analytics.disabled) {
+        std.debug.print("REPORT DISABLED\n", .{});
+        return;
+    }
+
     switch (bun.Environment.os) {
         .windows => {
-            std.debug.print("REPORT TO {s}\n", .{url});
-
             var process: std.os.windows.PROCESS_INFORMATION = undefined;
             var startup_info = std.os.windows.STARTUPINFOW{
                 .cb = @sizeOf(std.os.windows.STARTUPINFOW),
@@ -1094,14 +1113,14 @@ fn report(url: []const u8) void {
                 .hStdError = null,
             };
             var cmd_line = std.BoundedArray(u16, 1024){};
-            cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell.exe -ExecutionPolicy Bypass -Command \""));
+            cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell.exe -ExecutionPolicy Bypass -Command \"Invoke-RestMethod -Uri '"));
             {
                 const encoded = bun.strings.convertUTF8toUTF16InBuffer(cmd_line.unusedCapacitySlice(), url);
                 cmd_line.len += @intCast(encoded.len);
             }
-            cmd_line.appendSlice(std.unicode.utf8ToUtf16LeStringLiteral("|out-null}catch{}\"")) catch return;
+            cmd_line.appendSlice(std.unicode.utf8ToUtf16LeStringLiteral("/ack'|out-null}catch{}\"")) catch return;
             cmd_line.append(0) catch return;
-            const did_process_spawn = std.os.windows.kernel32.CreateProcessW(
+            const spawn_result = std.os.windows.kernel32.CreateProcessW(
                 null,
                 cmd_line.buffer[0..cmd_line.len :0],
                 null,
@@ -1113,12 +1132,13 @@ fn report(url: []const u8) void {
                 &startup_info,
                 &process,
             );
-            if (did_process_spawn == 0) {
-                std.debug.print("Failed to spawn process", .{});
-                return;
-            }
+            // we don't care what happens with the process
+            _ = spawn_result;
         },
-        else => {},
+        .mac => {
+            // TODO
+        },
+        else => @compileError("NOT IMPLEMENTED"),
     }
 }
 

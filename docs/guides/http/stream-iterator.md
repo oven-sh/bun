@@ -39,7 +39,7 @@ Bun.serve({
           await Bun.sleep(100);
           yield "world!";
         },
-      }
+      },
       { headers: { "Content-Type": "text/plain" } },
     );
   },

@@ -84,9 +84,17 @@ depth = 1
 shallow = true
 fetchRecurseSubmodules = false
 [submodule "zig"]
-	path = src/deps/zig
-	url = https://github.com/oven-sh/zig
-	branch = bun
-	depth = 1
-	shallow = true
-	fetchRecurseSubmodules = false
+path = src/deps/zig
+url = https://github.com/oven-sh/zig
+branch = bun
+depth = 1
+shallow = true
+fetchRecurseSubmodules = false
+[submodule "test/node/node"]
+path = test/node/node
+url = https://github.com/nodejs/node.git
+ignore = dirty
+depth = 1
+update = none
+shallow = true
+fetchRecurseSubmodules = false

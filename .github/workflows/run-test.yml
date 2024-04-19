@@ -22,7 +22,7 @@ on:
 
 jobs:
   test:
-    name: Run Tests
+    name: Tests
     runs-on: ${{ inputs.runs-on }}
     steps:
       - name: Checkout
@@ -113,9 +113,62 @@ jobs:
 
             ${{ steps.test.outputs.failing_tests }}
 
-            **[View logs](${{ github.event.workflow_run.html_url }})**
+            **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**
       - name: Fail
         if: ${{ failure() || always() && steps.test.outputs.failing_tests != '' }}
         run: |
           echo "There are ${{ steps.test.outputs.failing_tests_count || 'some' }} failing tests on bun-${{ inputs.tag }}."
           exit 1
+  test-node:
+    name: Node.js Tests
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            test/node
+      - name: Download Bun
+        uses: actions/download-artifact@v4
+        with:
+          name: bun-${{ inputs.tag }}
+          path: bun
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run-id || github.run_id }}
+      - if: ${{ runner.os == 'Windows' }}
+        name: Setup Cygwin
+        uses: secondlife/setup-cygwin@v3
+        with:
+          packages: bash
+      - name: Setup Bun
+        shell: bash
+        run: |
+          unzip bun/bun-*.zip
+          cd bun-*
+          pwd >> $GITHUB_PATH
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Dependencies
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          bun install --cwd test/node
+      - name: Run Tests
+        timeout-minutes: 10 # Increase when more tests are added
+        shell: bash
+        working-directory: test/node
+        env:
+          TMPDIR: ${{ runner.temp }}
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
+        run: |
+          node runner.mjs
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-${{ inputs.tag }}-node-tests
+          path: |
+            summary/*.json
+          if-no-files-found: error
+          overwrite: true

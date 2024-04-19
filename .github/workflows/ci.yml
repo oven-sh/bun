@@ -15,9 +15,29 @@ on:
         type: string
         description: The workflow ID to download artifacts (skips the build step)
   pull_request:
+    paths:
+      - .github
+      - Dockerfile
+      - Makefile
+      - CMakeLists.txt
+      - build.zig
+      - src
+      - packages/bun-uws/src
+      - packages/bun-usockets/src
+      - test
   push:
     branches:
       - main
+    paths:
+      - .github
+      - Dockerfile
+      - Makefile
+      - CMakeLists.txt
+      - build.zig
+      - src
+      - packages/bun-uws/src
+      - packages/bun-usockets/src
+      - test
 
 jobs:
   format:

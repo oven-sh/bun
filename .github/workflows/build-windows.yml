@@ -324,4 +324,4 @@ jobs:
 
             @${{ github.actor }}, the build for bun-${{ inputs.tag }} failed.
 
-            **[View logs](${{ github.event.workflow_run.html_url }})**
+            **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { reject, set } from "lodash";
 import { resolve } from "bun";
 import { ca } from "js/third_party/grpc-js/common";
+import { AddressInfo } from "node:net";
 
 function loadPEM(filename: string) {
   return readFileSync(join(import.meta.dir, "fixtures", filename)).toString();
@@ -76,13 +77,14 @@ describe("tls.Server", () => {
 
     let connections = 0;
     const { promise, resolve, reject } = Promise.withResolvers();
-    let server: tls.Server;
+    let listening_server: tls.Server | null = null;
     try {
-      server = tls.createServer(serverOptions, async c => {
+      listening_server = tls.createServer(serverOptions, async c => {
         try {
           if (++connections === 3) {
             resolve();
           }
+          //@ts-ignore
           if (c.servername === "unknowncontext") {
             expect(c.authorized).toBe(false);
             return;
@@ -92,6 +94,7 @@ describe("tls.Server", () => {
           reject(e);
         }
       });
+      const server = listening_server as tls.Server;
 
       const secureContext = {
         key: agent1Key,
@@ -99,6 +102,7 @@ describe("tls.Server", () => {
         ca: [ca1],
       };
       server.addContext("context1", secureContext);
+      //@ts-ignore
       server.addContext("context2", tls.createSecureContext(secureContext));
 
       const clientOptionsBase = {
@@ -113,7 +117,7 @@ describe("tls.Server", () => {
           const client = tls.connect(
             {
               ...clientOptionsBase,
-              port: server.address().port,
+              port: (server.address() as AddressInfo).port,
               servername,
             },
             () => {
@@ -131,28 +135,30 @@ describe("tls.Server", () => {
       });
       await promise;
     } finally {
-      server.close();
+      listening_server?.close();
     }
   });
 
   it("should select the most recently added SecureContext", async () => {
-    let server: tls.Server;
+    let listening_server: tls.Server | null = null;
     const { promise, resolve, reject } = Promise.withResolvers();
     try {
       const timeout = setTimeout(() => {
         reject("timeout");
       }, 3000);
-      server = tls.createServer(serverOptions, c => {
+      listening_server = tls.createServer(serverOptions, c => {
         try {
           // The 'a' and 'b' subdomains are used to distinguish between client
           // connections.
           // Connection to subdomain 'a' is made when the 'bad' secure context is
           // the only one in use.
+          //@ts-ignore
           if ("a.example.com" === c.servername) {
             expect(c.authorized).toBe(false);
           }
           // Connection to subdomain 'b' is made after the 'good' context has been
           // added.
+          //@ts-ignore
           if ("b.example.com" === c.servername) {
             expect(c.authorized).toBe(true);
             clearTimeout(timeout);
@@ -163,13 +169,14 @@ describe("tls.Server", () => {
           reject(e);
         }
       });
+      const server = listening_server as tls.Server;
       // 1. Add the 'bad' secure context. A connection using this context will not be
       // authorized.
       server.addContext("*.example.com", badSecureContext);
 
       server.listen(0, () => {
         const options = {
-          port: server.address().port,
+          port: (server?.address() as AddressInfo).port,
           key: agent1Key,
           cert: agent1Cert,
           ca: [ca1],
@@ -216,11 +223,11 @@ describe("tls.Server", () => {
 
       await promise;
     } finally {
-      server.close();
+      listening_server?.close();
     }
   });
 
-  function testCA(ca) {
+  function testCA(ca: Array<string>) {
     const { promise, resolve, reject } = Promise.withResolvers();
     const server = tls.createServer({ ca, cert: agent3Cert, key: agent3Key });
 
@@ -229,7 +236,7 @@ describe("tls.Server", () => {
       const options = {
         servername: "agent3",
         host: "127.0.0.1",
-        port: server.address().port,
+        port: (server.address() as AddressInfo).port,
         ca,
       };
       const socket = tls.connect(options, () => {
@@ -251,10 +258,11 @@ describe("tls.Server", () => {
     expect(await testCA([ca2 + "\n" + ca1])).toBe(true);
   });
 
-  function testClient(options, clientResult, serverResult) {
+  function testClient(options: any, clientResult: boolean, serverResult: string) {
     const { promise, resolve, reject } = Promise.withResolvers();
     const server = tls.createServer(serverOptions, c => {
       try {
+        //@ts-ignore
         expect(c.servername).toBe(serverResult);
         expect(c.authorized).toBe(false);
       } catch (e) {
@@ -272,11 +280,12 @@ describe("tls.Server", () => {
       const client = tls.connect(
         {
           ...options,
-          port: server.address().port,
+          port: (server.address() as AddressInfo).port,
           rejectUnauthorized: false,
         },
         () => {
           const result =
+            //@ts-ignore
             client.authorizationError && client.authorizationError.indexOf("ERR_TLS_CERT_ALTNAME_INVALID") !== -1;
           if (result !== clientResult) {
             reject(new Error(`Expected ${clientResult}, got ${result} in ${options.servername}`));
@@ -338,7 +347,7 @@ describe("tls.Server", () => {
 });
 
 describe("Bun.serve SNI", () => {
-  function doClientRequest(options) {
+  function doClientRequest(options: any) {
     return new Promise((resolve, reject) => {
       const client = tls.connect(
         {
@@ -347,6 +356,7 @@ describe("Bun.serve SNI", () => {
         },
         () => {
           resolve(
+            //@ts-ignore
             client.authorizationError && client.authorizationError.indexOf("ERR_TLS_CERT_ALTNAME_INVALID") !== -1,
           );
         },
@@ -356,7 +366,7 @@ describe("Bun.serve SNI", () => {
     });
   }
   it("single SNI", async () => {
-    let server;
+    let server: ReturnType<typeof Bun.serve> | null = null;
     try {
       server = Bun.serve({
         port: 0,
@@ -386,7 +396,7 @@ describe("Bun.serve SNI", () => {
         expect(client).toBe(false);
       }
     } finally {
-      server.stop(true);
+      server?.stop(true);
     }
     try {
       server = Bun.serve({
@@ -421,7 +431,7 @@ describe("Bun.serve SNI", () => {
     }
   });
   it("multiple SNI", async () => {
-    let server;
+    let server: ReturnType<typeof Bun.serve> | null = null;
     try {
       server = Bun.serve({
         port: 0,
@@ -482,7 +492,7 @@ describe("Bun.serve SNI", () => {
         }),
       ).toBe(true);
     } finally {
-      server.stop(true);
+      server?.stop(true);
     }
   });
 });

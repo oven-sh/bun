@@ -25,6 +25,11 @@ jobs:
     name: Run Tests
     runs-on: ${{ inputs.runs-on }}
     steps:
+      - if: ${{ runner.os == "Windows" }}
+        name: Setup Git
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
       - name: Checkout
         uses: actions/checkout@v4
         with:

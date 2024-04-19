@@ -518,6 +518,23 @@ writeFileSync(
   }),
 );
 
+function mabeCapitalize(str) {
+  str = str.toLowerCase();
+  if (str.includes("arm64") || str.includes("aarch64")) {
+    return str.toUpperCase();
+  }
+
+  if (str.includes("x64")) {
+    return "x64";
+  }
+
+  if (str.includes("baseline")) {
+    return str;
+  }
+
+  return str[0].toUpperCase() + str.slice(1);
+}
+
 console.log("-> test-report.md, test-report.json");
 
 if (ci) {
@@ -528,7 +545,10 @@ if (ci) {
   action.setOutput("failing_tests_count", failing_tests.length);
   if (failing_tests.length) {
     const tag = process.env.BUN_TAG || "unknown";
-    let comment = `## ${emojiTag(tag)}${failing_tests.length} failing tests on bun-${tag}.
+    let comment = `## ${emojiTag(tag)}${failing_tests.length} failing tests ${tag
+      .split("-")
+      .map(mabeCapitalize)
+      .join(" ")}
 
 ${failingTestDisplay}
 

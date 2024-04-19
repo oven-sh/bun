@@ -38,14 +38,14 @@ jobs:
             echo -e "✅ @${{ github.actor }}, all tests passed!" > comment.md
           fi
           echo -e "\n**[View logs](${{ github.event.workflow_run.html_url }})**" >> comment.md
-          echo -e "<!-- generated-comment run-id=${{ github.event.workflow_run.id }} -->" >> comment.md
+          echo -e "<!-- generated-comment workflow=${{ github.workflow }} -->" >> comment.md
       - name: Find Comment
         id: comment
         uses: peter-evans/find-comment@v3
         with:
           issue-number: ${{ steps.env.outputs.pr-number }}
           comment-author: github-actions[bot]
-          body-includes: <!-- generated-comment run-id=${{ github.event.workflow_run.id }} -->
+          body-includes: <!-- generated-comment workflow=${{ github.workflow }} -->
       - name: Write Comment
         uses: peter-evans/create-or-update-comment@v4
         with:

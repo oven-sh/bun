@@ -134,11 +134,7 @@ pub const UDPSocketConfig = struct {
 
         const port: u16 = brk: {
             if (options.getTruthy(globalThis, "port")) |value| {
-                if (!value.isInt32()) {
-                    globalThis.throwInvalidArguments("Expected \"port\" to be an integer", .{});
-                    return null;
-                }
-                const number = value.asInt32();
+                const number = value.coerceToInt32(globalThis);
                 break :brk if (number < 1 or number > 0xffff) 0 else @intCast(number);
             } else {
                 break :brk 0;
@@ -205,12 +201,7 @@ pub const UDPSocketConfig = struct {
                     return null;
                 };
 
-                if (!connect_port_js.isInt32()) {
-                    globalThis.throwInvalidArguments("Expected \"connect.port\" to be an integer", .{});
-                    return null;
-                }
-
-                const connect_port = connect_port_js.asInt32();
+                const connect_port = connect_port_js.coerceToInt32(globalThis);
 
                 break :brk .{
                     .port = if (connect_port < 1 or connect_port > 0xffff) 0 else @as(u16, @intCast(connect_port)),
@@ -489,7 +480,7 @@ pub const UDPSocket = struct {
 
         var addr: std.os.sockaddr.storage = std.mem.zeroes(std.os.sockaddr.storage);
         if (dest) |destval| {
-            const number = destval.port.asInt32();
+            const number = destval.port.coerceToInt32();
             const port: u16 = if (number < 1 or number > 0xffff) 0 else @intCast(number);
 
             const str = destval.address.toBunString(globalThis);

@@ -898,7 +898,7 @@ Socket.prototype.remoteAddress = function() {
 
 
 Socket.prototype.setBroadcast = function(arg) {
-  throwNotImplemented('setBroadcast', 1630);
+  throwNotImplemented('setBroadcast', 10381);
   /*
   const err = this[kStateSymbol].handle.setBroadcast(arg ? 1 : 0);
   if (err) {
@@ -909,7 +909,7 @@ Socket.prototype.setBroadcast = function(arg) {
 
 
 Socket.prototype.setTTL = function(ttl) {
-  throwNotImplemented('setTTL', 1630);
+  throwNotImplemented('setTTL', 10381);
   /*
   validateNumber(ttl, 'ttl');
 
@@ -924,7 +924,7 @@ Socket.prototype.setTTL = function(ttl) {
 
 
 Socket.prototype.setMulticastTTL = function(ttl) {
-  throwNotImplemented('setMulticastTTL', 1630);
+  throwNotImplemented('setMulticastTTL', 10381);
   /*
   validateNumber(ttl, 'ttl');
 
@@ -939,7 +939,7 @@ Socket.prototype.setMulticastTTL = function(ttl) {
 
 
 Socket.prototype.setMulticastLoopback = function(arg) {
-  throwNotImplemented('setMulticastLoopback', 1630);
+  throwNotImplemented('setMulticastLoopback', 10381);
   /*
   const err = this[kStateSymbol].handle.setMulticastLoopback(arg ? 1 : 0);
   if (err) {
@@ -952,7 +952,7 @@ Socket.prototype.setMulticastLoopback = function(arg) {
 
 
 Socket.prototype.setMulticastInterface = function(interfaceAddress) {
-  throwNotImplemented('setMulticastInterface', 1630);
+  throwNotImplemented('setMulticastInterface', 10381);
   /*
   validateString(interfaceAddress, 'interfaceAddress');
 
@@ -965,7 +965,7 @@ Socket.prototype.setMulticastInterface = function(interfaceAddress) {
 
 Socket.prototype.addMembership = function(multicastAddress,
                                           interfaceAddress) {
-  throwNotImplemented('addMembership', 1630);
+  throwNotImplemented('addMembership', 10381);
   /*
   if (!multicastAddress) {
     throw new ERR_MISSING_ARGS('multicastAddress');
@@ -982,7 +982,7 @@ Socket.prototype.addMembership = function(multicastAddress,
 
 Socket.prototype.dropMembership = function(multicastAddress,
                                            interfaceAddress) {
-  throwNotImplemented('dropMembership', 1630);
+  throwNotImplemented('dropMembership', 10381);
   /*
   if (!multicastAddress) {
     throw new ERR_MISSING_ARGS('multicastAddress');
@@ -999,7 +999,7 @@ Socket.prototype.dropMembership = function(multicastAddress,
 Socket.prototype.addSourceSpecificMembership = function(sourceAddress,
                                                         groupAddress,
                                                         interfaceAddress) {
-  throwNotImplemented('addSourceSpecificMembership', 1630);
+  throwNotImplemented('addSourceSpecificMembership', 10381);
   /*
   validateString(sourceAddress, 'sourceAddress');
   validateString(groupAddress, 'groupAddress');
@@ -1018,7 +1018,7 @@ Socket.prototype.addSourceSpecificMembership = function(sourceAddress,
 Socket.prototype.dropSourceSpecificMembership = function(sourceAddress,
                                                          groupAddress,
                                                          interfaceAddress) {
-  throwNotImplemented('dropSourceSpecificMembership', 1630);
+  throwNotImplemented('dropSourceSpecificMembership', 10381);
   /*
   validateString(sourceAddress, 'sourceAddress');
   validateString(groupAddress, 'groupAddress');

@@ -293,8 +293,46 @@ describe("tls context", () => {
     });
     return promise;
   }
+  function testBunServerAndClient(options, clientResult) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const server = Bun.serve({
+      port: 0,
+      tls: serverOptions,
+      fetch(req, res) {
+        return new Response("OK");
+      },
+    });
 
-  it("test SNI server client", async () => {
+    server.addServerName("a.example.com", SNIContexts["a.example.com"]);
+    server.addServerName("*.test.com", SNIContexts["asterisk.test.com"]);
+    server.addServerName("chain.example.com", SNIContexts["chain.example.com"]);
+
+    const client = tls.connect(
+      {
+        ...options,
+        port: server.port,
+        rejectUnauthorized: false,
+      },
+      () => {
+        const result =
+          client.authorizationError && client.authorizationError.indexOf("ERR_TLS_CERT_ALTNAME_INVALID") !== -1;
+        if (result !== clientResult) {
+          reject(new Error(`Expected ${clientResult}, got ${result} in ${options.servername}`));
+        } else {
+          resolve();
+        }
+        client.end();
+      },
+    );
+
+    client.on("close", () => {
+      server.stop();
+    });
+
+    return promise;
+  }
+
+  it("test SNI tls.Server + tls.connect", async () => {
     await testClient(
       {
         ca: [ca1],
@@ -334,6 +372,44 @@ describe("tls context", () => {
       },
       true,
       "chain.example.com",
+    );
+  });
+
+  it("test SNI Bun.serve + tls.connect", async () => {
+    await testBunServerAndClient(
+      {
+        ca: [ca1],
+        servername: "a.example.com",
+      },
+      true,
+    );
+    await testBunServerAndClient(
+      {
+        ca: [ca2],
+        servername: "b.test.com",
+      },
+      true,
+    );
+    await testBunServerAndClient(
+      {
+        ca: [ca2],
+        servername: "a.b.test.com",
+      },
+      false,
+    );
+    await testBunServerAndClient(
+      {
+        ca: [ca1],
+        servername: "c.wrong.com",
+      },
+      false,
+    );
+    await testBunServerAndClient(
+      {
+        ca: [ca1],
+        servername: "chain.example.com",
+      },
+      true,
     );
   });
 });

@@ -283,15 +283,19 @@ const Socket = (function (InternalSocket) {
         self._secureEstablished = !!success;
         self.servername = socket.getServername();
         const server = self.server;
-        if (verifyError) {
-          self.authorized = false;
-          self.authorizationError = verifyError.code || verifyError.message;
-          server.emit("tlsClientError", verifyError, self);
-          if (self._rejectUnauthorized) {
-            // if we reject we still need to emit secure
-            self.emit("secure", self);
-            self.destroy(verifyError);
-            return;
+        if (self._requestCert || self._rejectUnauthorized) {
+          if (verifyError) {
+            self.authorized = false;
+            self.authorizationError = verifyError.code || verifyError.message;
+            server.emit("tlsClientError", verifyError, self);
+            if (self._rejectUnauthorized) {
+              // if we reject we still need to emit secure
+              self.emit("secure", self);
+              self.destroy(verifyError);
+              return;
+            }
+          } else {
+            self.authorized = true;
           }
         } else {
           self.authorized = true;

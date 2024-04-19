@@ -1,7 +1,10 @@
 // Hardcoded module "node:tls"
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
-const { Server: NetServer, [Symbol.for("::bunternal::")]: InternalTCPSocket } = net;
+const {
+  Server: NetServer,
+  [Symbol.for("::bunternal::")]: [InternalTCPSocket, addServerName],
+} = net;
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
@@ -543,7 +546,7 @@ class Server extends NetServer {
       context = createSecureContext(context);
     }
     if (this[bunSocketInternal]) {
-      this[bunSocketInternal].addServerName(hostname, context);
+      addServerName(this[bunSocketInternal], hostname, context);
     } else {
       if (!this.#contexts) this.#contexts = new Map();
       this.#contexts.set(hostname, context as typeof InternalSecureContext);

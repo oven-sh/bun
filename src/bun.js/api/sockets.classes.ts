@@ -204,10 +204,6 @@ export default [
         fn: "reload",
         length: 1,
       },
-      addServerName: {
-        fn: "addServerName",
-        length: 2,
-      },
       hostname: {
         getter: "getHostname",
         cache: true,

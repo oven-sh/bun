@@ -66,6 +66,8 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
+const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
+
 function closeNT(self) {
   self.emit("close");
 }
@@ -935,7 +937,7 @@ class Server extends EventEmitter {
 
       if (contexts) {
         for (const [name, context] of contexts) {
-          this[bunSocketInternal].addServerName(name, context);
+          addServerName(this[bunSocketInternal], name, context);
         }
       }
 
@@ -987,5 +989,5 @@ export default {
   isIPv4,
   isIPv6,
   Socket,
-  [Symbol.for("::bunternal::")]: SocketClass,
+  [Symbol.for("::bunternal::")]: [SocketClass, addServerName],
 };

@@ -814,17 +814,11 @@ pub const Listener = struct {
         socket.setTimeout(120000);
     }
 
-    pub fn addServerName(this: *Listener, global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn addServerName(this: *Listener, global: *JSC.JSGlobalObject, hostname: JSValue, tls: JSValue) JSValue {
         if (!this.ssl) {
             global.throwInvalidArguments("addServerName requires SSL support", .{});
             return .zero;
         }
-        const arguments = callframe.arguments(2);
-        if (arguments.len < 2) {
-            global.throwNotEnoughArguments("addServerName", 2, 0);
-            return .zero;
-        }
-        const hostname = arguments.ptr[0];
         if (!hostname.isString()) {
             global.throwInvalidArguments("hostname pattern expects a string", .{});
             return .zero;
@@ -839,7 +833,6 @@ pub const Listener = struct {
             global.throwInvalidArguments("hostname pattern cannot be empty", .{});
             return .zero;
         }
-        const tls = arguments.ptr[1];
         var exception_ref = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_ref;
 
@@ -3166,4 +3159,25 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             }
         }
     };
+}
+pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    JSC.markBinding(@src());
+
+    const arguments = callframe.arguments(3);
+    if (arguments.len < 3) {
+        global.throwNotEnoughArguments("addServerName", 3, arguments.len);
+        return .zero;
+    }
+    const listener = arguments.ptr[0];
+    if (listener.as(Listener)) |this| {
+        return this.addServerName(global, arguments.ptr[1], arguments.ptr[2]);
+    }
+    global.throw("Expected a Listener instance", .{});
+    return .zero;
+}
+
+pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
+    return JSC.JSArray.create(global, &.{
+        JSC.JSFunction.create(global, "addServerName", jsAddServerName, 3, .{}),
+    });
 }

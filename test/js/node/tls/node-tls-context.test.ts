@@ -6,7 +6,7 @@ import { expect, it, describe } from "bun:test";
 import tls from "node:tls";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { reject } from "lodash";
+import { reject, set } from "lodash";
 import { resolve } from "bun";
 import { ca } from "js/third_party/grpc-js/common";
 
@@ -293,45 +293,6 @@ describe("tls context", () => {
     });
     return promise;
   }
-  function testBunServerAndClient(options, clientResult) {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const server = Bun.serve({
-      port: 0,
-      tls: serverOptions,
-      fetch(req, res) {
-        return new Response("OK");
-      },
-    });
-
-    server.addServerName("a.example.com", SNIContexts["a.example.com"]);
-    server.addServerName("*.test.com", SNIContexts["asterisk.test.com"]);
-    server.addServerName("chain.example.com", SNIContexts["chain.example.com"]);
-
-    const client = tls.connect(
-      {
-        ...options,
-        port: server.port,
-        rejectUnauthorized: false,
-      },
-      () => {
-        const result =
-          client.authorizationError && client.authorizationError.indexOf("ERR_TLS_CERT_ALTNAME_INVALID") !== -1;
-        if (result !== clientResult) {
-          reject(new Error(`Expected ${clientResult}, got ${result} in ${options.servername}`));
-        } else {
-          resolve();
-        }
-        client.end();
-      },
-    );
-
-    client.on("close", () => {
-      server.stop();
-    });
-
-    return promise;
-  }
-
   it("test SNI tls.Server + tls.connect", async () => {
     await testClient(
       {
@@ -374,7 +335,129 @@ describe("tls context", () => {
       "chain.example.com",
     );
   });
+});
 
+describe("Bun.serve addServerName", () => {
+  function testBunServerAndClient(options, clientResult) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const server = Bun.serve({
+      port: 0,
+      tls: serverOptions,
+      fetch(req, res) {
+        return new Response("OK");
+      },
+    });
+
+    server.addServerName("a.example.com", SNIContexts["a.example.com"]);
+    server.addServerName("*.test.com", SNIContexts["asterisk.test.com"]);
+    server.addServerName("chain.example.com", SNIContexts["chain.example.com"]);
+
+    const client = tls.connect(
+      {
+        ...options,
+        port: server.port,
+        rejectUnauthorized: false,
+      },
+      () => {
+        const result =
+          client.authorizationError && client.authorizationError.indexOf("ERR_TLS_CERT_ALTNAME_INVALID") !== -1;
+        if (result !== clientResult) {
+          reject(new Error(`Expected ${clientResult}, got ${result} in ${options.servername}`));
+        } else {
+          resolve();
+        }
+        client.end();
+      },
+    );
+
+    client.on("close", () => {
+      server.stop();
+    });
+
+    return promise;
+  }
+
+  function doClientRequest(options) {
+    return new Promise((resolve, reject) => {
+      const client = tls.connect(
+        {
+          ...options,
+          rejectUnauthorized: false,
+        },
+        () => {
+          resolve(
+            client.authorizationError && client.authorizationError.indexOf("ERR_TLS_CERT_ALTNAME_INVALID") !== -1,
+          );
+          client.on("data", data => {
+            const text = data.toString();
+            resolve(text.split("\r\n\r\n")[1]);
+          });
+
+          client.write(`GET / HTTP/1.1\r\nHost: ${options.servername}\r\n\r\n`);
+        },
+      );
+      client.on("close", resolve);
+      client.on("error", reject);
+    });
+  }
+
+  it("test addServerName/removeServerName", async () => {
+    let server;
+    try {
+      server = Bun.serve({
+        port: 0,
+        tls: {
+          ...SNIContexts["asterisk.test.com"],
+          serverName: "*.test.com",
+        },
+        fetch(req, res) {
+          return new Response(new URL(req.url).hostname);
+        },
+      });
+      {
+        const client = await doClientRequest({
+          ...SNIContexts["asterisk.test.com"],
+          port: server.port,
+          ca: [ca2],
+          servername: "b.test.com",
+        });
+        expect(client).toBe(true);
+      }
+
+      {
+        const client = await doClientRequest({
+          ...goodSecureContext,
+          port: server.port,
+          servername: "a.example.com",
+        });
+        expect(client).toBe(false);
+      }
+
+      {
+        server.addServerName("*.example.com", goodSecureContext);
+
+        const client = await doClientRequest({
+          ...goodSecureContext,
+          port: server.port,
+          servername: "a.example.com",
+        });
+        expect(client).toBe(true);
+      }
+
+      {
+        server.removeServerName("*.example.com");
+
+        const client = await doClientRequest({
+          ...goodSecureContext,
+          port: server.port,
+          servername: "a.example.com",
+        });
+        expect(client).toBe(false);
+      }
+    } finally {
+      server.stop(true);
+    }
+  });
   it("test SNI Bun.serve + tls.connect", async () => {
     await testBunServerAndClient(
       {

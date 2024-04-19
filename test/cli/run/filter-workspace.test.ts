@@ -368,4 +368,35 @@ describe("bun", () => {
   test("should warn about malformed package.json", () => {
     runInCwdFailure(cwd_root, "*", "x", /Failed to read package.json/);
   });
+  test("nonzero exit code on failure", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      dep0: {
+        "package.json": JSON.stringify({
+          name: "dep0",
+          scripts: {
+            script: "exit 0",
+          },
+        }),
+      },
+      dep1: {
+        "package.json": JSON.stringify({
+          name: "dep1",
+          scripts: {
+            script: "exit 1",
+          },
+        }),
+      },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutval = stdout.toString();
+    expect(stdoutval).toMatch(/code 0/);
+    expect(stdoutval).toMatch(/code 1/);
+    expect(exitCode).toBe(1);
+  });
 });

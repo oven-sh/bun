@@ -4,7 +4,7 @@ import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, closeSync } f
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { cpus, hostname, tmpdir, totalmem, userInfo } from "os";
-import { join, normalize } from "path";
+import { join, normalize, posix, relative } from "path";
 import { fileURLToPath } from "url";
 import PQueue from "p-queue";
 
@@ -206,7 +206,7 @@ setInterval(checkSlowTests, SHORT_TIMEOUT_DURATION).unref();
 var currentTestNumber = 0;
 async function runTest(path) {
   const thisTestNumber = currentTestNumber++;
-  const name = path.replace(cwd, "").slice(1);
+  const testFileName = posix.normalize(relative(cwd, path));
   let exitCode, signal, err, output;
 
   const start = Date.now();
@@ -222,7 +222,7 @@ async function runTest(path) {
 at ${((start - run_start.getTime()) / 1000).toFixed(2)}s, file ${thisTestNumber
           .toString()
           .padStart(total.toString().length, "0")}/${total}, ${failing_tests.length} failing files
-Starting "${name}"
+Starting "${testFileName}"
 
 `,
       );
@@ -308,7 +308,7 @@ Starting "${name}"
     maxFd = getMaxFileDescriptor();
     if (maxFd > prevMaxFd + queue.concurrency * 2) {
       process.stderr.write(
-        `\n\x1b[31mewarn\x1b[0;2m:\x1b[0m file descriptor leak in ${name}, delta: ${
+        `\n\x1b[31mewarn\x1b[0;2m:\x1b[0m file descriptor leak in ${testFileName}, delta: ${
           maxFd - prevMaxFd
         }, current: ${maxFd}, previous: ${prevMaxFd}\n`,
       );
@@ -358,9 +358,9 @@ Starting "${name}"
   }
 
   console.log(
-    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${passed ? "\x1b[32m✔" : "\x1b[31m✖"} ${name}\x1b[0m${
-      reason ? ` (${reason})` : ""
-    }`,
+    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
+      passed ? "\x1b[32m✔" : "\x1b[31m✖"
+    } ${testFileName}\x1b[0m${reason ? ` (${reason})` : ""}`,
   );
 
   finished++;
@@ -374,11 +374,11 @@ Starting "${name}"
   }
 
   if (!passed) {
-    failing_tests.push({ path: name, reason, output });
+    failing_tests.push({ path: testFileName, reason, output });
     process.exitCode = 1;
     if (err) console.error(err);
   } else {
-    passing_tests.push(name);
+    passing_tests.push(testFileName);
   }
 
   return passed;
@@ -518,6 +518,23 @@ writeFileSync(
   }),
 );
 
+function mabeCapitalize(str) {
+  str = str.toLowerCase();
+  if (str.includes("arm64") || str.includes("aarch64")) {
+    return str.toUpperCase();
+  }
+
+  if (str.includes("x64")) {
+    return "x64";
+  }
+
+  if (str.includes("baseline")) {
+    return str;
+  }
+
+  return str[0].toUpperCase() + str.slice(1);
+}
+
 console.log("-> test-report.md, test-report.json");
 
 if (ci) {
@@ -528,7 +545,10 @@ if (ci) {
   action.setOutput("failing_tests_count", failing_tests.length);
   if (failing_tests.length) {
     const tag = process.env.BUN_TAG || "unknown";
-    let comment = `## ${emojiTag(tag)}${failing_tests.length} failing tests on bun-${tag}.
+    let comment = `## ${emojiTag(tag)}${failing_tests.length} failing tests ${tag
+      .split("-")
+      .map(mabeCapitalize)
+      .join(" ")}
 
 ${failingTestDisplay}
 

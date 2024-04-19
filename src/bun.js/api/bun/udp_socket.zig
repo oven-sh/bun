@@ -487,57 +487,33 @@ pub const UDPSocket = struct {
             }
         };
 
-        const port: u16 = init: {
-            if (dest) |destval| {
-                if (destval.port.isInt32()) {
-                    const number = destval.port.asInt32();
-                    break :init if (number < 1 or number > 0xffff) 0 else @intCast(number);
+        var addr: std.os.sockaddr.storage = std.mem.zeroes(std.os.sockaddr.storage);
+        if (dest) |destval| {
+            const number = destval.port.asInt32();
+            const port: u16 = if (number < 1 or number > 0xffff) 0 else @intCast(number);
+
+            const str = destval.address.toBunString(globalThis);
+            defer str.deref();
+            const address_slice = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
+            defer default_allocator.free(address_slice);
+
+            var addr4: *std.os.sockaddr.in = @ptrCast(&addr);
+            if (inet_pton(std.os.AF.INET, address_slice.ptr, &addr4.addr) == 1) {
+                addr4.port = htons(@truncate(port));
+                addr4.family = std.os.AF.INET;
+            } else {
+                var addr6: *std.os.sockaddr.in6 = @ptrCast(&addr);
+                if (inet_pton(std.os.AF.INET6, address_slice.ptr, &addr6.addr) == 1) {
+                    addr6.port = htons(@truncate(port));
+                    addr6.family = std.os.AF.INET6;
                 } else {
-                    globalThis.throwInvalidArguments("Expected integer as second argument", .{});
+                    globalThis.throwInvalidArguments("Invalid address: {s}", .{address_slice});
                     return .zero;
                 }
-            } else {
-                break :init 0;
             }
-        };
+        }
 
-        const address = init: {
-            if (dest) |destval| {
-                if (bun.String.tryFromJS(destval.address, globalThis)) |value| {
-                    const slice = value.toUTF8(default_allocator);
-                    break :init slice.slice();
-                } else {
-                    globalThis.throwInvalidArguments("Expected string as third argument", .{});
-                    return .zero;
-                }
-            } else {
-                break :init null;
-            }
-        };
-
-        var addr: std.os.sockaddr.storage = undefined;
-        const addr_ptr: ?*std.os.sockaddr.storage = brk: {
-            if (address) |address_slice| {
-                var addr4: *std.os.sockaddr.in = @ptrCast(&addr);
-                if (inet_pton(std.os.AF.INET, address_slice.ptr, &addr4.addr) == 1) {
-                    addr4.port = htons(@truncate(port));
-                    addr4.family = std.os.AF.INET;
-                } else {
-                    var addr6: *std.os.sockaddr.in6 = @ptrCast(&addr);
-                    if (inet_pton(std.os.AF.INET6, address_slice.ptr, &addr6.addr) == 1) {
-                        addr6.port = htons(@truncate(port));
-                        addr6.family = std.os.AF.INET6;
-                    } else {
-                        globalThis.throwInvalidArguments("Invalid address: {s}", .{address_slice});
-                        return .zero;
-                    }
-                }
-                break :brk &addr;
-            } else {
-                break :brk null;
-            }
-        };
-        this.send_buf.setPayload(@truncate(index), 0, payload, addr_ptr);
+        this.send_buf.setPayload(@truncate(index), 0, payload, if (dest != null) &addr else null);
         return null;
     }
 
@@ -725,6 +701,7 @@ pub const UDPSocket = struct {
         this.connect_info = .{
             .port = port,
         };
+        // TODO reset cached remoteAddress property
 
         return .undefined;
     }

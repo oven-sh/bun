@@ -107,6 +107,13 @@ class ERR_SOCKET_BAD_PORT extends Error {
   }
 }
 
+class ERR_SOCKET_DGRAM_NOT_RUNNING extends Error {
+  constructor() {
+    super('Socket is not running');
+    this.code = 'ERR_SOCKET_DGRAM_NOT_RUNNING';
+  }
+}
+
 function isInt32(value) {
   return value === (value | 0);
 }
@@ -860,6 +867,7 @@ Socket.prototype[SymbolAsyncDispose] = async function() {
   if (!this[kStateSymbol].handle) {
     return;
   }
+  console.log(this, this.close, promisify(this.close));
   return promisify(this.close).$call(this);
 };
 
@@ -870,7 +878,10 @@ function socketCloseNT(self) {
 
 
 Socket.prototype.address = function() {
-  return this[kStateSymbol].handle.socket.address;
+  const addr = this[kStateSymbol].handle.socket?.address;
+  if (!addr)
+    throw new ERR_SOCKET_DGRAM_NOT_RUNNING();
+  return addr;
 };
 
 Socket.prototype.remoteAddress = function() {

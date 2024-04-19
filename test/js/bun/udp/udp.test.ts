@@ -1,5 +1,5 @@
 import { bindUDP } from "bun";
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, it } from "bun:test";
 import { randomPort, hasIP } from "harness";
 import { createSocket } from "dgram";
 
@@ -272,6 +272,52 @@ describe("createSocket()", () => {
       client.connect(PORT);
     });
   });
+
+  test("IPv4 address", (done) => {
+    const socket = createSocket('udp4');
+
+    socket.on('listening', () => {
+      const address = socket.address();
+
+      expect(address.address).toBe('127.0.0.1');
+      expect(address.port).toBeNumber();
+      expect(address.port).toBeFinite();
+      expect(address.port).toBeGreaterThan(0);
+      expect(address.family).toBe('IPv4');
+      socket.close(done);
+    });
+
+    socket.on('error', (err) => {
+      socket.close(done);
+      expect(err).toBeNull();
+    });
+
+    socket.bind(0, '127.0.0.1');
+  });
+
+  test("IPv6 address", (done) => {
+    const socket = createSocket('udp6');
+    const localhost = '::1';
+
+    socket.on('listening', () => {
+      const address = socket.address();
+
+      expect(address.address).toBe(localhost);
+      expect(address.port).toBeNumber();
+      expect(address.port).toBeFinite();
+      expect(address.port).toBeGreaterThan(0);
+      expect(address.family).toBe('IPv6');
+      socket.close(done);
+    });
+
+    socket.on('error', (err) => {
+      socket.close(done);
+      expect(err).toBeNull();
+    });
+
+    socket.bind(0, localhost);
+  });
+
 });
 
 /*

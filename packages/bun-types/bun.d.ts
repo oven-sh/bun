@@ -3925,7 +3925,7 @@ declare module "bun" {
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {
     hostname: string;
     port: number;
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {

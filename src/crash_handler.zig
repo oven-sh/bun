@@ -550,6 +550,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
     }
 
     if (show_trace) {
+        verbose_error_trace = show_trace;
         handleErrorReturnTraceExtra(err, error_return_trace, true);
     }
 
@@ -1215,16 +1216,9 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
 
         if (is_debug) {
             if (is_root) {
-                Output.note(
-                    "'main' returned error.{s}.{s}",
-                    .{
-                        @errorName(err),
-                        if (verbose_error_trace)
-                            ""
-                        else
-                            " (release build will not have this trace by default)",
-                    },
-                );
+                if (verbose_error_trace) {
+                    Output.note("Release build will not have this trace by default:", .{});
+                }
             } else {
                 Output.note(
                     "caught error.{s}:",
@@ -1378,11 +1372,13 @@ pub const js_bindings = struct {
     }
 
     pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const obj = JSValue.createEmptyObject(global, 1);
         const list = bun.Analytics.packed_features_list;
         const array = JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
             array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
         }
-        return array;
+        obj.put(global, JSC.ZigString.static("features"), array);
+        return obj;
     }
 };

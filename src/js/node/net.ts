@@ -21,6 +21,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
+const { addServerName } = require("../internal/net");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -66,7 +67,6 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
-const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 
 function closeNT(self) {
   self.emit("close");
@@ -993,5 +993,5 @@ export default {
   isIPv4,
   isIPv6,
   Socket,
-  [Symbol.for("::bunternal::")]: [SocketClass, addServerName],
+  [Symbol.for("::bunternal::")]: SocketClass,
 };

@@ -64,7 +64,7 @@ describe("bind()", () => {
       type: Buffer,
     },
     {
-      binaryType: "nodebuffer",
+      binaryType: "buffer",
       type: Buffer,
     },
     {
@@ -251,6 +251,7 @@ describe("bind()", () => {
   }
 });
 
+/*
 function send(data: string | BufferSource, port: number, address: string): void {
   const base64 = typeof data === "string" ? "" : "1";
   const message = typeof data === "string" ? data : Buffer.from(data as any).toString("base64");
@@ -264,3 +265,4 @@ function send(data: string | BufferSource, port: number, address: string): void 
     throw new Error(reason);
   }
 }
+*/

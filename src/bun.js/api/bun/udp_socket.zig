@@ -698,8 +698,8 @@ pub const UDPSocket = struct {
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
         return switch (this.config.binary_type) {
+            .Buffer => JSC.ZigString.init("buffer").toValueGC(globalThis),
             .Uint8Array => JSC.ZigString.init("uint8array").toValueGC(globalThis),
-            .Buffer => JSC.ZigString.init("nodebuffer").toValueGC(globalThis),
             .ArrayBuffer => JSC.ZigString.init("arraybuffer").toValueGC(globalThis),
             else => @panic("Invalid binary type"),
         };

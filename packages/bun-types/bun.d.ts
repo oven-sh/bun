@@ -4024,6 +4024,7 @@ declare module "bun" {
       readonly port: number;
       readonly address: SocketAddress;
       readonly binaryType: BinaryType;
+      readonly closed: boolean;
       ref(): void;
       unref(): void;
       close(): void;

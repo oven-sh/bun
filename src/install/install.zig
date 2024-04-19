@@ -2082,39 +2082,6 @@ pub const PackageInstall = struct {
         return false;
     }
 
-    fn installWithDirectorySymlink(this: *PackageInstall, skip_delete: bool, dest_dir: std.fs.Dir) Result {
-        const target = this.cache_dir_subpath;
-
-        if (!skip_delete) this.uninstallBeforeInstall(dest_dir);
-
-        if (comptime Environment.isWindows) {
-            const dest_parent_dirname = strings.withoutTrailingSlash(this.node_modules.path.items);
-
-            var dest_buf: bun.PathBuffer = undefined;
-            var remain: []u8 = &dest_buf;
-            @memcpy(remain[0..dest_parent_dirname.len], dest_parent_dirname);
-            remain = remain[dest_parent_dirname.len..];
-            remain[0] = std.fs.path.sep;
-            remain = remain[1..];
-            @memcpy(remain[0..this.destination_dir_subpath.len], this.destination_dir_subpath);
-            remain = remain[this.destination_dir_subpath.len..];
-            remain[0] = 0;
-            const dest = dest_buf[0 .. dest_parent_dirname.len + 1 + this.destination_dir_subpath.len :0];
-
-            bun.sys.symlinkOrJunction(dest, target).unwrap() catch |err| {
-                return Result.fail(err, .linking_dependency);
-            };
-
-            return Result.success();
-        }
-
-        bun.sys.symlinkat(target, bun.toFD(dest_dir.fd), this.destination_dir_subpath).unwrap() catch |err| {
-            return Result.fail(err, .linking_dependency);
-        };
-
-        return Result.success();
-    }
-
     pub fn installFromLink(this: *PackageInstall, skip_delete: bool, destination_dir: std.fs.Dir) Result {
         const dest_path = this.destination_dir_subpath;
         // If this fails, we don't care.

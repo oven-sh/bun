@@ -103,6 +103,8 @@ pub fn crashHandler(
     // the handler.
     resetSegfaultHandler();
 
+    var trace_str_buf = std.BoundedArray(u8, 1024){};
+
     nosuspend switch (panic_stage) {
         0 => {
             bun.maybeHandlePanicDuringProcessReload();
@@ -190,6 +192,13 @@ pub fn crashHandler(
 
                 if (debug_trace) {
                     dumpStackTrace(trace.*);
+
+                    // TODO: REMOVE
+                    trace_str_buf.writer().print("{}", .{TraceString{
+                        .trace = trace,
+                        .reason = reason,
+                        .action = .open_issue,
+                    }}) catch std.os.abort();
                 } else {
                     if (!has_printed_message) {
                         has_printed_message = true;
@@ -221,14 +230,13 @@ pub fn crashHandler(
 
                     writer.writeAll(" ") catch std.os.abort();
 
-                    encodeTraceString(
-                        .{
-                            .trace = trace,
-                            .reason = reason,
-                            .action = .open_issue,
-                        },
-                        writer,
-                    ) catch std.os.abort();
+                    trace_str_buf.writer().print("{}", .{TraceString{
+                        .trace = trace,
+                        .reason = reason,
+                        .action = .open_issue,
+                    }}) catch std.os.abort();
+
+                    writer.writeAll(trace_str_buf.slice()) catch std.os.abort();
 
                     writer.writeAll("\n") catch std.os.abort();
                 }
@@ -284,6 +292,8 @@ pub fn crashHandler(
             std.os.abort();
         },
     };
+
+    report(trace_str_buf.slice());
 
     crash();
 }
@@ -958,7 +968,7 @@ const TraceString = struct {
     };
 
     pub fn format(self: TraceString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try encodeTraceString(self, writer);
+        encodeTraceString(self, writer) catch return;
     }
 };
 
@@ -1053,6 +1063,61 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
     const second = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
     try first.writeTo(writer);
     try second.writeTo(writer);
+}
+
+fn report(url: []const u8) void {
+    switch (bun.Environment.os) {
+        .windows => {
+            std.debug.print("REPORT TO {s}\n", .{url});
+
+            var process: std.os.windows.PROCESS_INFORMATION = undefined;
+            var startup_info = std.os.windows.STARTUPINFOW{
+                .cb = @sizeOf(std.os.windows.STARTUPINFOW),
+                .lpReserved = null,
+                .lpDesktop = null,
+                .lpTitle = null,
+                .dwX = 0,
+                .dwY = 0,
+                .dwXSize = 0,
+                .dwYSize = 0,
+                .dwXCountChars = 0,
+                .dwYCountChars = 0,
+                .dwFillAttribute = 0,
+                .dwFlags = 0,
+                .wShowWindow = 0,
+                .cbReserved2 = 0,
+                .lpReserved2 = null,
+                .hStdInput = null,
+                .hStdOutput = null,
+                .hStdError = null,
+            };
+            var cmd_line = std.BoundedArray(u16, 1024){};
+            cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell.exe -ExecutionPolicy Bypass -Command \""));
+            {
+                const encoded = bun.strings.convertUTF8toUTF16InBuffer(cmd_line.unusedCapacitySlice(), url);
+                cmd_line.len += @intCast(encoded.len);
+            }
+            cmd_line.appendSlice(std.unicode.utf8ToUtf16LeStringLiteral("|out-null}catch{}\"")) catch return;
+            cmd_line.append(0) catch return;
+            const did_process_spawn = std.os.windows.kernel32.CreateProcessW(
+                null,
+                cmd_line.buffer[0..cmd_line.len :0],
+                null,
+                null,
+                1, // true
+                0,
+                null,
+                null,
+                &startup_info,
+                &process,
+            );
+            if (did_process_spawn == 0) {
+                std.debug.print("Failed to spawn process", .{});
+                return;
+            }
+        },
+        else => {},
+    }
 }
 
 /// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.

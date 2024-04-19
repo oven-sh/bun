@@ -1,10 +1,10 @@
-import { bind, spawnSync } from "bun";
+import { bindUDP, spawnSync } from "bun";
 import { describe, test, expect, mock, afterAll, afterEach } from "bun:test";
 import { randomPort, hasIP } from "harness";
 
 describe("bind()", () => {
   test("can create a socket", () => {
-    const socket = bind({});
+    const socket = bindUDP({});
     expect(socket).toBeInstanceOf(Object);
     expect(socket.port).toBeInteger();
     expect(socket.port).toBeWithin(1, 65535 + 1);
@@ -17,7 +17,7 @@ describe("bind()", () => {
       port: socket.port,
     });
     expect(socket.address).toBe(socket.address); // test that property is cached
-    expect(socket.binaryType).toBe("nodebuffer");
+    expect(socket.binaryType).toBe("buffer");
     expect(socket.binaryType).toBe(socket.binaryType); // test that property is cached
     expect(socket.ref).toBeFunction();
     expect(socket.unref).toBeFunction();
@@ -28,14 +28,14 @@ describe("bind()", () => {
 
   test("can create a socket with given port", () => {
     const port = randomPort();
-    const socket = bind({ port });
+    const socket = bindUDP({ port });
     expect(socket.port).toBe(port);
     expect(socket.address).toMatchObject({ port: socket.port });
     socket.close();
   });
 
   test("can create a socket with a random port", () => {
-    const socket = bind({ port: 0 });
+    const socket = bindUDP({ port: 0 });
     expect(socket.port).toBeInteger();
     expect(socket.port).toBeWithin(1, 65535 + 1);
     expect(socket.address).toMatchObject({ port: socket.port });
@@ -48,7 +48,7 @@ describe("bind()", () => {
     { hostname: "::1", skip: !hasIP("IPv6") },
   ])("can create a socket with given hostname", ({ hostname, skip }) => {
     test.skipIf(skip)(hostname, () => {
-      const socket = bind({ hostname });
+      const socket = bindUDP({ hostname });
       expect(socket.hostname).toBe(hostname);
       expect(socket.port).toBeInteger();
       expect(socket.port).toBeWithin(1, 65535 + 1);
@@ -133,13 +133,13 @@ describe("bind()", () => {
   for (const { binaryType, type } of dataTypes) {
     for (const { label, data, bytes } of recvCases) {
       test(`${label} (${binaryType || "undefined"})`, (done) => {
-        const client = bind({});
-        const server = bind({
+        const client = bindUDP({});
+        const server = bindUDP({
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
               expect(socket).toBeInstanceOf(Object);
-              expect(socket.binaryType).toBe(binaryType || "nodebuffer");
+              expect(socket.binaryType).toBe(binaryType || "buffer");
               expect(data).toBeInstanceOf(type);
               expect(port).toBeInteger();
               expect(port).toBeWithin(1, 65535 + 1);
@@ -156,7 +156,7 @@ describe("bind()", () => {
         // handle unreliable transmission in UDP
         function sendRec() {
           if (!client.closed) {
-            send(data, server.port, server.hostname);
+            client.send(data, server.port, server.hostname);
             setTimeout(sendRec, 100);
           }
         }
@@ -220,12 +220,12 @@ describe("bind()", () => {
 
   for (const { label, data, bytes } of sendCases) {
     test(label, (done) => {
-      const client = bind({});
-      const server = bind({
+      const client = bindUDP({});
+      const server = bindUDP({
         socket: {
           data(socket, data, port, address) {
             expect(socket).toBeInstanceOf(Object);
-            expect(socket.binaryType).toBe("nodebuffer");
+            expect(socket.binaryType).toBe("buffer");
             expect(data).toBeInstanceOf(Buffer);
             expect(data).toHaveLength(bytes.length);
             expect(data).toStrictEqual(Buffer.from(bytes));
@@ -242,7 +242,7 @@ describe("bind()", () => {
       // handle unreliable transmission in UDP
       function sendRec() {
         if (!client.closed) {
-          send(data, server.port, "127.0.0.1");
+          client.send(data, server.port, "127.0.0.1");
           setTimeout(sendRec, 100);
         }
       }

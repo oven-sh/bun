@@ -2729,10 +2729,15 @@ pub const udp = struct {
         pub fn connect(this: *This, hostname: [*c]const u8, port: c_uint) c_int {
             return us_udp_socket_connect(this, hostname, port);
         }
+
+        pub fn disconnect(this: *This) c_int {
+            return us_udp_socket_disconnect(this);
+        }
     };
 
     extern fn us_create_udp_socket(loop: ?*Loop, buf: ?*PacketBuffer, data_cb: *const fn (*udp.Socket, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*udp.Socket) callconv(.C) void, host: [*c]const u8, port: c_ushort, user_data: ?*anyopaque) ?*udp.Socket;
     extern fn us_udp_socket_connect(socket: ?*udp.Socket, hostname: [*c]const u8, port: c_uint) c_int;
+    extern fn us_udp_socket_disconnect(socket: ?*udp.Socket) c_int;
     extern fn us_udp_socket_send(socket: ?*udp.Socket, buf: ?*PacketBuffer, num: c_int) c_int;
     // extern fn us_udp_socket_receive(socket: ?*udp.Socket, buf: ?*PacketBuffer) c_int;
     extern fn us_udp_socket_user(socket: ?*udp.Socket) ?*anyopaque;

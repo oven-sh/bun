@@ -4019,8 +4019,6 @@ declare module "bun" {
       address: string;
     }
 
-    type ConnectedPacket = BasePacket | FullPacket;
-
     export interface BaseUDPSocket {
       readonly hostname: string;
       readonly port: number;
@@ -4032,8 +4030,8 @@ declare module "bun" {
     }
 
     export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
-      sendMany(packets: ConnectedPacket[]): void;
-      send(data: string | ArrayBufferView | ArrayBufferLike, port: number | undefined, address: string | undefined): void;
+      sendMany(packets: BasePacket[]): void;
+      send(data: string | ArrayBufferView | ArrayBufferLike): void;
       reload(handler: ConnectedSocketHandler<DataBinaryType>): void;
     }
 

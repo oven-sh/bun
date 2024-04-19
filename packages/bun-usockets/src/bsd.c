@@ -59,25 +59,41 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, in
 
     /* Let's just use sendto here */
     /* Winsock does not have sendmsg, while macOS has, however, we simply use sendto since both macOS and Winsock has it.
-     * Besides, you should use Linux either way to get best performance with the sendmmsg */
+     * Besides, you should use Linux either way to get best performance with sendmmsg */
 
 
     // while we do not get error, send next
 
-    for (int i = 0; i < LIBUS_UDP_MAX_NUM; i++) {
+    for (int i = 0; i < vlen; i++) {
         // need to support ipv6 addresses also!
-        int ret = sendto(fd, packet_buffer->buf[i], packet_buffer->len[i], flags, (struct sockaddr *)&packet_buffer->addr[i], sizeof(struct sockaddr_in));
+        int ret = 0;
+        switch (packet_buffer->addr[i].ss_family) {
+            case AF_INET: {
+                struct sockaddr *addr = (struct sockaddr *) &packet_buffer->addr[i];
+                socklen_t len = sizeof(struct sockaddr_in);
+                ret = sendto(fd, packet_buffer->buf[i], packet_buffer->len[i], flags, addr, len);
+                break;
+            }
+            case AF_INET6: {
+                struct sockaddr *addr = (struct sockaddr *) &packet_buffer->addr[i];
+                socklen_t len = sizeof(struct sockaddr_in6);
+                ret = sendto(fd, packet_buffer->buf[i], packet_buffer->len[i], flags, addr, len);
+                break;
+            }
+            case AF_UNSPEC: {
+                ret = send(fd, packet_buffer->buf[i], packet_buffer->len[i], flags);
+                break;
+            }
+        }
 
         if (ret == -1) {
             // if we fail then we need to buffer up, no that's not our problem
             // we do need to register poll out though and have a callback for it
             return i;
         }
-
-        //printf("sendto: %d\n", ret);
     }
 
-    return LIBUS_UDP_MAX_NUM; // one message
+    return vlen; // one message
 #else
     return sendmmsg(fd, (struct mmsghdr *)msgvec, vlen, flags | MSG_NOSIGNAL);
 #endif
@@ -170,16 +186,24 @@ void bsd_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, 
     struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) send_buf;
 
     memcpy(packet_buffer->buf[index], payload, length);
-    memcpy(&packet_buffer->addr[index], peer_addr, sizeof(struct sockaddr_storage));
+    if (peer_addr) {
+        memcpy(&packet_buffer->addr[index], peer_addr, sizeof(struct sockaddr_storage));
+    } else {
+        packet_buffer->addr[index].ss_family = AF_UNSPEC;
+    }
 
     packet_buffer->len[index] = length;
 #else
-    //printf("length: %d, offset: %d\n", length, offset);
 
     struct mmsghdr *ss = (struct mmsghdr *) send_buf;
 
     // copy the peer address
-    memcpy(ss[index].msg_hdr.msg_name, peer_addr, /*ss[index].msg_hdr.msg_namelen*/ sizeof(struct sockaddr_in));
+    if (peer_addr) {
+        memcpy(ss[index].msg_hdr.msg_name, peer_addr, /*ss[index].msg_hdr.msg_namelen*/ sizeof(struct sockaddr_in));
+    } else {
+        ss[index].msg_hdr.msg_name = NULL;
+        ss[index].msg_hdr.msg_namelen = 0;
+    }
 
     // set control length to 0
     ss[index].msg_hdr.msg_controllen = 0;
@@ -778,7 +802,6 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
-    hints.ai_flags = AI_PASSIVE;
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_DGRAM;
 
@@ -793,13 +816,30 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
         return LIBUS_SOCKET_ERROR;
     }
 
-    if (connect(fd, result->ai_addr, result->ai_addrlen) == 0) {
-        freeaddrinfo(result);
-        return 0;
+    for (struct addrinfo *rp = result; rp != NULL; rp = rp->ai_next) {
+        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
+            freeaddrinfo(result);
+            return 0;
+        }
     }
 
     freeaddrinfo(result);
     return LIBUS_SOCKET_ERROR;
+}
+
+int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
+    struct sockaddr addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sa_family = AF_UNSPEC;
+    addr.sa_len = sizeof(addr);
+
+    int res = connect(fd, &addr, sizeof(addr));
+    // EAFNOSUPPORT is harmless in this case - we just want to disconnect
+    if (res == 0 || errno == EAFNOSUPPORT) {
+        return 0;
+    } else {
+        return LIBUS_SOCKET_ERROR;
+    }
 }
 
 int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {

@@ -472,15 +472,18 @@ function _connect(port, address, callback) {
 }
 
 
+const connectFn = $newZigFunction("udp_socket.zig", "socketConnect", 2);
+
 function doConnect(ex, self, ip, address, port, callback) {
   const state = self[kStateSymbol];
   if (!state.handle)
     return;
 
   if (!ex) {
-    const err = state.handle.connect(ip, port);
-    if (err) {
-      ex = new ExceptionWithHostPort(err, 'connect', address, port);
+    try {
+      connectFn.$call(state.handle.socket, ip, port);
+    } catch (e) {
+      ex = e;
     }
   }
 
@@ -501,15 +504,14 @@ function doConnect(ex, self, ip, address, port, callback) {
 }
 
 
+const disconnectFn = $newZigFunction("udp_socket.zig", "socketDisconnect", 0);
+
 Socket.prototype.disconnect = function() {
   const state = this[kStateSymbol];
   if (state.connectState !== CONNECT_STATE_CONNECTED)
     throw new ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
-  const err = state.handle.disconnect();
-  if (err)
-    throw new ErrnoException(err, 'connect');
-  else
+    disconnectFn.$call(state.handle.socket);
     state.connectState = CONNECT_STATE_DISCONNECTED;
 };
 
@@ -755,7 +757,11 @@ function doSend(ex, self, ip, list, address, port, callback) {
   let sent = 0;
   try {
     if (list.length === 1) {
-      socket.send(list[0], port, ip);
+      if (port) {
+        socket.send(list[0], port, ip);
+      } else {
+        socket.send(list[0]);
+      }
       sent = 1;
     } else {
       const packets = [];

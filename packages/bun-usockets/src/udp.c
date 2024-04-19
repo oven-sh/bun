@@ -103,6 +103,10 @@ int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned 
     return bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), host, port);
 }
 
+int us_udp_socket_disconnect(struct us_udp_socket_t *s) {
+    return bsd_disconnect_udp_socket(us_poll_fd((struct us_poll_t *)s));
+}
+
 struct us_udp_socket_t *us_create_udp_socket(
     struct us_loop_t *loop, 
     struct us_udp_packet_buffer_t *buf, 

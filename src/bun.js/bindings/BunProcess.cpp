@@ -103,6 +103,7 @@ extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" void* Bun__getVM();
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
+extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__send);
 extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
@@ -195,7 +196,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     release->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, WTF::String("node"_s)), 0);
 
     release->putDirect(vm, Identifier::fromString(vm, "lts"_s), jsBoolean(false), 0);
-    release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsString(vm, WTF::String(Bun__githubURL, strlen(Bun__githubURL))), 0);
+    release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsString(vm, WTF::String(std::span { Bun__githubURL, strlen(Bun__githubURL) })), 0);
     release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsEmptyString(vm), 0);
     release->putDirect(vm, Identifier::fromString(vm, "libUrl"_s), jsEmptyString(vm), 0);
 
@@ -278,6 +279,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     }
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
+    if (filename.isEmpty()) {
+        JSC::throwTypeError(globalObject, scope, "dlopen requires a non-empty string as the second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    if (filename.startsWith("file://"_s)) {
+        WTF::URL fileURL = WTF::URL(filename);
+        if (!fileURL.isValid() || !fileURL.protocolIsFile()) {
+            JSC::throwTypeError(globalObject, scope, "invalid file: URL passed to dlopen"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        filename = fileURL.fileSystemPath();
+    }
+
     // Support embedded .node files
     // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
 #if OS(WINDOWS)
@@ -307,7 +323,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         LPWSTR messageBuffer = nullptr;
         size_t size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
             NULL, errorId, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&messageBuffer, 0, NULL);
-        WTF::String msg = makeString("LoadLibrary failed: ", WTF::StringView((UCHAR*)messageBuffer, size));
+        WTF::String msg = makeString("LoadLibrary failed: ", WTF::StringView(std::span { (UCHAR*)messageBuffer, size }));
         LocalFree(messageBuffer);
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
@@ -733,8 +749,10 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         // IPC handlers
         if (eventName.string() == "message"_s) {
             if (isAdded) {
-                if (Bun__GlobalObject__hasIPC(eventEmitter.scriptExecutionContext()->jsGlobalObject())
+                auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
+                if (Bun__GlobalObject__hasIPC(global)
                     && eventEmitter.listenerCount(eventName) == 1) {
+                    Bun__ensureProcessIPCInitialized(global);
                     eventEmitter.scriptExecutionContext()->refEventLoop();
                     eventEmitter.m_hasIPCRef = true;
                 }
@@ -1361,7 +1379,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
             char cwd[PATH_MAX] = { 0 };
             getcwd(cwd, PATH_MAX);
 
-            header->putDirect(vm, JSC::Identifier::fromString(vm, "cwd"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(cwd), strlen(cwd))), 0);
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "cwd"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(cwd), strlen(cwd) })), 0);
         }
 
         header->putDirect(vm, JSC::Identifier::fromString(vm, "commandLine"_s), JSValue::decode(Bun__Process__getExecArgv(globalObject)), 0);
@@ -1377,10 +1395,10 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
             struct utsname buf;
             uname(&buf);
 
-            header->putDirect(vm, JSC::Identifier::fromString(vm, "osName"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(buf.sysname), strlen(buf.sysname))), 0);
-            header->putDirect(vm, JSC::Identifier::fromString(vm, "osRelease"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(buf.release), strlen(buf.release))), 0);
-            header->putDirect(vm, JSC::Identifier::fromString(vm, "osVersion"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(buf.version), strlen(buf.version))), 0);
-            header->putDirect(vm, JSC::Identifier::fromString(vm, "osMachine"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(buf.machine), strlen(buf.machine))), 0);
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "osName"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(buf.sysname), strlen(buf.sysname) })), 0);
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "osRelease"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(buf.release), strlen(buf.release) })), 0);
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "osVersion"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(buf.version), strlen(buf.version) })), 0);
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "osMachine"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(buf.machine), strlen(buf.machine) })), 0);
         }
 
         // host
@@ -1389,7 +1407,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
             char host[1024] = { 0 };
             gethostname(host, 1024);
 
-            header->putDirect(vm, JSC::Identifier::fromString(vm, "host"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(host), strlen(host))), 0);
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "host"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(host), strlen(host) })), 0);
         }
 
 #if OS(LINUX)
@@ -1644,6 +1662,9 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
     return hrtime;
 }
 
+#if OS(WINDOWS)
+extern "C" void Bun__ForceFileSinkToBeSynchronousOnWindows(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+#endif
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
 {
     auto& vm = globalObject->vm();
@@ -1668,7 +1689,20 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
         return {};
     }
 
-    return result;
+    ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
+    JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
+
+#if OS(WINDOWS)
+    Zig::GlobalObject* globalThis = jsCast<Zig::GlobalObject*>(globalObject);
+    // Node.js docs - https://nodejs.org/api/process.html#a-note-on-process-io
+    // > Files: synchronous on Windows and POSIX
+    // > TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
+    // > Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
+    // > Synchronous writes avoid problems such as output written with console.log() or console.error() being unexpectedly interleaved, or not written at all if process.exit() is called before an asynchronous write completes. See process.exit() for more information.
+    Bun__ForceFileSinkToBeSynchronousOnWindows(globalThis, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+#endif
+
+    return resultObject->getIndex(globalObject, 0);
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -2352,11 +2386,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubEmptyFunction, (JSGlobalObject * globalObje
 JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
-}
-
-static JSValue Process_stubEmptyObject(VM& vm, JSObject* processObject)
-{
-    return JSC::constructEmptyObject(processObject->globalObject());
 }
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)

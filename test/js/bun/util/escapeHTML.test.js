@@ -88,4 +88,18 @@ describe("escapeHTML", () => {
     expect(escapeHTML(" ".repeat(32) + "😊lo")).toBe(" ".repeat(32) + "😊lo");
     expect(escapeHTML(" ".repeat(32) + "lo😊")).toBe(" ".repeat(32) + "lo😊");
   });
+
+  it("bad input doesn't crash", () => {
+    escapeHTML("a".repeat(512) + String.fromCodePoint(0xd800));
+
+    for (let i = 0; i < 768; i++) {
+      escapeHTML("\xff" + "a".repeat(i));
+      escapeHTML(String.fromCodePoint(0xd800) + "a".repeat(i));
+      escapeHTML("a".repeat(i) + String.fromCodePoint(0xd800));
+      escapeHTML(String.fromCodePoint(0xd800).repeat(i));
+      escapeHTML("\xff" + String.fromCodePoint(0xd800).repeat(i));
+      escapeHTML("\xff".repeat(i) + String.fromCodePoint(0xd800));
+      escapeHTML(String.fromCodePoint(0xd800) + "\xff".repeat(i));
+    }
+  });
 });

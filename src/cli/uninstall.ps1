@@ -12,7 +12,8 @@ $ErrorActionPreference = "Stop"
 function Write-Env {
   param([String]$Key, [String]$Value)
 
-  $EnvRegisterKey = Get-Item -Path 'HKCU:Environment'
+  $RegisterKey = Get-Item -Path 'HKCU:'
+  $EnvRegisterKey = $RegisterKey.OpenSubKey('Environment', $true)
   if ($null -eq $Value) {
     $EnvRegisterKey.DeleteValue($Key)
   } else {
@@ -30,7 +31,8 @@ function Write-Env {
 function Get-Env {
   param([String] $Key)
 
-  $RegisterKey = Get-Item -Path 'HKCU:Environment'
+  $RegisterKey = Get-Item -Path 'HKCU:'
+  $EnvRegisterKey = $RegisterKey.OpenSubKey('Environment')
   $EnvRegisterKey.GetValue($Key, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
 }
 
@@ -94,8 +96,9 @@ try {
   $Path = $Path -split ';'
   $Path = $Path | Where-Object { $_ -ne "${PSScriptRoot}\bin" }
   Write-Env -Key 'Path' -Value ($Path -join ';')
-} catch {
+} catch  {
   Write-Host "Could not remove ${PSScriptRoot}\bin from PATH."
+  Write-Error $_
   if ($PauseOnError) { pause }
   exit 1
 }

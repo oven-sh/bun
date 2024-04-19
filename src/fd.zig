@@ -24,7 +24,7 @@ fn handleToNumber(handle: FDImpl.System) FDImpl.SystemAsInt {
 fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
     if (env.os == .windows) {
         if (!@inComptime()) {
-            std.debug.assert(handle != FDImpl.invalid_value);
+            bun.assert(handle != FDImpl.invalid_value);
         }
         return @ptrFromInt(handle);
     } else {
@@ -34,15 +34,13 @@ fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
 
 pub fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
     const out = libuv.uv_get_osfhandle(in);
-    // TODO: this is causing a dead lock because is also used on fd format
-    // log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
     return out;
 }
 
-pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
+pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) error{SystemFdQuotaExceeded}!c_int {
     const out = libuv.uv_open_osfhandle(in);
-    // TODO: this is causing a dead lock because is also used on fd format
-    // log("uv_open_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
+    bun.assert(out >= -1);
+    if (out == -1) return error.SystemFdQuotaExceeded;
     return out;
 }
 
@@ -93,11 +91,11 @@ pub const FDImpl = packed struct {
         enum(u0) { system };
 
     comptime {
-        std.debug.assert(@sizeOf(FDImpl) == @sizeOf(System));
+        bun.assert(@sizeOf(FDImpl) == @sizeOf(System));
 
         if (env.os == .windows) {
             // we want the conversion from FD to fd_t to be a integer truncate
-            std.debug.assert(@as(FDImpl, @bitCast(@as(u64, 512))).value.as_system == 512);
+            bun.assert(@as(FDImpl, @bitCast(@as(u64, 512))).value.as_system == 512);
         }
     }
 
@@ -112,7 +110,7 @@ pub const FDImpl = packed struct {
         if (env.os == .windows) {
             // the current process fd is max usize
             // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess
-            std.debug.assert(@intFromPtr(system_fd) <= std.math.maxInt(SystemAsInt));
+            bun.assert(@intFromPtr(system_fd) <= std.math.maxInt(SystemAsInt));
         }
 
         return fromSystemWithoutAssertion(system_fd);
@@ -200,12 +198,15 @@ pub const FDImpl = packed struct {
         return this.closeAllowingStdoutAndStderr();
     }
 
-    pub fn makeLibUVOwned(this: FDImpl) FDImpl {
+    /// Assumes given a valid file descriptor
+    /// If error, the handle has not been closed
+    pub fn makeLibUVOwned(this: FDImpl) !FDImpl {
+        this.assertValid();
         return switch (env.os) {
             else => this,
             .windows => switch (this.kind) {
                 .system => fd: {
-                    break :fd FDImpl.fromUV(uv_open_osfhandle(numberToHandle(this.value.as_system)));
+                    break :fd FDImpl.fromUV(try uv_open_osfhandle(numberToHandle(this.value.as_system)));
                 },
                 .uv => this,
             },
@@ -214,7 +215,7 @@ pub const FDImpl = packed struct {
 
     pub fn closeAllowingStdoutAndStderr(this: FDImpl) ?bun.sys.Error {
         if (allow_assert) {
-            std.debug.assert(this.value.as_system != invalid_value); // probably a UAF
+            bun.assert(this.value.as_system != invalid_value); // probably a UAF
         }
 
         // Format the file descriptor for logging BEFORE closing it.
@@ -225,8 +226,8 @@ pub const FDImpl = packed struct {
         const result: ?bun.sys.Error = switch (env.os) {
             .linux => result: {
                 const fd = this.encode();
-                std.debug.assert(fd != bun.invalid_fd);
-                std.debug.assert(fd.cast() > -1);
+                bun.assert(fd != bun.invalid_fd);
+                bun.assert(fd.cast() > -1);
                 break :result switch (linux.getErrno(linux.close(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
@@ -234,8 +235,8 @@ pub const FDImpl = packed struct {
             },
             .mac => result: {
                 const fd = this.encode();
-                std.debug.assert(fd != bun.invalid_fd);
-                std.debug.assert(fd.cast() > -1);
+                bun.assert(fd != bun.invalid_fd);
+                bun.assert(fd.cast() > -1);
                 break :result switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
@@ -253,7 +254,7 @@ pub const FDImpl = packed struct {
                             null;
                     },
                     .system => {
-                        std.debug.assert(this.value.as_system != 0);
+                        bun.assert(this.value.as_system != 0);
                         const handle: System = @ptrFromInt(@as(u64, this.value.as_system));
                         break :result switch (bun.windows.NtClose(handle)) {
                             .SUCCESS => null,
@@ -289,6 +290,14 @@ pub const FDImpl = packed struct {
     pub fn fromJS(value: JSValue) ?FDImpl {
         if (!value.isInt32()) return null;
         const fd = value.asInt32();
+        if (comptime env.isWindows) {
+            return switch (bun.FDTag.get(fd)) {
+                .stdin => FDImpl.decode(bun.STDIN_FD),
+                .stdout => FDImpl.decode(bun.STDOUT_FD),
+                .stderr => FDImpl.decode(bun.STDERR_FD),
+                else => FDImpl.fromUV(fd),
+            };
+        }
         return FDImpl.fromUV(fd);
     }
 
@@ -300,12 +309,31 @@ pub const FDImpl = packed struct {
         if (!JSC.Node.Valid.fileDescriptor(fd, global, exception_ref)) {
             return error.JSException;
         }
+
+        if (comptime env.isWindows) {
+            return switch (bun.FDTag.get(fd)) {
+                .stdin => FDImpl.decode(bun.STDIN_FD),
+                .stdout => FDImpl.decode(bun.STDOUT_FD),
+                .stderr => FDImpl.decode(bun.STDERR_FD),
+                else => FDImpl.fromUV(fd),
+            };
+        }
+
         return FDImpl.fromUV(fd);
     }
 
-    /// After calling, the input file descriptor is no longer valid and must not be used
-    pub fn toJS(value: FDImpl, _: *JSC.JSGlobalObject) JSValue {
-        return JSValue.jsNumberFromInt32(value.makeLibUVOwned().uv());
+    /// After calling, the input file descriptor is no longer valid and must not be used.
+    /// If an error is thrown, the file descriptor is cleaned up for you.
+    pub fn toJS(value: FDImpl, global: *JSC.JSGlobalObject) JSValue {
+        const fd = value.makeLibUVOwned() catch {
+            _ = value.close();
+            global.throwValue((JSC.SystemError{
+                .message = bun.String.static("EMFILE, too many open files"),
+                .code = bun.String.static("EMFILE"),
+            }).toErrorInstance(global));
+            return .zero;
+        };
+        return JSValue.jsNumberFromInt32(fd.uv());
     }
 
     pub fn format(this: FDImpl, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -371,6 +399,6 @@ pub const FDImpl = packed struct {
     }
 
     pub fn assertValid(this: FDImpl) void {
-        std.debug.assert(this.isValid());
+        bun.assert(this.isValid());
     }
 };

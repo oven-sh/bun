@@ -66,8 +66,6 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn clearRetainingCapacity(this: *@This()) void {
-            var list_ = this.listManaged(bun.default_allocator);
-            list_.clearRetainingCapacity();
             this.len = 0;
         }
 
@@ -77,9 +75,9 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn appendAssumeCapacity(this: *@This(), value: Type) void {
+            bun.assert(this.cap > this.len);
             this.ptr[this.len] = value;
             this.len += 1;
-            std.debug.assert(this.cap >= this.len);
         }
 
         pub fn writableSlice(this: *@This(), allocator: std.mem.Allocator, cap: usize) ![]Type {
@@ -93,10 +91,10 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
             const tail = this.ptr[this.len .. this.len + values.len];
-            std.debug.assert(this.cap >= this.len + @as(u32, @truncate(values.len)));
+            bun.assert(this.cap >= this.len + @as(u32, @truncate(values.len)));
             bun.copy(Type, tail, values);
             this.len += @as(u32, @truncate(values.len));
-            std.debug.assert(this.cap >= this.len);
+            bun.assert(this.cap >= this.len);
         }
 
         pub fn initCapacity(allocator: std.mem.Allocator, len: usize) !ListType {
@@ -130,7 +128,7 @@ pub fn BabyList(comptime Type: type) type {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(list_.items.len <= list_.capacity);
+                bun.assert(list_.items.len <= list_.capacity);
             }
 
             return ListType{
@@ -165,7 +163,7 @@ pub fn BabyList(comptime Type: type) type {
             };
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap);
+                bun.assert(this.len <= this.cap);
             }
         }
 
@@ -197,12 +195,12 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub inline fn at(this: ListType, index: usize) *const Type {
-            std.debug.assert(index < this.len);
+            bun.assert(index < this.len);
             return &this.ptr[index];
         }
 
         pub inline fn mut(this: ListType, index: usize) *Type {
-            std.debug.assert(index < this.len);
+            bun.assert(index < this.len);
             return &this.ptr[index];
         }
 
@@ -306,7 +304,7 @@ pub fn BabyList(comptime Type: type) type {
         pub fn writeTypeAsBytesAssumeCapacity(this: *@This(), comptime Int: type, int: Int) void {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
-            std.debug.assert(this.cap >= this.len + @sizeOf(Int));
+            bun.assert(this.cap >= this.len + @sizeOf(Int));
             @as([*]align(1) Int, @ptrCast(this.ptr[this.len .. this.len + @sizeOf(Int)]))[0] = int;
             this.len += @sizeOf(Int);
         }

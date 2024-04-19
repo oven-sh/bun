@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -300,14 +300,14 @@ pub const Loader = struct {
 
         if (behavior != .disable and behavior != .load_all_without_inlining) {
             if (behavior == .prefix) {
-                std.debug.assert(prefix.len > 0);
+                bun.assert(prefix.len > 0);
 
                 while (iter.next()) |entry| {
                     if (strings.startsWith(entry.key_ptr.*, prefix)) {
                         key_buf_len += entry.key_ptr.len;
                         key_count += 1;
                         e_strings_to_allocate += 1;
-                        std.debug.assert(entry.key_ptr.len > 0);
+                        bun.assert(entry.key_ptr.len > 0);
                     }
                 }
             } else {
@@ -317,7 +317,7 @@ pub const Loader = struct {
                         key_count += 1;
                         e_strings_to_allocate += 1;
 
-                        std.debug.assert(entry.key_ptr.len > 0);
+                        bun.assert(entry.key_ptr.len > 0);
                     }
                 }
             }
@@ -360,7 +360,7 @@ pub const Loader = struct {
                         } else {
                             const hash = bun.hash(entry.key_ptr.*);
 
-                            std.debug.assert(hash != invalid_hash);
+                            bun.assert(hash != invalid_hash);
 
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
                                 e_strings[0] = js_ast.E.String{
@@ -468,13 +468,22 @@ pub const Loader = struct {
         dir: *Fs.FileSystem.DirEntry,
         env_files: []const []const u8,
         comptime suffix: DotEnvFileSuffix,
+        skip_default_env: bool,
     ) !void {
         const start = std.time.nanoTimestamp();
 
         if (env_files.len > 0) {
             try this.loadExplicitFiles(env_files);
         } else {
-            try this.loadDefaultFiles(dir, suffix);
+            // Do not automatically load .env files in `bun run <script>`
+            // Instead, it is the responsibility of the script's instance of `bun` to load .env,
+            // so that if the script runner is NODE_ENV=development, but the script is
+            // "NODE_ENV=production bun ...", there should be no development env loaded.
+            //
+            // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
+            // for more details on how this edge case works.
+            if (!skip_default_env)
+                try this.loadDefaultFiles(dir, suffix);
         }
 
         if (!this.quiet) this.printLoaded(start);
@@ -492,8 +501,8 @@ pub const Loader = struct {
                 var iter = std.mem.splitBackwardsScalar(u8, arg_value, ',');
                 while (iter.next()) |file_path| {
                     if (file_path.len > 0) {
-                        try this.loadEnvFileDynamic(file_path, false, true);
-                        Analytics.Features.dotenv = true;
+                        try this.loadEnvFileDynamic(file_path, false);
+                        Analytics.Features.dotenv += 1;
                     }
                 }
             }
@@ -514,55 +523,55 @@ pub const Loader = struct {
         switch (comptime suffix) {
             .development => {
                 if (dir.hasComptimeQuery(".env.development.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.development.local", false, true);
-                    Analytics.Features.dotenv = true;
+                    try this.loadEnvFile(dir_handle, ".env.development.local", false);
+                    Analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.production.local", false, true);
-                    Analytics.Features.dotenv = true;
+                    try this.loadEnvFile(dir_handle, ".env.production.local", false);
+                    Analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.test.local", false, true);
-                    Analytics.Features.dotenv = true;
+                    try this.loadEnvFile(dir_handle, ".env.test.local", false);
+                    Analytics.Features.dotenv += 1;
                 }
             },
         }
 
         if (comptime suffix != .@"test") {
             if (dir.hasComptimeQuery(".env.local")) {
-                try this.loadEnvFile(dir_handle, ".env.local", false, false);
-                Analytics.Features.dotenv = true;
+                try this.loadEnvFile(dir_handle, ".env.local", false);
+                Analytics.Features.dotenv += 1;
             }
         }
 
         switch (comptime suffix) {
             .development => {
                 if (dir.hasComptimeQuery(".env.development")) {
-                    try this.loadEnvFile(dir_handle, ".env.development", false, true);
-                    Analytics.Features.dotenv = true;
+                    try this.loadEnvFile(dir_handle, ".env.development", false);
+                    Analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production")) {
-                    try this.loadEnvFile(dir_handle, ".env.production", false, true);
-                    Analytics.Features.dotenv = true;
+                    try this.loadEnvFile(dir_handle, ".env.production", false);
+                    Analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test")) {
-                    try this.loadEnvFile(dir_handle, ".env.test", false, true);
-                    Analytics.Features.dotenv = true;
+                    try this.loadEnvFile(dir_handle, ".env.test", false);
+                    Analytics.Features.dotenv += 1;
                 }
             },
         }
 
         if (dir.hasComptimeQuery(".env")) {
-            try this.loadEnvFile(dir_handle, ".env", false, false);
-            Analytics.Features.dotenv = true;
+            try this.loadEnvFile(dir_handle, ".env", false);
+            Analytics.Features.dotenv += 1;
         }
     }
 
@@ -636,7 +645,6 @@ pub const Loader = struct {
         dir: std.fs.Dir,
         comptime base: string,
         comptime override: bool,
-        comptime conditional: bool,
     ) !void {
         if (@field(this, base) != null) {
             return;
@@ -714,7 +722,6 @@ pub const Loader = struct {
             this.map,
             override,
             false,
-            conditional,
         );
 
         @field(this, base) = source;
@@ -724,7 +731,6 @@ pub const Loader = struct {
         this: *Loader,
         file_path: []const u8,
         comptime override: bool,
-        comptime conditional: bool,
     ) !void {
         if (this.custom_files_loaded.contains(file_path)) {
             return;
@@ -786,7 +792,6 @@ pub const Loader = struct {
             this.map,
             override,
             false,
-            conditional,
         );
 
         try this.custom_files_loaded.put(file_path, source);
@@ -857,7 +862,7 @@ const Parser = struct {
     }
 
     fn parseQuoted(this: *Parser, comptime quote: u8) ?string {
-        if (comptime Environment.allow_assert) std.debug.assert(this.src[this.pos] == quote);
+        if (comptime Environment.allow_assert) bun.assert(this.src[this.pos] == quote);
         const start = this.pos;
         const max_len = value_buffer.len;
         var end = start + 1;
@@ -878,7 +883,7 @@ const Parser = struct {
                         while (i < end and ptr < max_len) {
                             switch (this.src[i]) {
                                 '\\' => if (comptime quote == '"') {
-                                    if (comptime Environment.allow_assert) std.debug.assert(i + 1 < end);
+                                    if (comptime Environment.allow_assert) bun.assert(i + 1 < end);
                                     switch (this.src[i + 1]) {
                                         'n' => {
                                             value_buffer[ptr] = '\n';
@@ -1011,7 +1016,6 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
-        comptime conditional: bool,
     ) void {
         var count = map.map.count();
         while (this.pos < this.src.len) {
@@ -1032,7 +1036,7 @@ const Parser = struct {
             }
             entry.value_ptr.* = .{
                 .value = allocator.dupe(u8, value) catch unreachable,
-                .conditional = conditional,
+                .conditional = false,
             };
         }
         if (comptime !is_process) {
@@ -1044,7 +1048,7 @@ const Parser = struct {
                     allocator.free(entry.value_ptr.value);
                     entry.value_ptr.* = .{
                         .value = allocator.dupe(u8, value) catch unreachable,
-                        .conditional = conditional,
+                        .conditional = false,
                     };
                 }
             }
@@ -1057,10 +1061,9 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
-        comptime conditional: bool,
     ) void {
         var parser = Parser{ .src = source.contents };
-        parser._parse(allocator, map, override, is_process, conditional);
+        parser._parse(allocator, map, override, is_process);
     }
 };
 
@@ -1094,7 +1097,7 @@ pub const Map = struct {
                 bun.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
                 envp_buf[i] = env_buf.ptr;
             }
-            if (comptime Environment.allow_assert) std.debug.assert(i == envp_count);
+            if (comptime Environment.allow_assert) bun.assert(i == envp_count);
         }
         return envp_buf;
     }
@@ -1108,10 +1111,7 @@ pub const Map = struct {
 
         var iter = this.map.iterator();
         while (iter.next()) |entry| {
-            // Allow var from .env.development or .env.production to be loaded again
-            if (!entry.value_ptr.conditional) {
-                try env_map.hash_map.put(entry.key_ptr.*, entry.value_ptr.value);
-            }
+            try env_map.hash_map.put(entry.key_ptr.*, entry.value_ptr.value);
         }
 
         return .{ .unsafe_map = env_map };
@@ -1166,7 +1166,7 @@ pub const Map = struct {
 
     pub inline fn put(this: *Map, key: string, value: string) !void {
         if (Environment.isWindows and Environment.allow_assert) {
-            std.debug.assert(bun.strings.indexOfChar(key, '\x00') == null);
+            bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
         }
         try this.map.put(key, .{
             .value = value,

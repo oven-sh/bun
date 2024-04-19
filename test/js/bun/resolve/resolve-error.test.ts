@@ -9,6 +9,17 @@ describe("ResolveMessage", () => {
     }
   });
 
+  it(".message is modifiable", async () => {
+    try {
+      await import("./file-importing-nonexistent-file.js");
+    } catch (e: any) {
+      const orig = e.message;
+      expect(() => (e.message = "new message")).not.toThrow();
+      expect(e.message).toBe("new message");
+      expect(e.message).not.toBe(orig);
+    }
+  });
+
   it("has code for esm", async () => {
     try {
       await import("./file-importing-nonexistent-file.js");

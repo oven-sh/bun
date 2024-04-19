@@ -2,7 +2,12 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const { getHeader, setHeader, assignHeaders: assignHeadersFast } = $lazy("http");
+
+const {
+  getHeader,
+  setHeader,
+  assignHeaders: assignHeadersFast,
+} = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding");
 
 const GlobalPromise = globalThis.Promise;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
@@ -1383,6 +1388,7 @@ class ClientRequest extends OutgoingMessage {
   #timeoutTimer?: Timer = undefined;
   #options;
   #finished;
+  #tls;
 
   get path() {
     return this.#path;
@@ -1457,6 +1463,7 @@ class ClientRequest extends OutgoingMessage {
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
+        tls: this.#tls,
       };
 
       if (!!$debug) {
@@ -1676,6 +1683,7 @@ class ClientRequest extends OutgoingMessage {
     this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
+    this.#tls = options.tls;
 
     const timeout = options.timeout;
     if (timeout !== undefined && timeout !== 0) {

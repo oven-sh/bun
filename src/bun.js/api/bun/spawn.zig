@@ -1,4 +1,4 @@
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const bun = @import("root").bun;
 const string = bun.string;
 const std = @import("std");
@@ -259,6 +259,10 @@ pub const PosixSpawn = struct {
         }
 
         pub fn dup2(self: *PosixSpawnActions, fd: bun.FileDescriptor, newfd: bun.FileDescriptor) !void {
+            if (fd == newfd) {
+                return self.inherit(fd);
+            }
+
             switch (errno(system.posix_spawn_file_actions_adddup2(&self.actions, fd.cast(), newfd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,

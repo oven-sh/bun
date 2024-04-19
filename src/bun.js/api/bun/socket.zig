@@ -1,19 +1,19 @@
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 const ZigString = JSC.ZigString;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
@@ -32,8 +32,8 @@ const Async = bun.Async;
 //         this.holder = owner;
 //         if (this.ptr == null) {
 //             this.ptr = bun.default_allocator.alloc(u8, 16384) catch @panic("Out of memory allocating corker");
-//             std.debug.assert(this.list.cap == 0);
-//             std.debug.assert(this.list.len == 0);
+//             bun.assert(this.list.cap == 0);
+//             bun.assert(this.list.len == 0);
 //             this.list.cap = 16384;
 //             this.list.ptr = this.ptr.?;
 //             this.list.len = 0;
@@ -132,6 +132,11 @@ noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []c
     return exception;
 }
 
+/// we always allow and check the SSL certificate after the handshake or renegotiation
+fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.C) c_int {
+    return 1;
+}
+
 fn normalizeHost(input: anytype) @TypeOf(input) {
     return input;
 }
@@ -218,8 +223,9 @@ const Handlers = struct {
                 this.unprotect();
                 // will deinit when is not wrapped or when is the TCP wrapped connection
                 if (wrapped != .tls) {
-                    if (ctx) |ctx_|
+                    if (ctx) |ctx_| {
                         ctx_.deinit(ssl);
+                    }
                 }
                 bun.default_allocator.destroy(this);
             }
@@ -298,7 +304,7 @@ const Handlers = struct {
 
     pub fn unprotect(this: *Handlers) void {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(this.protection_count > 0);
+            bun.assert(this.protection_count > 0);
             this.protection_count -= 1;
         }
         this.onOpen.unprotect();
@@ -790,7 +796,7 @@ pub const Listener = struct {
         log("onCreate", .{});
         var listener: *Listener = socket.context().?.ext(ssl, *Listener).?.*;
         const Socket = NewSocket(ssl);
-        std.debug.assert(ssl == listener.ssl);
+        bun.assert(ssl == listener.ssl);
 
         var this_socket = listener.handlers.vm.allocator.create(Socket) catch @panic("Out of memory");
         this_socket.* = Socket{
@@ -825,23 +831,27 @@ pub const Listener = struct {
         const arguments = callframe.arguments(1);
         log("close", .{});
 
-        if (arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null) {
-            this.socket_context.?.close(this.ssl);
-            this.listener = null;
-        } else {
-            var listener = this.listener orelse return JSValue.jsUndefined();
-            this.listener = null;
-            listener.close(this.ssl);
-        }
+        var listener = this.listener orelse return JSValue.jsUndefined();
+        this.listener = null;
 
         this.poll_ref.unref(this.handlers.vm);
+        // if we already have no active connections, we can deinit the context now
         if (this.handlers.active_connections == 0) {
             this.handlers.unprotect();
-            this.socket_context.?.close(this.ssl);
+            // deiniting the context will also close the listener
             this.socket_context.?.deinit(this.ssl);
             this.socket_context = null;
             this.strong_self.clear();
             this.strong_data.clear();
+        } else {
+            const forceClose = arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null;
+            if (forceClose) {
+                // close all connections in this context and wait for them to close
+                this.socket_context.?.close(this.ssl);
+            } else {
+                // only close the listener and wait for the connections to close by it self
+                listener.close(this.ssl);
+            }
         }
 
         return JSValue.jsUndefined();
@@ -856,8 +866,8 @@ pub const Listener = struct {
         this.strong_self.deinit();
         this.strong_data.deinit();
         this.poll_ref.unref(this.handlers.vm);
-        std.debug.assert(this.listener == null);
-        std.debug.assert(this.handlers.active_connections == 0);
+        bun.assert(this.listener == null);
+        bun.assert(this.handlers.active_connections == 0);
         this.handlers.unprotect();
 
         if (this.socket_context) |ctx| {
@@ -1038,18 +1048,8 @@ pub const Listener = struct {
             TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
 
             tls.doConnect(connection, socket_context) catch {
-                handlers_ptr.unprotect();
-                socket_context.deinit(true);
-                handlers.vm.allocator.destroy(handlers_ptr);
-                handlers.promise.deinit();
-                bun.default_allocator.destroy(tls);
-                const err = JSC.SystemError{
-                    .message = bun.String.static("Failed to connect"),
-                    .syscall = bun.String.static("connect"),
-                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
-                };
-                exception.* = err.toErrorInstance(globalObject).asObjectRef();
-                return .zero;
+                tls.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
+                return promise_value;
             };
             tls.poll_ref.ref(handlers.vm);
 
@@ -1069,18 +1069,8 @@ pub const Listener = struct {
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
 
             tcp.doConnect(connection, socket_context) catch {
-                handlers_ptr.unprotect();
-                socket_context.deinit(false);
-                handlers.vm.allocator.destroy(handlers_ptr);
-                handlers.promise.deinit();
-                bun.default_allocator.destroy(tcp);
-                const err = JSC.SystemError{
-                    .message = bun.String.static("Failed to connect"),
-                    .syscall = bun.String.static("connect"),
-                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
-                };
-                exception.* = err.toErrorInstance(globalObject).asObjectRef();
-                return .zero;
+                tcp.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
+                return promise_value;
             };
             tcp.poll_ref.ref(handlers.vm);
 
@@ -1253,8 +1243,7 @@ fn NewSocket(comptime ssl: bool) type {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }
         }
-        pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
-            JSC.markBinding(@src());
+        fn handleConnectError(this: *This, errno: c_int) void {
             log("onConnectError({d})", .{errno});
             if (this.detached) return;
             this.detached = true;
@@ -1270,10 +1259,9 @@ fn NewSocket(comptime ssl: bool) type {
                 .errno = errno,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
-
                 // For some reason errno is 0 which causes this to be success.
-                // Unix socket case wont hit this callback because it instantly errors.
-                .code = bun.String.static("ECONNREFUSED"),
+                // Unix socket emits ENOENT
+                .code = if (errno == @intFromEnum(bun.C.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
                 // .code = bun.String.static(@tagName(bun.sys.getErrno(errno))),
                 // .code = bun.String.static(@tagName(@as(bun.C.E, @enumFromInt(errno)))),
             };
@@ -1310,6 +1298,10 @@ fn NewSocket(comptime ssl: bool) type {
                 promise.rejectOnNextTickAsHandled(globalObject, err_);
                 this.has_pending_activity.store(false, .Release);
             }
+        }
+        pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
+            JSC.markBinding(@src());
+            this.handleConnectError(errno);
         }
 
         pub fn markActive(this: *This) void {
@@ -2062,6 +2054,84 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn disableRenegotiation(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = this.socket.ssl();
+            BoringSSL.SSL_set_renegotiate_mode(ssl_ptr, BoringSSL.ssl_renegotiate_never);
+            return JSValue.jsUndefined();
+        }
+
+        pub fn setVerifyMode(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const args = callframe.arguments(2);
+
+            if (args.len < 2) {
+                globalObject.throw("Expected requestCert and rejectUnauthorized arguments", .{});
+                return .zero;
+            }
+            const request_cert_js = args.ptr[0];
+            const reject_unauthorized_js = args.ptr[1];
+            if (!request_cert_js.isBoolean() or !reject_unauthorized_js.isBoolean()) {
+                globalObject.throw("Expected requestCert and rejectUnauthorized arguments to be boolean", .{});
+                return .zero;
+            }
+
+            const request_cert = request_cert_js.toBoolean();
+            const reject_unauthorized = request_cert_js.toBoolean();
+            var verify_mode: c_int = BoringSSL.SSL_VERIFY_NONE;
+            if (this.handlers.is_server) {
+                if (request_cert) {
+                    verify_mode = BoringSSL.SSL_VERIFY_PEER;
+                    if (reject_unauthorized)
+                        verify_mode |= BoringSSL.SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+                }
+            }
+            const ssl_ptr = this.socket.ssl();
+            // we always allow and check the SSL certificate after the handshake or renegotiation
+            BoringSSL.SSL_set_verify(ssl_ptr, verify_mode, alwaysAllowSSLVerifyCallback);
+            return JSValue.jsUndefined();
+        }
+
+        pub fn renegotiate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = this.socket.ssl();
+            BoringSSL.ERR_clear_error();
+            if (BoringSSL.SSL_renegotiate(ssl_ptr) != 1) {
+                globalObject.throwValue(getSSLException(globalObject, "SSL_renegotiate error"));
+                return .zero;
+            }
+            return JSValue.jsUndefined();
+        }
         pub fn getTLSTicket(
             this: *This,
             globalObject: *JSC.JSGlobalObject,
@@ -2160,7 +2230,7 @@ fn NewSocket(comptime ssl: bool) type {
             var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
             const result_size = BoringSSL.i2d_SSL_SESSION(session, &buffer_ptr);
-            std.debug.assert(result_size == size);
+            bun.assert(result_size == size);
             return buffer;
         }
 
@@ -2427,7 +2497,7 @@ fn NewSocket(comptime ssl: bool) type {
             const buffer_ptr = @as(*anyopaque, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
             const result_size = BoringSSL.SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size);
-            std.debug.assert(result_size == size);
+            bun.assert(result_size == size);
             return buffer;
         }
 
@@ -2459,7 +2529,7 @@ fn NewSocket(comptime ssl: bool) type {
             const buffer_ptr = @as(*anyopaque, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
             const result_size = BoringSSL.SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size);
-            std.debug.assert(result_size == size);
+            bun.assert(result_size == size);
             return buffer;
         }
 
@@ -2905,6 +2975,9 @@ fn NewSocket(comptime ssl: bool) type {
             // this will keep tls alive until socket.open() is called to start TLS certificate and the handshake process
             // open is not immediately called because we need to set bunSocketInternal
             tls.markActive();
+
+            // we're unrefing the original instance and refing the TLS instance
+            tls.poll_ref.ref(this.handlers.vm);
 
             // mark both instances on socket data
             new_socket.ext(WrappedSocket).?.* = .{ .tcp = raw, .tls = tls };

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 /**
  * Portions of these tests are derived from the [deno_task_shell](https://github.com/denoland/deno_task_shell/) tests, which are developed and maintained by the Deno authors.
  * Copyright 2018-2023 the Deno authors.
@@ -7,11 +6,12 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm } from "fs/promises";
-import { bunEnv, runWithErrorPromise, tempDirWithFiles } from "harness";
+import { mkdir, mkdtemp, realpath, rm, stat } from "fs/promises";
+import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
-import { TestBuilder, sortedShellOutput } from "./util";
+import { createTestBuilder, sortedShellOutput } from "./util";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 $.env(bunEnv);
 $.cwd(process.cwd());
@@ -35,7 +35,7 @@ afterAll(async () => {
   await rm(temp_dir, { force: true, recursive: true });
 });
 
-const BUN = process.argv0;
+const BUN = bunExe();
 
 describe("bunshell", () => {
   describe("concurrency", () => {
@@ -117,7 +117,7 @@ describe("bunshell", () => {
   });
 
   describe("quiet", async () => {
-    test.todo("basic", async () => {
+    test("basic", async () => {
       // Check its buffered
       {
         const { stdout, stderr } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;
@@ -261,6 +261,11 @@ describe("bunshell", () => {
       expect(stdout.toString("utf-8")).toEqual(`${haha}\n`);
     });
 
+    // #9823
+    TestBuilder.command`AUTH_COOKIE_SECUREALKJAKJDLASJDKLSAJD=false; echo $AUTH_COOKIE_SECUREALKJAKJDLASJDKLSAJD`
+      .stdout("false\n")
+      .runAsTest("long varname");
+
     // test("invalid lone surrogate fails", async () => {
     //   const err = await runWithErrorPromise(async () => {
     //     const loneSurrogate = randomLoneSurrogate();
@@ -347,23 +352,206 @@ describe("bunshell", () => {
     expect(stdout.toString()).toEqual(`noice\n`);
   });
 
-  describe("glob expansion", () => {
-    test("No matches should fail", async () => {
-      // Issue #8403: https://github.com/oven-sh/bun/issues/8403
-      await TestBuilder.command`ls *.sdfljsfsdf`.exitCode(1).stderr("bun: no matches found: *.sdfljsfsdf\n").run();
-    });
+  // Ported from GNU bash "quote.tests"
+  // https://github.com/bminor/bash/blob/f3b6bd19457e260b65d11f2712ec3da56cef463f/tests/quote.tests#L1
+  // Some backtick tests are skipped, because of insane behavior:
+  // For some reason, even though $(...) and `...` are suppoed to be equivalent,
+  // doing:
+  // echo "`echo 'foo\
+  // bar'`"
+  //
+  // gives:
+  // foobar
+  //
+  // While doing the same, but with $(...):
+  // echo "$(echo 'foo\
+  // bar')"
+  //
+  // gives:
+  // foo\
+  // bar
+  //
+  // I'm not sure why, this isn't documented behavior, so I'm choosing to ignore it.
+  describe("gnu_quote", () => {
+    // An unfortunate consequence of our use of String.raw and tagged template
+    // functions for the shell make it so that we have to use { raw: string } to do
+    // backtick command substitution
+    const BACKTICK = { raw: "`" };
 
-    test("Should work with a different cwd", async () => {
+    // Single Quote
+    TestBuilder.command`
+echo 'foo
+bar'
+echo 'foo
+bar'
+echo 'foo\
+bar'
+`
+      .stdout("foo\nbar\nfoo\nbar\nfoo\\\nbar\n")
+      .runAsTest("Single Quote");
+
+    TestBuilder.command`
+echo "foo
+bar"
+echo "foo
+bar"
+echo "foo\
+bar"
+`
+      .stdout("foo\nbar\nfoo\nbar\nfoobar\n")
+      .runAsTest("Double Quote");
+
+    TestBuilder.command`
+echo ${BACKTICK}echo 'foo
+bar'${BACKTICK}
+echo ${BACKTICK}echo 'foo
+bar'${BACKTICK}
+echo ${BACKTICK}echo 'foo\
+bar'${BACKTICK}
+`
+      .stdout(
+        `foo bar
+foo bar
+foobar\n`,
+      )
+      .todo("insane backtick behavior")
+      .runAsTest("Backslash Single Quote");
+
+    TestBuilder.command`
+echo "${BACKTICK}echo 'foo
+bar'${BACKTICK}"
+echo "${BACKTICK}echo 'foo
+bar'${BACKTICK}"
+echo "${BACKTICK}echo 'foo\
+bar'${BACKTICK}"
+`
+      .stdout(
+        `foo
+bar
+foo
+bar
+foobar\n`,
+      )
+      .todo("insane backtick behavior")
+      .runAsTest("Double Quote Backslash Single Quote");
+
+    TestBuilder.command`
+echo $(echo 'foo
+bar')
+echo $(echo 'foo
+bar')
+echo $(echo 'foo\
+bar')
+`
+      .stdout(
+        `foo bar
+foo bar
+foo\\ bar\n`,
+      )
+      .runAsTest("Dollar Paren Single Quote");
+
+    TestBuilder.command`
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo\
+bar')"
+`
+      .stdout(
+        `foo
+bar
+foo
+bar
+foo\\
+bar\n`,
+      )
+      .runAsTest("Dollar Paren Double Quote");
+
+    TestBuilder.command`
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo\
+bar')"
+`
+      .stdout(
+        `foo
+bar
+foo
+bar
+foo\\
+bar\n`,
+      )
+      .runAsTest("Double Quote Dollar Paren Single Quote");
+  });
+
+  describe("escaped_newline", () => {
+    const printArgs = /* ts */ `console.log(JSON.stringify(process.argv))`;
+
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    on a newline!
+  `
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!"]))
+      .runAsTest("single");
+
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    on a newline! \
+    and \
+    a few \
+    others!
+  `
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out =>
+        expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "and", "a", "few", "others!"]),
+      )
+      .runAsTest("many");
+
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    on a newline! \
+    ooga"
+booga"
+  `
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "ooga\nbooga"]))
+      .runAsTest("quotes");
+  });
+
+  describe("glob expansion", () => {
+    // Issue #8403: https://github.com/oven-sh/bun/issues/8403
+    TestBuilder.command`ls *.sdfljsfsdf`
+      .exitCode(1)
+      .stderr("bun: no matches found: *.sdfljsfsdf\n")
+      .runAsTest("No matches should fail");
+
+    TestBuilder.command`FOO=*.lolwut; echo $FOO`
+      .stdout("*.lolwut\n")
+      .runAsTest("No matches in assignment position should print out pattern");
+
+    TestBuilder.command`FOO=hi*; echo $FOO`
+      .ensureTempDir()
+      .stdout("hi*\n")
+      .runAsTest("Trailing asterisk with no matches");
+
+    TestBuilder.command`touch hihello; touch hifriends; FOO=hi*; echo $FOO`
+      .ensureTempDir()
+      .stdout(s => expect(s).toBeOneOf(["hihello hifriends\n", "hifriends hihello\n"]))
+      .runAsTest("Trailing asterisk with matches, inline");
+
+    TestBuilder.command`ls *.js`
       // Calling `ensureTempDir()` changes the cwd here
-      await TestBuilder.command`ls *.js`
-        .ensureTempDir()
-        .file("foo.js", "foo")
-        .file("bar.js", "bar")
-        .stdout(out => {
-          expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"));
-        })
-        .run();
-    });
+      .ensureTempDir()
+      .file("foo.js", "foo")
+      .file("bar.js", "bar")
+      .stdout(out => {
+        expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"));
+      })
+      .runAsTest("Should work with a different cwd");
   });
 
   describe("brace expansion", () => {
@@ -566,14 +754,12 @@ describe("deno_task", () => {
     TestBuilder.command`echo 1 && echo 2 || echo 3`.stdout("1\n2\n").runAsTest("echo 1 && echo 2 || echo 3");
     TestBuilder.command`echo 1 || echo 2 && echo 3`.stdout("1\n3\n").runAsTest("echo 1 || echo 2 && echo 3");
 
-    TestBuilder.command`echo 1 || (echo 2 && echo 3)`
-      .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
-      .runAsTest("or with subshell");
+    TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").runAsTest("or with subshell");
+    TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").runAsTest("or with subshell 2");
+    TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").runAsTest("conditional with subshell");
     TestBuilder.command`false || false || (echo 2 && false) || echo 3`
-      .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
-      .runAsTest("or with subshell 2");
-    // await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").run();
-    // await TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").run();
+      .stdout("2\n3\n")
+      .runAsTest("conditional with subshell2");
   });
 
   describe("command substitution", async () => {
@@ -612,9 +798,10 @@ describe("deno_task", () => {
 
     TestBuilder.command`echo 1 | echo 2 && echo 3`.stdout("2\n3\n").runAsTest("pipe in conditional");
 
-    // await TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_TEST_VAR=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
-    //   .stdout("1 2\n")
-    //   .run();
+    TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_DEBUG_QUIET_LOGS=1 BUN_TEST_VAR=1 ${BUN} -e 'await process.stdin.pipe(process.stdout)'`
+      .stdout("1 2\n")
+      .todo("& not supported")
+      .runAsTest("complicated pipeline");
 
     TestBuilder.command`echo 2 | echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
@@ -649,9 +836,12 @@ describe("deno_task", () => {
   });
 
   describe("redirects", async function igodf() {
-    // await TestBuilder.command`echo 5 6 7 > test.txt`.fileEquals("test.txt", "5 6 7\n").run();
+    TestBuilder.command`echo 5 6 7 > test.txt`.fileEquals("test.txt", "5 6 7\n").runAsTest("basic redirect");
 
-    // await TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`.stdout("1 2 3\n").fileEquals("test.txt", "1\n").run();
+    TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`
+      .stdout("1 2 3\n")
+      .fileEquals("test.txt", "1\n")
+      .runAsTest("basic redirect with &&");
 
     // subdir
     TestBuilder.command`mkdir subdir && cd subdir && echo 1 2 3 > test.txt`
@@ -793,8 +983,7 @@ describe("deno_task", () => {
 
   test("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
-    const code = /* ts */ `
-    import { $ } from 'bun'
+    const code = /* ts */ `import { $ } from 'bun'
 
     $.throws(true)
 
@@ -817,6 +1006,1168 @@ describe("deno_task", () => {
       .stdout(s => expect(s).toInclude(`[eval]:${lineNr}`))
       .run();
   });
+
+  test("big_data", async () => {
+    const writerCode = /* ts */ `
+
+    const writer = Bun.stdout.writer();
+    const buf = new Uint8Array(128 * 1024).fill('a'.charCodeAt(0))
+    for (let i = 0; i < 10; i++) {
+      writer.write(buf);
+      await writer.flush();
+    }
+    `;
+
+    const tmpdir = TestBuilder.tmpdir();
+    // I think writing 1mb of 'a's to the terminal breaks CI so redirect to a FD instead
+    const { stdout, stderr, exitCode } = await $`${BUN} -e ${writerCode} > ${tmpdir}/output.txt`.env(bunEnv);
+
+    expect(stderr.length).toEqual(0);
+    expect(stdout.length).toEqual(0);
+    expect(exitCode).toEqual(0);
+
+    const s = await stat(`${tmpdir}/output.txt`);
+    expect(s.size).toEqual(10 * 128 * 1024);
+  });
+
+  // https://github.com/oven-sh/bun/issues/9458
+  test("input", async () => {
+    const inputCode = /* ts */ `
+    const downArrow = '\\x1b[B';
+    const enterKey = '\\x0D';
+    await Bun.sleep(100)
+    const writer = Bun.stdout.writer();
+    writer.write(downArrow)
+    await Bun.sleep(100)
+    writer.write(enterKey)
+    writer.flush()
+    `;
+
+    const code = /* ts */ `
+    import { expect } from 'bun:test'
+    const expected = [
+      '\\x1b[B',
+      '\\x0D'
+    ]
+    let i = 0
+    const writer = Bun.stdout.writer();
+    process.stdin.on("data", async chunk => {
+      const input = chunk.toString();
+      expect(input).toEqual(expected[i++])
+      writer.write(input)
+      await writer.flush()
+    });
+    `;
+
+    const { stdout, stderr, exitCode } =
+      await Bun.$`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${inputCode} | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code}`;
+
+    expect(exitCode).toBe(0);
+    expect(stderr.length).toBe(0);
+    expect(stdout.toString()).toEqual("\x1b[B\x0D");
+  });
+});
+
+describe("if_clause", () => {
+  TestBuilder.command/* sh */ `
+# The name of the package we're interested in
+package_name=react
+
+filename=package.json
+
+if [[ -f $filename ]]; then
+  echo The file $filename exists and is a regular file.
+  echo Checking for $package_name in dependencies...
+
+  # Attempt to extract the package version from dependencies
+  dep_version=$(jq -r ".dependencies[\"$package_name\"]" $filename)
+
+  # If not found in dependencies, try devDependencies
+  if [[ -z $dep_version ]] || [[ $dep_version == null ]]; then
+    dep_version=$(jq -r ".devDependencies[\"$package_name\"]" $filename)
+  fi
+
+  # Check if we got a non-empty, non-null version string
+  if [[ -n $dep_version ]] && [[ $dep_version != null ]]; then
+    echo The package $package_name is listed as a dependency with version: $dep_version.
+  else
+    echo The package $package_name is not listed as a dependency.
+  fi
+else
+  echo The file $filename does not exist or is not a regular file.
+fi
+`
+    .file(
+      "package.json",
+      `{
+  "private": true,
+  "name": "bun",
+  "dependencies": {
+    "@vscode/debugadapter": "^1.61.0",
+    "esbuild": "^0.17.15",
+    "eslint": "^8.20.0",
+    "eslint-config-prettier": "^8.5.0",
+    "mitata": "^0.1.3",
+    "peechy": "0.4.34",
+    "prettier": "^3.2.5",
+    "react": "next",
+    "react-dom": "next",
+    "source-map-js": "^1.0.2",
+    "typescript": "^5.0.2"
+  },
+  "devDependencies": {
+  },
+  "scripts": {
+  }
+}
+`,
+    )
+    .stdout(
+      "The file package.json exists and is a regular file.\nChecking for react in dependencies...\nThe package react is listed as a dependency with version: next.\n",
+    );
+
+  TestBuilder.command`
+  if
+    echo cond;
+  then
+    echo then;
+  elif
+    echo elif;
+  then
+    echo elif then;
+  else
+    echo else;
+  fi`
+    .stdout("cond\nthen\n")
+    .runAsTest("basic");
+
+  TestBuilder.command`
+  if
+    echo cond
+  then
+    echo then
+  elif
+    echo elif
+  then
+    echo elif then
+  else
+    echo else
+  fi`
+    .stdout("cond\nthen\n")
+    .runAsTest("basic without semicolon");
+
+  TestBuilder.command`
+  if
+    lkfjslkdjfsldf
+  then
+    echo shouldnt see this
+  else
+    echo okay here
+  fi`
+    .stdout("okay here\n")
+    .stderr("bun: command not found: lkfjslkdjfsldf\n")
+    .runAsTest("else basic");
+
+  TestBuilder.command`
+  if
+    lkfjslkdjfsldf
+  then
+    echo shouldnt see this
+  elif
+    sdfkjsldf
+  then
+    echo shouldnt see this either
+  else
+    echo okay here
+  fi`
+    .stdout("okay here\n")
+    .stderr("bun: command not found: lkfjslkdjfsldf\nbun: command not found: sdfkjsldf\n")
+    .runAsTest("else");
+
+  TestBuilder.command`
+  if
+    echo hi
+  then
+    echo hey
+  else
+    echo uh oh
+  fi | cat
+  `
+    .stdout("hi\nhey\n")
+    .runAsTest("in pipeline");
+
+  TestBuilder.command`if echo hi; then echo lmao; fi && echo nice`
+    .stdout("hi\nlmao\nnice\n")
+    .runAsTest("no else, cond true");
+
+  TestBuilder.command`if BUNISBAD; then echo not true; fi && echo bun is good`
+    .stdout("bun is good\n")
+    .stderr("bun: command not found: BUNISBAD\n")
+    .runAsTest("no else, cond false");
+
+  TestBuilder.command`if [[ -f package.json ]]
+  then
+    a
+    b
+  else
+    c
+  fi`
+    .exitCode(1)
+    .file("package.json", "lol")
+    .stderr("bun: command not found: a\nbun: command not found: b\n")
+    .runAsTest("multi statement then");
+
+  TestBuilder.command`if
+    [[ -f package.json ]]
+    [[ -f lkdfjlskdf ]]
+  then
+    echo yeah...
+    echo nope!
+  else
+    echo okay
+    echo makes sense!
+  fi`
+    .file("package.json", "lol")
+    .stdout("okay\nmakes sense!\n")
+    .runAsTest("multi statement in all branches");
+
+  ["if", "else", "elif", "then", "fi"].map(tok => {
+    TestBuilder.command`"${{ raw: tok }}"`
+      .stderr(`bun: command not found: ${tok}\n`)
+      .exitCode(1)
+      .runAsTest(`quoted ${tok} doesn't break`);
+
+    TestBuilder.command`echo ${{ raw: "lksdfjklsdjf" + tok }}`
+      .stdout(`lksdfjklsdjf${tok}\n`)
+      .runAsTest(`${tok} in script does not break parsing 1`);
+
+    TestBuilder.command`echo ${{ raw: "hi " + tok }}`
+      .stdout(`hi ${tok}\n`)
+      .runAsTest(`${tok} in script does not break parsing 2`);
+
+    TestBuilder.command`echo ${{ raw: tok + " hi" }}`
+      .stdout(`${tok} hi\n`)
+      .runAsTest(`${tok} in script does not break parsing 3`);
+  });
+
+  TestBuilder.command`echo fif hi`.stdout("fif hi\n").runAsTest("parsing edge case");
+
+  // Ported from https://github.com/posix-shell-tests/posix-shell-tests/
+  describe("ported from posix shell tests", () => {
+    // test_oE 'execution path of if, true'
+    TestBuilder.command`if echo foo; then echo bar; fi`.stdout("foo\nbar\n").runAsTest("execution path of if, true");
+
+    // test_oE 'execution path of if, false'
+    TestBuilder.command`if ! echo foo; then echo bar; fi`
+      .stdout("foo\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if, false");
+
+    // test_oE 'execution path of if-else, true'
+    TestBuilder.command`if echo foo; then echo bar; else echo baz; fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("execution path of if-else, true");
+
+    // test_oE 'execution path of if-else, false'
+    TestBuilder.command`if ! echo foo; then echo bar; else echo baz; fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-else, false");
+
+    // test_oE 'execution path of if-elif, true'
+    TestBuilder.command`if echo 1; then echo 2; elif echo 3; then echo 4; fi`
+      .stdout("1\n2\n")
+      .runAsTest("execution path of if-elif, true");
+
+    // test_oE 'execution path of if-elif, false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif echo 3; then echo 4; fi`
+      .stdout("1\n3\n4\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif, false-true");
+
+    // test_oE 'execution path of if-elif, false-false'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; fi`
+      .stdout("1\n3\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif, false-false");
+
+    // test_oE 'execution path of if-elif-else, true'
+    TestBuilder.command`if echo 1; then echo 2; elif echo 3; then echo 4; else echo 5; fi`
+      .stdout("1\n2\n")
+      .runAsTest("execution path of if-elif-else, true");
+
+    // test_oE 'execution path of if-elif-else, false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif echo 3; then echo 4; else echo 5; fi`
+      .stdout("1\n3\n4\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-else, false-true");
+
+    // test_oE 'execution path of if-elif-else, false-false'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; else echo 5; fi`
+      .stdout("1\n3\n5\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-else, false-false");
+
+    // test_oE 'execution path of if-elif-elif, true'
+    TestBuilder.command`if echo 1; then echo 2; elif echo 3; then echo 4; elif echo 5; then echo 6; fi`
+      .stdout("1\n2\n")
+      .runAsTest("execution path of if-elif-elif, true");
+
+    // test_oE 'execution path of if-elif-elif, false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif echo 3; then echo 4; elif echo 5; then echo 6; fi`
+      .stdout("1\n3\n4\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif, false-true");
+
+    // test_oE 'execution path of if-elif-elif, false-false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; elif echo 5; then echo 6; fi`
+      .stdout("1\n3\n5\n6\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif, false-false-true");
+
+    // test_oE 'execution path of if-elif-elif, false-false-false'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; elif ! echo 5; then echo 6; fi`
+      .stdout("1\n3\n5\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif, false-false-false");
+
+    // test_oE 'execution path of if-elif-elif-else, true'
+    TestBuilder.command`if echo 1; then echo 2; elif echo 3; then echo 4; elif echo 5; then echo 6; else echo 7; fi`
+      .stdout("1\n2\n")
+      .runAsTest("execution path of if-elif-elif-else, true");
+
+    // test_oE 'execution path of if-elif-elif-else, false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif echo 3; then echo 4; elif echo 5; then echo 6; else echo 7; fi`
+      .stdout("1\n3\n4\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif-else, false-true");
+
+    // test_oE 'execution path of if-elif-elif-else, false-false-true'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; elif echo 5; then echo 6; else echo 7; fi`
+      .stdout("1\n3\n5\n6\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif-else, false-false-true");
+
+    // test_oE 'execution path of if-elif-elif-else, false-false-false'
+    TestBuilder.command`if ! echo 1; then echo 2; elif ! echo 3; then echo 4; elif ! echo 5; then echo 6; else echo 7; fi`
+      .stdout("1\n3\n5\n7\n")
+      .todo("! not supported")
+      .runAsTest("execution path of if-elif-elif-else, false-false-false");
+
+    const exit = (code: number): { raw: string } => ({
+      raw:
+        process.platform !== "win32"
+          ? `bash -c 'exit $1' -- ${code}`
+          : `BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.exit(${code})'`,
+    });
+
+    // test_x -e 0 'exit status of if, true-true'
+    TestBuilder.command`if ${exit(0)}; then ${exit(0)}; fi`.exitCode(0).runAsTest("exit status of if, true-true");
+    // test_x -e 1 'exit status of if, true-false'
+    TestBuilder.command`if ${exit(0)}; then ${exit(1)}; fi`.exitCode(1).runAsTest("exit status of if, true-false");
+
+    // test_x -e 0 'exit status of if, false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; fi`.exitCode(0).runAsTest("exit status of if, false");
+
+    // test_x -e 0 'exit status of if-else, true-true'
+    TestBuilder.command`if ${exit(0)}; then ${exit(0)}; else ${exit(1)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-else, true-true");
+
+    // test_x -e 1 'exit status of if-else, true-false'
+    TestBuilder.command`if ${exit(0)}; then ${exit(1)}; else ${exit(2)}; fi`
+      .exitCode(1)
+      .runAsTest("exit status of if-else, true-false");
+
+    // test_x -e 0 'exit status of if-else, false-true'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; else ${exit(0)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-else, false-true");
+
+    // test_x -e 2 'exit status of if-else, false-false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(0)}; else ${exit(2)}; fi`
+      .exitCode(2)
+      .runAsTest("exit status of if-else, false-false");
+
+    // test_x -e 0 'exit status of if-elif, true-true'
+    TestBuilder.command`if ${exit(0)}; then ${exit(0)}; elif ${exit(1)}; then ${exit(2)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif, true-true");
+
+    // test_x -e 1 'exit status of if-elif, true-false'
+    TestBuilder.command`if ${exit(0)}; then ${exit(1)}; elif ${exit(2)}; then ${exit(3)}; fi`
+      .exitCode(1)
+      .runAsTest("exit status of if-elif, true-false");
+
+    // test_x -e 0 'exit status of if-elif, false-true-true'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(0)}; then ${exit(0)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif, false-true-true");
+
+    // test_x -e 3 'exit status of if-elif, false-true-false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(0)}; then ${exit(3)}; fi`
+      .exitCode(3)
+      .runAsTest("exit status of if-elif, false-true-false");
+
+    // test_x -e 0 'exit status of if-elif-elif-else, true-true'
+    TestBuilder.command`if ${exit(0)}; then ${exit(0)}; elif ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; else ${exit(5)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif-elif-else, true-true");
+
+    // test_x -e 11 'exit status of if-elif-elif-else, true-false'
+    TestBuilder.command`if ${exit(0)}; then ${exit(11)}; elif ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; else ${exit(5)}; fi`
+      .exitCode(11)
+      .runAsTest("exit status of if-elif-elif-else, true-false");
+
+    // test_x -e 0 'exit status of if-elif-elif-else, false-true-true'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(0)}; then ${exit(0)}; elif ${exit(3)}; then ${exit(4)}; else ${exit(5)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif-elif-else, false-true-true");
+
+    // test_x -e 13 'exit status of if-elif-elif-else, false-true-false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(0)}; then ${exit(13)}; elif ${exit(3)}; then ${exit(4)}; else ${exit(5)}; fi`
+      .exitCode(13)
+      .runAsTest("exit status of if-elif-elif-else, false-true-false");
+
+    // test_x -e 0 'exit status of if-elif-elif-else, false-false-true-true'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; elif ${exit(0)}; then ${exit(0)}; else ${exit(5)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif-elif-else, false-false-true-true");
+
+    // test_x -e 5 'exit status of if-elif-elif-else, false-false-true-false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; elif ${exit(0)}; then ${exit(5)}; else ${exit(6)}; fi`
+      .exitCode(5)
+      .runAsTest("exit status of if-elif-elif-else, false-false-true-false");
+
+    // test_x -e 0 'exit status of if-elif-elif-else, false-false-false-true'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; elif ${exit(5)}; then ${exit(6)}; else ${exit(0)}; fi`
+      .exitCode(0)
+      .runAsTest("exit status of if-elif-elif-else, false-false-false-true");
+
+    // test_x -e 7 'exit status of if-elif-elif-else, false-false-false-false'
+    TestBuilder.command`if ${exit(1)}; then ${exit(2)}; elif ${exit(3)}; then ${exit(4)}; elif ${exit(5)}; then ${exit(6)}; else ${exit(7)}; fi`
+      .exitCode(7)
+      .runAsTest("exit status of if-elif-elif-else, false-false-false-false");
+
+    // test_oE 'linebreak after if'
+    TestBuilder.command`if
+echo foo;then echo bar;fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("linebreak after if");
+
+    // test_oE 'linebreak before then (after if)'
+    TestBuilder.command`if echo foo
+then echo bar;fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("linebreak before then (after if)");
+
+    // test_oE 'linebreak after then (after if)'
+    TestBuilder.command`if echo foo;then
+echo bar;fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("linebreak after then (after if)");
+
+    // test_oE 'linebreak before fi (after then)'
+    TestBuilder.command`if echo foo;then echo bar
+fi`
+      .stdout("foo\nbar\n")
+      .runAsTest("linebreak before fi (after then)");
+
+    // test_oE 'linebreak before elif'
+    TestBuilder.command`if ! echo foo;then echo bar
+elif echo baz;then echo qux;fi`
+      .stdout("foo\nbaz\nqux\n")
+      .todo("! not supported")
+      .runAsTest("linebreak before elif");
+
+    // test_oE 'linebreak after elif'
+    TestBuilder.command`if ! echo foo;then echo bar;elif
+echo baz;then echo qux;fi`
+      .stdout("foo\nbaz\nqux\n")
+      .todo("! not supported")
+      .runAsTest("linebreak after elif");
+
+    // test_oE 'linebreak before then (after elif)'
+    TestBuilder.command`if ! echo foo;then echo bar;elif echo baz
+then echo qux;fi`
+      .stdout("foo\nbaz\nqux\n")
+      .todo("! not supported")
+      .runAsTest("linebreak before then (after elif)");
+
+    // test_oE 'linebreak after then (after elif)'
+    TestBuilder.command`if ! echo foo;then echo bar;elif echo baz;then
+echo qux;fi`
+      .stdout("foo\nbaz\nqux\n")
+      .todo("! not supported")
+      .runAsTest("linebreak after then (after elif)");
+
+    // test_oE 'linebreak before else'
+    TestBuilder.command`if ! echo foo;then echo bar
+else echo baz;fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("linebreak before else");
+
+    // test_oE 'linebreak after else'
+    TestBuilder.command`if ! echo foo;then echo bar;else
+echo baz;fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("linebreak after else");
+
+    // test_oE 'linebreak before fi (after else)'
+    TestBuilder.command`if ! echo foo;then echo bar;else echo baz
+fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("linebreak before fi (after else)");
+
+    // test_oE 'command ending with asynchronous command (after if)'
+    TestBuilder.command`if echo foo&then wait;fi`
+      .stdout("foo\n")
+      .todo("wait not implemented")
+      .runAsTest("command ending with asynchronous command (after if)");
+
+    // test_oE 'command ending with asynchronous command (after then)'
+    TestBuilder.command`if echo foo;then echo bar&fi;wait`
+      .stdout("foo\nbar\n")
+      .todo("wait not implementeeed")
+      .runAsTest("command ending with asynchronous command (after then)");
+
+    // test_oE 'command ending with asynchronous command (after elif)'
+    TestBuilder.command`if ! echo foo;then echo bar;elif echo baz&then wait;fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("command ending with asynchronous command (after elif)");
+
+    // test_oE 'command ending with asynchronous command (after else)'
+    TestBuilder.command`if ! echo foo;then echo bar;elif ! echo baz;then echo qux;else echo quux;fi;wait`
+      .stdout("foo\nbaz\nquux\n")
+      .todo("! not supported")
+      .runAsTest("command ending with asynchronous command (after else)");
+
+    // test_oE 'more than one inner command'
+    TestBuilder.command`if echo 1; echo 2
+echo 3; ! echo 4; then echo x1; echo x2
+echo x3; echo x4; elif echo 5; echo 6
+echo 7; echo 8; then echo 9; echo 10
+echo 11; echo 12; else echo x5; echo x6
+echo x7; echo x8; fi`
+      .stdout("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n")
+      .todo("! not supported")
+      .runAsTest("more than one inner command");
+
+    // test_oE 'nest between if and then'
+    TestBuilder.command`if { echo foo; } then echo bar; fi`
+      .stdout("foo\nbar\n")
+      .todo("grouping with { and } not supported yet")
+      .runAsTest("nest between if and then");
+
+    // test_oE 'nest between then and fi'
+    TestBuilder.command`if echo foo; then { echo bar; } fi`
+      .stdout("foo\nbar\n")
+      .todo("grouping with { and } not supported yet")
+      .runAsTest("nest between then and fi");
+
+    // test_oE 'nest between then and elif'
+    TestBuilder.command`if echo foo; then { echo bar; } elif echo baz; then echo qux; fi`
+      .stdout("foo\nbar\n")
+      .todo("grouping with { and } not supported yet")
+      .runAsTest("nest between then and elif");
+
+    // test_oE 'nest between elif and then'
+    TestBuilder.command`if echo foo; then echo bar; elif { echo baz; } then echo qux; fi`
+      .stdout("foo\nbar\n")
+      .todo("grouping with { and } not supported yet")
+      .runAsTest("nest between elif and then");
+
+    // test_oE 'nest between then and else'
+    TestBuilder.command`if ! echo foo; then { echo bar; } else echo baz; fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("nest between then and else");
+
+    // test_oE 'nest between then and else'
+    TestBuilder.command`if ! echo foo; then echo bar; else { echo baz; } fi`
+      .stdout("foo\nbaz\n")
+      .todo("! not supported")
+      .runAsTest("nest between then and else");
+
+    // test_oE 'redirection on if'
+    TestBuilder.command`if echo foo
+then echo bar
+else echo baz
+fi >redir_out
+cat redir_out`
+      .stdout("foo\nbar\n")
+      .todo("redirecting if-else not supported yet")
+      .runAsTest("redirection on if");
+  });
+});
+
+describe("condexprs", () => {
+  TestBuilder.command`[[ -f package.json ]] && echo yes!`.file("package.json", "hi").stdout("yes!\n").runAsTest("-f");
+  TestBuilder.command`[[ -f mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-f non-existent");
+
+  TestBuilder.command`[[ -d mydir ]] && echo yes!`.directory("mydir").stdout("yes!\n").runAsTest("-d");
+  TestBuilder.command`[[ -d mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-d non-existent");
+
+  TestBuilder.command`[[ -c /dev/null ]] && echo yes!`.stdout("yes!\n").runAsTest("-c");
+  TestBuilder.command`[[ -c lol ]] && echo yes!`.exitCode(1).file("lol", "lol").runAsTest("-c not character device");
+  TestBuilder.command`[[ -c mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-c non-existent");
+
+  TestBuilder.command`FOO=""; [[ -z $FOO ]] && echo yes!`.stdout("yes!\n").runAsTest("-z");
+  TestBuilder.command`[[ -z "skldjfldsf" ]] && echo yes!`.exitCode(1).runAsTest("-z fail");
+
+  TestBuilder.command`FOO="lkjdflskdjf"; [[ -n $FOO ]] && echo yes!`.stdout("yes!\n").runAsTest("-n");
+  TestBuilder.command`FOO="" [[ -n $FOO ]] && echo yes!`.exitCode(1).runAsTest("-n fail");
+
+  TestBuilder.command`[[ -n hey ]] | echo hi | cat`.stdout("hi\n").runAsTest("precedence: pipeline");
+
+  TestBuilder.command`[[ foo == foo ]] && echo yes!`.stdout("yes!\n").runAsTest("==");
+  TestBuilder.command`[[ foo == lol ]] && echo yes!`.exitCode(1).runAsTest("== fail");
+  TestBuilder.command`[[ foo != foo ]] && echo yes!`.exitCode(1).runAsTest("!= fail");
+  TestBuilder.command`[[ lmao != foo ]] && echo yes!`.stdout("yes!\n").runAsTest("!=");
+
+  TestBuilder.command`LOL=; [[ $LOl == $LOL ]] && echo yes!`.stdout("yes!\n").runAsTest("== empty");
+  TestBuilder.command`LOL=; [[ $LOl != $LOL ]] && echo yes!`.exitCode(1).runAsTest("!= empty");
+
+  describe.todo("ported from GNU bash", () => {
+    TestBuilder.command`
+    [[ foo > bar && $PWD -ef . ]]
+    `
+      .exitCode(0)
+      .runAsTest("this one is straight out of the ksh88 book");
+
+    TestBuilder.command`
+    [[ x ]]
+    `
+      .exitCode(0)
+      .runAsTest("[[ x ]] is equivalent to [[ -n x ]]");
+
+    TestBuilder.command`[[ ! x ]]`.exitCode(1).runAsTest("# [[ ! x ]] is equivalent to [[ ! -n x ]]");
+
+    // tests.ts
+
+    TestBuilder.command`[[ ! x || x ]]`
+      .exitCode(0)
+      .runAsTest("! binds tighter than test/[ -- it binds to a term, not an expression");
+
+    TestBuilder.command`
+[[ ! 1 -eq 1 ]]; echo $?
+[[ ! ! 1 -eq 1 ]]; echo $?
+`
+      .stdout("1")
+      .stdout("0")
+      .runAsTest("! toggles on and off rather than just setting an 'invert result' flag");
+
+    TestBuilder.command`
+[[ ! ! ! 1 -eq 1 ]]; echo $?
+[[ ! ! ! ! 1 -eq 1 ]]; echo $?
+`
+      .stdout("1")
+      .stdout("0")
+      .runAsTest("! toggles on and off rather than just setting an 'invert result' flag");
+
+    TestBuilder.command`[[ a ]]`.exitCode(0).runAsTest("parenthesized terms didn't work right until post-2.04");
+    TestBuilder.command`[[ (a) ]]`.exitCode(0).runAsTest("parenthesized terms didn't work right until post-2.04");
+    TestBuilder.command`[[ -n a ]]`.exitCode(0).runAsTest("parenthesized terms didn't work right until post-2.04");
+    TestBuilder.command`[[ (-n a) ]]`.exitCode(0).runAsTest("parenthesized terms didn't work right until post-2.04");
+
+    TestBuilder.command`[[ -n $UNSET ]]`.exitCode(1).runAsTest("unset variables don't need to be quoted");
+    TestBuilder.command`[[ -z $UNSET ]]`.exitCode(0).runAsTest("unset variables don't need to be quoted");
+
+    TestBuilder.command`[[ $TDIR == /usr/homes/* ]]`
+      .exitCode(0)
+      .runAsTest("the ==/= and != operators do pattern matching");
+    TestBuilder.command`[[ $TDIR == /usr/homes/\\* ]]`
+      .exitCode(1)
+      .runAsTest("...but you can quote any part of the pattern to have it matched as a string");
+    TestBuilder.command`[[ $TDIR == '/usr/homes/*' ]]`
+      .exitCode(1)
+      .runAsTest("...but you can quote any part of the pattern to have it matched as a string");
+
+    TestBuilder.command`[[ -n $UNSET && $UNSET == foo ]]`
+      .exitCode(1)
+      .runAsTest("if the first part of && fails, the second is not executed");
+    TestBuilder.command`[[ -z $UNSET && $UNSET == foo ]]`
+      .exitCode(1)
+      .runAsTest("if the first part of && fails, the second is not executed");
+
+    TestBuilder.command`[[ -z $UNSET || -d $PWD ]]`
+      .exitCode(0)
+      .runAsTest("if the first part of || succeeds, the second is not executed");
+
+    // TestBuilder.command`[[ -n $TDIR || $HOME -ef ${H*} ]]`.exitCode(0).runAsTest("if the rhs were executed, it would be an error");
+    // TestBuilder.command`[[ -n $TDIR && -z $UNSET || $HOME -ef ${H*} ]]`.exitCode(0).runAsTest("if the rhs were executed, it would be an error");
+
+    TestBuilder.command`[[ -n $TDIR && -n $UNSET || $TDIR -ef . ]]`
+      .exitCode(0)
+      .runAsTest("&& has a higher parsing precedence than ||");
+    TestBuilder.command`[[ -n $TDIR || -n $UNSET && $PWD -ef xyz ]]`
+      .exitCode(1)
+      .runAsTest("...but expressions in parentheses may be used to override precedence rules");
+    TestBuilder.command`[[ ( -n $TDIR || -n $UNSET ) && $PWD -ef xyz ]]`
+      .exitCode(1)
+      .runAsTest("...but expressions in parentheses may be used to override precedence rules");
+
+    TestBuilder.command`
+unset IVAR A
+[[ 7 -gt $IVAR ]]
+`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+unset IVAR A
+[[ $IVAR -gt 7 ]]
+`
+      .exitCode(1)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+IVAR=4
+[[ $IVAR -gt 7 ]]
+`
+      .exitCode(1)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`[[ 7 -eq 4+3 ]]`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`[[ 7 -eq 4+ ]]`
+      .exitCode(1)
+      .stdout('./cond.tests: line 122: [[: 4+: syntax error: operand expected (error token is "+")')
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+IVAR=4+3
+[[ $IVAR -eq 7 ]]
+`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+A=7
+[[ $IVAR -eq A ]]
+`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`[[ "$IVAR" -eq "7" ]]`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+A=7
+[[ "$IVAR" -eq "A" ]]
+`
+      .exitCode(0)
+      .runAsTest(
+        "some arithmetic tests for completeness -- see what happens with missing operands, bad expressions, makes sure arguments are evaluated as arithmetic expressions, etc.",
+      );
+
+    TestBuilder.command`
+unset IVAR A
+[[ $filename == *.c ]]
+`
+      .exitCode(1)
+      .runAsTest("more pattern matching tests");
+
+    TestBuilder.command`
+filename=patmatch.c
+[[ $filename == *.c ]]
+`
+      .exitCode(0)
+      .runAsTest("more pattern matching tests");
+
+    TestBuilder.command`
+shopt -s extglob
+arg=-7
+[[ $arg == -+([0-9]) ]]
+`
+      .exitCode(0)
+      .runAsTest("the extended globbing features may be used when matching patterns");
+
+    TestBuilder.command`
+shopt -s extglob
+arg=-H
+[[ $arg == -+([0-9]) ]]
+`
+      .exitCode(1)
+      .runAsTest("the extended globbing features may be used when matching patterns");
+
+    TestBuilder.command`
+shopt -s extglob
+arg=+4
+[[ $arg == ++([0-9]) ]]
+`
+      .exitCode(0)
+      .runAsTest("the extended globbing features may be used when matching patterns");
+
+    TestBuilder.command`
+STR=file.c
+PAT=
+if [[ $STR = $PAT ]]; then
+        echo oops
+fi
+`.runAsTest("make sure the null string is never matched if the string is not null");
+
+    TestBuilder.command`
+STR=
+PAT=
+if [[ $STR = $PAT ]]; then
+        echo ok
+fi
+`
+      .stdout("ok")
+      .runAsTest("but that if the string is null, a null pattern is matched correctly");
+
+    // TestBuilder.command`
+    // [[ jbig2dec-0.9-i586-001.tgz =~ ([^-]+)-([^-]+)-([^-]+)-0*([1-9][0-9]*)\.tgz ]]
+    // echo ${BASH_REMATCH[1]}
+    // `
+    //   .stdout("jbig2dec")
+    //   .runAsTest("test the regular expression conditional operator");
+
+    // TestBuilder.command`
+    // [[ jbig2dec-0.9-i586-001.tgz =~ \\([^-]+\\)-\\([^-]+\\)-\\([^-]+\\)-0*\\([1-9][0-9]*\\)\\.tgz ]]
+    // echo ${BASH_REMATCH[1]}
+    // `
+    //   .runAsTest("this shouldn't echo anything");
+
+    // TestBuilder.command`
+    // LDD_BASH="       linux-gate.so.1 =>  (0xffffe000)
+    //        libreadline.so.5 => /lib/libreadline.so.5 (0xb7f91000)
+    //        libhistory.so.5 => /lib/libhistory.so.5 (0xb7f8a000)
+    //        libncurses.so.5 => /lib/libncurses.so.5 (0xb7f55000)
+    //        libdl.so.2 => /lib/libdl.so.2 (0xb7f51000)
+    //        libc.so.6 => /lib/libc.so.6 (0xb7e34000)
+    //        /lib/ld-linux.so.2 (0xb7fd0000)"
+    // [[ "$LDD_BASH" =~ "libc" ]] && echo "found 1"
+    // echo ${BASH_REMATCH[@]}
+    // `
+    //   .stdout("found 1")
+    //   .stdout("libc")
+    //   .runAsTest("test the regular expression conditional operator");
+
+    // TestBuilder.command`
+    // LDD_BASH="       linux-gate.so.1 =>  (0xffffe000)
+    //        libreadline.so.5 => /lib/libreadline.so.5 (0xb7f91000)
+    //        libhistory.so.5 => /lib/libhistory.so.5 (0xb7f8a000)
+    //        libncurses.so.5 => /lib/libncurses.so.5 (0xb7f55000)
+    //        libdl.so.2 => /lib/libdl.so.2 (0xb7f51000)
+    //        libc.so.6 => /lib/libc.so.6 (0xb7e34000)
+    //        /lib/ld-linux.so.2 (0xb7fd0000)"
+    // [[ "$LDD_BASH" =~ libc ]] && echo "found 2"
+    // echo ${BASH_REMATCH[@]}
+    // `
+    //   .stdout("found 2")
+    //   .stdout("libc")
+    //   .runAsTest("test the regular expression conditional operator");
+
+    TestBuilder.command`
+if [[ "123abc" == *?(a)bc ]]; then echo ok 42; else echo bad 42; fi
+if [[ "123abc" == *?(a)bc ]]; then echo ok 43; else echo bad 43; fi
+`
+      .stdout("ok 42")
+      .stdout("ok 43")
+      .runAsTest("bug in all versions up to and including bash-2.05b");
+
+    // TestBuilder.command`
+    // match() { [[ $ 1 == $2 ]]; }
+    // match $'? *x\1y\177z' $'??\\*\\x\\\1\\y\\\177\\z' || echo bad 44
+
+    // foo=""
+    // [[ bar == *"${foo,,}"* ]] && echo ok 1
+    // [[ bar == *${foo,,}* ]] && echo ok 2
+
+    // shopt -s extquote
+    // bs='\\'
+    // del=$'\177'
+    // [[ bar == *$bs"$del"* ]] || echo ok 3
+    // [[ "" == "$foo" ]] && echo ok 4
+    // [[ "$del" == "${foo,,}" ]] || echo ok 5
+
+    // # allow reserved words after a conditional command just because
+    // if [[ str ]] then [[ str ]] fi
+    // `
+    //   .stdout("ok 1")
+    //   .stdout("ok 2")
+    //   .stdout("ok 3")
+    //   .stdout("ok 4")
+    //   .stdout("ok 5")
+    //   .runAsTest("various tests");
+  });
+});
+
+describe("subshell", () => {
+  const sharppkgjson = /* json */ `{
+    "name": "sharp-test",
+    "module": "index.ts",
+    "type": "module",
+    "dependencies": {
+      "sharp": "^0.33.3"
+    }
+  }`;
+
+  TestBuilder.command/* sh */ `
+  mkdir sharp-test
+  cd sharp-test
+  echo ${sharppkgjson} > package.json
+  ${BUN} i
+  `
+    .ensureTempDir()
+    .stdout(out => expect(out).toInclude("+ sharp@0.33.3"))
+    .stderr(() => {})
+    .exitCode(0)
+    .env(bunEnv)
+    .runAsTest("sharp");
+
+  TestBuilder.command/* sh */ `( ( ( ( echo HI! ) ) ) )`.stdout("HI!\n").runAsTest("multiple levels");
+  TestBuilder.command/* sh */ `(
+    echo HELLO! ;
+    echo HELLO AGAIN!
+    )`
+    .stdout("HELLO!\nHELLO AGAIN!\n")
+    .runAsTest("multiline");
+  TestBuilder.command/* sh */ `(exit 42)`.exitCode(42).runAsTest("exit code");
+  TestBuilder.command/* sh */ `(exit 42); echo hi`.exitCode(0).stdout("hi\n").runAsTest("exit code 2");
+  TestBuilder.command/* sh */ `
+  VAR1=VALUE1
+  VAR2=VALUE2
+  VAR3=VALUE3
+  (
+    echo $VAR1 $VAR2 $VAR3
+    VAR1='you cant'
+    VAR2='see me'
+    VAR3='my time is now'
+    echo $VAR1 $VAR2 $VAR3
+  )
+  echo $VAR1 $VAR2 $VAR3
+  `
+    .stdout("VALUE1 VALUE2 VALUE3\nyou cant see me my time is now\nVALUE1 VALUE2 VALUE3\n")
+    .runAsTest("copy of environment");
+
+  TestBuilder.command/* sh */ `
+  mkdir foo
+  (
+    echo $PWD
+    cd foo
+    echo $PWD
+  )
+  echo $PWD
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}foo\n$TEMP_DIR\n`)
+    .runAsTest("does not change cwd");
+
+  TestBuilder.command`
+  BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log(process.env.FOO)"}
+
+  (
+    export FOO=bar
+    BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log(process.env.FOO)"}
+  )
+
+
+  BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log(process.env.FOO)"}
+  `
+    .stdout("undefined\nbar\nundefined\n")
+    .runAsTest("does not modify export env of parent");
+
+  TestBuilder.command`\(echo hi \)`.stderr("bun: command not found: (echo\n").exitCode(1).runAsTest("escaped subshell");
+  TestBuilder.command`echo \\\(hi\\\)`.stdout("\\(hi\\)\n").runAsTest("escaped subshell 2");
+
+  TestBuilder.command/* sh */ `
+  mkdir dir
+  (
+    cd dir
+    pwd | cat | cat
+  )
+  pwd
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
+    .runAsTest("pipeline in subshell");
+
+  TestBuilder.command/* sh */ `
+  mkdir dir
+  (pwd) | cat
+  (cd dir; pwd) | cat
+  pwd
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
+    .runAsTest("subshell in pipeline");
+
+  TestBuilder.command/* sh */ `
+  mkdir dir
+  (pwd) | cat
+  (cd dir; pwd) | cat
+  pwd
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
+    .runAsTest("subshell in pipeline");
+
+  TestBuilder.command/* sh */ `
+  mkdir foo
+  ( ( (cd foo ; pwd) | cat) ) | ( ( (cat) ) | cat )
+
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR${sep}foo\n`)
+    .runAsTest("imbricated subshells and pipelines");
+
+  TestBuilder.command/* sh */ `
+  echo (echo)
+  `
+    .error("Unexpected token: `(`")
+    .runAsTest("Invalid subshell use");
+
+  describe("ported", () => {
+    // test_oE 'effect of subshell'
+    TestBuilder.command/* sh */ `
+  a=1
+  # (a=2; echo $a; exit; echo not reached)
+  # NOTE: We actually implemented exit wrong so changing this for now until we fix it
+  (a=2; echo $a; exit; echo reached)
+  echo $a
+  `
+      .stdout("2\nreached\n1\n")
+      .runAsTest("effect of subshell");
+
+    // test_x -e 23 'exit status of subshell'
+    TestBuilder.command/* sh */ `
+  (true; exit 23)
+  `
+      .exitCode(23)
+      .runAsTest("exit status of subshell");
+
+    // test_oE 'redirection on subshell'
+    TestBuilder.command/* sh */ `
+  (echo 1; echo 2; echo 3; echo 4) >sub_out
+  # (tail -n 2) <sub_out
+  cat sub_out
+  `
+      .error("Subshells with redirections are currently not supported. Please open a GitHub issue.")
+      // .stdout("1\n2\n3\n4\n")
+      .runAsTest("redirection on subshell");
+
+    // test_oE 'subshell ending with semicolon'
+    TestBuilder.command/* sh */ `
+(echo foo;)
+`
+      .stdout("foo\n")
+      .runAsTest("subshell ending with semicolon");
+
+    // test_oE 'subshell ending with asynchronous list'
+    TestBuilder.command/* sh */ `
+mkfifo fifo1
+(echo foo >fifo1&)
+cat fifo1
+`
+      .stdout("foo\n")
+      .todo("async commands not implemented yet")
+      .runAsTest("subshell ending with asynchronous list");
+
+    // test_oE 'newlines in subshell'
+    TestBuilder.command/* sh */ `
+(
+echo foo
+)
+`
+      .stdout("foo\n")
+      .runAsTest("newlines in subshell");
+
+    // test_oE 'effect of brace grouping'
+    TestBuilder.command/* sh */ `
+a=1
+{ a=2; echo $a; exit; echo not reached; }
+echo $a
+`
+      .stdout("2\n1\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("effect of brace grouping");
+
+    // test_x -e 29 'exit status of brace grouping'
+    TestBuilder.command/* sh */ `
+{ true; sh -c 'exit 29'; }
+`
+      .exitCode(29)
+      .todo("brace grouping not implemented")
+      .runAsTest("exit status of brace grouping");
+
+    // test_oE 'redirection on brace grouping'
+    TestBuilder.command/* sh */ `
+{ echo 1; echo 2; echo 3; echo 4; } >brace_out
+{ tail -n 2; } <brace_out
+`
+      .stdout("3\n4\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("redirection on brace grouping");
+
+    // test_oE 'brace grouping ending with semicolon'
+    TestBuilder.command/* sh */ `
+{ echo foo; }
+`
+      .stdout("foo\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("brace grouping ending with semicolon");
+
+    // test_oE 'brace grouping ending with asynchronous list'
+    TestBuilder.command/* sh */ `
+mkfifo fifo1
+{ echo foo >fifo1& }
+cat fifo1
+`
+      .stdout("foo\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("brace grouping ending with asynchronous list");
+
+    // test_oE 'newlines in brace grouping'
+    TestBuilder.command/* sh */ `
+{
+echo foo
+}
+`
+      .stdout("foo\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("newlines in brace grouping");
+  });
+});
+
+describe.todo("async", () => {
+  TestBuilder.command`echo hi && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${/* ts */ `await Bun.sleep(500); console.log('noice')`} &; echo hello`
+    .stdout("hi\nhello\nnoice\n")
+    .runAsTest("basic");
+
+  TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${/* ts */ `await Bun.sleep(500); console.log('noice')`} | cat &; echo hello`
+    .stdout("hello\nnoice\n")
+    .runAsTest("pipeline");
+
+  TestBuilder.command`echo start > output.txt & cat output.txt`
+    .file("output.txt", "hey")
+    .stdout(s => expect(s).toBeOneOf(["hey", "start\n"]))
+    .runAsTest("background_execution_with_output_redirection");
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {

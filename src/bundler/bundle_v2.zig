@@ -73,7 +73,6 @@ const DebugOptions = @import("../cli.zig").Command.DebugOptions;
 const ThreadPoolLib = @import("../thread_pool.zig");
 const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
 const BabyList = @import("../baby_list.zig").BabyList;
-const panicky = @import("../panic_handler.zig");
 const Fs = @import("../fs.zig");
 const schema = @import("../api/schema.zig");
 const Api = schema.Api;
@@ -97,7 +96,6 @@ const NodeFallbackModules = @import("../node_fallbacks.zig");
 const CacheEntry = @import("../cache.zig").Fs.Entry;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const URL = @import("../url.zig").URL;
-const Report = @import("../report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("../toml/toml_parser.zig").TOML;
@@ -217,7 +215,7 @@ pub const ThreadPool = struct {
 
         deinit_task: ThreadPoolLib.Task = .{ .callback = deinitCallback },
 
-        temporary_arena: @import("root").bun.ArenaAllocator = undefined,
+        temporary_arena: bun.ArenaAllocator = undefined,
         stmt_list: LinkerContext.StmtList = undefined,
 
         pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
@@ -301,7 +299,7 @@ pub const ThreadPool = struct {
             this.data.bundler.linker.resolver = &this.data.bundler.resolver;
             this.data.bundler.macro_context = js_ast.Macro.MacroContext.init(&this.data.bundler);
             this.data.macro_context = this.data.bundler.macro_context.?;
-            this.temporary_arena = @import("root").bun.ArenaAllocator.init(this.allocator);
+            this.temporary_arena = bun.ArenaAllocator.init(this.allocator);
             this.stmt_list = LinkerContext.StmtList.init(this.allocator);
 
             const CacheSet = @import("../cache.zig");
@@ -804,7 +802,7 @@ pub const BundleV2 = struct {
 
         if (this.bundler.router) |router| {
             defer this.bundler.resetStore();
-            Analytics.Features.filesystem_router = true;
+            Analytics.Features.filesystem_router += 1;
 
             const entry_points = try router.getEntryPoints();
             try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, entry_points.len);
@@ -946,7 +944,7 @@ pub const BundleV2 = struct {
             while (iter.next()) |index| {
                 builder.addClientComponent(index);
             }
-            std.debug.assert(builder.resolved_source_indices.items.len > 0);
+            bun.assert(builder.resolved_source_indices.items.len > 0);
 
             const path = Fs.Path.initWithNamespace(
                 std.fmt.allocPrint(
@@ -2344,7 +2342,7 @@ pub const ParseTask = struct {
         // runtime here.
         const runtime_require = switch (target) {
             // __require is intentionally not implemented here, as we
-            // always inline 'import.meta.require' and 'import.meta.resolveSync'
+            // always inline 'import.meta.require' and 'import.meta.require.resolve'
             // Omitting it here acts as an extra assertion.
             .bun, .bun_macro => "",
 
@@ -2905,7 +2903,7 @@ pub const ParseTask = struct {
         }
 
         // never a react client component if RSC is not enabled.
-        std.debug.assert(use_directive == .none or bundler.options.react_server_components);
+        bun.assert(use_directive == .none or bundler.options.react_server_components);
 
         step.* = .resolve;
         ast.target = target;
@@ -2939,7 +2937,7 @@ pub const ParseTask = struct {
         defer worker.unget();
         var step: ParseTask.Result.Error.Step = .pending;
         var log = Logger.Log.init(worker.allocator);
-        std.debug.assert(this.source_index.isValid()); // forgot to set source_index
+        bun.assert(this.source_index.isValid()); // forgot to set source_index
 
         const result = bun.default_allocator.create(Result) catch unreachable;
         result.* = .{
@@ -3485,7 +3483,7 @@ const LinkerGraph = struct {
         }
 
         // null ref shouldn't be there.
-        std.debug.assert(!ref.isEmpty());
+        bun.assert(!ref.isEmpty());
 
         // Track that this specific symbol was imported
         if (source_index_to_import_from.get() != source_index) {
@@ -3560,7 +3558,7 @@ const LinkerGraph = struct {
             for (entry_points, path_strings, source_indices) |i, *path_string, *source_index| {
                 const source = sources[i.get()];
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(source.index.get() == i.get());
+                    bun.assert(source.index.get() == i.get());
                 }
                 entry_point_kinds[source.index.get()] = EntryPoint.Kind.user_specified;
                 path_string.* = bun.PathString.init(source.path.text);
@@ -3568,7 +3566,7 @@ const LinkerGraph = struct {
             }
 
             for (dynamic_import_entry_points) |id| {
-                std.debug.assert(this.code_splitting); // this should never be a thing without code splitting
+                bun.assert(this.code_splitting); // this should never be a thing without code splitting
 
                 if (entry_point_kinds[id] != .none) {
                     // You could dynamic import a file that is already an entry point
@@ -3870,6 +3868,13 @@ const LinkerContext = struct {
             const line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
+            const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
+
+            if (!loader.canHaveSourceMap()) {
+                // This is not a file which we support generating source maps for
+                line_offset_table.* = .{};
+                return;
+            }
 
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
 
@@ -3884,7 +3889,12 @@ const LinkerContext = struct {
 
         pub fn computeQuotedSourceContents(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
+            const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
             const quoted_source_contents: *string = &this.graph.files.items(.quoted_source_contents)[source_index];
+            if (!loader.canHaveSourceMap()) {
+                quoted_source_contents.* = "";
+                return;
+            }
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             const mutable = MutableString.initEmpty(allocator);
@@ -4070,7 +4080,7 @@ const LinkerContext = struct {
 
         var stack_fallback = std.heap.stackFallback(4096, this.allocator);
         const stack_all = stack_fallback.get();
-        var arena = @import("root").bun.ArenaAllocator.init(stack_all);
+        var arena = bun.ArenaAllocator.init(stack_all);
         defer arena.deinit();
 
         var temp_allocator = arena.allocator();
@@ -4719,7 +4729,7 @@ const LinkerContext = struct {
                 // for entry point files in CommonJS format (or when in pass-through mode).
                 if (kind == .cjs and (!entry_point_kinds[id].isEntryPoint() or output_format == .iife or output_format == .esm)) {
                     flags[id].wrap = .cjs;
-                    std.debug.assert(kind == .cjs);
+                    bun.assert(kind == .cjs);
                 }
             }
 
@@ -5003,7 +5013,7 @@ const LinkerContext = struct {
                     .ptr = string_buffer.ptr,
                 };
 
-                defer std.debug.assert(builder.len == builder.cap); // ensure we used all of it
+                defer bun.assert(builder.len == builder.cap); // ensure we used all of it
 
                 // Pre-generate symbols for re-exports CommonJS symbols in case they
                 // are necessary later. This is done now because the symbols map cannot be
@@ -5064,7 +5074,7 @@ const LinkerContext = struct {
                         runtime_export_symbol_ref = this.runtimeFunction("__export");
                     }
 
-                    std.debug.assert(runtime_export_symbol_ref.isValid());
+                    bun.assert(runtime_export_symbol_ref.isValid());
 
                     this.graph.generateSymbolImportAndUse(
                         id,
@@ -5263,7 +5273,7 @@ const LinkerContext = struct {
                             continue;
                         }
 
-                        std.debug.assert(@as(usize, @intCast(other_id)) < this.graph.meta.len);
+                        bun.assert(@as(usize, @intCast(other_id)) < this.graph.meta.len);
                         const other_flags = flags[other_id];
                         const other_export_kind = exports_kind[other_id];
                         const other_source_index = other_id;
@@ -5368,7 +5378,7 @@ const LinkerContext = struct {
                         if (record.source_index.isValid()) {
                             const other_source_index = record.source_index.get();
                             const other_id = other_source_index;
-                            std.debug.assert(@as(usize, @intCast(other_id)) < this.graph.meta.len);
+                            bun.assert(@as(usize, @intCast(other_id)) < this.graph.meta.len);
                             const other_export_kind = exports_kind[other_id];
                             if (other_source_index != source_index and other_export_kind.isDynamic()) {
                                 happens_at_runtime = true;
@@ -5555,7 +5565,7 @@ const LinkerContext = struct {
         const all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @intFromBool(needs_exports_variable)) + @as(usize, @intFromBool(properties.items.len > 0))];
         stmts.head = stmts.head[all_export_stmts.len..];
         var remaining_stmts = all_export_stmts;
-        defer std.debug.assert(remaining_stmts.len == 0); // all must be used
+        defer bun.assert(remaining_stmts.len == 0); // all must be used
 
         // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
         if (needs_exports_variable) {
@@ -5783,7 +5793,7 @@ const LinkerContext = struct {
             // Now that we know this, we can determine cross-part dependencies
             for (symbol_uses, 0..) |ref, j| {
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(part.symbol_uses.values()[j].count_estimate > 0);
+                    bun.assert(part.symbol_uses.values()[j].count_estimate > 0);
                 }
 
                 const other_parts = c.topLevelSymbolsToParts(id, ref);
@@ -5886,7 +5896,7 @@ const LinkerContext = struct {
                 }
             } else if (file_entry_bits.len > 0) {
                 // assert that the tag is correct
-                std.debug.assert(file_entry_bits[0] == .static);
+                bun.assert(file_entry_bits[0] == .static);
             }
 
             // Code splitting: Determine which entry points can reach which files. This
@@ -6159,7 +6169,7 @@ const LinkerContext = struct {
         // imports because of export alias renaming, which must consider all export
         // aliases simultaneously to avoid collisions.
         {
-            std.debug.assert(chunk_metas.len == chunks.len);
+            bun.assert(chunk_metas.len == chunks.len);
             var r = renamer.ExportRenamer.init(c.allocator);
             defer r.deinit();
             debug("Generating cross-chunk exports", .{});
@@ -6677,14 +6687,14 @@ const LinkerContext = struct {
 
         _ = chunk_index;
         const c = ctx.c;
-        std.debug.assert(chunk.content == .javascript);
+        bun.assert(chunk.content == .javascript);
 
         js_ast.Expr.Data.Store.create(bun.default_allocator);
         js_ast.Stmt.Data.Store.create(bun.default_allocator);
 
         defer chunk.renamer.deinit(bun.default_allocator);
 
-        var arena = @import("root").bun.ArenaAllocator.init(worker.allocator);
+        var arena = bun.ArenaAllocator.init(worker.allocator);
         defer arena.deinit();
 
         // Also generate the cross-chunk binding code
@@ -8227,7 +8237,7 @@ const LinkerContext = struct {
                             );
                             stmt.data.s_local.is_export = false;
                         } else if (FeatureFlags.unwrap_commonjs_to_esm and s.was_commonjs_export and wrap == .cjs) {
-                            std.debug.assert(stmt.data.s_local.decls.len == 1);
+                            bun.assert(stmt.data.s_local.decls.len == 1);
                             const decl = stmt.data.s_local.decls.ptr[0];
                             if (decl.value) |decl_value| {
                                 stmt = Stmt.alloc(
@@ -8488,7 +8498,7 @@ const LinkerContext = struct {
             //   };
             //
             if (index == part_index_for_lazy_default_export) {
-                std.debug.assert(index != std.math.maxInt(u32));
+                bun.assert(index != std.math.maxInt(u32));
 
                 const stmt = part_stmts[0];
 
@@ -10300,7 +10310,7 @@ const LinkerContext = struct {
                         .dependencies = Dependency.List.init(dependencies),
                     },
                 ) catch unreachable;
-                std.debug.assert(part_index != js_ast.namespace_export_part_index);
+                bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
                 c.graph.generateSymbolImportAndUse(
                     source_index,
@@ -10349,7 +10359,7 @@ const LinkerContext = struct {
                         .dependencies = Dependency.List.init(dependencies),
                     },
                 ) catch unreachable;
-                std.debug.assert(part_index != js_ast.namespace_export_part_index);
+                bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
                 c.graph.generateSymbolImportAndUse(
                     source_index,
@@ -11094,7 +11104,7 @@ pub const Chunk = struct {
                             .chunk, .asset => {
                                 const index = piece.index.index;
                                 const file_path = switch (piece.index.kind) {
-                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].src_path.text,
+                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].dest_path,
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
@@ -11145,7 +11155,7 @@ pub const Chunk = struct {
                                         .asset => {
                                             shift.before.advance(unique_key_for_additional_files[index]);
                                             const file = graph.additional_output_files.items[additional_files[index].last().?.output_file];
-                                            break :brk file.src_path.text;
+                                            break :brk file.dest_path;
                                         },
                                         .chunk => {
                                             const piece_chunk = chunks[index];
@@ -11191,8 +11201,8 @@ pub const Chunk = struct {
                         ) catch unreachable).len..];
                     }
 
-                    std.debug.assert(remain.len == 0);
-                    std.debug.assert(total_buf.len == count + debug_id_len);
+                    bun.assert(remain.len == 0);
+                    bun.assert(total_buf.len == count + debug_id_len);
 
                     return .{
                         .buffer = total_buf,
@@ -11257,7 +11267,7 @@ pub const Chunk = struct {
                         count += piece.data_len;
 
                         if (Environment.allow_assert) {
-                            std.debug.assert(piece.data().len == piece.data_len);
+                            bun.assert(piece.data().len == piece.data_len);
                         }
 
                         switch (piece.index.kind) {
@@ -11310,7 +11320,7 @@ pub const Chunk = struct {
                                 const file_path = switch (piece.index.kind) {
                                     .asset => brk: {
                                         const files = additional_files[index];
-                                        std.debug.assert(files.len > 0);
+                                        bun.assert(files.len > 0);
 
                                         const output_file = files.last().?.output_file;
 
@@ -11342,8 +11352,8 @@ pub const Chunk = struct {
                         }
                     }
 
-                    std.debug.assert(remain.len == 0);
-                    std.debug.assert(total_buf.len == count);
+                    bun.assert(remain.len == 0);
+                    bun.assert(total_buf.len == count);
 
                     return .{
                         .buffer = total_buf,
@@ -11473,7 +11483,7 @@ pub const CrossChunkImport = struct {
             // TODO: do we need to clone this array?
             for (import_items.slice()) |*item| {
                 item.export_alias = exports_to_other_chunks.get(item.ref).?;
-                std.debug.assert(item.export_alias.len > 0);
+                bun.assert(item.export_alias.len > 0);
             }
             std.sort.pdq(CrossChunkImport.Item, import_items.slice(), {}, CrossChunkImport.Item.lessThan);
 
@@ -11579,7 +11589,7 @@ fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
     if (strings.endsWithChar(prefix, '/')) {
         if (strings.startsWithChar(suffix, '/')) {
             return .{
-                prefix[0 .. prefix.len - 1],
+                prefix[0..prefix.len],
                 suffix[1..suffix.len],
             };
         }

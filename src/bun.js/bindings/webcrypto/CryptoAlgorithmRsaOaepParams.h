@@ -50,7 +50,7 @@ public:
         if (!labelBuffer.length())
             return m_labelVector;
 
-        m_labelVector.append(labelBuffer.data(), labelBuffer.length());
+        m_labelVector.append(std::span { labelBuffer.data(), labelBuffer.length() });
         return m_labelVector;
     }
 

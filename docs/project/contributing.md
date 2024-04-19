@@ -1,6 +1,6 @@
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
-If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
+If you are using Windows, please refer to [this guide](/docs/project/building-windows)
 
 ## Install Dependencies
 
@@ -24,32 +24,29 @@ $ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-
 $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
+```bash#openSUSE Tumbleweed
+$ sudo zypper install go cmake ninja automake git rustup && rustup toolchain install stable
+```
+
 {% /codetabs %}
+
+> **Note**: The Zig compiler is automatically installed and updated by the build scripts. Manual installation is not required.
 
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
 {% codetabs %}
 
 ```bash#Native
-$ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+$ curl -fsSL https://bun.sh/install | bash
 ```
 
 ```bash#npm
-$ npm install -g bun # the last `npm` command you'll ever need
+$ npm install -g bun
 ```
 
 ```bash#Homebrew
-$ brew tap oven-sh/bun # for macOS and Linux
+$ brew tap oven-sh/bun
 $ brew install bun
-```
-
-```bash#Docker
-$ docker pull oven/bun
-$ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
-```
-
-```bash#proto
-$ proto install bun
 ```
 
 {% /codetabs %}
@@ -77,6 +74,10 @@ $ sudo pacman -S llvm clang lld
 $ sudo dnf install 'dnf-command(copr)'
 $ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
 $ sudo dnf install llvm clang lld
+```
+
+```bash#openSUSE Tumbleweed
+$ sudo zypper install clang16 lld16 llvm16
 ```
 
 {% /codetabs %}
@@ -136,11 +137,13 @@ $ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 $ ninja -C build # 'bun run build' runs just this
 ```
 
-Advanced uses can pass CMake flags to customize the build.
+Advanced users can pass CMake flags to customize the build.
 
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
+
+If you use a different editor, make sure that you tell ZLS to use the automatically installed Zig compiler, which is located at `./.cache/zig/zig` (`zig.exe` on Windows).
 
 ## Code generation scripts
 
@@ -304,8 +307,7 @@ $ xcode-select --install
 Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
 ```bash
-$ cmake -Bbuild -GNinja -DUSE_STATIC_LIBATOMIC=ON
-$ ninja -Cbuild
+$ bun setup -DUSE_STATIC_LIBATOMIC=OFF
 ```
 
 The built version of Bun may not work on other systems if compiled this way.

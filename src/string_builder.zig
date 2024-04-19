@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const Environment = bun.Environment;
 const string = @import("string_types.zig").string;
 const StringBuilder = @This();
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 const DebugHashTable = if (Environment.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
 
@@ -21,6 +21,10 @@ pub fn initCapacity(
         .len = 0,
         .ptr = (try allocator.alloc(u8, cap)).ptr,
     };
+}
+
+pub fn countZ(this: *StringBuilder, slice: string) void {
+    this.cap += slice.len + 1;
 }
 
 pub fn count(this: *StringBuilder, slice: string) void {
@@ -48,6 +52,22 @@ pub fn append16(this: *StringBuilder, slice: []const u16) ?[:0]u8 {
     }
 
     return null;
+}
+
+pub fn appendZ(this: *StringBuilder, slice: string) [:0]const u8 {
+    if (comptime Environment.allow_assert) {
+        assert(this.len + 1 <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
+    }
+
+    bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
+    this.ptr.?[this.len + slice.len] = 0;
+    const result = this.ptr.?[this.len..this.cap][0..slice.len :0];
+    this.len += slice.len + 1;
+
+    if (comptime Environment.allow_assert) assert(this.len <= this.cap);
+
+    return result;
 }
 
 pub fn append(this: *StringBuilder, slice: string) string {

@@ -10,7 +10,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const options = @import("../options.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const cache = @import("../cache.zig");
 const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
@@ -116,6 +116,8 @@ pub const TSConfigJSON = struct {
         // emulation of what the TypeScript compiler does (e.g. string escape
         // behavior may also be different).
         const json: js_ast.Expr = (json_cache.parseTSConfig(log, source, allocator) catch null) orelse return null;
+
+        bun.Analytics.Features.tsconfig += 1;
 
         var result: TSConfigJSON = TSConfigJSON{ .abs_path = source.key_path.text, .paths = PathsMap.init(allocator) };
         errdefer allocator.free(result.paths);
@@ -226,6 +228,9 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("paths")) |paths_prop| {
                 switch (paths_prop.expr.data) {
                     .e_object => {
+                        defer {
+                            bun.Analytics.Features.tsconfig_paths += 1;
+                        }
                         var paths = paths_prop.expr.data.e_object;
                         result.base_url_for_paths = if (result.base_url.len > 0) result.base_url else ".";
                         result.paths = PathsMap.init(allocator);
@@ -316,14 +321,14 @@ pub const TSConfigJSON = struct {
         }
 
         if (Environment.isDebug and has_base_url) {
-            std.debug.assert(result.base_url.len > 0);
+            assert(result.base_url.len > 0);
         }
 
         const _result = allocator.create(TSConfigJSON) catch unreachable;
         _result.* = result;
 
         if (Environment.isDebug and has_base_url) {
-            std.debug.assert(_result.base_url.len > 0);
+            assert(_result.base_url.len > 0);
         }
         return _result;
     }
@@ -438,3 +443,5 @@ pub const TSConfigJSON = struct {
         return false;
     }
 };
+
+const assert = bun.assert;

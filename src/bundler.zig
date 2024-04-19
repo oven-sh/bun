@@ -12,7 +12,7 @@ const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const std = @import("std");
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -46,11 +46,10 @@ const NodeFallbackModules = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const URL = @import("./url.zig").URL;
-const Report = @import("./report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 
 pub fn MacroJSValueType_() type {
@@ -520,7 +519,7 @@ pub const Bundler = struct {
         bundler.configureLinkerWithAutoJSX(true);
     }
 
-    pub fn runEnvLoader(this: *Bundler) !void {
+    pub fn runEnvLoader(this: *Bundler, skip_default_env: bool) !void {
         switch (this.options.env.behavior) {
             .prefix, .load_all, .load_all_without_inlining => {
                 // Step 1. Load the project root.
@@ -541,11 +540,11 @@ pub const Bundler = struct {
                 }
 
                 if (this.options.isTest() or this.env.isTest()) {
-                    try this.env.load(dir, this.options.env.files, .@"test");
+                    try this.env.load(dir, this.options.env.files, .@"test", skip_default_env);
                 } else if (this.options.production) {
-                    try this.env.load(dir, this.options.env.files, .production);
+                    try this.env.load(dir, this.options.env.files, .production, skip_default_env);
                 } else {
-                    try this.env.load(dir, this.options.env.files, .development);
+                    try this.env.load(dir, this.options.env.files, .development, skip_default_env);
                 }
             },
             .disable => {
@@ -584,7 +583,7 @@ pub const Bundler = struct {
             this.options.env.prefix = "BUN_";
         }
 
-        try this.runEnvLoader();
+        try this.runEnvLoader(false);
 
         this.options.jsx.setProduction(this.env.isProduction());
 
@@ -1719,7 +1718,7 @@ pub const Bundler = struct {
                     bun.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname.ext);
                     len += absolute_pathname.ext.len;
 
-                    if (comptime Environment.allow_assert) std.debug.assert(len > 0);
+                    if (comptime Environment.allow_assert) bun.assert(len > 0);
 
                     const decoded_entry_point_path = tmp_buildfile_buf2[0..len];
                     break :brk try bundler.resolver.resolve(bundler.fs.top_level_dir, decoded_entry_point_path, .entry_point);

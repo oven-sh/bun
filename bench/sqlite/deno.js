@@ -1,4 +1,4 @@
-import { Database } from "https://deno.land/x/sqlite3@0.9.1/mod.ts";
+import { Database } from "https://deno.land/x/sqlite3@0.11.1/mod.ts";
 import { run, bench } from "../node_modules/mitata/src/cli.mjs";
 
 const db = new Database("./src/northwind.sqlite");

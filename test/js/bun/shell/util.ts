@@ -4,9 +4,9 @@ import { ShellPromise } from "bun";
 import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import * as fs from "node:fs";
-import { TestBuilder } from "./test_builder";
+import { createTestBuilder } from "./test_builder";
 
-export { TestBuilder };
+export { createTestBuilder };
 
 declare module "bun" {
   // Define the additional methods
@@ -33,8 +33,5 @@ export const redirect = (opts?: Partial<typeof defaultRedirect>): typeof default
         ...opts,
       };
 
-export const sortedShellOutput = (output: string): string[] =>
-  output
-    .split("\n")
-    .filter(s => s.length > 0)
-    .sort();
+export const sortedShellOutput = (output: string | string[]): string[] =>
+  (Array.isArray(output) ? output : output.split("\n").filter(s => s.length > 0)).sort();

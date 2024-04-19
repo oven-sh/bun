@@ -1,4 +1,4 @@
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Fs = @import("../../fs.zig");
 const CAPI = JSC.C;
 const JS = @import("../javascript.zig");
@@ -8,7 +8,7 @@ const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const std = @import("std");
 const Shimmer = @import("./shimmer.zig").Shimmer;
-const strings = @import("root").bun.strings;
+const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const NewGlobalObject = JSC.NewGlobalObject;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -25,7 +25,6 @@ const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
 const Microtask = JSC.Microtask;
 
-const Backtrace = @import("../../crash_reporter.zig");
 const JSPrinter = bun.js_printer;
 const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
@@ -49,7 +48,6 @@ pub const ZigGlobalObject = extern struct {
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
         const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
-        Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
 
@@ -184,10 +182,18 @@ pub const ResolvedSource = extern struct {
     pub const name = "ResolvedSource";
     pub const namespace = shim.namespace;
 
+    /// Specifier's lifetime is the caller from C++
+    /// https://github.com/oven-sh/bun/issues/9521
     specifier: bun.String = bun.String.empty,
     source_code: bun.String = bun.String.empty,
+
+    /// source_url is eventually deref'd on success
     source_url: bun.String = bun.String.empty,
+
+    // this pointer is unused and shouldn't exist
     commonjs_exports: ?[*]ZigString = null,
+
+    // This field is used to indicate whether it's a CommonJS module or ESM
     commonjs_exports_len: u32 = 0,
 
     hash: u32 = 0,
@@ -195,7 +201,9 @@ pub const ResolvedSource = extern struct {
     allocator: ?*anyopaque = null,
 
     tag: Tag = Tag.javascript,
-    needs_deref: bool = true,
+
+    /// This is for source_code
+    source_code_needs_deref: bool = true,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
@@ -206,7 +214,7 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
     var allocator: std.mem.Allocator = @as(*std.mem.Allocator, @ptrCast(@alignCast(allocator_ orelse return))).*;
     var ptr = ZigString.init(raw[0..len]).slice().ptr;
     if (comptime Environment.allow_assert) {
-        std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
+        bun.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
     const str = ptr[0..len];
 
@@ -216,7 +224,7 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
 export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
     const untagged = @as(*anyopaque, @ptrFromInt(@intFromPtr(ZigString.init(ptr[0..len]).slice().ptr)));
     if (comptime Environment.allow_assert) {
-        std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
+        bun.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
     // we must untag the string pointer
     Mimalloc.mi_free(untagged);

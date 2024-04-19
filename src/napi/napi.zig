@@ -1,6 +1,6 @@
 const std = @import("std");
-const JSC = @import("root").bun.JSC;
-const strings = @import("root").bun.strings;
+const JSC = bun.JSC;
+const strings = bun.strings;
 const bun = @import("root").bun;
 const Lock = @import("../lock.zig").Lock;
 const JSValue = JSC.JSValue;
@@ -32,7 +32,7 @@ pub const Ref = opaque {
     pub fn create(globalThis: *JSC.JSGlobalObject, value: JSValue) *Ref {
         JSC.markBinding(@src());
         var ref: *Ref = undefined;
-        std.debug.assert(
+        bun.assert(
             napi_create_reference(
                 globalThis,
                 value,
@@ -41,7 +41,7 @@ pub const Ref = opaque {
             ) == .ok,
         );
         if (comptime bun.Environment.isDebug) {
-            std.debug.assert(ref.get() == value);
+            bun.assert(ref.get() == value);
         }
         return ref;
     }
@@ -168,6 +168,8 @@ pub const napi_status = enum(c_uint) {
     would_deadlock = 21,
 };
 pub const napi_callback = ?*const fn (napi_env, napi_callback_info) callconv(.C) napi_value;
+
+/// expects `napi_env`, `callback_data`, `context`
 pub const napi_finalize = ?*const fn (napi_env, ?*anyopaque, ?*anyopaque) callconv(.C) void;
 pub const napi_property_descriptor = extern struct {
     utf8name: [*c]const u8,
@@ -1182,19 +1184,19 @@ pub export fn napi_create_async_work(
 }
 pub export fn napi_delete_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_delete_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     work.deinit();
     return .ok;
 }
 pub export fn napi_queue_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_queue_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     work.schedule();
     return .ok;
 }
 pub export fn napi_cancel_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_cancel_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     if (work.cancel()) {
         return .ok;
     }
@@ -1259,7 +1261,7 @@ pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*any
 
 pub const Finalizer = struct {
     fun: napi_finalize,
-    ctx: ?*anyopaque = null,
+    data: ?*anyopaque = null,
 };
 
 // TODO: generate comptime version of this instead of runtime checking
@@ -1290,7 +1292,7 @@ pub const ThreadSafeFunction = struct {
     env: napi_env,
 
     finalizer_task: JSC.AnyTask = undefined,
-    finalizer: Finalizer = Finalizer{ .fun = null, .ctx = null },
+    finalizer: Finalizer = Finalizer{ .fun = null, .data = null },
     channel: Queue,
 
     ctx: ?*anyopaque = null,
@@ -1398,7 +1400,7 @@ pub const ThreadSafeFunction = struct {
     pub fn finalize(opaq: *anyopaque) void {
         var this = bun.cast(*ThreadSafeFunction, opaq);
         if (this.finalizer.fun) |fun| {
-            fun(this.event_loop.global, opaq, this.finalizer.ctx);
+            fun(this.event_loop.global, this.finalizer.data, this.ctx);
         }
 
         if (this.callback == .js) {
@@ -1496,7 +1498,7 @@ pub export fn napi_create_threadsafe_function(
         .poll_ref = Async.KeepAlive.init(),
     };
 
-    function.finalizer = .{ .ctx = thread_finalize_data, .fun = thread_finalize_cb };
+    function.finalizer = .{ .data = thread_finalize_data, .fun = thread_finalize_cb };
     result.* = function;
     return .ok;
 }
@@ -1529,14 +1531,14 @@ pub export fn napi_release_threadsafe_function(func: napi_threadsafe_function, m
 }
 pub export fn napi_unref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_unref_threadsafe_function", .{});
-    std.debug.assert(func.event_loop.global == env);
+    bun.assert(func.event_loop.global == env);
 
     func.unref();
     return .ok;
 }
 pub export fn napi_ref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_ref_threadsafe_function", .{});
-    std.debug.assert(func.event_loop.global == env);
+    bun.assert(func.event_loop.global == env);
 
     func.ref();
     return .ok;

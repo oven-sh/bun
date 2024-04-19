@@ -274,7 +274,7 @@ pub fn LinearFifo(
                 slice = self.writableSlice(0);
             }
 
-            std.debug.assert(slice.len >= size);
+            bun.assert(slice.len >= size);
             return slice[0..size];
         }
 

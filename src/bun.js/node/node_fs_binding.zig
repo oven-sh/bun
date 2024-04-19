@@ -1,12 +1,12 @@
 const bun = @import("root").bun;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const std = @import("std");
 const Flavor = JSC.Node.Flavor;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const system = std.os.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const FeatureFlags = bun.FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 
@@ -258,3 +258,14 @@ pub const NodeJSFS = struct {
     pub const opendir = notimpl;
     pub const opendirSync = notimpl;
 };
+
+pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    var module = globalObject.allocator().create(NodeJSFS) catch bun.outOfMemory();
+    module.* = .{};
+
+    const vm = globalObject.bunVM();
+    if (vm.standalone_module_graph != null)
+        module.node_fs.vm = vm;
+
+    return module.toJS(globalObject);
+}

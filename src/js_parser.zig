@@ -3,7 +3,7 @@
 /// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
 /// ** IMPORTANT **
 pub const std = @import("std");
-pub const logger = @import("root").bun.logger;
+pub const logger = bun.logger;
 pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
 pub const js_ast = bun.JSAst;
@@ -43,7 +43,7 @@ pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Index = @import("./ast/base.zig").Index;
 
 fn _disabledAssert(_: bool) void {
@@ -51,7 +51,7 @@ fn _disabledAssert(_: bool) void {
     unreachable;
 }
 
-const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
+const assert = if (Environment.allow_assert) bun.assert else _disabledAssert;
 const debug = Output.scoped(.JSParser, false);
 const ExprListLoc = struct {
     list: ExprNodeList,
@@ -97,10 +97,8 @@ const TypeParameterFlag = packed struct {
     /// TypeScript 5.0
     allow_const_modifier: bool = false,
 
-    pub const all = TypeParameterFlag{
-        .allow_in_out_variance_annotations = true,
-        .allow_const_modifier = true,
-    };
+    /// Allow "<>" without any type parameters
+    allow_empty_type_parameters: bool = false,
 };
 
 const JSXImport = enum {
@@ -139,13 +137,13 @@ const JSXImport = enum {
         pub fn runtimeImportNames(this: *const Symbols, buf: *[3]string) []const string {
             var i: usize = 0;
             if (this.jsxDEV != null) {
-                std.debug.assert(this.jsx == null); // we should never end up with this in the same file
+                bun.assert(this.jsx == null); // we should never end up with this in the same file
                 buf[0] = "jsxDEV";
                 i += 1;
             }
 
             if (this.jsx != null) {
-                std.debug.assert(this.jsxDEV == null); // we should never end up with this in the same file
+                bun.assert(this.jsxDEV == null); // we should never end up with this in the same file
                 buf[0] = "jsx";
                 i += 1;
             }
@@ -2841,7 +2839,7 @@ pub const Parser = struct {
         transform_only: bool = false,
 
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
-            std.debug.assert(!this.bundle);
+            bun.assert(!this.bundle);
 
             if (did_use_jsx) {
                 if (this.jsx.parse) {
@@ -3469,7 +3467,7 @@ pub const Parser = struct {
                         .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(stmts_),
                     });
                 }
-                std.debug.assert(remaining_stmts.len == 0);
+                bun.assert(remaining_stmts.len == 0);
             }
 
             if (p.commonjs_named_exports.count() > 0) {
@@ -3882,7 +3880,7 @@ pub const Parser = struct {
         // 3) we are not bundling.
         //
         if (exports_kind == .esm and (uses_dirname or uses_filename)) {
-            std.debug.assert(!p.options.bundle);
+            bun.assert(!p.options.bundle);
             const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
             var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
             var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
@@ -5005,7 +5003,7 @@ fn NewParser_(
         }
 
         pub inline fn transposeRequireResolveKnownString(p: *P, arg: Expr) Expr {
-            std.debug.assert(arg.data == .e_string);
+            bun.assert(arg.data == .e_string);
 
             // Ignore calls to import() if the control flow is provably dead here.
             // We don't want to spend time scanning the required files if they will
@@ -7773,8 +7771,7 @@ fn NewParser_(
         }
 
         pub inline fn skipTypescriptReturnType(p: *P) anyerror!void {
-            var result = TypeScript.Metadata.default;
-            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_return_type), false, &result);
+            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_return_type), false, {});
         }
 
         pub inline fn skipTypescriptReturnTypeWithMetadata(p: *P) anyerror!TypeScript.Metadata {
@@ -7808,8 +7805,7 @@ fn NewParser_(
 
         inline fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
             p.markTypeScriptOnly();
-            var result = TypeScript.Metadata.default;
-            try p.skipTypeScriptTypeWithOpts(level, TypeScript.SkipTypeOptions.empty, false, &result);
+            try p.skipTypeScriptTypeWithOpts(level, TypeScript.SkipTypeOptions.empty, false, {});
         }
 
         inline fn skipTypeScriptTypeWithMetadata(p: *P, level: js_ast.Op.Level) anyerror!TypeScript.Metadata {
@@ -7961,7 +7957,11 @@ fn NewParser_(
         //     let x = (y: any): (y) => {return 0};
         //     let x = (y: any): asserts y is (y) => {};
         //
-        fn skipTypeScriptParenOrFnType(p: *P, comptime get_metadata: bool, result: *TypeScript.Metadata) anyerror!void {
+        fn skipTypeScriptParenOrFnType(
+            p: *P,
+            comptime get_metadata: bool,
+            result: if (get_metadata) *TypeScript.Metadata else void,
+        ) anyerror!void {
             p.markTypeScriptOnly();
 
             if (p.trySkipTypeScriptArrowArgsWithBacktracking()) {
@@ -7984,7 +7984,7 @@ fn NewParser_(
             level: js_ast.Op.Level,
             opts: TypeScript.SkipTypeOptions.Bitset,
             comptime get_metadata: bool,
-            result: *TypeScript.Metadata,
+            result: if (get_metadata) *TypeScript.Metadata else void,
         ) anyerror!void {
             p.markTypeScriptOnly();
 
@@ -8352,8 +8352,7 @@ fn NewParser_(
                             if (p.lexer.token == .t_dot_dot_dot) {
                                 try p.lexer.next();
                             }
-                            var dummy_result = TypeScript.Metadata.default;
-                            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.allow_tuple_labels), false, &dummy_result);
+                            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.allow_tuple_labels), false, {});
                             if (p.lexer.token == .t_question) {
                                 try p.lexer.next();
                             }
@@ -8426,13 +8425,13 @@ fn NewParser_(
                             if (left.finishUnion(p)) |final| {
                                 // finish skipping the rest of the type without collecting type metadata.
                                 result.* = final;
-                                try p.skipTypeScriptType(.bitwise_or);
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_or, opts, false, {});
                             } else {
-                                try p.skipTypeScriptTypeWithOpts(.bitwise_or, TypeScript.SkipTypeOptions.empty, get_metadata, result);
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_or, opts, get_metadata, result);
                                 result.mergeUnion(left);
                             }
                         } else {
-                            try p.skipTypeScriptType(.bitwise_or);
+                            try p.skipTypeScriptTypeWithOpts(.bitwise_or, opts, false, {});
                         }
                     },
                     .t_ampersand => {
@@ -8447,13 +8446,13 @@ fn NewParser_(
                             if (left.finishIntersection(p)) |final| {
                                 // finish skipping the rest of the type without collecting type metadata.
                                 result.* = final;
-                                try p.skipTypeScriptType(.bitwise_and);
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_and, opts, false, {});
                             } else {
-                                try p.skipTypeScriptTypeWithOpts(.bitwise_and, TypeScript.SkipTypeOptions.empty, get_metadata, result);
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_and, opts, get_metadata, result);
                                 result.mergeIntersection(left);
                             }
                         } else {
-                            try p.skipTypeScriptType(.bitwise_and);
+                            try p.skipTypeScriptTypeWithOpts(.bitwise_and, opts, false, {});
                         }
                     },
                     .t_exclamation => {
@@ -8531,8 +8530,13 @@ fn NewParser_(
                         try p.lexer.next();
 
                         // The type following "extends" is not permitted to be another conditional type
-                        var extends_type = TypeScript.Metadata.default;
-                        try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), get_metadata, &extends_type);
+                        var extends_type = if (get_metadata) TypeScript.Metadata.default else {};
+                        try p.skipTypeScriptTypeWithOpts(
+                            .lowest,
+                            TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types),
+                            get_metadata,
+                            if (get_metadata) &extends_type else {},
+                        );
 
                         if (comptime get_metadata) {
                             // intersection
@@ -8581,8 +8585,7 @@ fn NewParser_(
                 if (p.lexer.token == .t_open_bracket) {
                     // Index signature or computed property
                     try p.lexer.next();
-                    var metadata = TypeScript.Metadata.default;
-                    try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_index_signature), false, &metadata);
+                    try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_index_signature), false, {});
 
                     // "{ [key: string]: number }"
                     // "{ readonly [K in keyof T]: T[K] }"
@@ -8876,6 +8879,11 @@ fn NewParser_(
 
             var result = SkipTypeParameterResult.could_be_type_cast;
             try p.lexer.next();
+
+            if (p.lexer.token == .t_greater_than and flags.allow_empty_type_parameters) {
+                try p.lexer.next();
+                return .definitely_type_parameters;
+            }
 
             while (true) {
                 var has_in = false;
@@ -10524,7 +10532,10 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{
+                .allow_in_out_variance_annotations = true,
+                .allow_empty_type_parameters = true,
+            });
 
             try p.lexer.expect(.t_equals);
             try p.skipTypeScriptType(.lowest);
@@ -10652,7 +10663,10 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{
+                .allow_in_out_variance_annotations = true,
+                .allow_empty_type_parameters = true,
+            });
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();
@@ -11070,7 +11084,7 @@ fn NewParser_(
             const what = switch (kind) {
                 .k_await_using, .k_using => "declaration",
                 .k_const => "constant",
-                else => comptime unreachable,
+                else => @compileError("unreachable"),
             };
 
             for (decls) |decl| {
@@ -12452,8 +12466,7 @@ fn NewParser_(
 
             pub fn skipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions.Bitset) anyerror!bool {
                 try p.lexer.expect(.t_extends);
-                var metadata = TypeScript.Metadata.default;
-                try p.skipTypeScriptTypeWithOpts(.prefix, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), false, &metadata);
+                try p.skipTypeScriptTypeWithOpts(.prefix, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), false, {});
 
                 if (!flags.contains(.disallow_conditional_types) and p.lexer.token == .t_question) {
                     return error.Backtrack;
@@ -15540,7 +15553,7 @@ fn NewParser_(
         }
 
         fn recordDeclaredSymbol(p: *P, ref: Ref) anyerror!void {
-            std.debug.assert(ref.isSymbol());
+            bun.assert(ref.isSymbol());
             try p.declared_symbols.append(p.allocator, DeclaredSymbol{
                 .ref = ref,
                 .is_top_level = p.current_scope == p.module_scope,
@@ -17106,7 +17119,7 @@ fn NewParser_(
         fn recordUsageOfRuntimeRequire(p: *P) void {
             // target bun does not have __require
             if (!p.options.features.use_import_meta_require) {
-                std.debug.assert(p.options.features.allow_runtime);
+                bun.assert(p.options.features.allow_runtime);
 
                 p.ensureRequireSymbol();
                 p.recordUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
@@ -17114,7 +17127,7 @@ fn NewParser_(
         }
 
         inline fn valueForRequire(p: *P, loc: logger.Loc) Expr {
-            std.debug.assert(!p.isSourceRuntime());
+            bun.assert(!p.isSourceRuntime());
             return Expr{
                 .data = .{
                     .e_require_call_target = {},
@@ -18564,7 +18577,7 @@ fn NewParser_(
 
                                     // This is to handle TS decorators, mostly.
                                     var class_stmts = p.lowerClass(.{ .stmt = s2 });
-                                    std.debug.assert(class_stmts[0].data == .s_class);
+                                    bun.assert(class_stmts[0].data == .s_class);
 
                                     if (class_stmts.len > 1) {
                                         data.value.stmt = class_stmts[0];
@@ -19648,7 +19661,7 @@ fn NewParser_(
                         var output_properties = object.properties.slice();
                         var end: u32 = 0;
                         for (bound_object.properties) |property| {
-                            if (property.key.asString(p.allocator)) |name| {
+                            if (property.key.asStringLiteral(p.allocator)) |name| {
                                 if (object.asProperty(name)) |query| {
                                     switch (query.expr.data) {
                                         .e_object, .e_array => p.visitBindingAndExprForMacro(property.value, query.expr),
@@ -20329,7 +20342,7 @@ fn NewParser_(
 
                 .m_dot => |_refs| {
                     var refs = _refs;
-                    std.debug.assert(refs.items.len >= 2);
+                    bun.assert(refs.items.len >= 2);
                     defer refs.deinit(p.allocator);
 
                     var dots = p.newExpr(
@@ -22957,6 +22970,7 @@ fn NewParser_(
                 // Only enable during bundling
                 .commonjs_named_exports_deoptimized = !opts.bundle,
             };
+            this.lexer.track_comments = opts.features.minify_identifiers;
 
             this.unwrap_all_requires = brk: {
                 if (opts.bundle) {

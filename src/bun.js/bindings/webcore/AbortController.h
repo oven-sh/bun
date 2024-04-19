@@ -43,6 +43,8 @@ class GlobalObject;
 
 namespace WebCore {
 
+class WebCoreOpaqueRoot;
+
 class AbortSignal;
 
 class ScriptExecutionContext;
@@ -55,7 +57,10 @@ public:
     ~AbortController();
 
     AbortSignal& signal();
+    Ref<AbortSignal> protectedSignal() const;
     void abort(Zig::GlobalObject&, JSC::JSValue reason);
+
+    WebCoreOpaqueRoot opaqueRoot();
 
 private:
     explicit AbortController(ScriptExecutionContext&);

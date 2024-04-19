@@ -22,7 +22,7 @@ const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const ParseResult = bun.bundler.ParseResult;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Bundler = bun.Bundler;
@@ -34,47 +34,47 @@ const js_ast = bun.JSAst;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
-const ZigString = @import("root").bun.JSC.ZigString;
+const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../runtime.zig");
 const Router = @import("./api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const WebCore = @import("root").bun.JSC.WebCore;
+const WebCore = bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const String = bun.String;
 const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
-const js = @import("root").bun.JSC.C;
-const JSC = @import("root").bun.JSC;
+const js = bun.JSC.C;
+const JSC = bun.JSC;
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
-const JSValue = @import("root").bun.JSC.JSValue;
+const JSValue = bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
 
-const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
-const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
-const Node = @import("root").bun.JSC.Node;
-const ZigException = @import("root").bun.JSC.ZigException;
-const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = @import("root").bun.JSC.ErrorableResolvedSource;
-const ResolvedSource = @import("root").bun.JSC.ResolvedSource;
-const JSPromise = @import("root").bun.JSC.JSPromise;
-const JSInternalPromise = @import("root").bun.JSC.JSInternalPromise;
-const JSModuleLoader = @import("root").bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = @import("root").bun.JSC.JSPromiseRejectionOperation;
-const Exception = @import("root").bun.JSC.Exception;
-const ErrorableZigString = @import("root").bun.JSC.ErrorableZigString;
-const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
-const VM = @import("root").bun.JSC.VM;
-const JSFunction = @import("root").bun.JSC.JSFunction;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const ExceptionValueRef = bun.JSC.ExceptionValueRef;
+const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
+const ConsoleObject = bun.JSC.ConsoleObject;
+const Node = bun.JSC.Node;
+const ZigException = bun.JSC.ZigException;
+const ZigStackTrace = bun.JSC.ZigStackTrace;
+const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
+const ResolvedSource = bun.JSC.ResolvedSource;
+const JSPromise = bun.JSC.JSPromise;
+const JSInternalPromise = bun.JSC.JSInternalPromise;
+const JSModuleLoader = bun.JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
+const Exception = bun.JSC.Exception;
+const ErrorableZigString = bun.JSC.ErrorableZigString;
+const ZigGlobalObject = bun.JSC.ZigGlobalObject;
+const VM = bun.JSC.VM;
+const JSFunction = bun.JSC.JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
@@ -263,7 +263,7 @@ pub const SavedSourceMap = struct {
         return SourceMap.Mapping.find(parsed_mappings.mappings, line, column);
     }
 };
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
     return JSC.VirtualMachine.get().global;
@@ -300,8 +300,8 @@ pub export fn Bun__Process__send(
         return .zero;
     }
     const vm = globalObject.bunVM();
-    if (vm.ipc) |ipc_instance| {
-        const success = ipc_instance.ipc.serializeAndSend(globalObject, callFrame.argument(0));
+    if (vm.getIPCInstance()) |ipc_instance| {
+        const success = ipc_instance.data.serializeAndSend(globalObject, callFrame.argument(0));
         return if (success) .undefined else .zero;
     } else {
         globalObject.throw("IPC Socket is no longer open.", .{});
@@ -323,6 +323,15 @@ pub export fn Bun__Process__disconnect(
     return .undefined;
 }
 
+/// When IPC environment variables are passed, the socket is not immediately opened,
+/// but rather we wait for process.on('message') or process.send() to be called, THEN
+/// we open the socket. This is to avoid missing messages at the start of the program.
+pub export fn Bun__ensureProcessIPCInitialized(globalObject: *JSGlobalObject) void {
+    // getIPC() will initialize a "waiting" ipc instance so this is enough.
+    // it will do nothing if IPC is not enabled.
+    _ = globalObject.bunVM().getIPCInstance();
+}
+
 /// This function is called on the main thread
 /// The bunVM() call will assert this
 pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
@@ -339,8 +348,9 @@ pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppT
 
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
     JSC.markBinding(@src());
-
-    var jsc_vm = globalObject.bunVM();
+    // This JSGlobalObject might not be the main script execution context
+    // See the crash in https://github.com/oven-sh/bun/issues/9778
+    const jsc_vm = JSC.VirtualMachine.get();
     jsc_vm.onUnhandledError(globalObject, value);
     return JSC.JSValue.jsUndefined();
 }
@@ -385,13 +395,17 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
-// pub fn getGlobalExitCodeForPipeFailure() u8 {
-//     if (VirtualMachine.is_main_thread_vm) {
-//         return VirtualMachine.get().exit_handler.exit_code;
-//     }
+const WindowsOnly = struct {
+    pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.C) *bun.windows.libuv.Loop {
+        return jsc_vm.uvLoop();
+    }
+};
 
-//     return 0;
-// }
+comptime {
+    if (Environment.isWindows) {
+        @export(WindowsOnly.Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
+    }
+}
 
 pub const ExitHandler = struct {
     exit_code: u8 = 0,
@@ -594,7 +608,7 @@ pub const VirtualMachine = struct {
 
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
-    ipc: ?*IPCInstance = null,
+    ipc: ?IPCInstanceUnion = null,
 
     debugger: ?Debugger = null,
     has_started_debugger: bool = false,
@@ -763,13 +777,20 @@ pub const VirtualMachine = struct {
             this.hide_bun_stackframes = false;
         }
 
-        if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
+        if (map.map.fetchSwapRemove("NODE_CHANNEL_FD")) |kv| {
+            const mode = if (map.map.fetchSwapRemove("NODE_CHANNEL_SERIALIZATION_MODE")) |mode_kv|
+                IPC.Mode.fromString(mode_kv.value.value) orelse .json
+            else
+                .json;
+            IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ kv.value.value, @tagName(mode) });
             if (Environment.isWindows) {
-                this.initIPCInstance(kv.value.value);
-            } else if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
-                this.initIPCInstance(bun.toFD(fd));
+                this.initIPCInstance(kv.value.value, mode);
             } else {
-                Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
+                if (std.fmt.parseInt(i32, kv.value.value, 10)) |fd| {
+                    this.initIPCInstance(bun.toFD(fd), mode);
+                } else |_| {
+                    Output.warn("Failed to parse IPC channel number '{s}'", .{kv.value.value});
+                }
             }
         }
 
@@ -779,6 +800,11 @@ pub const VirtualMachine = struct {
             // depend on.
             if (map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
                 bun.spawn.WaiterThread.setShouldUseWaiterThread();
+            }
+
+            // Only allowed for testing
+            if (map.get("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING") != null) {
+                ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
             }
 
             if (strings.eqlComptime(gc_level, "1")) {
@@ -824,7 +850,11 @@ pub const VirtualMachine = struct {
         Output.debug("Reloading...", .{});
         if (this.hot_reload == .watch) {
             Output.flush();
-            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
+            bun.reloadProcess(
+                bun.default_allocator,
+                !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"),
+                false,
+            );
         }
 
         if (!strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
@@ -1039,7 +1069,7 @@ pub const VirtualMachine = struct {
 
         pub export fn Debugger__didConnect() void {
             var this = VirtualMachine.get();
-            std.debug.assert(this.debugger.?.wait_for_connection);
+            bun.assert(this.debugger.?.wait_for_connection);
             this.debugger.?.wait_for_connection = false;
             this.debugger.?.poll_ref.unref(this);
         }
@@ -1147,7 +1177,7 @@ pub const VirtualMachine = struct {
         this.bundler.resolver.caches.fs.use_alternate_source_cache = true;
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
-        Analytics.Features.macros = true;
+        Analytics.Features.macros += 1;
         this.transpiler_store.enabled = false;
     }
 
@@ -1215,7 +1245,7 @@ pub const VirtualMachine = struct {
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
-            .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
+            .origin_timer = std.time.Timer.start() catch @panic("Timers are not supported on this system."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
@@ -1553,7 +1583,7 @@ pub const VirtualMachine = struct {
                 .source_url = bun.String.init(source_url),
                 .hash = 0,
                 .allocator = null,
-                .needs_deref = false,
+                .source_code_needs_deref = false,
             };
         }
         var source = this.refCountedString(code, hash_, !add_double_ref);
@@ -1568,13 +1598,13 @@ pub const VirtualMachine = struct {
             .source_url = bun.String.init(source_url),
             .hash = source.hash,
             .allocator = source,
-            .needs_deref = false,
+            .source_code_needs_deref = false,
         };
     }
 
     pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
         JSC.markBinding(@src());
-        std.debug.assert(input_.len > 0);
+        bun.assert(input_.len > 0);
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
         this.ref_strings_mutex.lock();
         defer this.ref_strings_mutex.unlock();
@@ -1603,7 +1633,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
-        std.debug.assert(input_.len > 0);
+        bun.assert(input_.len > 0);
         var _was_new = false;
         return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
     }
@@ -1616,41 +1646,41 @@ pub const VirtualMachine = struct {
         log: *logger.Log,
         comptime flags: FetchFlags,
     ) anyerror!ResolvedSource {
-        std.debug.assert(VirtualMachine.isLoaded());
+        bun.assert(VirtualMachine.isLoaded());
 
         if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
             return builtin;
         }
 
-        var virtual_source: ?*logger.Source = null;
-
-        var display_specifier = _specifier.toUTF8(bun.default_allocator);
+        const display_specifier = _specifier.toUTF8(bun.default_allocator);
         defer display_specifier.deinit();
-        var specifier_clone = _specifier.toUTF8(bun.default_allocator);
+        const specifier_clone = _specifier.toUTF8(bun.default_allocator);
         defer specifier_clone.deinit();
         var display_slice = display_specifier.slice();
         const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
         const path = Fs.Path.init(specifier_clone.slice());
-        var loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
-            if (strings.eqlLong(specifier, jsc_vm.main, true)) {
-                break :brk options.Loader.js;
+        const loader, const virtual_source = brk: {
+            if (jsc_vm.module_loader.eval_source) |eval_source| {
+                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+                    break :brk .{ .tsx, eval_source };
+                }
+                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
+                    break :brk .{ .tsx, eval_source };
+                }
             }
 
-            break :brk options.Loader.file;
+            break :brk .{
+                jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk2: {
+                    if (strings.eqlLong(specifier, jsc_vm.main, true)) {
+                        break :brk2 options.Loader.js;
+                    }
+                    break :brk2 options.Loader.file;
+                },
+                null,
+            };
         };
-
-        if (jsc_vm.module_loader.eval_source) |eval_source| {
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_source;
-                loader = .tsx;
-            }
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                virtual_source = eval_source;
-                loader = .tsx;
-            }
-        }
 
         // .print_source, which is used by exceptions avoids duplicating the entire source code
         // but that means we have to be careful of the lifetime of the source code
@@ -1700,7 +1730,7 @@ pub const VirtualMachine = struct {
         is_esm: bool,
         comptime is_a_file_path: bool,
     ) !void {
-        std.debug.assert(VirtualMachine.isLoaded());
+        bun.assert(VirtualMachine.isLoaded());
         // macOS threadlocal vars are very slow
         // we won't change threads in this function
         // so we can copy it here
@@ -1749,7 +1779,9 @@ pub const VirtualMachine = struct {
             // TODO: We only want to retry on not found only when the directories we searched for were cached.
             // This fixes an issue where new files created in cached directories were not picked up.
             // See https://github.com/oven-sh/bun/issues/3216
-            var retry_on_not_found = true;
+            //
+            // This cache-bust is disabled when the filesystem is not being used to resolve.
+            var retry_on_not_found = std.fs.path.isAbsolute(source_to_use);
             while (true) {
                 break :brk switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
                     source_to_use,
@@ -1921,7 +1953,8 @@ pub const VirtualMachine = struct {
         }
 
         const old_log = jsc_vm.log;
-        var log = logger.Log.init(jsc_vm.allocator);
+        // the logger can end up being called on another thread, it must not use threadlocal Heap Allocator
+        var log = logger.Log.init(bun.default_allocator);
         defer log.deinit();
         jsc_vm.log = &log;
         jsc_vm.bundler.resolver.log = &log;
@@ -2836,6 +2869,11 @@ pub const VirtualMachine = struct {
             defer printGithubAnnotation(exception);
         }
 
+        // This is a longer number than necessary because we don't handle this case very well
+        // At the very least, we shouldn't dump 100 KB of minified code into your terminal.
+        const max_line_length_with_divot = 512;
+        const max_line_length = 1024;
+
         const line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
         for (line_numbers) |line| max_line = @max(max_line, line);
@@ -2852,13 +2890,27 @@ pub const VirtualMachine = struct {
             last_pad = pad;
             try writer.writeByteNTimes(' ', pad);
 
-            try writer.print(
-                comptime Output.prettyFmt("<r><d>{d} | <r>{}\n", allow_ansi_color),
-                .{
-                    display_line,
-                    bun.fmt.fmtJavaScript(std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t "), allow_ansi_color),
-                },
-            );
+            const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
+            const clamped = trimmed[0..@min(trimmed.len, max_line_length)];
+
+            if (clamped.len != trimmed.len) {
+                const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r><b>{d} |<r> {}" ++ fmt,
+                        allow_ansi_color,
+                    ),
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                );
+            } else {
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r><b>{d} |<r> {}\n",
+                        allow_ansi_color,
+                    ),
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                );
+            }
         }
 
         const name = exception.name;
@@ -2882,17 +2934,28 @@ pub const VirtualMachine = struct {
             if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 defer source.text.deinit();
-                const text = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
+                const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
 
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r><d>- |<r> {}\n",
-                        allow_ansi_color,
-                    ),
-                    .{
-                        bun.fmt.fmtJavaScript(text, allow_ansi_color),
-                    },
-                );
+                const text = trimmed[0..@min(trimmed.len, max_line_length)];
+
+                if (text.len != trimmed.len) {
+                    const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>- |<r> {}" ++ fmt,
+                            allow_ansi_color,
+                        ),
+                        .{bun.fmt.fmtJavaScript(text, allow_ansi_color)},
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><d>- |<r> {}\n",
+                            allow_ansi_color,
+                        ),
+                        .{bun.fmt.fmtJavaScript(text, allow_ansi_color)},
+                    );
+                }
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
             } else if (top_frame) |top| {
@@ -2903,24 +2966,40 @@ pub const VirtualMachine = struct {
                 try writer.writeByteNTimes(' ', pad);
                 defer source.text.deinit();
                 const text = source.text.slice();
-                const remainder = std.mem.trimRight(u8, std.mem.trim(u8, text, "\n"), "\t ");
+                const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, text, "\n"), "\t ");
 
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r><b>{d} |<r> {}\n",
-                        allow_ansi_color,
-                    ),
-                    .{ display_line, bun.fmt.fmtJavaScript(remainder, allow_ansi_color) },
-                );
+                // TODO: preserve the divot position and possibly use stringWidth() to figure out where to put the divot
+                const clamped = trimmed[0..@min(trimmed.len, max_line_length)];
 
-                if (!top.position.isInvalid()) {
-                    const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column_start));
+                if (clamped.len != trimmed.len) {
+                    const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n\n" else "\n\n";
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>{d} |<r> {}" ++ fmt,
+                            allow_ansi_color,
+                        ),
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>{d} |<r> {}\n",
+                            allow_ansi_color,
+                        ),
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                    );
 
-                    try writer.writeByteNTimes(' ', indent);
-                    try writer.print(comptime Output.prettyFmt(
-                        "<red><b>^<r>\n",
-                        allow_ansi_color,
-                    ), .{});
+                    if (clamped.len < max_line_length_with_divot or top.position.column_start > max_line_length_with_divot) {
+                        const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column_start));
+
+                        try writer.writeByteNTimes(' ', indent);
+                        try writer.print(comptime Output.prettyFmt(
+                            "<red><b>^<r>\n",
+                            allow_ansi_color,
+                        ), .{});
+                    } else {
+                        try writer.writeAll("\n");
+                    }
                 }
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
@@ -3197,12 +3276,26 @@ pub const VirtualMachine = struct {
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
 
+    pub const IPCInstanceUnion = union(enum) {
+        /// IPC is put in this "enabled but not started" state when IPC is detected
+        /// but the client JavaScript has not yet done `.on("message")`
+        waiting: struct {
+            info: IPCInfoType,
+            mode: IPC.Mode,
+        },
+        initialized: *IPCInstance,
+    };
+
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
         context: if (Environment.isPosix) *uws.SocketContext else u0,
-        ipc: IPC.IPCData,
+        data: IPC.IPCData,
 
         pub usingnamespace bun.New(@This());
+
+        pub fn ipc(this: *IPCInstance) *IPC.IPCData {
+            return &this.data;
+        }
 
         pub fn handleIPCMessage(
             this: *IPCInstance,
@@ -3225,7 +3318,6 @@ pub const VirtualMachine = struct {
         }
 
         pub fn handleIPCClose(this: *IPCInstance) void {
-            JSC.markBinding(@src());
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;
@@ -3241,45 +3333,70 @@ pub const VirtualMachine = struct {
     };
 
     const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
-    pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType) void {
-        if (Environment.isWindows) {
-            var instance = IPCInstance.new(.{
-                .globalThis = this.global,
-                .context = 0,
-                .ipc = .{},
-            });
-            instance.ipc.configureClient(IPCInstance, instance, info) catch {
-                instance.destroy();
-                Output.printErrorln("Unable to start IPC pipe", .{});
-                return;
-            };
-
-            this.ipc = instance;
-            instance.ipc.writeVersionPacket();
-            return;
-        }
-        this.event_loop.ensureWaker();
-        const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
-        IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
-
-        var instance = IPCInstance.new(.{
-            .globalThis = this.global,
-            .context = context,
-            .ipc = undefined,
-        });
-        const socket = IPC.Socket.fromFd(context, info, IPCInstance, instance, null) orelse {
-            instance.destroy();
-            Output.printErrorln("Unable to start IPC socket", .{});
-            return;
+    pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType, mode: IPC.Mode) void {
+        IPC.log("initIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{info});
+        this.ipc = .{
+            .waiting = .{ .info = info, .mode = mode },
         };
-        socket.setTimeout(0);
-        instance.ipc = .{ .socket = socket };
-
-        const ptr = socket.ext(*IPCInstance);
-        ptr.?.* = instance;
-        this.ipc = instance;
-        instance.ipc.writeVersionPacket();
     }
+
+    pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
+        if (this.ipc == null) return null;
+        if (this.ipc.? != .waiting) return this.ipc.?.initialized;
+        const opts = this.ipc.?.waiting;
+
+        IPC.log("getIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{opts.info});
+
+        this.event_loop.ensureWaker();
+
+        const instance = switch (Environment.os) {
+            else => instance: {
+                const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
+                IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
+
+                var instance = IPCInstance.new(.{
+                    .globalThis = this.global,
+                    .context = context,
+                    .data = undefined,
+                });
+
+                const socket = IPC.Socket.fromFd(context, opts.info, IPCInstance, instance, null) orelse {
+                    instance.destroy();
+                    this.ipc = null;
+                    Output.warn("Unable to start IPC socket", .{});
+                    return null;
+                };
+                socket.setTimeout(0);
+
+                instance.data = .{ .socket = socket, .mode = opts.mode };
+
+                break :instance instance;
+            },
+            .windows => instance: {
+                var instance = IPCInstance.new(.{
+                    .globalThis = this.global,
+                    .context = 0,
+                    .data = .{ .mode = opts.mode },
+                });
+
+                instance.data.configureClient(IPCInstance, instance, opts.info) catch {
+                    instance.destroy();
+                    this.ipc = null;
+                    Output.warn("Unable to start IPC pipe '{s}'", .{opts.info});
+                    return null;
+                };
+
+                break :instance instance;
+            },
+        };
+
+        this.ipc = .{ .initialized = instance };
+
+        instance.data.writeVersionPacket();
+
+        return instance;
+    }
+
     comptime {
         if (!JSC.is_bindgen)
             _ = Bun__remapStackFramePositions;
@@ -3349,7 +3466,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     if (comptime Ctx == ImportWatcher) {
                         this.reloader.ctx.rareData().closeAllListenSocketsForWatchMode();
                     }
-                    bun.reloadProcess(bun.default_allocator, clear_screen);
+                    bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
                 }
 

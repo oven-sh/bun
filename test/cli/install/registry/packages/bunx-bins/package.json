@@ -1,0 +1,54 @@
+{
+	"name": "bunx-bins",
+	"versions": {
+		"1.0.0": {
+			"name": "bunx-bins",
+			"version": "1.0.0",
+			"bin": {
+				"bin-node": "bin-node.js",
+				"bin-bun": "bin-bun.ts",
+				"bin-bun-run": "bin-bun-run.ts",
+				"bin1": "bin1.ts",
+				"bin2": "bin2.ts",
+				"bin3": "bin3.ts",
+				"bin4": "bin4.ts",
+				"bin5": "bin5.ts",
+				"bin6": "bin6.ts",
+				"bin7": "bin7.ts",
+				"native": "native.exe",
+				"uses-native": "uses-native.ts",
+				"no-shebang": "no-shebang.ts"
+			},
+			"_id": "bunx-bins@1.0.0",
+			"gitHead": "ec66b07720395f3cf1da601fc111d7e3ec8e3837",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-tvXcjJwkOFm2RxOWRycgZDI3Uis5RsW8ExXWTGryEwdgfyjwQ/4nu0wkt6nUIrRVaJSwMuTpP9rrhIBbty32dw==",
+				"shasum": "a77e200b47158585a4bf70ef934202c5fb2b0dd7",
+				"tarball": "http://localhost:4873/bunx-bins/-/bunx-bins-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-03-29T00:26:35.003Z",
+		"created": "2024-03-29T00:26:35.003Z",
+		"1.0.0": "2024-03-29T00:26:35.003Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bunx-bins-1.0.0.tgz": {
+			"shasum": "a77e200b47158585a4bf70ef934202c5fb2b0dd7",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "bunx-bins",
+	"readme": "ERROR: No README data found!"
+}

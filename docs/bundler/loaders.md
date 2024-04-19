@@ -10,7 +10,7 @@ Bun uses the file extension to determine which built-in _loader_ should be used 
 
 **JavaScript**. Default for `.cjs` and `.mjs`.
 
-Parses the code and applies a set of default transforms, like dead-code elimination, tree shaking, and environment variable inlining. Note that Bun does not attempt to down-convert syntax at the moment.
+Parses the code and applies a set of default transforms like dead-code elimination and tree shaking. Note that Bun does not attempt to down-convert syntax at the moment.
 
 ### `jsx`
 
@@ -178,7 +178,7 @@ In the bundler, `.node` files are handled using the [`file`](#file) loader.
 In the runtime and bundler, SQLite databases can be directly imported. This will load the database using [`bun:sqlite`](/docs/api/sqlite.md).
 
 ```ts
-import db from "./my.db" with {type: "sqlite"};
+import db from "./my.db" with { type: "sqlite" };
 ```
 
 This is only supported when the `target` is `bun`.
@@ -189,21 +189,21 @@ You can change this behavior with the `"embed"` attribute:
 
 ```ts
 // embed the database into the bundle
-import db from "./my.db" with {type: "sqlite", embed: "true"};
+import db from "./my.db" with { type: "sqlite", embed: "true" };
 ```
 
 When using a [standalone executable](/docs/bundler/executables), the database is embedded into the single-file executable.
 
 Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
 
-### `bunshell` loader
+### `sh` loader
 
-**Bun Shell loader**. Default for `.bun.sh` files
+**Bun Shell loader**. Default for `.sh` files
 
-This loader is used to parse [Bun Shell](/docs/runtime/shell) scripts. It's only supported when starting bun itself, so it's not available in the bundler or in the runtime.
+This loader is used to parse [Bun Shell](/docs/runtime/shell) scripts. It's only supported when starting Bun itself, so it's not available in the bundler or in the runtime.
 
 ```sh
-$ bun run ./script.bun.sh
+$ bun run ./script.sh
 ```
 
 ### `file`

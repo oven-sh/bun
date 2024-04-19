@@ -220,7 +220,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
 
         pub inline fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
             if (comptime Environment.isWindows) {
-                if (rc != 0) return null;
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
             }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
@@ -246,7 +248,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
 
         pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             if (comptime Environment.isWindows) {
-                if (rc != 0) return null;
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
             }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
@@ -266,7 +270,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                 @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
             }
             if (comptime Environment.isWindows) {
-                if (rc != 0) return null;
+                if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else {
+                    if (rc != 0) return null;
+                }
             }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
@@ -924,12 +930,9 @@ pub const Valid = struct {
             0...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
-                    .{},
-                    ctx,
-                    exception,
-                );
+                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(zig_str.slice()).toSystemError();
+                system_error.syscall = bun.String.dead;
+                exception.* = system_error.toErrorInstance(ctx).asObjectRef();
                 return false;
             },
         }
@@ -942,12 +945,9 @@ pub const Valid = struct {
             0...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
-                    .{},
-                    ctx,
-                    exception,
-                );
+                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
+                system_error.syscall = bun.String.dead;
+                exception.* = system_error.toErrorInstance(ctx).asObjectRef();
                 return false;
             },
         }
@@ -968,14 +968,9 @@ pub const Valid = struct {
             },
 
             else => {
-
-                // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path buffer: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
-                    .{},
-                    ctx,
-                    exception,
-                );
+                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
+                system_error.syscall = bun.String.dead;
+                exception.* = system_error.toErrorInstance(ctx).asObjectRef();
                 return false;
             },
             1...bun.MAX_PATH_BYTES => return true,
@@ -4848,12 +4843,11 @@ pub const Path = struct {
 
 pub const Process = struct {
     pub fn getArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return JSC.ZigString.fromUTF8(bun.argv()[0]).toValueGC(globalObject);
+        return JSC.ZigString.fromUTF8(bun.argv[0]).toValueGC(globalObject);
     }
 
     pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        var buf: bun.PathBuffer = undefined;
-        const out = std.fs.selfExePath(&buf) catch {
+        const out = bun.selfExePath() catch {
             // if for any reason we are unable to get the executable path, we just return argv[0]
             return getArgv0(globalObject);
         };
@@ -4880,13 +4874,13 @@ pub const Process = struct {
             JSC.ZigString,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
             // argv also omits the script name
-            bun.argv().len -| 1,
+            bun.argv.len -| 1,
         ) catch bun.outOfMemory();
         defer allocator.free(args);
         var used: usize = 0;
         const offset = 1;
 
-        for (bun.argv()[@min(bun.argv().len, offset)..]) |arg| {
+        for (bun.argv[@min(bun.argv.len, offset)..]) |arg| {
             if (arg.len == 0)
                 continue;
 
@@ -4935,7 +4929,7 @@ pub const Process = struct {
                 bun.String.static("bun"),
             );
         } else {
-            const exe_path = std.fs.selfExePathAlloc(allocator) catch null;
+            const exe_path = bun.selfExePath() catch null;
             args_list.appendAssumeCapacity(
                 if (exe_path) |str| bun.String.fromUTF8(str) else bun.String.static("bun"),
             );

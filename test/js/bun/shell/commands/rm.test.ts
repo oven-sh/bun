@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "invalid enum value"
 /**
  * These tests are derived from the [deno_task_shell](https://github.com/denoland/deno_task_shell/) rm tests, which are developed and maintained by the Deno authors.
  * Copyright 2018-2023 the Deno authors.
@@ -11,7 +10,8 @@ import { $ } from "bun";
 import path from "path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { ShellOutput } from "bun";
-import { TestBuilder, sortedShellOutput } from "../util";
+import { createTestBuilder, sortedShellOutput } from "../util";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 const fileExists = async (path: string): Promise<boolean> =>
   $`ls -d ${path}`.then(o => o.stdout.toString() === `${path}\n`);
@@ -25,6 +25,7 @@ describe("bunshell rm", () => {
   TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`
     .ensureTempDir()
     .doesNotExist("node_modules")
+    .timeout(10 * 1000)
     .runAsTest("node_modules");
 
   test("force", async () => {

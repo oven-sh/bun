@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawn, file } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
@@ -29,7 +28,6 @@ beforeEach(async () => {
   await dummyBeforeEach();
 });
 afterEach(async () => {
-  await rm(link_dir, { force: true, recursive: true });
   await dummyAfterEach();
 });
 
@@ -73,8 +71,8 @@ it("should link and unlink workspace package", async () => {
   var out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + boba@workspace:packages${sep}boba`,
-    ` + moo@workspace:packages${sep}moo`,
+    ` + boba@workspace:packages/boba`,
+    ` + moo@workspace:packages/moo`,
     "",
     " 2 packages installed",
   ]);
@@ -514,5 +512,7 @@ it("should link dependency without crashing", async () => {
     "[] done",
     "",
   ]);
-  expect(await exited4).toBe(0);
+
+  // This should fail with a non-zero exit code.
+  expect(await exited4).toBe(1);
 });

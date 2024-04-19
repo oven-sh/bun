@@ -1,0 +1,27 @@
+name: Prefilled crash report
+description: Report a crash in Bun
+labels:
+  - bug
+  - crash
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for submitting a crash report. It helps make Bun better.
+  - type: textarea
+    attributes:
+      label: How can we reproduce the crash?
+      description: Please provide instructions on how to reproduce the crash.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Please copy and paste any relevant log output. This will be
+        automatically formatted into code, so no need for backticks.
+      render: shell
+  - type: textarea
+    id: remapped_trace
+    attributes:
+      label: Stack Trace (bun.report)
+    validations:
+      required: true

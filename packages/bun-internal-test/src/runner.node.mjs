@@ -205,14 +205,15 @@ function checkSlowTests() {
 setInterval(checkSlowTests, SHORT_TIMEOUT_DURATION).unref();
 var currentTestNumber = 0;
 async function runTest(path) {
+  const pathOnDisk = resolve(path);
   const thisTestNumber = currentTestNumber++;
-  const testFileName = posix.normalize(relative(cwd, path));
+  const testFileName = posix.normalize(relative(cwd, path).replaceAll("\\", "/"));
   let exitCode, signal, err, output;
 
   const start = Date.now();
 
   const activeTestObject = { start, proc: undefined };
-  activeTests.set(path, activeTestObject);
+  activeTests.set(testFileName, activeTestObject);
 
   try {
     await new Promise((finish, reject) => {
@@ -227,7 +228,7 @@ Starting "${testFileName}"
 `,
       );
       const TMPDIR = maketemp();
-      const proc = spawn(bunExe, ["test", resolve(path)], {
+      const proc = spawn(bunExe, ["test", pathOnDisk], {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
@@ -298,7 +299,7 @@ Starting "${testFileName}"
       });
     });
   } finally {
-    activeTests.delete(path);
+    activeTests.delete(testFileName);
   }
 
   if (!hasInitialMaxFD) {

@@ -854,7 +854,7 @@ Socket.prototype.close = function(callback) {
 
   state.receiving = false;
   state.handle.socket?.close();
-  state.handle = null;
+  state.handle.socket = undefined;
   defaultTriggerAsyncIdScope(this[async_id_symbol],
                              process.nextTick,
                              socketCloseNT,
@@ -886,14 +886,18 @@ Socket.prototype.address = function() {
 
 Socket.prototype.remoteAddress = function() {
   const state = this[kStateSymbol];
+  const socket = state.handle.socket;
+
+  if (!socket) 
+    throw new ERR_SOCKET_DGRAM_NOT_RUNNING();
+
   if (state.connectState !== CONNECT_STATE_CONNECTED)
     throw new ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
-  const out = state.handle.socket.remoteAddress;
-  if (!out)
+  if (!socket.remoteAddress)
     throw new ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
-  return out;
+  return socket.remoteAddress;
 };
 
 

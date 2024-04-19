@@ -178,6 +178,50 @@ describe("bindUDP()", () => {
         }
         sendRec();
       });
+
+      test(`send connected ${label} (${binaryType || "undefined"})`, (done) => {
+        let client;
+        const server = bindUDP({
+          binaryType: binaryType,
+          socket: {
+            data(socket, data, port, address) {
+              expect(socket).toBeInstanceOf(Object);
+              expect(socket.binaryType).toBe(binaryType || "buffer");
+              expect(data).toHaveLength(bytes.length);
+              if (data instanceof ArrayBuffer) {
+                expect(new Uint8Array(data)).toStrictEqual(new Uint8Array(bytes));
+              } else {
+                expect(Buffer.from(data)).toStrictEqual(Buffer.from(bytes));
+              }
+              expect(data).toBeInstanceOf(type);
+              expect(port).toBeInteger();
+              expect(port).toBeWithin(1, 65535 + 1);
+              expect(port).not.toBe(socket.port);
+              expect(address).toBeString();
+              expect(address).not.toBeEmpty();
+              
+              server.close();
+              client.close();
+              done();
+            },
+          },
+        });
+        client = bindUDP({
+          connect: {
+            port: server.port,
+            hostname: server.hostname,
+          }
+        });
+
+        // handle unreliable transmission in UDP
+        function sendRec() {
+          if (!client.closed) {
+            client.send(data);
+            setTimeout(sendRec, 100);
+          }
+        }
+        sendRec();
+      });
     }
   }
 
@@ -278,6 +322,41 @@ describe("createSocket()", () => {
       server.on('listening', (err) => {
         expect(err).toBeFalsy();
         sendRec();
+      });
+      server.bind();
+    });
+
+
+    test(`send connected ${label}`, (done) => {
+      const client = createSocket('udp4');
+      const closed = { closed: false };
+      client.on('close', () => { closed.closed = true });
+      const server = createSocket('udp4');
+      server.on('message', (data, rinfo) => {
+        expect(data).toHaveLength(bytes.length);
+        expect(data).toStrictEqual(Buffer.from(bytes));
+        expect(rinfo.port).toBeInteger();
+        expect(rinfo.port).toBeWithin(1, 65535 + 1);
+        expect(rinfo.port).not.toBe(server.address().port);
+        expect(rinfo.address).toBeString();
+        expect(rinfo.address).not.toBeEmpty();
+        
+        server.close();
+        client.close();
+        done();
+      });
+      function sendRec() {
+        if (!closed.closed) {
+          client.send(data, () => {
+            setTimeout(sendRec, 100);
+          });
+        }
+      }
+      server.on('listening', () => {
+        const addr = server.address();
+        client.connect(addr.port, addr.address, () => {
+          sendRec();
+        })
       });
       server.bind();
     });

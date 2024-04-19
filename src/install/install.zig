@@ -1320,7 +1320,7 @@ pub const PackageInstall = struct {
 
     threadlocal var node_fs_for_package_installer: bun.JSC.Node.NodeFS = .{};
 
-    fn initInstallDir(this: *PackageInstall, state: *InstallDirState, destination_dir: std.fs.Dir, method: Method) Result {
+    fn initInstallDir(this: *PackageInstall, state: *InstallDirState, destination_dir: std.fs.Dir) Result {
         const destbase = destination_dir;
         const destpath = this.destination_dir_subpath;
 
@@ -1331,10 +1331,7 @@ pub const PackageInstall = struct {
             state.cached_package_dir,
             this.allocator,
             &[_]bun.OSPathSlice{},
-            if (method == .symlink)
-                &[_]bun.OSPathSlice{"node_modules"}
-            else
-                &[_]bun.OSPathSlice{},
+            &[_]bun.OSPathSlice{},
         ) catch bun.outOfMemory();
 
         if (!Environment.isWindows) {
@@ -1400,7 +1397,7 @@ pub const PackageInstall = struct {
 
     fn installWithCopyfile(this: *PackageInstall, destination_dir: std.fs.Dir) Result {
         var state = InstallDirState{};
-        const res = this.initInstallDir(&state, destination_dir, .copyfile);
+        const res = this.initInstallDir(&state, destination_dir);
         if (res.isFail()) return res;
         defer state.deinit();
 
@@ -1674,7 +1671,7 @@ pub const PackageInstall = struct {
 
     fn installWithHardlink(this: *PackageInstall, dest_dir: std.fs.Dir) !Result {
         var state = InstallDirState{};
-        const res = this.initInstallDir(&state, dest_dir, .hardlink);
+        const res = this.initInstallDir(&state, dest_dir);
         if (res.isFail()) return res;
         defer state.deinit();
 
@@ -1772,7 +1769,7 @@ pub const PackageInstall = struct {
 
     fn installWithSymlink(this: *PackageInstall, dest_dir: std.fs.Dir) !Result {
         var state = InstallDirState{};
-        const res = this.initInstallDir(&state, dest_dir, .symlink);
+        const res = this.initInstallDir(&state, dest_dir);
         if (res.isFail()) return res;
         defer state.deinit();
 

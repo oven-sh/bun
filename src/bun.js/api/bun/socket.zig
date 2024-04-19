@@ -823,12 +823,13 @@ pub const Listener = struct {
             global.throwInvalidArguments("hostname pattern expects a string", .{});
             return .zero;
         }
-        const host_str = hostname.toSliceZ(
+        const host_str = hostname.toSlice(
             global,
             bun.default_allocator,
         );
         defer host_str.deinit();
-        const server_name = host_str.sliceZ();
+        const server_name = bun.default_allocator.dupeZ(u8, host_str.slice()) catch bun.outOfMemory();
+        defer bun.default_allocator.free(server_name);
         if (server_name.len == 0) {
             global.throwInvalidArguments("hostname pattern cannot be empty", .{});
             return .zero;

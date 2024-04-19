@@ -20,14 +20,6 @@ function generate(name) {
         fn: "doReload",
         length: 2,
       },
-      addServerName: {
-        fn: "addServerName",
-        length: 2,
-      },
-      removeServerName: {
-        fn: "removeServerName",
-        length: 1,
-      },
       stop: {
         fn: "doStop",
         length: 1,

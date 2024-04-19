@@ -2414,7 +2414,7 @@ declare module "bun" {
     extends WebSocketServeOptions<WebSocketDataType>,
       TLSOptions {
     unix?: never;
-    tls?: TLSOptions;
+    tls?: TLSOptions | Array<TLSOptions>;
   }
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
@@ -2424,7 +2424,7 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix: string;
-    tls?: TLSOptions;
+    tls?: TLSOptions | Array<TLSOptions>;
   }
   interface ErrorLike extends Error {
     code?: string;
@@ -2493,23 +2493,11 @@ declare module "bun" {
   }
 
   interface TLSServeOptions extends ServeOptions, TLSOptions {
-    /**
-     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
-     *  The values are SSL options objects.
-     */
-    serverNames?: Record<string, TLSOptions>;
-
-    tls?: TLSOptions;
+    tls?: TLSOptions | Array<TLSOptions>;
   }
 
   interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
-    /**
-     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
-     *  The values are SSL options objects.
-     */
-    serverNames?: Record<string, TLSOptions>;
-
-    tls?: TLSOptions;
+    tls?: TLSOptions | Array<TLSOptions>;
   }
 
   interface SocketAddress {
@@ -2706,18 +2694,6 @@ declare module "bun" {
      * To prevent new connections from being accepted, use {@link Server.stop}
      */
     unref(): void;
-
-    /**
-     * Add SNI server name to the server.
-     * @param pattern The SNI server name pattern to match
-     * @param tls The TLS options to use for this server name (optional if not provided, the default TLS options are used)
-     */
-    addServerName(pattern: string, tls?: TLSOptions): void;
-    /**
-     * Remove SNI server name from the server.
-     * @param pattern The SNI server name pattern to remove
-     */
-    removeServerName(pattern: string): void;
 
     /**
      * How many requests are in-flight right now?
@@ -3949,7 +3925,7 @@ declare module "bun" {
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {
     hostname: string;
     port: number;
-    tls?: TLSOptions;
+    tls?: TLSOptions | Array<TLSOptions>;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {

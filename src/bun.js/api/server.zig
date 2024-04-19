@@ -137,6 +137,7 @@ pub const ServerConfig = struct {
                     allocator.free(addr);
                 },
             }
+            this.* = .{ .tcp = .{} };
         }
     } = .{
         .tcp = .{},
@@ -147,6 +148,7 @@ pub const ServerConfig = struct {
     base_uri: string = "",
 
     ssl_config: ?SSLConfig = null,
+    sni: ?bun.BabyList(SSLConfig) = null,
     max_request_body_size: usize = 1024 * 1024 * 128,
     development: bool = false,
 
@@ -159,6 +161,26 @@ pub const ServerConfig = struct {
     reuse_port: bool = false,
     id: []const u8 = "",
     allow_hot: bool = true,
+
+    pub fn deinit(this: *ServerConfig) void {
+        this.address.deinit(bun.default_allocator);
+
+        if (this.base_url.href.len > 0) {
+            bun.default_allocator.free(this.base_url.href);
+            this.base_url = URL{};
+        }
+        if (this.ssl_config) |*ssl_config| {
+            ssl_config.deinit();
+            this.ssl_config = null;
+        }
+        if (this.sni) |sni| {
+            for (sni.slice()) |*ssl_config| {
+                ssl_config.deinit();
+            }
+            this.sni.?.deinitWithAllocator(bun.default_allocator);
+            this.sni = null;
+        }
+    }
 
     pub fn computeID(this: *const ServerConfig, allocator: std.mem.Allocator) []const u8 {
         var arraylist = std.ArrayList(u8).init(allocator);
@@ -277,6 +299,7 @@ pub const ServerConfig = struct {
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
                     }
+                    @field(this, field) = "";
                 }
             }
 
@@ -706,14 +729,6 @@ pub const ServerConfig = struct {
                 return null;
             return result;
         }
-
-        pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) ?SSLConfig {
-            if (arguments.next()) |arg| {
-                return SSLConfig.inJS(global, arg, exception);
-            }
-
-            return null;
-        }
     };
 
     pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) ServerConfig {
@@ -911,16 +926,51 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "tls")) |tls| {
-                if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
-                    args.ssl_config = ssl_config;
-                }
+                if (tls.jsType().isArray()) {
+                    var value_iter = tls.arrayIterator(global);
+                    if (value_iter.len == 1) {
+                        JSC.throwInvalidArguments("tls option expects at least 1 tls object", .{}, global, exception);
+                        return args;
+                    }
+                    while (value_iter.next()) |item| {
+                        if (SSLConfig.inJS(global, item, exception)) |ssl_config| {
+                            if (args.ssl_config == null) {
+                                args.ssl_config = ssl_config;
+                            } else {
+                                if (ssl_config.server_name == null or std.mem.span(ssl_config.server_name).len == 0) {
+                                    var config = ssl_config;
+                                    defer config.deinit();
+                                    JSC.throwInvalidArguments("SNI tls object must have a serverName", .{}, global, exception);
+                                    return args;
+                                }
+                                if (args.sni == null) {
+                                    args.sni = bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1) catch bun.outOfMemory();
+                                }
 
-                if (exception.* != null) {
-                    return args;
-                }
+                                args.sni.?.push(bun.default_allocator, ssl_config) catch bun.outOfMemory();
+                            }
+                        }
 
-                if (global.hasException()) {
-                    return args;
+                        if (exception.* != null) {
+                            return args;
+                        }
+
+                        if (global.hasException()) {
+                            return args;
+                        }
+                    }
+                } else {
+                    if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
+                        args.ssl_config = ssl_config;
+                    }
+
+                    if (exception.* != null) {
+                        return args;
+                    }
+
+                    if (global.hasException()) {
+                        return args;
+                    }
                 }
             }
 
@@ -5287,7 +5337,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const exception: JSC.C.ExceptionRef = &exception_ref;
             var new_config = ServerConfig.fromJS(globalThis, &args_slice, exception);
             if (exception.* != null) {
+                new_config.deinit();
                 globalThis.throwValue(exception_ref[0].?.value());
+                return .zero;
+            }
+            if (globalThis.hasException()) {
+                new_config.deinit();
                 return .zero;
             }
 
@@ -5498,89 +5553,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
         }
 
-        pub fn addServerName(this: *ThisServer, global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-            if (!ssl_enabled) {
-                global.throwInvalidArguments("addServerName requires SSL support", .{});
-                return .zero;
-            }
-            const arguments = callframe.arguments(2);
-            if (arguments.len < 1) {
-                global.throwNotEnoughArguments("addServerName", 1, 0);
-                return .zero;
-            }
-            const hostname = arguments.ptr[0];
-            if (!hostname.isString()) {
-                global.throwInvalidArguments("hostname pattern expects a string", .{});
-                return .zero;
-            }
-            const host_str = hostname.toSliceZ(
-                global,
-                bun.default_allocator,
-            );
-            defer host_str.deinit();
-            const server_name = host_str.sliceZ();
-            if (server_name.len == 0) {
-                global.throwInvalidArguments("hostname pattern cannot be empty", .{});
-                return .zero;
-            }
-            if (arguments.len > 1) {
-                const tls = arguments.ptr[1];
-                var exception_ref = [_]JSC.C.JSValueRef{null};
-                const exception: JSC.C.ExceptionRef = &exception_ref;
-
-                if (ServerConfig.SSLConfig.inJS(global, tls, exception)) |ssl_config| {
-                    // add serverName to the SSL context/options
-                    this.app.addServerNameWithOptions(server_name, ssl_config.asUSockets());
-                    this.app.domain(server_name);
-                    this.setRoutes();
-                }
-
-                if (exception.* != null) {
-                    global.throwValue(exception_ref[0].?.value());
-                    return .zero;
-                }
-            } else if (this.config.ssl_config) |ssl_config| {
-                this.app.addServerNameWithOptions(server_name, ssl_config.asUSockets());
-                this.app.domain(server_name);
-                this.setRoutes();
-            } else {
-                global.throwInvalidArguments("addServerName requires tls argument", .{});
-                return .zero;
-            }
-
-            return JSValue.jsUndefined();
-        }
-
-        pub fn removeServerName(this: *ThisServer, global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-            if (!ssl_enabled) {
-                global.throwInvalidArguments("removeServerName requires SSL support", .{});
-                return .zero;
-            }
-            const arguments = callframe.arguments(1);
-            if (arguments.len < 1) {
-                global.throwNotEnoughArguments("removeServerName", 1, 0);
-                return .zero;
-            }
-            const hostname = arguments.ptr[0];
-            if (!hostname.isString()) {
-                global.throwInvalidArguments("hostname pattern expects a string", .{});
-                return .zero;
-            }
-            const host_str = hostname.toSliceZ(
-                global,
-                bun.default_allocator,
-            );
-            defer host_str.deinit();
-            const server_name = host_str.sliceZ();
-            if (server_name.len == 0) {
-                global.throwInvalidArguments("hostname pattern cannot be empty", .{});
-                return .zero;
-            }
-
-            this.app.removeServerName(server_name);
-
-            return JSValue.jsUndefined();
-        }
         pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             const fmt = switch (this.config.address) {
                 .unix => |unix| brk: {
@@ -5747,12 +5719,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.cached_hostname.deref();
             this.cached_protocol.deref();
 
-            this.config.address.deinit(bun.default_allocator);
-
-            if (this.config.base_url.href.len > 0) {
-                bun.default_allocator.free(this.config.base_url.href);
-            }
-
+            this.config.deinit();
             this.app.destroy();
             const allocator = this.allocator;
             allocator.destroy(this);
@@ -6213,27 +6180,36 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn listen(this: *ThisServer) void {
             httplog("listen", .{});
-            var custom_servername: ?[:0]const u8 = null;
             if (ssl_enabled) {
                 BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
                 const ssl_options = ssl_config.asUSockets();
                 this.app = App.create(ssl_options);
 
+                this.setRoutes();
+                // add serverName to the SSL context using default ssl options
                 if (ssl_config.server_name != null) {
                     const servername_len = std.mem.span(ssl_config.server_name).len;
                     if (servername_len > 0) {
-                        // add serverName to the SSL context using default ssl options
                         this.app.addServerNameWithOptions(ssl_config.server_name, ssl_options);
-                        custom_servername = ssl_config.server_name[0..servername_len :0];
+                        this.app.domain(ssl_config.server_name[0..servername_len :0]);
+                        this.setRoutes();
+                    }
+                }
+
+                // apply SNI routes if any
+                if (this.config.sni) |sni| {
+                    for (sni.slice()) |sni_ssl_config| {
+                        const sni_servername_len = std.mem.span(sni_ssl_config.server_name).len;
+                        if (sni_servername_len > 0) {
+                            this.app.addServerNameWithOptions(sni_ssl_config.server_name, sni_ssl_config.asUSockets());
+                            this.app.domain(sni_ssl_config.server_name[0..sni_servername_len :0]);
+                            this.setRoutes();
+                        }
                     }
                 }
             } else {
                 this.app = App.create(.{});
-            }
-            this.setRoutes();
-            if (custom_servername) |serverName| {
-                this.app.domain(serverName);
                 this.setRoutes();
             }
 

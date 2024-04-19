@@ -64,7 +64,7 @@ const goodSecureContext = {
   ca: [ca1],
 };
 
-describe("tls context", () => {
+describe("tls.Server", () => {
   it("tls add Context", async () => {
     const serverOptions = {
       key: agent2Key,
@@ -293,7 +293,7 @@ describe("tls context", () => {
     });
     return promise;
   }
-  it("test SNI tls.Server + tls.connect", async () => {
+  it("SNI tls.Server + tls.connect", async () => {
     await testClient(
       {
         ca: [ca1],
@@ -337,20 +337,30 @@ describe("tls context", () => {
   });
 });
 
-describe("Bun.serve addServerName", () => {
+describe("Bun.serve SNI", () => {
   function testBunServerAndClient(options, clientResult) {
     const { promise, resolve, reject } = Promise.withResolvers();
     const server = Bun.serve({
       port: 0,
-      tls: serverOptions,
+      tls: [
+        serverOptions,
+        {
+          serverName: "a.example.com",
+          ...SNIContexts["a.example.com"],
+        },
+        {
+          serverName: "*.test.com",
+          ...SNIContexts["asterisk.test.com"],
+        },
+        {
+          serverName: "chain.example.com",
+          ...SNIContexts["chain.example.com"],
+        },
+      ],
       fetch(req, res) {
         return new Response("OK");
       },
     });
-
-    server.addServerName("a.example.com", SNIContexts["a.example.com"]);
-    server.addServerName("*.test.com", SNIContexts["asterisk.test.com"]);
-    server.addServerName("chain.example.com", SNIContexts["chain.example.com"]);
 
     const client = tls.connect(
       {
@@ -400,8 +410,7 @@ describe("Bun.serve addServerName", () => {
       client.on("error", reject);
     });
   }
-
-  it("test addServerName/removeServerName", async () => {
+  it("single SNI", async () => {
     let server;
     try {
       server = Bun.serve({
@@ -414,39 +423,16 @@ describe("Bun.serve addServerName", () => {
           return new Response(new URL(req.url).hostname);
         },
       });
-      {
+      for (const servername of ["a.test.com", "b.test.com", "c.test.com"]) {
         const client = await doClientRequest({
           ...SNIContexts["asterisk.test.com"],
           port: server.port,
           ca: [ca2],
-          servername: "b.test.com",
+          servername,
         });
         expect(client).toBe(true);
       }
-
       {
-        const client = await doClientRequest({
-          ...goodSecureContext,
-          port: server.port,
-          servername: "a.example.com",
-        });
-        expect(client).toBe(false);
-      }
-
-      {
-        server.addServerName("*.example.com", goodSecureContext);
-
-        const client = await doClientRequest({
-          ...goodSecureContext,
-          port: server.port,
-          servername: "a.example.com",
-        });
-        expect(client).toBe(true);
-      }
-
-      {
-        server.removeServerName("*.example.com");
-
         const client = await doClientRequest({
           ...goodSecureContext,
           port: server.port,
@@ -457,8 +443,39 @@ describe("Bun.serve addServerName", () => {
     } finally {
       server.stop(true);
     }
+    try {
+      server = Bun.serve({
+        port: 0,
+        tls: {
+          ...goodSecureContext,
+          serverName: "*.example.com",
+        },
+        fetch(req, res) {
+          return new Response(new URL(req.url).hostname);
+        },
+      });
+      {
+        const client = await doClientRequest({
+          ...goodSecureContext,
+          port: server.port,
+          servername: "a.example.com",
+        });
+        expect(client).toBe(true);
+      }
+
+      {
+        const client = await doClientRequest({
+          ...goodSecureContext,
+          port: server.port,
+          servername: "b.example.com",
+        });
+        expect(client).toBe(true);
+      }
+    } finally {
+      server.stop(true);
+    }
   });
-  it("test SNI Bun.serve + tls.connect", async () => {
+  it("multiple SNI", async () => {
     await testBunServerAndClient(
       {
         ca: [ca1],

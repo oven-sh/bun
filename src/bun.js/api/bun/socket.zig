@@ -856,35 +856,6 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn removeServerName(this: *Listener, global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-        if (!this.ssl) {
-            global.throwInvalidArguments("removeServerName requires SSL support", .{});
-            return .zero;
-        }
-        const arguments = callframe.arguments(2);
-        if (arguments.len < 2) {
-            global.throwNotEnoughArguments("removeServerName", 2, 0);
-            return .zero;
-        }
-        const hostname = arguments.ptr[0];
-        if (!hostname.isString()) {
-            global.throwInvalidArguments("hostname pattern expects a string", .{});
-            return .zero;
-        }
-        const host_str = hostname.toSliceZ(
-            global,
-            bun.default_allocator,
-        );
-        defer host_str.deinit();
-        const server_name = host_str.sliceZ();
-        if (server_name.len == 0) {
-            global.throwInvalidArguments("hostname pattern cannot be empty", .{});
-            return .zero;
-        }
-        uws.us_socket_context_remove_server_name(1, this.socket_context, server_name);
-        return JSValue.jsUndefined();
-    }
-
     pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const arguments = callframe.arguments(1);
         log("close", .{});

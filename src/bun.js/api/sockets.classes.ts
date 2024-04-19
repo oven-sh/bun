@@ -204,10 +204,6 @@ export default [
         fn: "reload",
         length: 1,
       },
-      removeServerName: {
-        fn: "removeServerName",
-        length: 1,
-      },
       addServerName: {
         fn: "addServerName",
         length: 2,

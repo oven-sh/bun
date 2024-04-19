@@ -1235,14 +1235,14 @@ pub const Command = struct {
 
     pub fn isBunX(argv0: []const u8) bool {
         if (Environment.isWindows) {
-            return strings.endsWithComptime(argv0, "bunx.exe");
+            return strings.endsWithComptime(argv0, "bunx.exe") or strings.endsWithComptime(argv0, "bunx");
         }
         return strings.endsWithComptime(argv0, "bunx");
     }
 
     pub fn isNode(argv0: []const u8) bool {
         if (Environment.isWindows) {
-            return strings.endsWithComptime(argv0, "node.exe");
+            return strings.endsWithComptime(argv0, "node.exe") or strings.endsWithComptime(argv0, "node");
         }
         return strings.endsWithComptime(argv0, "node");
     }

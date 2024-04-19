@@ -25,7 +25,7 @@ jobs:
     name: Run Tests
     runs-on: ${{ inputs.runs-on }}
     steps:
-      - if: ${{ runner.os == "Windows" }}
+      - if: ${{ runner.os == 'Windows' }}
         name: Setup Git
         run: |
           git config --global core.autocrlf false

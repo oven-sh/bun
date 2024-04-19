@@ -2718,8 +2718,12 @@ pub const udp = struct {
             return us_udp_socket_bound_port(this);
         }
 
-        pub fn boundIp(this: *This, buf: [*c]u8, length: [*c]i32) void {
+        pub fn boundIp(this: *This, buf: [*c]u8, length: *i32) void {
             return us_udp_socket_bound_ip(this, buf, length);
+        }
+
+        pub fn remoteIp(this: *This, buf: [*c]u8, length: *i32) void {
+            return us_udp_socket_remote_ip(this, buf, length);
         }
 
         pub fn close(this: *This) void {
@@ -2744,6 +2748,7 @@ pub const udp = struct {
     extern fn us_udp_socket_bind(socket: ?*udp.Socket, hostname: [*c]const u8, port: c_uint) c_int;
     extern fn us_udp_socket_bound_port(socket: ?*udp.Socket) c_int;
     extern fn us_udp_socket_bound_ip(socket: ?*udp.Socket, buf: [*c]u8, length: [*c]i32) void;
+    extern fn us_udp_socket_remote_ip(socket: ?*udp.Socket, buf: [*c]u8, length: [*c]i32) void;
     extern fn us_udp_socket_close(socket: ?*udp.Socket) void;
 
     pub const PacketBuffer = opaque {

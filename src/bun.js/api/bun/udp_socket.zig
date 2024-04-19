@@ -22,68 +22,6 @@ extern fn inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: c_int)
 extern fn inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
 extern fn JSSocketAddress__create(global: *JSGlobalObject, address: JSValue, port: i32, v6: bool) JSValue;
 
-pub fn socketConnect(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    const args = callFrame.arguments(2);
-
-    const this = callFrame.this().as(UDPSocket) orelse {
-        globalThis.throwInvalidArguments("Expected UDPSocket as 'this'", .{});
-        return .zero;
-    };
-
-    if (this.connected) {
-        globalThis.throw("Socket is already connected", .{});
-        return .zero;
-    }
-
-    if (args.len < 2) {
-        globalThis.throwInvalidArguments("Expected 2 arguments", .{});
-        return .zero;
-    }
-
-    const str = args.ptr[0].toBunString(globalThis);
-    defer str.deref();
-    const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
-    defer default_allocator.free(connect_host);
-
-    const connect_port_js = args.ptr[1];
-
-    if (!connect_port_js.isNumber()) {
-        globalThis.throwInvalidArguments("Expected \"port\" to be an integer", .{});
-        return .zero;
-    }
-
-    const connect_port = connect_port_js.asInt32();
-    const port: u16 = if (connect_port < 1 or connect_port > 0xffff) 0 else @as(u16, @intCast(connect_port));
-
-    if (this.socket.connect(connect_host, port) == -1) {
-        globalThis.throw("Failed to connect socket", .{});
-        return .zero;
-    }
-    this.connected = true;
-
-    return .undefined;
-}
-
-pub fn socketDisconnect(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    const this = callFrame.this().as(UDPSocket) orelse {
-        globalObject.throwInvalidArguments("Expected UDPSocket as 'this'", .{});
-        return .zero;
-    };
-
-    if (!this.connected) {
-        globalObject.throw("Socket is not connected", .{});
-        return .zero;
-    }
-
-    if (this.socket.disconnect() == -1) {
-        globalObject.throw("Failed to disconnect socket", .{});
-        return .zero;
-    }
-    this.connected = false;
-
-    return .undefined;
-}
-
 fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     JSC.markBinding(@src());
 
@@ -323,9 +261,13 @@ pub const UDPSocket = struct {
     ref: JSC.Ref = JSC.Ref.init(),
     poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
     closed: bool = false,
-    connected: bool = false,
+    connect_info: ?ConnectInfo = null,
     vm: *JSC.VirtualMachine,
     js_refcount: usize = 1,
+
+    const ConnectInfo = struct {
+        port: u16,
+    };
 
     pub usingnamespace JSC.Codegen.JSUDPSocket;
 
@@ -375,7 +317,7 @@ pub const UDPSocket = struct {
                 globalThis.throw("Failed to connect socket", .{});
                 return .zero;
             }
-            this.connected = true;
+            this.connect_info = .{ .port = connect.port };
         }
 
         this.poll_ref.ref(vm);
@@ -432,7 +374,7 @@ pub const UDPSocket = struct {
                 return .zero;
             };
             const dst: ?Destination = brk: {
-                if (this.connected) {
+                if (this.connect_info != null) {
                     const port = val.getTruthyComptime(globalThis, "port");
                     const addr = val.getTruthyComptime(globalThis, "address");
                     if (port != null) {
@@ -474,7 +416,7 @@ pub const UDPSocket = struct {
     ) callconv(.C) JSValue {
         const arguments = callframe.arguments(3);
         const dst: ?Destination = brk: {
-            if (this.connected) {
+            if (this.connect_info != null) {
                 if (arguments.len == 1) {
                     break :brk null;
                 }
@@ -669,26 +611,44 @@ pub const UDPSocket = struct {
         return JSValue.jsNumber(this.socket.boundPort());
     }
 
-    pub fn getAddress(this: *This, globalThis: *JSGlobalObject) callconv(.C) JSValue {
-        var buf: [64]u8 = [_]u8{0} ** 64;
-        var length: i32 = 64;
+    fn addressToString(globalThis: *JSGlobalObject, address_bytes: []const u8) JSValue {
         var text_buf: [512]u8 = undefined;
-        this.socket.boundIp(&buf, &length);
-
-        const address_bytes = buf[0..@as(usize, @intCast(length))];
-        const address: std.net.Address = switch (length) {
+        const address: std.net.Address = switch (address_bytes.len) {
             4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
             16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
             else => return .undefined,
         };
 
         const slice = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        var addr = bun.String.createLatin1(slice);
+        return bun.String.createLatin1(slice).toJS(globalThis);
+    }
+
+    pub fn getAddress(this: *This, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+        var buf: [64]u8 = [_]u8{0} ** 64;
+        var length: i32 = 64;
+        this.socket.boundIp(&buf, &length);
+
+        const address_bytes = buf[0..@as(usize, @intCast(length))];
         const port = this.socket.boundPort();
         return JSSocketAddress__create(
             globalThis,
-            addr.toJS(globalThis),
+            addressToString(globalThis, address_bytes),
             @intCast(port),
+            length == 16,
+        );
+    }
+
+    pub fn getRemoteAddress(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        const connect_info = this.connect_info orelse return .undefined;
+        var buf: [64]u8 = [_]u8{0} ** 64;
+        var length: i32 = 64;
+        this.socket.remoteIp(&buf, &length);
+
+        const address_bytes = buf[0..@as(usize, @intCast(length))];
+        return JSSocketAddress__create(
+            globalThis,
+            addressToString(globalThis, address_bytes),
+            connect_info.port,
             length == 16,
         );
     }
@@ -723,5 +683,69 @@ pub const UDPSocket = struct {
         this.config.deinit();
 
         default_allocator.destroy(this);
+    }
+
+    pub fn jsConnect(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const args = callFrame.arguments(2);
+
+        const this = callFrame.this().as(UDPSocket) orelse {
+            globalThis.throwInvalidArguments("Expected UDPSocket as 'this'", .{});
+            return .zero;
+        };
+
+        if (this.connect_info != null) {
+            globalThis.throw("Socket is already connected", .{});
+            return .zero;
+        }
+
+        if (args.len < 2) {
+            globalThis.throwInvalidArguments("Expected 2 arguments", .{});
+            return .zero;
+        }
+
+        const str = args.ptr[0].toBunString(globalThis);
+        defer str.deref();
+        const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
+        defer default_allocator.free(connect_host);
+
+        const connect_port_js = args.ptr[1];
+
+        if (!connect_port_js.isNumber()) {
+            globalThis.throwInvalidArguments("Expected \"port\" to be an integer", .{});
+            return .zero;
+        }
+
+        const connect_port = connect_port_js.asInt32();
+        const port: u16 = if (connect_port < 1 or connect_port > 0xffff) 0 else @as(u16, @intCast(connect_port));
+
+        if (this.socket.connect(connect_host, port) == -1) {
+            globalThis.throw("Failed to connect socket", .{});
+            return .zero;
+        }
+        this.connect_info = .{
+            .port = port,
+        };
+
+        return .undefined;
+    }
+
+    pub fn jsDisconnect(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const this = callFrame.this().as(UDPSocket) orelse {
+            globalObject.throwInvalidArguments("Expected UDPSocket as 'this'", .{});
+            return .zero;
+        };
+
+        if (this.connect_info == null) {
+            globalObject.throw("Socket is not connected", .{});
+            return .zero;
+        }
+
+        if (this.socket.disconnect() == -1) {
+            globalObject.throw("Failed to disconnect socket", .{});
+            return .zero;
+        }
+        this.connect_info = null;
+
+        return .undefined;
     }
 };

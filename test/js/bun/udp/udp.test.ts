@@ -1,6 +1,7 @@
-import { bindUDP, spawnSync } from "bun";
-import { describe, test, expect, mock, afterAll, afterEach } from "bun:test";
+import { bindUDP } from "bun";
+import { describe, test, expect } from "bun:test";
 import { randomPort, hasIP } from "harness";
+import { createSocket } from "dgram";
 
 describe("bind()", () => {
   test("can create a socket", () => {
@@ -156,7 +157,7 @@ describe("bind()", () => {
         // handle unreliable transmission in UDP
         function sendRec() {
           if (!client.closed) {
-            client.send(data, server.port, server.hostname);
+            client.send(data, server.port, '127.0.0.1');
             setTimeout(sendRec, 100);
           }
         }
@@ -249,6 +250,28 @@ describe("bind()", () => {
       sendRec();
     });
   }
+});
+
+describe("createSocket()", () => {
+  test("connect", (done) => {
+    const PORT = 12345;
+    const client = createSocket("udp4");
+    client.on('close', done);
+
+    client.connect(PORT, () => {
+      const remoteAddr = client.remoteAddress();
+      expect(remoteAddr.port).toBe(PORT);
+      expect(() => client.connect(PORT)).toThrow();
+    
+      client.disconnect();
+      expect(() => client.disconnect()).toThrow();
+    
+      expect(() => client.remoteAddress()).toThrow();
+    
+      client.once('connect', () => client.close());
+      client.connect(PORT);
+    });
+  });
 });
 
 /*

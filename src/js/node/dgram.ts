@@ -293,7 +293,6 @@ function bufferSize(self, size, buffer) {
 Socket.prototype.bind = function(port_, address_ /* , callback */) {
   let port = port_;
 
-  healthCheck(this);
   const state = this[kStateSymbol];
 
   if (state.bindState !== BIND_STATE_UNBOUND)
@@ -472,7 +471,7 @@ function _connect(port, address, callback) {
 }
 
 
-const connectFn = $newZigFunction("udp_socket.zig", "socketConnect", 2);
+const connectFn = $newZigFunction("udp_socket.zig", "UDPSocket.jsConnect", 2);
 
 function doConnect(ex, self, ip, address, port, callback) {
   const state = self[kStateSymbol];
@@ -504,7 +503,7 @@ function doConnect(ex, self, ip, address, port, callback) {
 }
 
 
-const disconnectFn = $newZigFunction("udp_socket.zig", "socketDisconnect", 0);
+const disconnectFn = $newZigFunction("udp_socket.zig", "UDPSocket.jsDisconnect", 0);
 
 Socket.prototype.disconnect = function() {
   const state = this[kStateSymbol];
@@ -699,10 +698,6 @@ Socket.prototype.send = function(buffer,
     validateString(address, 'address');
   }
 
-
-  healthCheck(this);
-
-
   if (state.bindState === BIND_STATE_UNBOUND)
     this.bind({ port: 0, exclusive: true }, null);
 
@@ -850,8 +845,7 @@ Socket.prototype.close = function(callback) {
     return this;
   }
 
-  healthCheck(this);
-  stopReceiving(this);
+  state.receiving = false;
   state.handle.socket?.close();
   state.handle = null;
   defaultTriggerAsyncIdScope(this[async_id_symbol],
@@ -876,42 +870,36 @@ function socketCloseNT(self) {
 
 
 Socket.prototype.address = function() {
-  healthCheck(this);
-
-  const out = {};
-  const err = this[kStateSymbol].handle.getsockname(out);
-  if (err) {
-    throw new ErrnoException(err, 'getsockname');
-  }
-
-  return out;
+  return this[kStateSymbol].handle.socket.address;
 };
 
 Socket.prototype.remoteAddress = function() {
-  healthCheck(this);
-
   const state = this[kStateSymbol];
   if (state.connectState !== CONNECT_STATE_CONNECTED)
     throw new ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
-  const out = {};
-  const err = state.handle.getpeername(out);
-  if (err)
-    throw new ErrnoException(err, 'getpeername');
+  const out = state.handle.socket.remoteAddress;
+  if (!out)
+    throw new ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
   return out;
 };
 
 
 Socket.prototype.setBroadcast = function(arg) {
+  throwNotImplemented('setBroadcast', 1630);
+  /*
   const err = this[kStateSymbol].handle.setBroadcast(arg ? 1 : 0);
   if (err) {
     throw new ErrnoException(err, 'setBroadcast');
   }
+  */
 };
 
 
 Socket.prototype.setTTL = function(ttl) {
+  throwNotImplemented('setTTL', 1630);
+  /*
   validateNumber(ttl, 'ttl');
 
   const err = this[kStateSymbol].handle.setTTL(ttl);
@@ -920,10 +908,13 @@ Socket.prototype.setTTL = function(ttl) {
   }
 
   return ttl;
+  */
 };
 
 
 Socket.prototype.setMulticastTTL = function(ttl) {
+  throwNotImplemented('setMulticastTTL', 1630);
+  /*
   validateNumber(ttl, 'ttl');
 
   const err = this[kStateSymbol].handle.setMulticastTTL(ttl);
@@ -932,33 +923,39 @@ Socket.prototype.setMulticastTTL = function(ttl) {
   }
 
   return ttl;
+  */
 };
 
 
 Socket.prototype.setMulticastLoopback = function(arg) {
+  throwNotImplemented('setMulticastLoopback', 1630);
+  /*
   const err = this[kStateSymbol].handle.setMulticastLoopback(arg ? 1 : 0);
   if (err) {
     throw new ErrnoException(err, 'setMulticastLoopback');
   }
 
   return arg; // 0.4 compatibility
+  */
 };
 
 
 Socket.prototype.setMulticastInterface = function(interfaceAddress) {
-  healthCheck(this);
+  throwNotImplemented('setMulticastInterface', 1630);
+  /*
   validateString(interfaceAddress, 'interfaceAddress');
 
   const err = this[kStateSymbol].handle.setMulticastInterface(interfaceAddress);
   if (err) {
     throw new ErrnoException(err, 'setMulticastInterface');
   }
+  */
 };
 
 Socket.prototype.addMembership = function(multicastAddress,
                                           interfaceAddress) {
-  healthCheck(this);
-
+  throwNotImplemented('addMembership', 1630);
+  /*
   if (!multicastAddress) {
     throw new ERR_MISSING_ARGS('multicastAddress');
   }
@@ -968,13 +965,14 @@ Socket.prototype.addMembership = function(multicastAddress,
   if (err) {
     throw new ErrnoException(err, 'addMembership');
   }
+  */
 };
 
 
 Socket.prototype.dropMembership = function(multicastAddress,
                                            interfaceAddress) {
-  healthCheck(this);
-
+  throwNotImplemented('dropMembership', 1630);
+  /*
   if (!multicastAddress) {
     throw new ERR_MISSING_ARGS('multicastAddress');
   }
@@ -984,13 +982,14 @@ Socket.prototype.dropMembership = function(multicastAddress,
   if (err) {
     throw new ErrnoException(err, 'dropMembership');
   }
+  */
 };
 
 Socket.prototype.addSourceSpecificMembership = function(sourceAddress,
                                                         groupAddress,
                                                         interfaceAddress) {
-  healthCheck(this);
-
+  throwNotImplemented('addSourceSpecificMembership', 1630);
+  /*
   validateString(sourceAddress, 'sourceAddress');
   validateString(groupAddress, 'groupAddress');
 
@@ -1001,14 +1000,15 @@ Socket.prototype.addSourceSpecificMembership = function(sourceAddress,
   if (err) {
     throw new ErrnoException(err, 'addSourceSpecificMembership');
   }
+  */
 };
 
 
 Socket.prototype.dropSourceSpecificMembership = function(sourceAddress,
                                                          groupAddress,
                                                          interfaceAddress) {
-  healthCheck(this);
-
+  throwNotImplemented('dropSourceSpecificMembership', 1630);
+  /*
   validateString(sourceAddress, 'sourceAddress');
   validateString(groupAddress, 'groupAddress');
 
@@ -1019,43 +1019,24 @@ Socket.prototype.dropSourceSpecificMembership = function(sourceAddress,
   if (err) {
     throw new ErrnoException(err, 'dropSourceSpecificMembership');
   }
+  */
 };
 
-
-function healthCheck(socket) {
-  /*
-  if (!socket[kStateSymbol].handle) {
-    // Error message from dgram_legacy.js.
-    throw new ERR_SOCKET_DGRAM_NOT_RUNNING();
-  }
-  */
-}
-
-
-function stopReceiving(socket) {
-  const state = socket[kStateSymbol];
-
-  if (!state.receiving)
-    return;
-
-  state.receiving = false;
-}
-
 Socket.prototype.ref = function() {
-  const handle = this[kStateSymbol].handle;
+  const socket = this[kStateSymbol].handle?.socket;
 
-  if (handle)
-    handle.ref();
+  if (socket)
+    socket.ref();
 
   return this;
 };
 
 
 Socket.prototype.unref = function() {
-  const handle = this[kStateSymbol].handle;
+  const socket = this[kStateSymbol].handle?.socket;
 
-  if (handle)
-    handle.unref();
+  if (socket)
+    socket.unref();
 
   return this;
 };
@@ -1081,11 +1062,13 @@ Socket.prototype.getSendBufferSize = function() {
 };
 
 Socket.prototype.getSendQueueSize = function() {
-  return this[kStateSymbol].handle.getSendQueueSize();
+  return 0;
+  // return this[kStateSymbol].handle.getSendQueueSize();
 };
 
 Socket.prototype.getSendQueueCount = function() {
-  return this[kStateSymbol].handle.getSendQueueCount();
+  return 0;
+  // return this[kStateSymbol].handle.getSendQueueCount();
 };
 
 // Deprecated private APIs.
@@ -1189,11 +1172,13 @@ ObjectDefineProperty(UDP.prototype, 'owner', {
 
 
 export default {
-  // _createSocketHandle: deprecate(
-  //   _createSocketHandle,
-  //   'dgram._createSocketHandle() is deprecated',
-  //   'DEP0112',
-  // ),
+  /*
+  _createSocketHandle: deprecate(
+    _createSocketHandle,
+    'dgram._createSocketHandle() is deprecated',
+    'DEP0112',
+  ),
+  */
   createSocket,
   Socket,
 };

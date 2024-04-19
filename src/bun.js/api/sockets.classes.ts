@@ -260,6 +260,10 @@ export default [
         getter: "getAddress",
         cache: true,
       },
+      remoteAddress: {
+        getter: "getRemoteAddress",
+        cache: true,
+      },
       binaryType: {
         getter: "getBinaryType",
         cache: true,

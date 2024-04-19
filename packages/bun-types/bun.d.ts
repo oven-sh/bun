@@ -4031,6 +4031,7 @@ declare module "bun" {
     }
 
     export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
+      readonly remoteAddress: SocketAddress;
       sendMany(packets: BasePacket[]): void;
       send(data: string | ArrayBufferView | ArrayBufferLike): void;
       reload(handler: ConnectedSocketHandler<DataBinaryType>): void;

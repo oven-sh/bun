@@ -480,7 +480,7 @@ pub const UDPSocket = struct {
 
         var addr: std.os.sockaddr.storage = std.mem.zeroes(std.os.sockaddr.storage);
         if (dest) |destval| {
-            const number = destval.port.coerceToInt32();
+            const number = destval.port.coerceToInt32(globalThis);
             const port: u16 = if (number < 1 or number > 0xffff) 0 else @intCast(number);
 
             const str = destval.address.toBunString(globalThis);

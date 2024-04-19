@@ -990,21 +990,34 @@ pub const PackageInstall = struct {
             .github => this.verifyGitResolution(&resolution.value.github, buf, root_node_modules_dir),
             else => {
                 if (resolution.tag == .folder and this.node_modules.tree_id != 0) {
-                    // transitive folder dependency is just a symlink. check if it's dangling
-                    return this.verifySymlink(root_node_modules_dir);
+                    return this.verifySymlinkedFolder(root_node_modules_dir);
                 }
                 return this.verifyPackageJSONNameAndVersion(root_node_modules_dir);
             },
         };
     }
 
-    fn verifySymlink(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {
+    fn verifySymlinkedFolder(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {
         var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
         defer {
             if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
         }
 
-        return !isDanglingSymlinkAt(bun.toFD(destination_dir.fd), this.destination_dir_subpath);
+        var dir: std.fs.Dir = bun.openDir(destination_dir, this.destination_dir_subpath) catch return false;
+        defer dir.close();
+
+        var iter = bun.DirIterator.iterate(dir, .u8);
+
+        while (switch (iter.next()) {
+            .result => |entry| entry,
+            .err => return false,
+        }) |entry| {
+            if (entry.kind == .file) {
+                return !isDanglingSymlinkAt(bun.toFD(dir.fd), entry.name.sliceAssumeZ());
+            }
+        }
+
+        return true;
     }
 
     fn verifyPackageJSONNameAndVersion(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {
@@ -1126,7 +1139,7 @@ pub const PackageInstall = struct {
             return .{ .success = {} };
         }
 
-        pub fn fail(err: anyerror, step: Step) Result {
+        pub inline fn fail(err: anyerror, step: Step) Result {
             return .{
                 .fail = .{
                     .err = err,
@@ -1135,7 +1148,7 @@ pub const PackageInstall = struct {
             };
         }
 
-        pub fn isFail(this: @This()) bool {
+        pub inline fn isFail(this: @This()) bool {
             return switch (this) {
                 .success => false,
                 .fail => true,
@@ -1307,18 +1320,21 @@ pub const PackageInstall = struct {
 
     threadlocal var node_fs_for_package_installer: bun.JSC.Node.NodeFS = .{};
 
-    fn initInstallDir(this: *PackageInstall, state: *InstallDirState, destination_dir: std.fs.Dir) Result {
+    fn initInstallDir(this: *PackageInstall, state: *InstallDirState, destination_dir: std.fs.Dir, method: Method) Result {
         const destbase = destination_dir;
         const destpath = this.destination_dir_subpath;
 
-        state.cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
+        state.cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err|
+            return Result.fail(err, .opening_cache_dir);
+
         state.walker = Walker.walk(
             state.cached_package_dir,
             this.allocator,
             &[_]bun.OSPathSlice{},
-            &[_]bun.OSPathSlice{},
+            if (method == .symlink)
+                &[_]bun.OSPathSlice{"node_modules"}
+            else
+                &[_]bun.OSPathSlice{},
         ) catch bun.outOfMemory();
 
         if (!Environment.isWindows) {
@@ -1384,7 +1400,7 @@ pub const PackageInstall = struct {
 
     fn installWithCopyfile(this: *PackageInstall, destination_dir: std.fs.Dir) Result {
         var state = InstallDirState{};
-        const res = this.initInstallDir(&state, destination_dir);
+        const res = this.initInstallDir(&state, destination_dir, .copyfile);
         if (res.isFail()) return res;
         defer state.deinit();
 
@@ -1502,13 +1518,9 @@ pub const PackageInstall = struct {
             if (Environment.isWindows) &state.buf else void{},
             if (Environment.isWindows) state.to_copy_buf2 else void{},
             if (Environment.isWindows) &state.buf2 else void{},
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .copying_files },
-        };
+        ) catch |err| return Result.fail(err, .copying_files);
 
-        return Result{
-            .success = {},
-        };
+        return Result.success();
     }
 
     fn NewTaskQueue(comptime TaskType: type) type {
@@ -1662,7 +1674,7 @@ pub const PackageInstall = struct {
 
     fn installWithHardlink(this: *PackageInstall, dest_dir: std.fs.Dir) !Result {
         var state = InstallDirState{};
-        const res = this.initInstallDir(&state, dest_dir);
+        const res = this.initInstallDir(&state, dest_dir, .hardlink);
         if (res.isFail()) return res;
         defer state.deinit();
 
@@ -1755,14 +1767,12 @@ pub const PackageInstall = struct {
             return Result.fail(err, .copying_files);
         };
 
-        return Result{
-            .success = {},
-        };
+        return Result.success();
     }
 
     fn installWithSymlink(this: *PackageInstall, dest_dir: std.fs.Dir) !Result {
         var state = InstallDirState{};
-        const res = this.initInstallDir(&state, dest_dir);
+        const res = this.initInstallDir(&state, dest_dir, .symlink);
         if (res.isFail()) return res;
         defer state.deinit();
 
@@ -1993,7 +2003,7 @@ pub const PackageInstall = struct {
 
     pub fn isDanglingSymlink(path: [:0]const u8) bool {
         if (comptime Environment.isLinux) {
-            const rc = Syscall.system.open(path, std.os.O.PATH, 0);
+            const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
                     _ = bun.sys.close(bun.toFD(rc));
@@ -2012,7 +2022,7 @@ pub const PackageInstall = struct {
                 },
             }
         } else {
-            const rc = Syscall.system.open(path, 0, 0);
+            const rc = Syscall.system.open(path, @as(u32, 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
                     _ = Syscall.system.close(rc);
@@ -2025,7 +2035,7 @@ pub const PackageInstall = struct {
 
     pub fn isDanglingSymlinkAt(dirfd: bun.FileDescriptor, path: [:0]const u8) bool {
         if (comptime Environment.isLinux) {
-            const rc = bun.sys.system.openat(dirfd.cast(), path, std.os.O.PATH, 0);
+            const rc = bun.sys.system.openat(dirfd.cast(), path, @as(u32, std.os.O.PATH), @as(u32, 0));
             switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => {
                     _ = bun.sys.close(bun.toFD(rc));
@@ -2037,15 +2047,15 @@ pub const PackageInstall = struct {
             switch (bun.sys.sys_uv.openat(dirfd, path, 0, 0)) {
                 .err => return true,
                 .result => |fd| {
-                    _ = bun.sys.close(fd);
+                    _ = bun.sys.close(bun.toFD(fd));
                     return false;
                 },
             }
         } else {
-            const rc = bun.sys.system.openat(dirfd.cast(), path, 0, 0);
+            const rc = bun.sys.system.openat(dirfd.cast(), path, @as(u32, 0), @as(u32, 0));
             switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => {
-                    _ = bun.sys.close(rc);
+                    _ = bun.sys.close(bun.toFD(rc));
                     return false;
                 },
                 else => return true,
@@ -2217,12 +2227,16 @@ pub const PackageInstall = struct {
         };
     }
 
-    pub fn install(this: *PackageInstall, skip_delete: bool, destination_dir: std.fs.Dir) Result {
+    pub fn install(this: *PackageInstall, skip_delete: bool, destination_dir: std.fs.Dir, resolution_tag: Resolution.Tag) Result {
         // If this fails, we don't care.
         // we'll catch it the next error
         if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
 
         var supported_method_to_use = this.getInstallMethod();
+
+        if (resolution_tag == .folder and this.node_modules.tree_id != 0) {
+            supported_method_to_use = .symlink;
+        }
 
         switch (supported_method_to_use) {
             .clonefile => {
@@ -2238,12 +2252,8 @@ pub const PackageInstall = struct {
                                 supported_method = .copyfile;
                                 supported_method_to_use = .copyfile;
                             },
-                            error.FileNotFound => return Result{
-                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                            },
-                            else => return Result{
-                                .fail = .{ .err = err, .step = .copying_files },
-                            },
+                            error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir),
+                            else => return Result.fail(err, .copying_files),
                         }
                     }
                 }
@@ -2258,12 +2268,8 @@ pub const PackageInstall = struct {
                                 supported_method = .copyfile;
                                 supported_method_to_use = .copyfile;
                             },
-                            error.FileNotFound => return Result{
-                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                            },
-                            else => return Result{
-                                .fail = .{ .err = err, .step = .copying_files },
-                            },
+                            error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir),
+                            else => return Result.fail(err, .copying_files),
                         }
                     }
                 }
@@ -2281,39 +2287,25 @@ pub const PackageInstall = struct {
                     }
 
                     switch (err) {
-                        error.FileNotFound => return Result{
-                            .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                        },
-                        else => return Result{
-                            .fail = .{ .err = err, .step = .copying_files },
-                        },
+                        error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir),
+                        else => return Result.fail(err, .copying_files),
                     }
                 }
             },
             .symlink => {
-                if (comptime Environment.isWindows) {
-                    supported_method_to_use = .copyfile;
-                } else {
-                    if (this.installWithSymlink(destination_dir)) |result| {
-                        return result;
-                    } else |err| {
-                        switch (err) {
-                            error.FileNotFound => return Result{
-                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                            },
-                            else => return Result{
-                                .fail = .{ .err = err, .step = .copying_files },
-                            },
-                        }
+                if (this.installWithSymlink(destination_dir)) |result| {
+                    return result;
+                } else |err| {
+                    switch (err) {
+                        error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir),
+                        else => return Result.fail(err, .copying_files),
                     }
                 }
             },
             else => {},
         }
 
-        if (supported_method_to_use != .copyfile) return Result{
-            .success = {},
-        };
+        if (supported_method_to_use != .copyfile) return Result.success();
 
         // TODO: linux io_uring
         return this.installWithCopyfile(destination_dir);
@@ -3834,7 +3826,7 @@ pub const PackageManager = struct {
                         break :brk FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
                     }
 
-                    // transitive folder dependencies create a symlink relative to the package and don't resolve dependencies
+                    // transitive folder dependencies do not have their dependencies resolved
                     var name_slice = this.lockfile.str(&name);
                     var folder_path = this.lockfile.str(&version.value.folder);
                     var package = Lockfile.Package{};
@@ -9205,7 +9197,6 @@ pub const PackageManager = struct {
             };
 
             var resolution_buf: [512]u8 = undefined;
-            const extern_string_buf = this.lockfile.buffers.extern_strings.items;
             const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
 
             var installer = PackageInstall{
@@ -9252,21 +9243,11 @@ pub const PackageManager = struct {
                         installer.cache_dir = std.fs.cwd();
                     } else {
                         // transitive folder dependencies are relative to their parent. they are not hoisted
-                        const dirname = strings.withoutTrailingSlash(std.fs.path.dirname(this.node_modules.path.items) orelse this.node_modules.path.items);
+                        @memcpy(this.folder_path_buf[0..folder.len], folder);
+                        this.folder_path_buf[folder.len] = 0;
+                        installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
 
-                        if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
-                            @memcpy(this.folder_path_buf[0..dirname.len], dirname);
-                            this.folder_path_buf[dirname.len] = 0;
-                            installer.cache_dir_subpath = this.folder_path_buf[0..dirname.len :0];
-                        } else {
-                            const abs_target = Path.joinAbsStringBuf(dirname, &this.folder_path_buf, &[_]string{folder}, .auto);
-
-                            const target = FileSystem.instance.relative(this.node_modules.path.items, abs_target);
-
-                            @memcpy(this.folder_path_buf[0..target.len], target);
-                            this.folder_path_buf[target.len] = 0;
-                            installer.cache_dir_subpath = this.folder_path_buf[0..target.len :0];
-                        }
+                        // cache_dir might not be created yet (if it's in node_modules)
                         installer.cache_dir = std.fs.cwd();
                     }
                 },
@@ -9464,11 +9445,20 @@ pub const PackageManager = struct {
                     .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
                     else => brk: {
                         if (resolution.tag == .folder and this.current_tree_id != 0) {
-                            // transitive folder dependencies become symlinks
-                            break :brk installer.installWithDirectorySymlink(this.skip_delete, destination_dir);
+                            const dirname = std.fs.path.dirname(this.node_modules.path.items) orelse this.node_modules.path.items;
+
+                            installer.cache_dir = this.root_node_modules_folder.openDir(dirname, .{ .iterate = true, .access_sub_paths = true }) catch
+                                break :brk PackageInstall.Result.fail(error.FileNotFound, .opening_cache_dir);
+
+                            const result = installer.install(this.skip_delete, destination_dir, resolution.tag);
+
+                            if (result.isFail() and (result.fail.err == error.ENOENT or result.fail.err == error.FileNotFound))
+                                break :brk PackageInstall.Result.success();
+
+                            break :brk result;
                         }
 
-                        break :brk installer.install(this.skip_delete, destination_dir);
+                        break :brk installer.install(this.skip_delete, destination_dir, resolution.tag);
                     },
                 };
 
@@ -9497,7 +9487,7 @@ pub const PackageManager = struct {
                                     .root_node_modules_folder = bun.toFD(this.root_node_modules_folder),
                                     .package_name = strings.StringOrTinyString.init(alias),
                                     .string_buf = buf,
-                                    .extern_string_buf = extern_string_buf,
+                                    .extern_string_buf = this.lockfile.buffers.extern_strings.items,
                                 };
 
                                 bin_linker.link(this.manager.options.global);

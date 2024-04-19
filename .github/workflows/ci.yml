@@ -100,7 +100,7 @@ jobs:
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
     with:
-      runs-on: windows-latest
+      runs-on: windows
       tag: windows-x64
       arch: x64
       cpu: haswell
@@ -110,7 +110,7 @@ jobs:
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
     with:
-      runs-on: windows-latest
+      runs-on: windows
       tag: windows-x64-baseline
       arch: x64
       cpu: nehalem
@@ -189,7 +189,7 @@ jobs:
     with:
       run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
-      runs-on: windows-latest
+      runs-on: windows
       tag: windows-x64
   windows-x64-baseline-test:
     if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
@@ -200,7 +200,7 @@ jobs:
     with:
       run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
-      runs-on: windows-latest
+      runs-on: windows
       tag: windows-x64-baseline
   cleanup:
     if: ${{ always() }}

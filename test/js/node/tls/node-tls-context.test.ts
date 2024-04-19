@@ -338,55 +338,6 @@ describe("tls.Server", () => {
 });
 
 describe("Bun.serve SNI", () => {
-  function testBunServerAndClient(options, clientResult) {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const server = Bun.serve({
-      port: 0,
-      tls: [
-        serverOptions,
-        {
-          serverName: "a.example.com",
-          ...SNIContexts["a.example.com"],
-        },
-        {
-          serverName: "*.test.com",
-          ...SNIContexts["asterisk.test.com"],
-        },
-        {
-          serverName: "chain.example.com",
-          ...SNIContexts["chain.example.com"],
-        },
-      ],
-      fetch(req, res) {
-        return new Response("OK");
-      },
-    });
-
-    const client = tls.connect(
-      {
-        ...options,
-        port: server.port,
-        rejectUnauthorized: false,
-      },
-      () => {
-        const result =
-          client.authorizationError && client.authorizationError.indexOf("ERR_TLS_CERT_ALTNAME_INVALID") !== -1;
-        if (result !== clientResult) {
-          reject(new Error(`Expected ${clientResult}, got ${result} in ${options.servername}`));
-        } else {
-          resolve();
-        }
-        client.end();
-      },
-    );
-
-    client.on("close", () => {
-      server.stop();
-    });
-
-    return promise;
-  }
-
   function doClientRequest(options) {
     return new Promise((resolve, reject) => {
       const client = tls.connect(
@@ -398,12 +349,6 @@ describe("Bun.serve SNI", () => {
           resolve(
             client.authorizationError && client.authorizationError.indexOf("ERR_TLS_CERT_ALTNAME_INVALID") !== -1,
           );
-          client.on("data", data => {
-            const text = data.toString();
-            resolve(text.split("\r\n\r\n")[1]);
-          });
-
-          client.write(`GET / HTTP/1.1\r\nHost: ${options.servername}\r\n\r\n`);
         },
       );
       client.on("close", resolve);
@@ -476,40 +421,68 @@ describe("Bun.serve SNI", () => {
     }
   });
   it("multiple SNI", async () => {
-    await testBunServerAndClient(
-      {
-        ca: [ca1],
-        servername: "a.example.com",
-      },
-      true,
-    );
-    await testBunServerAndClient(
-      {
-        ca: [ca2],
-        servername: "b.test.com",
-      },
-      true,
-    );
-    await testBunServerAndClient(
-      {
-        ca: [ca2],
-        servername: "a.b.test.com",
-      },
-      false,
-    );
-    await testBunServerAndClient(
-      {
-        ca: [ca1],
-        servername: "c.wrong.com",
-      },
-      false,
-    );
-    await testBunServerAndClient(
-      {
-        ca: [ca1],
-        servername: "chain.example.com",
-      },
-      true,
-    );
+    let server;
+    try {
+      server = Bun.serve({
+        port: 0,
+        tls: [
+          serverOptions,
+          {
+            serverName: "a.example.com",
+            ...SNIContexts["a.example.com"],
+          },
+          {
+            serverName: "*.test.com",
+            ...SNIContexts["asterisk.test.com"],
+          },
+          {
+            serverName: "chain.example.com",
+            ...SNIContexts["chain.example.com"],
+          },
+        ],
+        fetch(req, res) {
+          return new Response("OK");
+        },
+      });
+      expect(
+        await doClientRequest({
+          ca: [ca1],
+          servername: "a.example.com",
+          port: server.port,
+        }),
+      ).toBe(true);
+      expect(
+        await doClientRequest({
+          ca: [ca2],
+          servername: "b.test.com",
+          port: server.port,
+        }),
+      ).toBe(true);
+
+      expect(
+        await doClientRequest({
+          ca: [ca2],
+          servername: "a.b.test.com",
+          port: server.port,
+        }),
+      ).toBe(false);
+
+      expect(
+        await doClientRequest({
+          ca: [ca1],
+          servername: "c.wrong.com",
+          port: server.port,
+        }),
+      ).toBe(false);
+      expect(
+        await doClientRequest({
+          ca: [ca1],
+          servername: "chain.example.com",
+          port: server.port,
+        }),
+      ).toBe(true);
+    } finally {
+      server.stop(true);
+    }
   });
 });

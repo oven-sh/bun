@@ -1072,8 +1072,8 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
 
 fn isReportingEnabled() bool {
     // If trying to test the crash handler backend, implicitly enable reporting
-    if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |len| {
-        return len > 0;
+    if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |value| {
+        return value.len > 0;
     }
 
     // Environment variable to specifically enable or disable reporting

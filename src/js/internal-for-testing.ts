@@ -29,3 +29,8 @@ export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") a
   rootError: () => void;
   outOfMemory: () => void;
 };
+
+export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bindings.generate") as {
+  openTempDirWithoutSharingDelete: () => void;
+  closeTempDirHandle: () => void;
+};

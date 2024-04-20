@@ -26,13 +26,16 @@ echo $@ > ${root}/request.out
 `,
         });
 
-        const env: any = mergeWindowEnvs([{
-          ...bunEnv,
-          GITHUB_ACTIONS: undefined,
-          CI: undefined,
-        },{
-          PATH: temp + path.delimiter + process.env.PATH,
-        }]);
+        const env: any = mergeWindowEnvs([
+          {
+            ...bunEnv,
+            GITHUB_ACTIONS: undefined,
+            CI: undefined,
+          },
+          {
+            PATH: temp + path.delimiter + process.env.PATH,
+          },
+        ]);
 
         if (!should_report) {
           env.DO_NOT_TRACK = "1";

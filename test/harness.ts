@@ -1,9 +1,12 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { readlink, readFile, writeFile } from "fs/promises";
-import { isAbsolute, sep, join, dirname } from "path";
+import { isAbsolute, join, dirname } from "path";
 import fs, { openSync, closeSync } from "node:fs";
 import os from "node:os";
+import { heapStats } from "bun:jsc";
+
+type Awaitable<T> = T | Promise<T>;
 
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
@@ -512,8 +515,6 @@ function failTestsOnBlockingWriteCall() {
 
 failTestsOnBlockingWriteCall();
 
-import { heapStats } from "bun:jsc";
-import { Awaitable } from "vitest";
 export function dumpStats() {
   const stats = heapStats();
   const { objectTypeCounts, protectedObjectTypeCounts } = stats;

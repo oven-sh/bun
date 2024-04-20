@@ -32,7 +32,8 @@ const debug = std.debug;
 /// This is useful for testing as a crash in here will not 'panicked during a panic'.
 pub const enable = true;
 
-const report_base_url = "https://bun.report/";
+/// Override with BUN_CRASH_REPORT_URL enviroment variable.
+const default_report_base_url = "https://bun.report/";
 
 /// Only print the `Bun has crashed` message once. Once this is true, control
 /// flow is not returned to the main application.
@@ -575,6 +576,22 @@ fn panicBuiltin(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, b
 
 pub const panic = if (enable) panicImpl else panicBuiltin;
 
+pub fn reportBaseUrl() []const u8 {
+    const static = struct {
+        var base_url: ?[]const u8 = null;
+    };
+    return static.base_url orelse {
+        const computed = computed: {
+            if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |url| {
+                break :computed url;
+            }
+            break :computed default_report_base_url;
+        };
+        static.base_url = computed;
+        return computed;
+    };
+}
+
 const arch_display_string = if (bun.Environment.isAarch64)
     if (bun.Environment.isMac) "Silicon" else "arm64"
 else
@@ -770,41 +787,34 @@ const Platform = enum(u8) {
 
 const git_sha = if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown";
 
-const StackLine = union(enum) {
-    unknown,
-    known: struct {
-        address: i32,
-        // null -> from bun.exe
-        object: ?[]const u8,
-    },
-    javascript,
+const StackLine = struct {
+    address: i32,
+    // null -> from bun.exe
+    object: ?[]const u8,
 
-    pub fn fromAddress(addr: usize, name_bytes: []u8) StackLine {
+    /// `null` implies the trace is not known.
+    pub fn fromAddress(addr: usize, name_bytes: []u8) ?StackLine {
         return switch (bun.Environment.os) {
             .windows => {
-                const module = bun.windows.getModuleHandleFromAddress(addr) orelse {
-                    // TODO: try to figure out of this is a JS stack frame
-                    return .{ .unknown = {} };
-                };
+                const module = bun.windows.getModuleHandleFromAddress(addr) orelse
+                    return null;
 
                 const base_address = @intFromPtr(module);
 
                 var temp: [512]u16 = undefined;
                 const name = bun.windows.getModuleNameW(module, &temp) orelse
-                    return .{ .unknown = {} };
+                    return null;
 
                 const image_path = bun.windows.exePathW();
 
                 return .{
-                    .known = .{
-                        // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
-                        .address = @intCast(addr - base_address),
+                    // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
+                    .address = @intCast(addr - base_address),
 
-                        .object = if (!std.mem.eql(u16, name, image_path)) name: {
-                            const basename = name[std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' }) orelse 0 ..];
-                            break :name bun.strings.convertUTF16toUTF8InBuffer(name_bytes, basename) catch null;
-                        } else null,
-                    },
+                    .object = if (!std.mem.eql(u16, name, image_path)) name: {
+                        const basename = name[std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' }) orelse 0 ..];
+                        break :name bun.strings.convertUTF16toUTF8InBuffer(name_bytes, basename) catch null;
+                    } else null,
                 };
             },
             .mac => {
@@ -845,30 +855,30 @@ const StackLine = union(enum) {
                                 if (i == 0) {
                                     const image_relative_address = stable_address - seg_start;
                                     if (image_relative_address > std.math.maxInt(i32)) {
-                                        return .{ .unknown = {} };
+                                        return null;
                                     }
 
                                     // To remap this, you have to add the offset (which is going to be 0x100000000),
                                     // and then you can run it through `llvm-symbolizer --obj bun-with-symbols 0x123456`
                                     // The reason we are subtracting this known offset is mostly just so that we can
                                     // fit it within a signed 32-bit integer. The VLQs will be shorter too.
-                                    return .{ .known = .{
+                                    return .{
                                         .object = null,
                                         .address = @intCast(image_relative_address),
-                                    } };
+                                    };
                                 } else {
                                     // these libraries are not interesting, mark as unknown
-                                    return .{ .unknown = {} };
+                                    return null;
                                 }
 
-                                return .{ .unknown = {} };
+                                return null;
                             }
                         },
                         else => {},
                     };
                 }
 
-                return .{ .unknown = {} };
+                return null;
             },
             else => {
                 // This code is slightly modified from std.debug.DebugInfo.lookupModuleDl
@@ -878,7 +888,7 @@ const StackLine = union(enum) {
                     address: usize,
                     i: usize = 0,
                     // Output
-                    result: StackLine = .{ .unknown = {} },
+                    result: ?StackLine = null,
                 } = .{ .address = addr -| 1 };
                 const CtxTy = @TypeOf(ctx);
 
@@ -898,10 +908,8 @@ const StackLine = union(enum) {
                             if (context.address >= seg_start and context.address < seg_end) {
                                 // const name = bun.sliceTo(info.dlpi_name, 0) orelse "";
                                 context.result = .{
-                                    .known = .{
-                                        .address = @intCast(context.address - info.dlpi_addr),
-                                        .object = null,
-                                    },
+                                    .address = @intCast(context.address - info.dlpi_addr),
+                                    .object = null,
                                 };
                                 return error.Found;
                             }
@@ -914,33 +922,35 @@ const StackLine = union(enum) {
         };
     }
 
-    pub fn writeEncoded(self: StackLine, writer: anytype) !void {
-        switch (self) {
-            .unknown => try writer.writeAll("_"),
-            .known => |known| {
-                if (known.object) |object| {
-                    try SourceMap.encodeVLQ(1).writeTo(writer);
-                    try SourceMap.encodeVLQ(@intCast(object.len)).writeTo(writer);
-                    try writer.writeAll(object);
-                }
-                try SourceMap.encodeVLQ(known.address).writeTo(writer);
-            },
-            .javascript => {
-                try writer.writeAll("=");
-            },
+    pub fn writeEncoded(self: ?StackLine, writer: anytype) !void {
+        const known = self orelse {
+            try writer.writeAll("_");
+            return;
+        };
+
+        if (known.object) |object| {
+            try SourceMap.encodeVLQ(1).writeTo(writer);
+            try SourceMap.encodeVLQ(@intCast(object.len)).writeTo(writer);
+            try writer.writeAll(object);
         }
+
+        try SourceMap.encodeVLQ(known.address).writeTo(writer);
     }
 
-    pub fn format(self: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        switch (self) {
-            .unknown => try writer.print("???", .{}),
-            .known => |known| try writer.print("0x{x}{s}{s}", .{
-                if (bun.Environment.isMac) @as(u64, known.address) + 0x100000000 else known.address,
-                if (known.object != null) " @ " else "",
-                known.object orelse "",
-            }),
-            .javascript => try writer.print("javascript address", .{}),
-        }
+    pub fn format(line: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("0x{x}{s}{s}", .{
+            if (bun.Environment.isMac) @as(u64, line.address) + 0x100000000 else line.address,
+            if (line.object != null) " @ " else "",
+            line.object orelse "",
+        });
+    }
+
+    pub fn writeDecoded(self: ?StackLine, writer: anytype) !void {
+        const known = self orelse {
+            try writer.print("???", .{});
+            return;
+        };
+        try known.format("", .{}, writer);
     }
 };
 
@@ -962,8 +972,9 @@ const TraceString = struct {
 };
 
 fn encodeTraceString(opts: TraceString, writer: anytype) !void {
+    try writer.writeAll(reportBaseUrl());
     try writer.writeAll(
-        report_base_url ++
+        "/" ++
             bun.Environment.version_string ++
             "/" ++
             .{@intFromEnum(Platform.current)},
@@ -979,7 +990,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
 
     for (opts.trace.instruction_addresses[0..opts.trace.index]) |addr| {
         const line = StackLine.fromAddress(addr, &name_bytes);
-        try line.writeEncoded(writer);
+        try StackLine.writeEncoded(line, writer);
     }
 
     try writer.writeAll(comptime zero_vlq: {
@@ -1053,10 +1064,38 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
 }
 
 fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
-    const first = SourceMap.encodeVLQ(@intCast((addr & 0xFFFFFFFF00000000) >> 32));
+    const first = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
     const second = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
     try first.writeTo(writer);
     try second.writeTo(writer);
+}
+
+fn isReportingEnabled() bool {
+    // If specifically trying to enable reporting, then allow
+    if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |_| {
+        return true;
+    }
+
+    if (bun.getenvZ("BUN_ENABLE_CRASH_REPORTING")) |value| {
+        if (bun.strings.eqlComptime(value, "1")) {
+            return true;
+        }
+    }
+
+    // Debug builds shouldn't report to the default url
+    if (bun.Environment.isDebug)
+        return false;
+
+    // Honor DO_NOT_TRACK
+    if (!bun.analytics.isEnabled())
+        return false;
+
+    // TODO: currently we are only testing automatic reporting
+    // in canary. later, this should be set to releases.
+    if (bun.Environment.is_canary)
+        return true;
+
+    return false;
 }
 
 /// Bun automatically reports crashes on Windows and macOS
@@ -1065,10 +1104,7 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
 /// information (PII). The stackframes point to Bun's open-source native code
 /// (not user code), and are safe to share publicly and with the Bun team.
 fn report(url: []const u8) void {
-    if (bun.Environment.isDebug) return;
-    if (bun.Environment.os == .linux) return;
-    if (!bun.Analytics.isEnabled()) return;
-    if (bun.Analytics.isCI()) return;
+    if (!isReportingEnabled()) return;
 
     switch (bun.Environment.os) {
         .windows => {

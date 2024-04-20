@@ -1302,7 +1302,7 @@ pub const js_bindings = struct {
         inline for (.{
             .{ "getMachOImageZeroOffset", jsGetMachOImageZeroOffset },
             .{ "getFeaturesAsVLQ", jsGetFeaturesAsVLQ },
-            .{ "getFeatureList", jsGetFeatureList },
+            .{ "getFeatureData", jsGetFeatureData },
 
             .{ "segfault", jsSegfault },
             .{ "panic", jsPanic },
@@ -1355,7 +1355,7 @@ pub const js_bindings = struct {
         return bun.String.createLatin1(buf.slice()).toJS(global);
     }
 
-    pub fn jsGetFeatureList(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const list = bun.Analytics.packed_features_list;
         const array = JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {

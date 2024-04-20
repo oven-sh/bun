@@ -1079,12 +1079,9 @@ fn report(url: []const u8) void {
     // if (bun.Environment.isDebug) return;
     if (bun.Environment.os == .linux) return;
     if (!bun.Analytics.isEnabled()) {
-        std.debug.print("Not reporting crash {s}\n", .{url});
         return;
     }
-    if (bun.Analytics.isCI()) {
-        std.debug.print("Not reporting crash {s} (CI)\n", .{url});
-    }
+    if (bun.Analytics.isCI()) {}
 
     std.debug.print("Reporting crash {s}\n", .{url});
 
@@ -1107,21 +1104,25 @@ fn report(url: []const u8) void {
                 .wShowWindow = 0,
                 .cbReserved2 = 0,
                 .lpReserved2 = null,
-                .hStdInput = null,
-                .hStdOutput = null,
-                .hStdError = null,
+                // .hStdInput = null,
+                // .hStdOutput = null,
+                // .hStdError = null,
+                .hStdInput = bun.win32.STDIN_FD.cast(),
+                .hStdOutput = bun.win32.STDOUT_FD.cast(),
+                .hStdError = bun.win32.STDERR_FD.cast(),
             };
             var cmd_line = std.BoundedArray(u16, 4096){};
-            cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell -ExecutionPolicy Bypass -Command \"Invoke-RestMethod -Uri '"));
+            cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));
             {
                 const encoded = bun.strings.convertUTF8toUTF16InBuffer(cmd_line.unusedCapacitySlice(), url);
                 cmd_line.len += @intCast(encoded.len);
             }
             cmd_line.appendSlice(std.unicode.utf8ToUtf16LeStringLiteral("/ack'|out-null}catch{}\"")) catch return;
             cmd_line.append(0) catch return;
+            const cmd_line_slice = cmd_line.buffer[0 .. cmd_line.len - 1 :0];
             const spawn_result = std.os.windows.kernel32.CreateProcessW(
                 null,
-                cmd_line.buffer[0..cmd_line.len :0],
+                cmd_line_slice,
                 null,
                 null,
                 1, // true

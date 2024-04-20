@@ -31,9 +31,11 @@ pub fn isEnabled() bool {
         .no => false,
         .unknown => {
             enabled = detect: {
-                if (bun.getenvZ("DO_NOT_TRACK") != null) {
-                    std.debug.print("Not reporting crashes (DO_NOT_TRACK)\n", .{});
-                    break :detect .no;
+                if (bun.getenvZ("DO_NOT_TRACK")) |x| {
+                    std.debug.print("Not reporting crashes (DO_NOT_TRACK={s})\n", .{x});
+                    if (x.len == 1 and x[0] == '1') {
+                        break :detect .no;
+                    }
                 }
                 if (bun.getenvZ("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null) {
                     std.debug.print("Not reporting crashes (HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET)\n", .{});

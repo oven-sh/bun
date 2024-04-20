@@ -1071,18 +1071,22 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
 }
 
 fn isReportingEnabled() bool {
-    // If specifically trying to enable reporting, then allow
-    if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |_| {
-        return true;
+    // If trying to test the crash handler backend, implicitly enable reporting
+    if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |len| {
+        return len > 0;
     }
 
+    // Environment variable to specifically enable or disable reporting
     if (bun.getenvZ("BUN_ENABLE_CRASH_REPORTING")) |value| {
-        if (bun.strings.eqlComptime(value, "1")) {
-            return true;
+        if (value.len > 0) {
+            if (bun.strings.eqlComptime(value, "1")) {
+                return true;
+            }
+            return false;
         }
     }
 
-    // Debug builds shouldn't report to the default url
+    // Debug builds shouldn't report to the default url by default
     if (bun.Environment.isDebug)
         return false;
 

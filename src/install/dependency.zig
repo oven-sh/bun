@@ -396,6 +396,11 @@ pub const Version = struct {
         pub fn infer(dependency: string) Tag {
             // empty string means `latest`
             if (dependency.len == 0) return .dist_tag;
+
+            if (strings.startsWithWindowsDriveLetter(dependency) and dependency[2] == '\\' or dependency[2] == '/') {
+                return .folder;
+            }
+
             switch (dependency[0]) {
                 // =1
                 // >1.2
@@ -965,6 +970,14 @@ pub fn parseWithTag(
             };
         },
         .folder => {
+            if (strings.startsWithWindowsDriveLetter(dependency)) {
+                return .{
+                    .literal = sliced.value(),
+                    .value = .{ .folder = sliced.sub(dependency).value() },
+                    .tag = .folder,
+                };
+            }
+
             if (strings.indexOfChar(dependency, ':')) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
                     const folder = brk: {

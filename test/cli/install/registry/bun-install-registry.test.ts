@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { bunExe, bunEnv as env, isLinux, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
-import { join, sep } from "path";
+import { join, sep, resolve } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
@@ -2222,6 +2222,70 @@ test("it should install transitive folder dependencies", async () => {
   expect(await exited).toBe(0);
 
   await checkFiles();
+});
+
+test("it should install folder dependencies with absolute paths", async () => {
+  async function writePackages(num: number) {
+    await rm(join(packageDir, `pkg0`), { recursive: true, force: true });
+    for (let i = 0; i < num; i++) {
+      await mkdir(join(packageDir, `pkg${i}`));
+      await writeFile(
+        join(packageDir, `pkg${i}`, "package.json"),
+        JSON.stringify({
+          name: `pkg${i}`,
+          version: "1.1.1",
+        }),
+      );
+    }
+  }
+
+  await writePackages(2);
+
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        // without and without file protocol
+        "pkg0": `file:${resolve(packageDir, "pkg0").replace(/\\/g, "\\\\")}`,
+        "pkg1": `${resolve(packageDir, "pkg1").replace(/\\/g, "\\\\")}`,
+      },
+    }),
+  );
+
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "pipe",
+    env,
+  });
+
+  var err = await Bun.readableStreamToText(stderr);
+  var out = await Bun.readableStreamToText(stdout);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + pkg0@pkg0",
+    " + pkg1@pkg1",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "pkg0", "pkg1"]);
+  expect(await file(join(packageDir, "node_modules", "pkg0", "package.json")).json()).toEqual({
+    name: "pkg0",
+    version: "1.1.1",
+  });
+  expect(await file(join(packageDir, "node_modules", "pkg1", "package.json")).json()).toEqual({
+    name: "pkg1",
+    version: "1.1.1",
+  });
 });
 
 test("it should re-populate .bin folder if package is reinstalled", async () => {

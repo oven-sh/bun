@@ -574,14 +574,18 @@ pub const UpgradeCommand = struct {
 
             const version_name = version.name().?;
 
-            var save_dir_ = filesystem.tmpdir();
-            const save_dir_it = save_dir_.makeOpenPath(version_name, .{}) catch {
-                Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
+            var save_dir_ = filesystem.tmpdir() catch |err| {
+                Output.errGeneric("Failed to open temporary directory: {s}", .{@errorName(err)});
+                Global.exit(1);
+            };
+
+            const save_dir_it = save_dir_.makeOpenPath(version_name, .{}) catch |err| {
+                Output.errGeneric("Failed to open temporary directory: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
             const save_dir = save_dir_it;
-            const tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
-                Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
+            const tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch |err| {
+                Output.errGeneric("Failed to read temporary directory: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
 
@@ -974,5 +978,88 @@ pub const UpgradeCommand = struct {
                 }
             }
         }
+    }
+};
+
+pub const upgrade_js_bindings = struct {
+    const JSC = bun.JSC;
+    const JSValue = JSC.JSValue;
+    const ZigString = JSC.ZigString;
+
+    var tempdir_fd: ?bun.FileDescriptor = null;
+
+    pub fn generate(global: *JSC.JSGlobalObject) JSC.JSValue {
+        const obj = JSValue.createEmptyObject(global, 3);
+        const open = ZigString.static("openTempDirWithoutSharingDelete");
+        obj.put(global, open, JSC.createCallback(global, open, 1, jsOpenTempDirWithoutSharingDelete));
+        const close = ZigString.static("closeTempDirHandle");
+        obj.put(global, close, JSC.createCallback(global, close, 1, jsCloseTempDirHandle));
+        return obj;
+    }
+
+    /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
+    /// Windows only
+    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+        if (comptime !Environment.isWindows) return .undefined;
+        const w = std.os.windows;
+
+        var buf: bun.WPathBuffer = undefined;
+        const tmpdir_path = fs.FileSystem.RealFS.getDefaultTempDir();
+        const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf)) {
+            .err => return .undefined,
+            .result => |norm| norm,
+        };
+
+        const path_len_bytes: u16 = @truncate(path.len * 2);
+        var nt_name = std.os.windows.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(path.ptr),
+        };
+
+        var attr = std.os.windows.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(std.os.windows.OBJECT_ATTRIBUTES),
+            .RootDirectory = null,
+            .Attributes = 0,
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        };
+
+        const flags: u32 = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE | w.FILE_TRAVERSE;
+
+        var fd: std.os.windows.HANDLE = std.os.windows.INVALID_HANDLE_VALUE;
+        var io: std.os.windows.IO_STATUS_BLOCK = undefined;
+
+        const rc = std.os.windows.ntdll.NtCreateFile(
+            &fd,
+            flags,
+            &attr,
+            &io,
+            null,
+            0,
+            w.FILE_SHARE_READ | w.FILE_SHARE_WRITE,
+            w.FILE_OPEN,
+            w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT,
+            null,
+            0,
+        );
+
+        switch (bun.windows.Win32Error.fromNTStatus(rc)) {
+            .SUCCESS => tempdir_fd = bun.toFD(fd),
+            else => {},
+        }
+
+        return .undefined;
+    }
+
+    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        if (comptime !Environment.isWindows) return .undefined;
+
+        if (tempdir_fd) |fd| {
+            _ = bun.sys.close(fd);
+        }
+
+        return .undefined;
     }
 };

@@ -398,7 +398,7 @@ Socket.prototype.bind = function(port_, address_ /* , callback */) {
     // TODO flags
     try {
       const family = this.type === 'udp4' ? 'IPv4' : 'IPv6';
-      state.handle.socket = Bun.bindUDP({
+      state.handle.socket = Bun.udpSocket({
         hostname: ip,
         port: port || 0,
         socket: {

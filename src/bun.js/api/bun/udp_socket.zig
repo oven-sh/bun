@@ -271,8 +271,8 @@ pub const UDPSocket = struct {
         return this.js_refcount > 0;
     }
 
-    pub fn bindUDP(globalThis: *JSGlobalObject, options: JSValue) JSValue {
-        log("bindUDP", .{});
+    pub fn udpSocket(globalThis: *JSGlobalObject, options: JSValue) JSValue {
+        log("udpSocket", .{});
 
         const config = UDPSocketConfig.fromJS(globalThis, options) orelse {
             return .zero;

@@ -1,4 +1,4 @@
-import { bindUDP } from "bun";
+import { udpSocket } from "bun";
 import { describe, test, expect, it } from "bun:test";
 import { randomPort, hasIP } from "harness";
 import { createSocket } from "dgram";
@@ -84,9 +84,9 @@ const dataCases = [
 ];
 
 
-describe("bindUDP()", () => {
+describe("udpSocket()", () => {
   test("can create a socket", () => {
-    const socket = bindUDP({});
+    const socket = udpSocket({});
     expect(socket).toBeInstanceOf(Object);
     expect(socket.port).toBeInteger();
     expect(socket.port).toBeWithin(1, 65535 + 1);
@@ -110,14 +110,14 @@ describe("bindUDP()", () => {
 
   test("can create a socket with given port", () => {
     const port = randomPort();
-    const socket = bindUDP({ port });
+    const socket = udpSocket({ port });
     expect(socket.port).toBe(port);
     expect(socket.address).toMatchObject({ port: socket.port });
     socket.close();
   });
 
   test("can create a socket with a random port", () => {
-    const socket = bindUDP({ port: 0 });
+    const socket = udpSocket({ port: 0 });
     expect(socket.port).toBeInteger();
     expect(socket.port).toBeWithin(1, 65535 + 1);
     expect(socket.address).toMatchObject({ port: socket.port });
@@ -130,7 +130,7 @@ describe("bindUDP()", () => {
     { hostname: "::1", skip: !hasIP("IPv6") },
   ])("can create a socket with given hostname", ({ hostname, skip }) => {
     test.skipIf(skip)(hostname, () => {
-      const socket = bindUDP({ hostname });
+      const socket = udpSocket({ hostname });
       expect(socket.hostname).toBe(hostname);
       expect(socket.port).toBeInteger();
       expect(socket.port).toBeWithin(1, 65535 + 1);
@@ -142,8 +142,8 @@ describe("bindUDP()", () => {
   for (const { binaryType, type } of dataTypes) {
     for (const { label, data, bytes } of dataCases) {
       test(`send ${label} (${binaryType || "undefined"})`, (done) => {
-        const client = bindUDP({});
-        const server = bindUDP({
+        const client = udpSocket({});
+        const server = udpSocket({
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
@@ -181,7 +181,7 @@ describe("bindUDP()", () => {
 
       test(`send connected ${label} (${binaryType || "undefined"})`, (done) => {
         let client;
-        const server = bindUDP({
+        const server = udpSocket({
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
@@ -206,7 +206,7 @@ describe("bindUDP()", () => {
             },
           },
         });
-        client = bindUDP({
+        client = udpSocket({
           connect: {
             port: server.port,
             hostname: server.hostname,

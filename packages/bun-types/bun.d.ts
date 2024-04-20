@@ -4044,8 +4044,8 @@ declare module "bun" {
     }
   }
 
-  export function bindUDP<DataBinaryType extends BinaryType = "buffer">(options: udp.SocketOptions<DataBinaryType>): udp.Socket<DataBinaryType>;
-  export function bindUDP<DataBinaryType extends BinaryType = "buffer">(options: udp.ConnectSocketOptions<DataBinaryType>): udp.ConnectedSocket<DataBinaryType>;
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(options: udp.SocketOptions<DataBinaryType>): udp.Socket<DataBinaryType>;
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(options: udp.ConnectSocketOptions<DataBinaryType>): udp.ConnectedSocket<DataBinaryType>;
 
   namespace SpawnOptions {
     /**

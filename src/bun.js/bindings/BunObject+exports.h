@@ -48,7 +48,7 @@
     macro(inflateSync) \
     macro(jest) \
     macro(listen) \
-    macro(bindUDP) \
+    macro(udpSocket) \
     macro(mmap) \
     macro(nanoseconds) \
     macro(openInEditor) \

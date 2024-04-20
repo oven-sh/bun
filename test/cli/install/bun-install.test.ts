@@ -6765,7 +6765,6 @@ it("should handle installing packages from inside a workspace without prefix", a
 });
 
 it("should handle more complicated globs", async () => {
-  Bun.$.throws(true);
   const package_dir = tempDirWithFiles("complicated-glob", {
     "package.json": JSON.stringify({
       name: "package3",
@@ -6811,11 +6810,26 @@ it("should handle more complicated globs", async () => {
     },
   });
 
-  const { stdout, stderr, exitCode } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir);
-  expect(stderr).toBeDefined();
+  const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
   const err1 = stderr.toString();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout.toString()).toEqual("");
+  expect(
+    stdout
+      .toString()
+      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+      .split(/\r?\n/)
+      .sort(),
+  ).toEqual(
+    [
+      "",
+      ` + backend@workspace:packages/backend`,
+      ` + components@workspace:packages/frontend/components`,
+      ` + frontend@workspace:packages/frontend`,
+      ` + types@workspace:packages/types`,
+      "",
+      " 4 packages installed",
+    ].sort(),
+  );
 });
 
 it("should handle installing packages inside workspaces with difference versions", async () => {

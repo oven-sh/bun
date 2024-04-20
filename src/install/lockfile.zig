@@ -4015,23 +4015,23 @@ pub const Package = extern struct {
         if (workspace_globs.items.len > 0) {
             var arena = std.heap.ArenaAllocator.init(allocator);
             defer arena.deinit();
-            for (workspace_globs.items) |user_path| {
+            for (workspace_globs.items) |user_pattern| {
                 defer _ = arena.reset(.retain_capacity);
 
-                const path_to_use = if (user_path.len == 0) "package.json" else brk: {
-                    const parts = [_][]const u8{ user_path, "package.json" };
+                const glob_pattern = if (user_pattern.len == 0) "package.json" else brk: {
+                    const parts = [_][]const u8{ user_pattern, "package.json" };
                     break :brk arena.allocator().dupe(u8, bun.path.join(parts, .auto)) catch bun.outOfMemory();
                 };
 
                 var walker: GlobWalker = .{};
                 const cwd = bun.path.dirname(source.path.textZ(), .auto);
-                if ((try walker.initWithCwd(&arena, path_to_use, cwd, false, false, false, false, true)).asErr()) |e| {
+                if ((try walker.initWithCwd(&arena, glob_pattern, cwd, false, false, false, false, true)).asErr()) |e| {
                     log.addErrorFmt(
                         source,
                         loc,
                         allocator,
                         "<r><red>error<r>: Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
-                        .{ path_to_use, @tagName(e.getErrno()) },
+                        .{ user_pattern, @tagName(e.getErrno()) },
                     ) catch {};
                     return error.GlobError;
                 }
@@ -4046,7 +4046,7 @@ pub const Package = extern struct {
                         loc,
                         allocator,
                         "<r><red>error<r>: Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
-                        .{ path_to_use, @tagName(e.getErrno()) },
+                        .{ user_pattern, @tagName(e.getErrno()) },
                     ) catch {};
                     return error.GlobError;
                 }
@@ -4060,25 +4060,24 @@ pub const Package = extern struct {
                             loc,
                             allocator,
                             "<r><red>error<r>: Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
-                            .{ path_to_use, @tagName(e.getErrno()) },
+                            .{ user_pattern, @tagName(e.getErrno()) },
                         ) catch {};
                         return error.GlobError;
                     },
-                }) |matched_path_| {
-                    const file = std.fs.cwd().openFile(matched_path_, .{ .mode = .read_only }) catch |err| {
-                        debug("processWorkspaceName({s}) = {} ", .{ path_to_use, err });
+                }) |matched_path| {
+                    const workspace_file = iter.cwd_fd.value.asDir().openFile(matched_path, .{ .mode = .read_only }) catch |err| {
+                        debug("processWorkspaceName({s}) = {} ", .{ glob_pattern, err });
                         return err;
                     };
-                    defer file.close();
-                    const matched_path = Path.dirname(matched_path_, .auto);
-                    debug("matched path: {s}, dirname: {s}\n", .{ matched_path_, matched_path });
+                    defer workspace_file.close();
 
                     const entry_dir: []const u8 = Path.dirname(matched_path, .auto);
                     const entry_base: []const u8 = Path.basename(matched_path);
+                    debug("matched path: {s}, dirname: {s}\n", .{ matched_path, entry_dir });
 
-                    var parts = [2]string{ entry_dir, entry_base };
+                    var parts = [_]string{entry_dir};
                     const entry_path = Path.joinAbsStringBufZ(
-                        Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
+                        cwd,
                         filepath_buf,
                         &parts,
                         .auto,
@@ -4087,8 +4086,8 @@ pub const Package = extern struct {
                     const workspace_entry = processWorkspaceNameImpl(
                         allocator,
                         workspace_allocator,
-                        file,
-                        matched_path,
+                        workspace_file,
+                        "",
                         matched_path,
                         workspace_name_buf,
                         log,

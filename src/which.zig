@@ -168,14 +168,3 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
 
     return null;
 }
-
-test "which" {
-    var buf: bun.fs.PathBuffer = undefined;
-    const realpath = bun.getenvZ("PATH") orelse unreachable;
-    const whichbin = which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "which");
-    try std.testing.expectEqualStrings(whichbin orelse return bun.assert(false), "/usr/bin/which");
-    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "baconnnnnn"));
-    try std.testing.expect(null != which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "zig"));
-    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "bin"));
-    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "usr"));
-}

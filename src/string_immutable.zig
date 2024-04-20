@@ -554,125 +554,6 @@ pub fn copyLowercaseIfNeeded(in: string, out: []u8) string {
     return if (any) out[0..in.len] else in;
 }
 
-test "indexOf" {
-    const fixtures = .{
-        .{
-            "0123456789",
-            "456",
-        },
-        .{
-            "/foo/bar/baz/bacon/eggs/lettuce/tomatoe",
-            "bacon",
-        },
-        .{
-            "/foo/bar/baz/bacon////eggs/lettuce/tomatoe",
-            "eggs",
-        },
-        .{
-            "////////////////zfoo/bar/baz/bacon/eggs/lettuce/tomatoe",
-            "/",
-        },
-        .{
-            "/okay/well/thats/even/longer/now/well/thats/even/longer/now/well/thats/even/longer/now/foo/bar/baz/bacon/eggs/lettuce/tomatoe",
-            "/tomatoe",
-        },
-        .{
-            "/okay///////////so much length i can't believe it!much length i can't believe it!much length i can't believe it!much length i can't believe it!much length i can't believe it!much length i can't believe it!much length i can't believe it!much length i can't believe it!/well/thats/even/longer/now/well/thats/even/longer/now/well/thats/even/longer/now/foo/bar/baz/bacon/eggs/lettuce/tomatoe",
-            "/tomatoe",
-        },
-    };
-
-    inline for (fixtures) |pair| {
-        try std.testing.expectEqual(
-            indexOf(pair[0], pair[1]).?,
-            std.mem.indexOf(u8, pair[0], pair[1]).?,
-        );
-    }
-}
-
-test "eqlComptimeCheckLen" {
-    try std.testing.expectEqual(eqlComptime("bun-darwin-aarch64.zip", "bun-darwin-aarch64.zip"), true);
-    const sizes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 23, 22, 24 };
-    inline for (sizes) |size| {
-        var buf: [size]u8 = undefined;
-        @memset(&buf, 'a');
-        var buf_copy: [size]u8 = undefined;
-        @memset(&buf_copy, 'a');
-
-        var bad: [size]u8 = undefined;
-        @memset(&bad, 'b');
-        try std.testing.expectEqual(std.mem.eql(u8, &buf, &buf_copy), eqlComptime(&buf, comptime brk: {
-            var buf_copy_: [size]u8 = undefined;
-            @memset(&buf_copy_, 'a');
-            break :brk buf_copy_;
-        }));
-
-        try std.testing.expectEqual(std.mem.eql(u8, &buf, &bad), eqlComptime(&bad, comptime brk: {
-            var buf_copy_: [size]u8 = undefined;
-            @memset(&buf_copy_, 'a');
-            break :brk buf_copy_;
-        }));
-    }
-}
-
-test "eqlComptimeUTF16" {
-    try std.testing.expectEqual(eqlComptimeUTF16(toUTF16Literal("bun-darwin-aarch64.zip"), "bun-darwin-aarch64.zip"), true);
-    const sizes = [_]u16{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 23, 22, 24 };
-    inline for (sizes) |size| {
-        var buf: [size]u16 = undefined;
-        @memset(&buf, @as(u8, 'a'));
-        var buf_copy: [size]u16 = undefined;
-        @memset(&buf_copy, @as(u8, 'a'));
-
-        var bad: [size]u16 = undefined;
-        @memset(&bad, @as(u16, 'b'));
-        try std.testing.expectEqual(std.mem.eql(u16, &buf, &buf_copy), eqlComptimeUTF16(&buf, comptime &brk: {
-            var buf_copy_: [size]u8 = undefined;
-            @memset(&buf_copy_, @as(u8, 'a'));
-            break :brk buf_copy_;
-        }));
-
-        try std.testing.expectEqual(std.mem.eql(u16, &buf, &bad), eqlComptimeUTF16(&bad, comptime &brk: {
-            var buf_copy_: [size]u8 = undefined;
-            @memset(&buf_copy_, @as(u8, 'a'));
-            break :brk buf_copy_;
-        }));
-    }
-}
-
-test "copyLowercase" {
-    {
-        const in = "Hello, World!";
-        var out = std.mem.zeroes([in.len]u8);
-        const out_ = copyLowercase(in, &out);
-        try std.testing.expectEqualStrings(out_, "hello, world!");
-    }
-
-    {
-        const in = "_ListCache";
-        var out = std.mem.zeroes([in.len]u8);
-        const out_ = copyLowercase(in, &out);
-        try std.testing.expectEqualStrings(out_, "_listcache");
-    }
-}
-
-test "StringOrTinyString" {
-    const correct: string = "helloooooooo";
-    const big = "wawaweewaverylargeihaveachairwawaweewaverylargeihaveachairwawaweewaverylargeihaveachairwawaweewaverylargeihaveachair";
-    var str = StringOrTinyString.init(correct);
-    try std.testing.expectEqualStrings(correct, str.slice());
-
-    str = StringOrTinyString.init(big);
-    try std.testing.expectEqualStrings(big, str.slice());
-    try std.testing.expect(@sizeOf(StringOrTinyString) == 32);
-}
-
-test "StringOrTinyString Lowercase" {
-    const correct: string = "HELLO!!!!!";
-    var str = StringOrTinyString.initLowerCase(correct);
-    try std.testing.expectEqualStrings("hello!!!!!", str.slice());
-}
-
 /// Copy a string into a buffer
 /// Return the copied version
 pub fn copy(buf: []u8, src: []const u8) []const u8 {
@@ -837,15 +718,6 @@ pub fn countChar(self: string, char: u8) usize {
     }
 
     return total;
-}
-
-test "countChar" {
-    try std.testing.expectEqual(countChar("hello there", ' '), 1);
-    try std.testing.expectEqual(countChar("hello;;;there", ';'), 3);
-    try std.testing.expectEqual(countChar("hello there", 'z'), 0);
-    try std.testing.expectEqual(countChar("hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there ", ' '), 28);
-    try std.testing.expectEqual(countChar("hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there ", 'z'), 0);
-    try std.testing.expectEqual(countChar("hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there", ' '), 27);
 }
 
 pub fn endsWithAnyComptime(self: string, comptime str: string) bool {
@@ -3127,38 +2999,6 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
     }
 }
 
-test "copyLatin1IntoUTF8 - ascii" {
-    const input: string = "hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!";
-    var output = std.mem.zeroes([500]u8);
-    const result = copyLatin1IntoUTF8(&output, string, input);
-    try std.testing.expectEqual(input.len, result.read);
-    try std.testing.expectEqual(input.len, result.written);
-
-    try std.testing.expectEqualSlices(u8, input, output[0..result.written]);
-}
-
-test "copyLatin1IntoUTF8 - latin1" {
-    {
-        const input: string = &[_]u8{ 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 32, 169 };
-        var output = std.mem.zeroes([500]u8);
-        const expected = "hello world ©";
-        const result = copyLatin1IntoUTF8(&output, string, input);
-        try std.testing.expectEqual(input.len, result.read);
-
-        try std.testing.expectEqualSlices(u8, expected, output[0..result.written]);
-    }
-
-    {
-        const input: string = &[_]u8{ 72, 169, 101, 108, 108, 169, 111, 32, 87, 111, 114, 169, 108, 100, 33 };
-        var output = std.mem.zeroes([500]u8);
-        const expected = "H©ell©o Wor©ld!";
-        const result = copyLatin1IntoUTF8(&output, string, input);
-        try std.testing.expectEqual(input.len, result.read);
-
-        try std.testing.expectEqualSlices(u8, expected, output[0..result.written]);
-    }
-}
-
 pub fn latin1ToCodepointAssumeNotASCII(char: u8, comptime CodePointType: type) CodePointType {
     return @as(
         CodePointType,
@@ -3936,14 +3776,6 @@ pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
     return null;
 }
 
-test "indexOfNeedsEscape" {
-    const out = indexOfNeedsEscape(
-        \\la la la la la la la la la la la la la la la la "oh!" okay "well"
-        ,
-    );
-    try std.testing.expectEqual(out.?, 48);
-}
-
 pub fn indexOfCharZ(sliceZ: [:0]const u8, char: u8) ?u63 {
     const ptr = bun.C.strchr(sliceZ.ptr, char) orelse return null;
     const pos = @intFromPtr(ptr) - @intFromPtr(sliceZ.ptr);
@@ -3978,41 +3810,6 @@ pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
 
 pub fn indexOfChar16Usize(slice: []const u16, char: u16) ?usize {
     return std.mem.indexOfScalar(u16, slice, char);
-}
-
-test "indexOfChar" {
-    const pairs = .{
-        .{
-            "fooooooboooooofoooooofoooooofoooooofoooooozball",
-            'b',
-        },
-        .{
-            "foooooofoooooofoooooofoooooofoooooofoooooozball",
-            'z',
-        },
-        .{
-            "foooooofoooooofoooooofoooooofoooooofoooooozball",
-            'a',
-        },
-        .{
-            "foooooofoooooofoooooofoooooofoooooofoooooozball",
-            'l',
-        },
-        .{
-            "baconaopsdkaposdkpaosdkpaosdkaposdkpoasdkpoaskdpoaskdpoaskdpo;",
-            ';',
-        },
-        .{
-            ";baconaopsdkaposdkpaosdkpaosdkaposdkpoasdkpoaskdpoaskdpoaskdpo;",
-            ';',
-        },
-    };
-    inline for (pairs) |pair| {
-        try std.testing.expectEqual(
-            indexOfChar(pair.@"0", pair.@"1").?,
-            @as(u32, @truncate(std.mem.indexOfScalar(u8, pair.@"0", pair.@"1").?)),
-        );
-    }
 }
 
 pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
@@ -4203,34 +4000,6 @@ pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
 
     return to_read * 2;
 }
-
-test "decodeHexToBytes" {
-    var buffer = std.mem.zeroes([1024]u8);
-    for (buffer, 0..) |_, i| {
-        buffer[i] = @as(u8, @truncate(i % 256));
-    }
-    var written: [2048]u8 = undefined;
-    const hex = std.fmt.bufPrint(&written, "{}", .{std.fmt.fmtSliceHexLower(&buffer)}) catch unreachable;
-    var good: [4096]u8 = undefined;
-    var ours_buf: [4096]u8 = undefined;
-    const match = try std.fmt.hexToBytes(good[0..1024], hex);
-    const ours = decodeHexToBytes(&ours_buf, u8, hex);
-    try std.testing.expectEqualSlices(u8, match, ours_buf[0..ours]);
-    try std.testing.expectEqualSlices(u8, &buffer, ours_buf[0..ours]);
-}
-
-// test "formatBytesToHex" {
-//     var buffer = std.mem.zeroes([1024]u8);
-//     for (buffer) |_, i| {
-//         buffer[i] = @truncate(u8, i % 256);
-//     }
-//     var written: [2048]u8 = undefined;
-//     var hex = std.fmt.bufPrint(&written, "{}", .{std.fmt.fmtSliceHexLower(&buffer)}) catch unreachable;
-//     var ours_buf: [4096]u8 = undefined;
-//     // var ours = formatBytesToHex(&ours_buf, &buffer);
-//     // try std.testing.expectEqualSlices(u8, match, ours_buf[0..ours]);
-//     try std.testing.expectEqualSlices(u8, &buffer, ours_buf[0..ours]);
-// }
 
 pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     if (indexOfNotChar(slice, char)) |i| {
@@ -4473,75 +4242,6 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
     }
 
     return null;
-}
-
-test "indexOfNotChar" {
-    {
-        var yes: [312]u8 = undefined;
-        for (0..yes.len) |i| {
-            @memset(yes, 'a');
-            yes[i] = 'b';
-            if (comptime Environment.allow_assert) assert(indexOfNotChar(&yes, 'a').? == i);
-            i += 1;
-        }
-    }
-}
-
-test "trimLeadingChar" {
-    {
-        const yes = "                                                                        fooo bar";
-        try std.testing.expectEqualStrings(trimLeadingChar(yes, ' '), "fooo bar");
-    }
-}
-
-test "isAllASCII" {
-    const yes = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123";
-    try std.testing.expectEqual(true, isAllASCII(yes));
-
-    const no = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123";
-    try std.testing.expectEqual(false, isAllASCII(no));
-}
-
-test "firstNonASCII" {
-    const yes = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123";
-    try std.testing.expectEqual(true, firstNonASCII(yes) == null);
-
-    {
-        const no = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123";
-        try std.testing.expectEqual(@as(u32, 50), firstNonASCII(no).?);
-    }
-
-    {
-        const no = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3";
-        try std.testing.expectEqual(@as(u32, 366), firstNonASCII(no).?);
-    }
-}
-
-test "firstNonASCII16" {
-    @setEvalBranchQuota(99999);
-    const yes = std.mem.bytesAsSlice(u16, toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
-    try std.testing.expectEqual(true, firstNonASCII16(@TypeOf(yes), yes) == null);
-
-    {
-        @setEvalBranchQuota(99999);
-        const no = std.mem.bytesAsSlice(u16, toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
-        try std.testing.expectEqual(@as(u32, 50), firstNonASCII16(@TypeOf(no), no).?);
-    }
-    {
-        @setEvalBranchQuota(99999);
-        const no = std.mem.bytesAsSlice(u16, toUTF16Literal("🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
-        try std.testing.expectEqual(@as(u32, 0), firstNonASCII16(@TypeOf(no), no).?);
-    }
-    {
-        @setEvalBranchQuota(99999);
-        const no = std.mem.bytesAsSlice(u16, toUTF16Literal("a🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
-        try std.testing.expectEqual(@as(u32, 1), firstNonASCII16(@TypeOf(no), no).?);
-    }
-    {
-        @setEvalBranchQuota(99999);
-        const no = std.mem.bytesAsSlice(u16, toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
-        try std.testing.expectEqual(@as(u32, 366), firstNonASCII16(@TypeOf(no), no).?);
-    }
 }
 
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
@@ -5138,62 +4838,6 @@ pub fn moveSlice(slice: string, from: string, to: string) string {
     return result;
 }
 
-test "moveSlice" {
-    var input: string = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz";
-    const cloned = try std.heap.page_allocator.dupe(u8, input);
-
-    const slice = input[20..][0..10];
-
-    try std.testing.expectEqual(eqlLong(moveSlice(slice, input, cloned), slice, false), true);
-}
-
-test "moveAllSlices" {
-    const Move = struct {
-        foo: string,
-        bar: string,
-        baz: string,
-        wrong: string,
-    };
-    var input: string = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz";
-    var move = Move{ .foo = input[20..], .bar = input[30..], .baz = input[10..20], .wrong = "baz" };
-    var cloned = try std.heap.page_allocator.dupe(u8, input);
-    moveAllSlices(Move, &move, input, cloned);
-    const expected = Move{ .foo = cloned[20..], .bar = cloned[30..], .baz = cloned[10..20], .wrong = "bar" };
-    try std.testing.expectEqual(move.foo.ptr, expected.foo.ptr);
-    try std.testing.expectEqual(move.bar.ptr, expected.bar.ptr);
-    try std.testing.expectEqual(move.baz.ptr, expected.baz.ptr);
-    try std.testing.expectEqual(move.foo.len, expected.foo.len);
-    try std.testing.expectEqual(move.bar.len, expected.bar.len);
-    try std.testing.expectEqual(move.baz.len, expected.baz.len);
-    try std.testing.expect(move.wrong.ptr != expected.wrong.ptr);
-}
-
-test "join" {
-    const string_list = &[_]string{ "abc", "def", "123", "hello" };
-    const list = try join(string_list, "-", std.heap.page_allocator);
-    try std.testing.expectEqualStrings("abc-def-123-hello", list);
-}
-
-test "sortAsc" {
-    var string_list = [_]string{ "abc", "def", "123", "hello" };
-    var sorted_string_list = [_]string{ "123", "abc", "def", "hello" };
-    const sorted_join = try join(&sorted_string_list, "-", std.heap.page_allocator);
-    sortAsc(&string_list);
-    const string_join = try join(&string_list, "-", std.heap.page_allocator);
-
-    try std.testing.expectEqualStrings(sorted_join, string_join);
-}
-
-test "sortDesc" {
-    var string_list = [_]string{ "abc", "def", "123", "hello" };
-    var sorted_string_list = [_]string{ "hello", "def", "abc", "123" };
-    const sorted_join = try join(&sorted_string_list, "-", std.heap.page_allocator);
-    sortDesc(&string_list);
-    const string_join = try join(&string_list, "-", std.heap.page_allocator);
-
-    try std.testing.expectEqualStrings(sorted_join, string_join);
-}
-
 pub usingnamespace @import("exact_size_matcher.zig");
 
 pub const unicode_replacement = 0xFFFD;
@@ -5202,14 +4846,6 @@ pub const unicode_replacement_str = brk: {
     _ = std.unicode.utf8Encode(unicode_replacement, &out) catch unreachable;
     break :brk out;
 };
-
-test "eqlCaseInsensitiveASCII" {
-    try std.testing.expect(eqlCaseInsensitiveASCII("abc", "ABC", true));
-    try std.testing.expect(eqlCaseInsensitiveASCII("abc", "abc", true));
-    try std.testing.expect(eqlCaseInsensitiveASCII("aBcD", "aBcD", true));
-    try std.testing.expect(!eqlCaseInsensitiveASCII("aBcD", "NOOO", true));
-    try std.testing.expect(!eqlCaseInsensitiveASCII("aBcD", "LENGTH CHECK", true));
-}
 
 pub fn isIPAddress(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;

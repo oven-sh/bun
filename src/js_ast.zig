@@ -5489,10 +5489,6 @@ pub const Expr = struct {
     };
 };
 
-test "Byte size of Expr" {
-    try std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("\n\nByte Size {d}\n\n", .{@sizeOf(Expr.Data)}));
-}
-
 pub const EnumValue = struct {
     loc: logger.Loc,
     ref: Ref,

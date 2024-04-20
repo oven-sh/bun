@@ -36,7 +36,7 @@ test("module.Module works", () => {
 });
 
 test("_nodeModulePaths() works", () => {
-  const root = isWindows ? "C:\\" : "/";
+  const root = path.resolve("/");
   expect(() => {
     _nodeModulePaths();
   }).toThrow();

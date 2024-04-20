@@ -995,7 +995,7 @@ fn scopedWriter() File.QuietWriter {
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
 pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
-    prettyErrorln("<red>error<r><d>:<r> " ++ fmt, args);
+    prettyErrorln("<r><red>error<r><d>:<r> " ++ fmt, args);
 }
 
 /// This struct is a workaround a Windows terminal bug.

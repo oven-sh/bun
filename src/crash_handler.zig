@@ -1076,14 +1076,10 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
 /// information (PII). The stackframes point to Bun's open-source native code
 /// (not user code), and are safe to share publicly and with the Bun team.
 fn report(url: []const u8) void {
-    // if (bun.Environment.isDebug) return;
+    if (bun.Environment.isDebug) return;
     if (bun.Environment.os == .linux) return;
-    if (!bun.Analytics.isEnabled()) {
-        return;
-    }
-    if (bun.Analytics.isCI()) {}
-
-    std.debug.print("Reporting crash {s}\n", .{url});
+    if (!bun.Analytics.isEnabled()) return;
+    if (bun.Analytics.isCI()) return;
 
     switch (bun.Environment.os) {
         .windows => {
@@ -1104,12 +1100,12 @@ fn report(url: []const u8) void {
                 .wShowWindow = 0,
                 .cbReserved2 = 0,
                 .lpReserved2 = null,
-                // .hStdInput = null,
-                // .hStdOutput = null,
-                // .hStdError = null,
-                .hStdInput = bun.win32.STDIN_FD.cast(),
-                .hStdOutput = bun.win32.STDOUT_FD.cast(),
-                .hStdError = bun.win32.STDERR_FD.cast(),
+                .hStdInput = null,
+                .hStdOutput = null,
+                .hStdError = null,
+                // .hStdInput = bun.win32.STDIN_FD.cast(),
+                // .hStdOutput = bun.win32.STDOUT_FD.cast(),
+                // .hStdError = bun.win32.STDERR_FD.cast(),
             };
             var cmd_line = std.BoundedArray(u16, 4096){};
             cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));

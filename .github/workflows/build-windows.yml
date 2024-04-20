@@ -9,7 +9,7 @@ on:
     inputs:
       runs-on:
         type: string
-        default: windows-latest
+        default: windows
       tag:
         type: string
         required: true
@@ -294,6 +294,9 @@ jobs:
           cp -r build\bun.exe "$Dist\bun.exe"
           cp -r build\bun.pdb "$Dist\bun.pdb"
           Compress-Archive -Force "$Dist" "$Dist.zip"
+          $env:BUN_GARBAGE_COLLECTOR_LEVEL = "1"
+          $env:BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING = "1"
+          .\build\bun.exe --print "JSON.stringify(require('bun:internal-for-testing').crash_handler.getFeatureData())" > .\features.json
       - name: Upload bun-${{ inputs.tag }}
         uses: actions/upload-artifact@v4
         with:
@@ -306,6 +309,13 @@ jobs:
           name: bun-${{ inputs.tag }}-profile
           path: bun-${{ inputs.tag }}-profile.zip
           if-no-files-found: error
+      - name: Upload bun-feature-data
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-feature-data
+          path: features.json
+          if-no-files-found: error
+          overwrite: true
   on-failure:
     if: ${{ github.repository_owner == 'oven-sh' && failure() }}
     name: On Failure

@@ -1327,7 +1327,7 @@ for (const [key, blob] of build.outputs) {
           throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
         }
 
-        if (false && run.stdout !== undefined) {
+        if (run.stdout !== undefined) {
           const result = stdout!.toUnixString().trim();
           if (typeof run.stdout === "string") {
             const expected = dedent(run.stdout).trim();

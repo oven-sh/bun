@@ -396,35 +396,34 @@ Socket.prototype.bind = function(port_, address_ /* , callback */) {
       flags |= UV_UDP_IPV6ONLY;
 
     // TODO flags
-    try {
-      const family = this.type === 'udp4' ? 'IPv4' : 'IPv6';
-      state.handle.socket = Bun.udpSocket({
-        hostname: ip,
-        port: port || 0,
-        socket: {
-          data: (_socket, data, port, address) => {
-            this.emit('message', data, {
-              port: port,
-              address: address,
-              size: data.length,
-              // TODO check if this is correct
-              family, 
-            });
-          },
-          error: (_socket, error) => {
-            this.emit('error', error);
-          }
+    const family = this.type === 'udp4' ? 'IPv4' : 'IPv6';
+    Bun.udpSocket({
+      hostname: ip,
+      port: port || 0,
+      socket: {
+        data: (_socket, data, port, address) => {
+          this.emit('message', data, {
+            port: port,
+            address: address,
+            size: data.length,
+            // TODO check if this is correct
+            family, 
+          });
         },
-      });
+        error: (_socket, error) => {
+          this.emit('error', error);
+        }
+      },
+    }).$then(socket => {
+      state.handle.socket = socket;
       state.receiving = true;
       state.bindState = BIND_STATE_BOUND;
 
       this.emit('listening');
-    } catch (err) {
+    }, err => {
       state.bindState = BIND_STATE_UNBOUND;
       this.emit('error', err);
-      return;
-    }
+    });
   });
 
 

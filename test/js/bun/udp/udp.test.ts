@@ -85,8 +85,8 @@ const dataCases = [
 
 
 describe("udpSocket()", () => {
-  test("can create a socket", () => {
-    const socket = udpSocket({});
+  test("can create a socket", async () => {
+    const socket = await udpSocket({});
     expect(socket).toBeInstanceOf(Object);
     expect(socket.port).toBeInteger();
     expect(socket.port).toBeWithin(1, 65535 + 1);
@@ -108,16 +108,16 @@ describe("udpSocket()", () => {
     socket.close();
   });
 
-  test("can create a socket with given port", () => {
+  test("can create a socket with given port", async () => {
     const port = randomPort();
-    const socket = udpSocket({ port });
+    const socket = await udpSocket({ port });
     expect(socket.port).toBe(port);
     expect(socket.address).toMatchObject({ port: socket.port });
     socket.close();
   });
 
-  test("can create a socket with a random port", () => {
-    const socket = udpSocket({ port: 0 });
+  test("can create a socket with a random port", async () => {
+    const socket = await udpSocket({ port: 0 });
     expect(socket.port).toBeInteger();
     expect(socket.port).toBeWithin(1, 65535 + 1);
     expect(socket.address).toMatchObject({ port: socket.port });
@@ -129,8 +129,8 @@ describe("udpSocket()", () => {
     { hostname: "127.0.0.1", skip: !hasIP("IPv4") },
     { hostname: "::1", skip: !hasIP("IPv6") },
   ])("can create a socket with given hostname", ({ hostname, skip }) => {
-    test.skipIf(skip)(hostname, () => {
-      const socket = udpSocket({ hostname });
+    test.skipIf(skip)(hostname, async () => {
+      const socket = await udpSocket({ hostname });
       expect(socket.hostname).toBe(hostname);
       expect(socket.port).toBeInteger();
       expect(socket.port).toBeWithin(1, 65535 + 1);
@@ -141,9 +141,9 @@ describe("udpSocket()", () => {
 
   for (const { binaryType, type } of dataTypes) {
     for (const { label, data, bytes } of dataCases) {
-      test(`send ${label} (${binaryType || "undefined"})`, (done) => {
-        const client = udpSocket({});
-        const server = udpSocket({
+      test(`send ${label} (${binaryType || "undefined"})`, async (done) => {
+        const client = await udpSocket({});
+        const server = await udpSocket({
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
@@ -179,9 +179,9 @@ describe("udpSocket()", () => {
         sendRec();
       });
 
-      test(`send connected ${label} (${binaryType || "undefined"})`, (done) => {
+      test(`send connected ${label} (${binaryType || "undefined"})`, async (done) => {
         let client;
-        const server = udpSocket({
+        const server = await udpSocket({
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
@@ -206,7 +206,7 @@ describe("udpSocket()", () => {
             },
           },
         });
-        client = udpSocket({
+        client = await udpSocket({
           connect: {
             port: server.port,
             hostname: server.hostname,

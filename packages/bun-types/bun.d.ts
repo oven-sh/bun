@@ -4032,20 +4032,20 @@ declare module "bun" {
 
     export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
       readonly remoteAddress: SocketAddress;
-      sendMany(packets: BasePacket[]): void;
-      send(data: string | ArrayBufferView | ArrayBufferLike): void;
+      sendMany(packets: BasePacket[]): number;
+      send(data: string | ArrayBufferView | ArrayBufferLike): boolean;
       reload(handler: ConnectedSocketHandler<DataBinaryType>): void;
     }
 
     export interface Socket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
-      sendMany(packets: FullPacket[]): void;
-      send(data: string | ArrayBufferView | ArrayBufferLike, port: number, address: string): void;
+      sendMany(packets: FullPacket[]): number;
+      send(data: string | ArrayBufferView | ArrayBufferLike, port: number, address: string): boolean;
       reload(handler: SocketHandler<DataBinaryType>): void;
     }
   }
 
-  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(options: udp.SocketOptions<DataBinaryType>): udp.Socket<DataBinaryType>;
-  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(options: udp.ConnectSocketOptions<DataBinaryType>): udp.ConnectedSocket<DataBinaryType>;
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(options: udp.SocketOptions<DataBinaryType>): Promise<udp.Socket<DataBinaryType>>;
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(options: udp.ConnectSocketOptions<DataBinaryType>): Promise<udp.ConnectedSocket<DataBinaryType>>;
 
   namespace SpawnOptions {
     /**

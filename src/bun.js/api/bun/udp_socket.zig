@@ -313,11 +313,10 @@ pub const UDPSocket = struct {
 
         this.poll_ref.ref(vm);
         this.config.protect();
-        vm.eventLoop().ensureWaker();
         const thisValue = this.toJS(globalThis);
+        thisValue.ensureStillAlive();
         this.thisValue = thisValue;
-
-        return thisValue;
+        return JSC.JSPromise.resolvedPromiseValue(globalThis, thisValue);
     }
 
     pub fn callErrorHandler(
@@ -443,14 +442,15 @@ pub const UDPSocket = struct {
     }
 
     fn doSend(this: *This, globalThis: *JSGlobalObject) JSValue {
-        if (this.socket.send(this.send_buf, 1) == -1) {
+        const res = this.socket.send(this.send_buf, 1);
+        if (res == -1) {
             const errno = @as(std.c.E, @enumFromInt(std.c._errno().*));
             const err = bun.sys.Error.fromCode(errno, .sendmmsg);
             globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
             return .zero;
         }
 
-        return .undefined;
+        return JSValue.jsNumber(res);
     }
 
     const Destination = struct {

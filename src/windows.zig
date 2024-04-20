@@ -3080,7 +3080,7 @@ pub extern "kernel32" fn GetTempPathW(
 pub extern "kernel32" fn CreateJobObjectA(
     lpJobAttributes: ?*anyopaque, // [in, optional]
     lpName: ?LPCSTR, // [in, optional]
-) callconv(windows.WINAPI) HANDLE;
+) callconv(windows.WINAPI) ?HANDLE;
 
 pub extern "kernel32" fn AssignProcessToJobObject(
     hJob: HANDLE, // [in]
@@ -3524,3 +3524,6 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
 
     return .{ .result = {} };
 }
+
+pub const EXCEPTION_CONTINUE_EXECUTION = -1;
+pub const MS_VC_EXCEPTION = 0x406d1388;

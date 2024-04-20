@@ -1078,8 +1078,15 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
 fn report(url: []const u8) void {
     // if (bun.Environment.isDebug) return;
     if (bun.Environment.os == .linux) return;
-    if (!bun.Analytics.isEnabled()) return;
-    if (bun.Analytics.isCI()) return;
+    if (!bun.Analytics.isEnabled()) {
+        std.debug.print("Not reporting crash {s}\n", .{url});
+        return;
+    }
+    if (bun.Analytics.isCI()) {
+        std.debug.print("Not reporting crash {s} (CI)\n", .{url});
+    }
+
+    std.debug.print("Reporting crash {s}\n", .{url});
 
     switch (bun.Environment.os) {
         .windows => {
@@ -1105,7 +1112,7 @@ fn report(url: []const u8) void {
                 .hStdError = null,
             };
             var cmd_line = std.BoundedArray(u16, 4096){};
-            cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell.exe -ExecutionPolicy Bypass -Command \"Invoke-RestMethod -Uri '"));
+            cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell -ExecutionPolicy Bypass -Command \"Invoke-RestMethod -Uri '"));
             {
                 const encoded = bun.strings.convertUTF8toUTF16InBuffer(cmd_line.unusedCapacitySlice(), url);
                 cmd_line.len += @intCast(encoded.len);

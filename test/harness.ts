@@ -114,12 +114,17 @@ export function hideFromStackTrace(block: CallableFunction) {
 }
 
 type DirectoryTree = {
-  [name: string]: string | Buffer | DirectoryTree;
+  [name: string]:
+    | string
+    | Buffer
+    | DirectoryTree
+    | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
 };
 
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
-  function makeTree(base: string, tree: DirectoryTree) {
-    for (const [name, contents] of Object.entries(tree)) {
+  async function makeTree(base: string, tree: DirectoryTree) {
+    for (const [name, raw_contents] of Object.entries(tree)) {
+      const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
       const joined = join(base, name);
       if (name.includes("/")) {
         const dir = dirname(name);
@@ -508,6 +513,7 @@ function failTestsOnBlockingWriteCall() {
 failTestsOnBlockingWriteCall();
 
 import { heapStats } from "bun:jsc";
+import { Awaitable } from "vitest";
 export function dumpStats() {
   const stats = heapStats();
   const { objectTypeCounts, protectedObjectTypeCounts } = stats;

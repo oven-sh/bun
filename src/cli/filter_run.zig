@@ -363,7 +363,8 @@ const State = struct {
         for (this.handles) |handle| {
             if (handle.process) |proc| {
                 switch (proc.status) {
-                    .exited => |exited| if (exited.code != 0) return 1,
+                    .exited => |exited| if (exited.code != 0) return exited.code,
+                    .signaled => |signal| return @intFromEnum(signal),
                     else => return 1,
                 }
             }

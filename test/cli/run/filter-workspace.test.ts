@@ -382,7 +382,7 @@ describe("bun", () => {
         "package.json": JSON.stringify({
           name: "dep1",
           scripts: {
-            script: "exit 1",
+            script: "exit 23",
           },
         }),
       },
@@ -396,7 +396,7 @@ describe("bun", () => {
     });
     const stdoutval = stdout.toString();
     expect(stdoutval).toMatch(/code 0/);
-    expect(stdoutval).toMatch(/code 1/);
-    expect(exitCode).toBe(1);
+    expect(stdoutval).toMatch(/code 23/);
+    expect(exitCode).toBe(23);
   });
 });

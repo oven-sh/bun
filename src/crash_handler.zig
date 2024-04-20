@@ -768,17 +768,6 @@ const Platform = enum(u8) {
         (if (bun.Environment.baseline) "_baseline" else ""));
 };
 
-// const tracestr_version: u8 = '1';
-
-// const tracestr_header = std.fmt.comptimePrint(
-//     "{s}/{c}{s}{c}",
-//     .{
-//         bun.Environment.version_string,
-//         @intFromEnum(Platform.current),
-//         tracestr_version,
-//     },
-// );
-
 const git_sha = if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown";
 
 const StackLine = union(enum) {

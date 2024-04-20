@@ -22,6 +22,11 @@ const Headers = bun.http.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
 
+/// Enables analytics. This is used by:
+/// - crash_handler.zig's `report` function to anonymously report crashes
+///
+/// Since this field can be .unknown, it makes more sense to call `isEnabled`
+/// instead of processing this field directly.
 pub var enabled: enum { yes, no, unknown } = .unknown;
 pub var is_ci: enum { yes, no, unknown } = .unknown;
 
@@ -236,6 +241,8 @@ const DotEnv = @import("../env_loader.zig");
 const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else Analytics.Architecture.x64;
 
 // TODO: move this code somewhere more appropriate, and remove it from "analytics"
+// The following code is not currently even used for analytics, just feature-detection
+// in order to determine if certain APIs are usable.
 pub const GenerateHeader = struct {
     pub const GeneratePlatform = struct {
         var osversion_name: [32]u8 = undefined;

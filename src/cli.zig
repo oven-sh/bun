@@ -2022,6 +2022,9 @@ pub const Command = struct {
         ReservedCommand,
         ExecCommand,
 
+        /// Used by crash reports.
+        /// 
+        /// This must be kept in sync with 
         pub fn char(this: Tag) u8 {
             return switch (this) {
                 .AddCommand => 'I',

@@ -1760,7 +1760,6 @@ pub const BundleOptions = struct {
 
         opts.polyfill_node_globals = opts.target == .browser;
 
-        Analytics.Features.framework += @as(usize, @intFromBool(opts.framework != null));
         Analytics.Features.filesystem_router += @as(usize, @intFromBool(opts.routes.routes_enabled));
         Analytics.Features.origin += @as(usize, @intFromBool(opts.origin.href.len > 0));
         Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));

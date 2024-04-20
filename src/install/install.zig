@@ -3783,7 +3783,7 @@ pub const PackageManager = struct {
 
             .folder => {
                 const res: FolderResolution = brk: {
-                    if (comptime successFn == assignRootResolution) {
+                    if (this.isRootDependency(dependency_id)) {
                         // relative to cwd
                         const folder_path = this.lockfile.str(&version.value.folder);
                         var buf2: bun.PathBuffer = undefined;

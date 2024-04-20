@@ -556,20 +556,9 @@ pub const Bundler = struct {
             else => {},
         }
 
-        if (this.env.get("DO_NOT_TRACK")) |dnt| {
-            // https://do-not-track.dev/
-            if (strings.eqlComptime(dnt, "1")) {
-                Analytics.disabled = true;
-            }
-        }
-
-        Analytics.is_ci = Analytics.is_ci or this.env.isCI();
-
         if (strings.eqlComptime(this.env.get("BUN_DISABLE_TRANSPILER") orelse "0", "1")) {
             this.options.disable_transpilation = true;
         }
-
-        Analytics.disabled = Analytics.disabled or this.env.get("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null;
     }
 
     // This must be run after a framework is configured, if a framework is enabled

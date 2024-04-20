@@ -559,7 +559,11 @@ pub const Arguments = struct {
                     ctx.runtime_options.eval.script = port_str;
                     ctx.runtime_options.eval.eval_and_print = true;
                 } else {
-                    opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+                    opts.port = std.fmt.parseInt(u16, port_str, 10) catch {
+                        Output.errGeneric("Invalid value for --port: \"{s}\". Must be a number\n", .{port_str});
+                        Output.note("To evaluate TypeScript here, use 'bun --print'", .{});
+                        Global.exit(1);
+                    };
                 }
             }
 
@@ -582,7 +586,7 @@ pub const Arguments = struct {
                 } else if (enum_value.len == 0) {
                     ctx.debug.global_cache = options.GlobalCache.force;
                 } else {
-                    Output.prettyErrorln("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
+                    Output.errGeneric("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
                     Global.exit(1);
                 }
             }
@@ -2017,6 +2021,37 @@ pub const Command = struct {
         ReplCommand,
         ReservedCommand,
         ExecCommand,
+
+        /// Used by crash reports.
+        ///
+        /// This must be kept in sync with
+        pub fn char(this: Tag) u8 {
+            return switch (this) {
+                .AddCommand => 'I',
+                .AutoCommand => 'a',
+                .BuildCommand => 'b',
+                .BunxCommand => 'B',
+                .CreateCommand => 'c',
+                .DiscordCommand => 'D',
+                .GetCompletionsCommand => 'g',
+                .HelpCommand => 'h',
+                .InitCommand => 'j',
+                .InstallCommand => 'i',
+                .InstallCompletionsCommand => 'C',
+                .LinkCommand => 'l',
+                .PackageManagerCommand => 'P',
+                .RemoveCommand => 'R',
+                .RunCommand => 'r',
+                .RunAsNodeCommand => 'n',
+                .TestCommand => 't',
+                .UnlinkCommand => 'U',
+                .UpdateCommand => 'u',
+                .UpgradeCommand => 'p',
+                .ReplCommand => 'G',
+                .ReservedCommand => 'w',
+                .ExecCommand => 'e',
+            };
+        }
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return comptime &switch (cmd) {

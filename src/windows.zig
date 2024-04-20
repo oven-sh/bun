@@ -3080,7 +3080,7 @@ pub extern "kernel32" fn GetTempPathW(
 pub extern "kernel32" fn CreateJobObjectA(
     lpJobAttributes: ?*anyopaque, // [in, optional]
     lpName: ?LPCSTR, // [in, optional]
-) callconv(windows.WINAPI) HANDLE;
+) callconv(windows.WINAPI) ?HANDLE;
 
 pub extern "kernel32" fn AssignProcessToJobObject(
     hJob: HANDLE, // [in]

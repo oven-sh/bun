@@ -773,7 +773,7 @@ pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 
 /// This wrapper exists to avoid the call to sliceTo(0)
 /// Zig's sliceTo(0) is scalar
-pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
+pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     if (comptime !Environment.isNative) {
         return null;
     }
@@ -783,8 +783,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
         for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            const key = line[0..key_end];
-            if (strings.eqlInsensitive(key, path_)) {
+            if (strings.eqlInsensitive(line[0..key_end], key)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }
@@ -792,7 +791,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
         return null;
     }
 
-    const ptr = std.c.getenv(path_.ptr) orelse return null;
+    const ptr = std.c.getenv(key.ptr) orelse return null;
     return sliceTo(ptr, 0);
 }
 

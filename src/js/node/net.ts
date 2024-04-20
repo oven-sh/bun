@@ -21,6 +21,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
+const { addServerName } = require("../internal/net");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -66,6 +67,7 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
+
 function closeNT(self) {
   self.emit("close");
 }
@@ -151,6 +153,7 @@ const Socket = (function (InternalSocket) {
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
+
         self.emit("secure", self);
 
         const { checkServerIdentity } = self[bunTLSConnectOptions];
@@ -167,6 +170,8 @@ const Socket = (function (InternalSocket) {
               self.destroy(verifyError);
               return;
             }
+          } else {
+            self.authorized = true;
           }
         } else {
           self.authorized = true;
@@ -276,6 +281,7 @@ const Socket = (function (InternalSocket) {
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
+        self.servername = socket.getServername();
         const server = self.server;
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
@@ -288,6 +294,8 @@ const Socket = (function (InternalSocket) {
               self.destroy(verifyError);
               return;
             }
+          } else {
+            self.authorized = true;
           }
         } else {
           self.authorized = true;
@@ -303,6 +311,7 @@ const Socket = (function (InternalSocket) {
       error(socket, error) {
         Socket.#Handlers.error(socket, error);
         this.data.emit("error", error);
+        this.data.server.emit("clientError", error, this.data);
       },
       timeout: Socket.#Handlers.timeout,
       connectError: Socket.#Handlers.connectError,
@@ -717,7 +726,7 @@ function createConnection(port, host, connectListener) {
 const connect = createConnection;
 
 class Server extends EventEmitter {
-  #server;
+  [bunSocketInternal] = null;
   [bunSocketServerConnections] = 0;
   [bunSocketServerOptions];
   maxConnections = 0;
@@ -742,23 +751,23 @@ class Server extends EventEmitter {
   }
 
   get listening() {
-    return !!this.#server;
+    return !!this[bunSocketInternal];
   }
 
   ref() {
-    this.#server?.ref();
+    this[bunSocketInternal]?.ref();
     return this;
   }
 
   unref() {
-    this.#server?.unref();
+    this[bunSocketInternal]?.unref();
     return this;
   }
 
   close(callback) {
-    if (this.#server) {
-      this.#server.stop(true);
-      this.#server = null;
+    if (this[bunSocketInternal]) {
+      this[bunSocketInternal].stop(true);
+      this[bunSocketInternal] = null;
       this[bunSocketServerConnections] = 0;
       this.emit("close");
       if (typeof callback === "function") {
@@ -777,7 +786,7 @@ class Server extends EventEmitter {
   }
 
   address() {
-    const server = this.#server;
+    const server = this[bunSocketInternal];
     if (server) {
       const unix = server.unix;
       if (unix) {
@@ -812,7 +821,7 @@ class Server extends EventEmitter {
       //in Bun case we will never error on getConnections
       //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
       //if disconnected will only pass null as well and 0 connected
-      callback(null, this.#server ? this[bunSocketServerConnections] : 0);
+      callback(null, this[bunSocketInternal] ? this[bunSocketServerConnections] : 0);
     }
     return this;
   }
@@ -894,18 +903,19 @@ class Server extends EventEmitter {
       var TLSSocketClass = undefined;
       const bunTLS = this[bunTlsSymbol];
       const options = this[bunSocketServerOptions];
-
+      let contexts: Map<string, any> | null = null;
       if (typeof bunTLS === "function") {
         [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
         options.servername = tls.serverName;
         options.InternalSocketClass = TLSSocketClass;
+        contexts = tls.contexts;
         if (!tls.requestCert) {
           tls.rejectUnauthorized = false;
         }
       } else {
         options.InternalSocketClass = SocketClass;
       }
-      this.#server = Bun.listen(
+      this[bunSocketInternal] = Bun.listen(
         path
           ? {
               exclusive,
@@ -923,7 +933,13 @@ class Server extends EventEmitter {
       );
 
       //make this instance available on handlers
-      this.#server.data = this;
+      this[bunSocketInternal].data = this;
+
+      if (contexts) {
+        for (const [name, context] of contexts) {
+          addServerName(this[bunSocketInternal], name, context);
+        }
+      }
 
       // We must schedule the emitListeningNextTick() only after the next run of
       // the event loop's IO queue. Otherwise, the server may not actually be listening

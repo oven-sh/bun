@@ -22,8 +22,53 @@ const Headers = bun.http.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
 
-pub var disabled = false;
-pub var is_ci = false;
+var enabled: enum { yes, no, unknown } = .unknown;
+var is_ci: enum { yes, no, unknown } = .unknown;
+
+pub fn isEnabled() bool {
+    return switch (enabled) {
+        .yes => true,
+        .no => false,
+        .not_sure => {
+            enabled = detect: {
+                if (bun.getenvZ("DO_NOT_TRACK") != null) {
+                    break :detect .no;
+                }
+                if (bun.getenvZ("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null) {
+                    break :detect .no;
+                }
+                break :detect .yes;
+            };
+            bun.assert(enabled == .yes or enabled == .no);
+            return enabled == .yes;
+        },
+    };
+}
+
+pub fn isCI() bool {
+    return switch (is_ci) {
+        .yes => true,
+        .no => false,
+        .not_sure => {
+            is_ci = detect: {
+                inline for (.{
+                    "CI",
+                    "TDDIUM",
+                    "GITHUB_ACTIONS",
+                    "JENKINS_URL",
+                    "bamboo.buildKey",
+                }) |key| {
+                    if (bun.getenvZ(key) != null) {
+                        break :detect .yes;
+                    }
+                }
+                break :detect .no;
+            };
+            bun.assert(is_ci == .yes or is_ci == .no);
+            return is_ci == .yes;
+        },
+    };
+}
 
 /// This answers, "What parts of bun are people actually using?"
 pub const Features = struct {

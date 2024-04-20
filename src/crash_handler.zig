@@ -253,6 +253,8 @@ pub fn crashHandler(
             // This is important so that we do not try to run the following reload logic twice.
             waitForOtherThreadToFinishPanicking();
 
+            report(trace_str_buf.slice());
+
             if (bun.auto_reload_on_crash and
                 // Do not reload if the panic arised FROM the reload function.
                 !bun.isProcessReloadInProgressOnAnotherThread())
@@ -291,8 +293,6 @@ pub fn crashHandler(
             std.os.abort();
         },
     };
-
-    report(trace_str_buf.slice());
 
     crash();
 }
@@ -1075,12 +1075,10 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
 /// information (PII). The stackframes point to Bun's open-source native code
 /// (not user code), and are safe to share publicly and with the Bun team.
 fn report(url: []const u8) void {
-    {
-        return;
-    }
-
     // if (bun.Environment.isDebug) return;
     if (bun.Environment.os == .linux) return;
+    if (!bun.Analytics.isEnabled()) return;
+    if (bun.Analytics.isCI()) return;
 
     std.debug.print("REPORT TO {s}/ack\n", .{url});
 
@@ -1132,11 +1130,33 @@ fn report(url: []const u8) void {
                 &startup_info,
                 &process,
             );
+
             // we don't care what happens with the process
             _ = spawn_result;
         },
         .mac => {
-            // TODO
+            var buf: bun.PathBuffer = undefined;
+            const curl = bun.which(
+                &buf,
+                bun.getenvZ("PATH") orelse return,
+                bun.getcwd() catch return,
+                "curl",
+            ) orelse return;
+            var cmd_line = std.BoundedArray(u8, 1024){};
+            cmd_line.append(url) catch return;
+            cmd_line.append("/ack") catch return;
+            cmd_line.append(0) catch return;
+
+            var pid: std.os.pid_t = undefined;
+            const argv = [_:null]?[:0]const u8{
+                curl,
+                "-fsSL",
+                cmd_line.buffer[0..cmd_line.len :0],
+            };
+            const spawn_result = std.c.posix_spawn(&pid, argv[0], null, null, &argv, std.c.environ);
+
+            // we don't care what happens with the process
+            _ = spawn_result;
         },
         else => @compileError("NOT IMPLEMENTED"),
     }

@@ -2754,6 +2754,30 @@ pub inline fn new(comptime T: type, t: T) *T {
     return ptr;
 }
 
+pub inline fn newCatchable(comptime T: type, t: T) error{OutOfMemory}!*T {
+    if (comptime is_heap_breakdown_enabled) {
+        const ptr = try HeapBreakdown.allocator(T).create(T);
+        ptr.* = t;
+        return ptr;
+    }
+
+    const ptr = try default_allocator.create(T);
+    ptr.* = t;
+    return ptr;
+}
+
+pub inline fn dupe(comptime T: type, t: *T) *T {
+    if (comptime is_heap_breakdown_enabled) {
+        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+        ptr.* = t.*;
+        return ptr;
+    }
+
+    const ptr = default_allocator.create(T) catch outOfMemory();
+    ptr.* = t.*;
+    return ptr;
+}
+
 /// Free a globally-allocated a value
 ///
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`

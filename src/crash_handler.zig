@@ -32,7 +32,8 @@ const debug = std.debug;
 /// This is useful for testing as a crash in here will not 'panicked during a panic'.
 pub const enable = true;
 
-const report_base_url = "https://bun.report/";
+/// Override with BUN_CRASH_REPORT_URL enviroment variable.
+const default_report_base_url = "https://bun.report/";
 
 /// Only print the `Bun has crashed` message once. Once this is true, control
 /// flow is not returned to the main application.
@@ -102,6 +103,8 @@ pub fn crashHandler(
     // If a segfault happens while panicking, we want it to actually segfault, not trigger
     // the handler.
     resetSegfaultHandler();
+
+    var trace_str_buf = std.BoundedArray(u8, 1024){};
 
     nosuspend switch (panic_stage) {
         0 => {
@@ -190,6 +193,13 @@ pub fn crashHandler(
 
                 if (debug_trace) {
                     dumpStackTrace(trace.*);
+
+                    // TODO: REMOVE
+                    trace_str_buf.writer().print("{}", .{TraceString{
+                        .trace = trace,
+                        .reason = reason,
+                        .action = .open_issue,
+                    }}) catch std.os.abort();
                 } else {
                     if (!has_printed_message) {
                         has_printed_message = true;
@@ -221,14 +231,13 @@ pub fn crashHandler(
 
                     writer.writeAll(" ") catch std.os.abort();
 
-                    encodeTraceString(
-                        .{
-                            .trace = trace,
-                            .reason = reason,
-                            .action = .open_issue,
-                        },
-                        writer,
-                    ) catch std.os.abort();
+                    trace_str_buf.writer().print("{}", .{TraceString{
+                        .trace = trace,
+                        .reason = reason,
+                        .action = .open_issue,
+                    }}) catch std.os.abort();
+
+                    writer.writeAll(trace_str_buf.slice()) catch std.os.abort();
 
                     writer.writeAll("\n") catch std.os.abort();
                 }
@@ -241,10 +250,11 @@ pub fn crashHandler(
 
                 Output.flush();
             }
-
             // Be aware that this function only lets one thread return from it.
             // This is important so that we do not try to run the following reload logic twice.
             waitForOtherThreadToFinishPanicking();
+
+            report(trace_str_buf.slice());
 
             if (bun.auto_reload_on_crash and
                 // Do not reload if the panic arised FROM the reload function.
@@ -541,6 +551,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
     }
 
     if (show_trace) {
+        verbose_error_trace = show_trace;
         handleErrorReturnTraceExtra(err, error_return_trace, true);
     }
 
@@ -564,6 +575,22 @@ fn panicBuiltin(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, b
 }
 
 pub const panic = if (enable) panicImpl else panicBuiltin;
+
+pub fn reportBaseUrl() []const u8 {
+    const static = struct {
+        var base_url: ?[]const u8 = null;
+    };
+    return static.base_url orelse {
+        const computed = computed: {
+            if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |url| {
+                break :computed url;
+            }
+            break :computed default_report_base_url;
+        };
+        static.base_url = computed;
+        return computed;
+    };
+}
 
 const arch_display_string = if (bun.Environment.isAarch64)
     if (bun.Environment.isMac) "Silicon" else "arm64"
@@ -655,6 +682,13 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
             windows.EXCEPTION_ACCESS_VIOLATION => .{ .segmentation_fault = info.ExceptionRecord.ExceptionInformation[1] },
             windows.EXCEPTION_ILLEGAL_INSTRUCTION => .{ .illegal_instruction = info.ContextRecord.getRegs().ip },
             windows.EXCEPTION_STACK_OVERFLOW => .{ .stack_overflow = {} },
+
+            // exception used for thread naming
+            // https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2017/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2017#set-a-thread-name-by-throwing-an-exception
+            // related commit
+            // https://github.com/go-delve/delve/pull/1384
+            bun.windows.MS_VC_EXCEPTION => return bun.windows.EXCEPTION_CONTINUE_EXECUTION,
+
             else => return windows.EXCEPTION_CONTINUE_SEARCH,
         },
         null,
@@ -758,53 +792,36 @@ const Platform = enum(u8) {
         (if (bun.Environment.baseline) "_baseline" else ""));
 };
 
-const tracestr_version: u8 = '1';
+const git_sha = if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown";
 
-const tracestr_header = std.fmt.comptimePrint(
-    "{s}/{c}{s}{c}",
-    .{
-        bun.Environment.version_string,
-        @intFromEnum(Platform.current),
-        if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown",
-        tracestr_version,
-    },
-);
+const StackLine = struct {
+    address: i32,
+    // null -> from bun.exe
+    object: ?[]const u8,
 
-const StackLine = union(enum) {
-    unknown,
-    known: struct {
-        address: i32,
-        // null -> from bun.exe
-        object: ?[]const u8,
-    },
-    javascript,
-
-    pub fn fromAddress(addr: usize, name_bytes: []u8) StackLine {
+    /// `null` implies the trace is not known.
+    pub fn fromAddress(addr: usize, name_bytes: []u8) ?StackLine {
         return switch (bun.Environment.os) {
             .windows => {
-                const module = bun.windows.getModuleHandleFromAddress(addr) orelse {
-                    // TODO: try to figure out of this is a JS stack frame
-                    return .{ .unknown = {} };
-                };
+                const module = bun.windows.getModuleHandleFromAddress(addr) orelse
+                    return null;
 
                 const base_address = @intFromPtr(module);
 
                 var temp: [512]u16 = undefined;
                 const name = bun.windows.getModuleNameW(module, &temp) orelse
-                    return .{ .unknown = {} };
+                    return null;
 
                 const image_path = bun.windows.exePathW();
 
                 return .{
-                    .known = .{
-                        // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
-                        .address = @intCast(addr - base_address),
+                    // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
+                    .address = @intCast(addr - base_address),
 
-                        .object = if (!std.mem.eql(u16, name, image_path)) name: {
-                            const basename = name[std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' }) orelse 0 ..];
-                            break :name bun.strings.convertUTF16toUTF8InBuffer(name_bytes, basename) catch null;
-                        } else null,
-                    },
+                    .object = if (!std.mem.eql(u16, name, image_path)) name: {
+                        const basename = name[std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' }) orelse 0 ..];
+                        break :name bun.strings.convertUTF16toUTF8InBuffer(name_bytes, basename) catch null;
+                    } else null,
                 };
             },
             .mac => {
@@ -845,30 +862,30 @@ const StackLine = union(enum) {
                                 if (i == 0) {
                                     const image_relative_address = stable_address - seg_start;
                                     if (image_relative_address > std.math.maxInt(i32)) {
-                                        return .{ .unknown = {} };
+                                        return null;
                                     }
 
                                     // To remap this, you have to add the offset (which is going to be 0x100000000),
                                     // and then you can run it through `llvm-symbolizer --obj bun-with-symbols 0x123456`
                                     // The reason we are subtracting this known offset is mostly just so that we can
                                     // fit it within a signed 32-bit integer. The VLQs will be shorter too.
-                                    return .{ .known = .{
+                                    return .{
                                         .object = null,
                                         .address = @intCast(image_relative_address),
-                                    } };
+                                    };
                                 } else {
                                     // these libraries are not interesting, mark as unknown
-                                    return .{ .unknown = {} };
+                                    return null;
                                 }
 
-                                return .{ .unknown = {} };
+                                return null;
                             }
                         },
                         else => {},
                     };
                 }
 
-                return .{ .unknown = {} };
+                return null;
             },
             else => {
                 // This code is slightly modified from std.debug.DebugInfo.lookupModuleDl
@@ -878,7 +895,7 @@ const StackLine = union(enum) {
                     address: usize,
                     i: usize = 0,
                     // Output
-                    result: StackLine = .{ .unknown = {} },
+                    result: ?StackLine = null,
                 } = .{ .address = addr -| 1 };
                 const CtxTy = @TypeOf(ctx);
 
@@ -898,10 +915,8 @@ const StackLine = union(enum) {
                             if (context.address >= seg_start and context.address < seg_end) {
                                 // const name = bun.sliceTo(info.dlpi_name, 0) orelse "";
                                 context.result = .{
-                                    .known = .{
-                                        .address = @intCast(context.address - info.dlpi_addr),
-                                        .object = null,
-                                    },
+                                    .address = @intCast(context.address - info.dlpi_addr),
+                                    .object = null,
                                 };
                                 return error.Found;
                             }
@@ -914,33 +929,35 @@ const StackLine = union(enum) {
         };
     }
 
-    pub fn writeEncoded(self: StackLine, writer: anytype) !void {
-        switch (self) {
-            .unknown => try writer.writeAll("_"),
-            .known => |known| {
-                if (known.object) |object| {
-                    try SourceMap.encodeVLQ(1).writeTo(writer);
-                    try SourceMap.encodeVLQ(@intCast(object.len)).writeTo(writer);
-                    try writer.writeAll(object);
-                }
-                try SourceMap.encodeVLQ(known.address).writeTo(writer);
-            },
-            .javascript => {
-                try writer.writeAll("=");
-            },
+    pub fn writeEncoded(self: ?StackLine, writer: anytype) !void {
+        const known = self orelse {
+            try writer.writeAll("_");
+            return;
+        };
+
+        if (known.object) |object| {
+            try SourceMap.encodeVLQ(1).writeTo(writer);
+            try SourceMap.encodeVLQ(@intCast(object.len)).writeTo(writer);
+            try writer.writeAll(object);
         }
+
+        try SourceMap.encodeVLQ(known.address).writeTo(writer);
     }
 
-    pub fn format(self: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        switch (self) {
-            .unknown => try writer.print("???", .{}),
-            .known => |known| try writer.print("0x{x}{s}{s}", .{
-                if (bun.Environment.isMac) @as(u64, known.address) + 0x100000000 else known.address,
-                if (known.object != null) " @ " else "",
-                known.object orelse "",
-            }),
-            .javascript => try writer.print("javascript address", .{}),
-        }
+    pub fn format(line: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("0x{x}{s}{s}", .{
+            if (bun.Environment.isMac) @as(u64, line.address) + 0x100000000 else line.address,
+            if (line.object != null) " @ " else "",
+            line.object orelse "",
+        });
+    }
+
+    pub fn writeDecoded(self: ?StackLine, writer: anytype) !void {
+        const known = self orelse {
+            try writer.print("???", .{});
+            return;
+        };
+        try known.format("", .{}, writer);
     }
 };
 
@@ -957,18 +974,30 @@ const TraceString = struct {
     };
 
     pub fn format(self: TraceString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try encodeTraceString(self, writer);
+        encodeTraceString(self, writer) catch return;
     }
 };
 
 fn encodeTraceString(opts: TraceString, writer: anytype) !void {
-    try writer.writeAll(report_base_url ++ tracestr_header);
+    try writer.writeAll(reportBaseUrl());
+    try writer.writeAll(
+        "/" ++
+            bun.Environment.version_string ++
+            "/" ++
+            .{@intFromEnum(Platform.current)},
+    );
+    try writer.writeByte(if (bun.CLI.Cli.cmd) |cmd| cmd.char() else '_');
+
+    try writer.writeAll("1" ++ git_sha);
+
+    const packed_features = bun.analytics.packedFeatures();
+    try writeU64AsTwoVLQs(writer, @bitCast(packed_features));
 
     var name_bytes: [1024]u8 = undefined;
 
     for (opts.trace.instruction_addresses[0..opts.trace.index]) |addr| {
         const line = StackLine.fromAddress(addr, &name_bytes);
-        try line.writeEncoded(writer);
+        try StackLine.writeEncoded(line, writer);
     }
 
     try writer.writeAll(comptime zero_vlq: {
@@ -1042,10 +1071,138 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
 }
 
 fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
-    const first = SourceMap.encodeVLQ(@intCast((addr & 0xFFFFFFFF00000000) >> 32));
+    const first = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
     const second = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
     try first.writeTo(writer);
     try second.writeTo(writer);
+}
+
+fn isReportingEnabled() bool {
+    // If trying to test the crash handler backend, implicitly enable reporting
+    if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |value| {
+        return value.len > 0;
+    }
+
+    // Environment variable to specifically enable or disable reporting
+    if (bun.getenvZ("BUN_ENABLE_CRASH_REPORTING")) |value| {
+        if (value.len > 0) {
+            if (bun.strings.eqlComptime(value, "1")) {
+                return true;
+            }
+            return false;
+        }
+    }
+
+    // Debug builds shouldn't report to the default url by default
+    if (bun.Environment.isDebug)
+        return false;
+
+    // Honor DO_NOT_TRACK
+    if (!bun.analytics.isEnabled())
+        return false;
+
+    // TODO: currently we are only testing automatic reporting
+    // in canary. later, this should be set to releases.
+    if (bun.Environment.is_canary)
+        return true;
+
+    return false;
+}
+
+/// Bun automatically reports crashes on Windows and macOS
+///
+/// These URLs contain no source code or personally-identifiable
+/// information (PII). The stackframes point to Bun's open-source native code
+/// (not user code), and are safe to share publicly and with the Bun team.
+fn report(url: []const u8) void {
+    if (!isReportingEnabled()) return;
+
+    switch (bun.Environment.os) {
+        .windows => {
+            var process: std.os.windows.PROCESS_INFORMATION = undefined;
+            var startup_info = std.os.windows.STARTUPINFOW{
+                .cb = @sizeOf(std.os.windows.STARTUPINFOW),
+                .lpReserved = null,
+                .lpDesktop = null,
+                .lpTitle = null,
+                .dwX = 0,
+                .dwY = 0,
+                .dwXSize = 0,
+                .dwYSize = 0,
+                .dwXCountChars = 0,
+                .dwYCountChars = 0,
+                .dwFillAttribute = 0,
+                .dwFlags = 0,
+                .wShowWindow = 0,
+                .cbReserved2 = 0,
+                .lpReserved2 = null,
+                .hStdInput = null,
+                .hStdOutput = null,
+                .hStdError = null,
+                // .hStdInput = bun.win32.STDIN_FD.cast(),
+                // .hStdOutput = bun.win32.STDOUT_FD.cast(),
+                // .hStdError = bun.win32.STDERR_FD.cast(),
+            };
+            var cmd_line = std.BoundedArray(u16, 4096){};
+            cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));
+            {
+                const encoded = bun.strings.convertUTF8toUTF16InBuffer(cmd_line.unusedCapacitySlice(), url);
+                cmd_line.len += @intCast(encoded.len);
+            }
+            cmd_line.appendSlice(std.unicode.utf8ToUtf16LeStringLiteral("/ack'|out-null}catch{}\"")) catch return;
+            cmd_line.append(0) catch return;
+            const cmd_line_slice = cmd_line.buffer[0 .. cmd_line.len - 1 :0];
+            const spawn_result = std.os.windows.kernel32.CreateProcessW(
+                null,
+                cmd_line_slice,
+                null,
+                null,
+                1, // true
+                0,
+                null,
+                null,
+                &startup_info,
+                &process,
+            );
+
+            // we don't care what happens with the process
+            _ = spawn_result;
+        },
+        .mac, .linux => {
+            var buf: bun.PathBuffer = undefined;
+            var buf2: bun.PathBuffer = undefined;
+            const curl = bun.which(
+                &buf,
+                bun.getenvZ("PATH") orelse return,
+                bun.getcwd(&buf2) catch return,
+                "curl",
+            ) orelse return;
+            var cmd_line = std.BoundedArray(u8, 4096){};
+            cmd_line.appendSlice(url) catch return;
+            cmd_line.appendSlice("/ack") catch return;
+            cmd_line.append(0) catch return;
+
+            var argv = [_:null]?[*:0]const u8{
+                curl,
+                "-fsSL",
+                cmd_line.buffer[0..cmd_line.len :0],
+            };
+            const result = std.c.fork();
+            switch (result) {
+                // success and failure cases: ignore the result
+                else => return,
+                // child
+                0 => {
+                    inline for (0..2) |i| {
+                        _ = std.c.close(i);
+                    }
+                    _ = std.c.execve(argv[0].?, &argv, std.c.environ);
+                    std.c.exit(0);
+                },
+            }
+        },
+        else => @compileError("NOT IMPLEMENTED"),
+    }
 }
 
 /// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.
@@ -1099,16 +1256,9 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
 
         if (is_debug) {
             if (is_root) {
-                Output.note(
-                    "'main' returned error.{s}.{s}",
-                    .{
-                        @errorName(err),
-                        if (verbose_error_trace)
-                            ""
-                        else
-                            " (release build will not have this trace by default)",
-                    },
-                );
+                if (verbose_error_trace) {
+                    Output.note("Release build will not have this trace by default:", .{});
+                }
             } else {
                 Output.note(
                     "caught error.{s}:",
@@ -1189,7 +1339,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     // order to get the demangled stack traces.
     var name_bytes: [1024]u8 = undefined;
     for (trace.instruction_addresses[0..trace.index]) |addr| {
-        const line = StackLine.fromAddress(addr, &name_bytes);
+        const line = StackLine.fromAddress(addr, &name_bytes) orelse continue;
         stderr.print("- {}\n", .{line}) catch break;
     }
     const program = switch (bun.Environment.os) {
@@ -1207,6 +1357,9 @@ pub const js_bindings = struct {
         const obj = JSC.JSValue.createEmptyObject(global, 3);
         inline for (.{
             .{ "getMachOImageZeroOffset", jsGetMachOImageZeroOffset },
+            .{ "getFeaturesAsVLQ", jsGetFeaturesAsVLQ },
+            .{ "getFeatureData", jsGetFeatureData },
+
             .{ "segfault", jsSegfault },
             .{ "panic", jsPanic },
             .{ "rootError", jsRootError },
@@ -1246,5 +1399,26 @@ pub const js_bindings = struct {
 
     pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         bun.outOfMemory();
+    }
+
+    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const bits = bun.Analytics.packedFeatures();
+        var buf = std.BoundedArray(u8, 16){};
+        writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
+            // there is definetly enough space in the bounded array
+            unreachable;
+        };
+        return bun.String.createLatin1(buf.slice()).toJS(global);
+    }
+
+    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const obj = JSValue.createEmptyObject(global, 1);
+        const list = bun.Analytics.packed_features_list;
+        const array = JSValue.createEmptyArray(global, list.len);
+        for (list, 0..) |feature, i| {
+            array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
+        }
+        obj.put(global, JSC.ZigString.static("features"), array);
+        return obj;
     }
 };

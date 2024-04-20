@@ -3306,6 +3306,13 @@ declare module "bun" {
      */
     static readonly byteLength: 32;
   }
+  class SHA512_224 extends CryptoHashInterface<SHA512_224> {
+    constructor();
+    /**
+     * The number of bytes the hash will produce
+     */
+    static readonly byteLength: 28;
+  }
   /**
    * See also {@link sha}
    */

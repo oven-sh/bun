@@ -1337,11 +1337,11 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     }
     // TODO: It would be reasonable, but hacky, to spawn LLVM-symbolizer here in
     // order to get the demangled stack traces.
-    // var name_bytes: [1024]u8 = undefined;
-    // for (trace.instruction_addresses[0..trace.index]) |addr| {
-    //     const line = StackLine.fromAddress(addr, &name_bytes);
-    //     stderr.print("- {}\n", .{line}) catch break;
-    // }
+    var name_bytes: [1024]u8 = undefined;
+    for (trace.instruction_addresses[0..trace.index]) |addr| {
+        const line = StackLine.fromAddress(addr, &name_bytes) orelse continue;
+        stderr.print("- {}\n", .{line}) catch break;
+    }
     const program = switch (bun.Environment.os) {
         .windows => "pdb-addr2line",
         else => "llvm-symbolizer",

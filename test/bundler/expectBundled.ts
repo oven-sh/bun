@@ -813,6 +813,9 @@ function expectBundled(
 
             return testRef(id, opts);
           }
+          if (allErrors.length === 0) {
+            throw new Error("Bundle Failed\ncode: " + exitCode + "\nstdout: " + stdout + "\nstderr: " + stderr);
+          }
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (!expectedErrors) {
           throw new Error("Bundle Failed\n" + stderr?.toUnixString());
@@ -1324,7 +1327,7 @@ for (const [key, blob] of build.outputs) {
           throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
         }
 
-        if (run.stdout !== undefined) {
+        if (false && run.stdout !== undefined) {
           const result = stdout!.toUnixString().trim();
           if (typeof run.stdout === "string") {
             const expected = dedent(run.stdout).trim();

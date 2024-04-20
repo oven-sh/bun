@@ -1029,7 +1029,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror
         )
     else()
-        target_compile_options(${bun} PUBLIC /Od /Z7)
+        target_compile_options(${bun} PUBLIC /Od /Z7 /GS-)
     endif()
 
     add_compile_definitions("BUN_DEBUG=1")

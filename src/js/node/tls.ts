@@ -1,7 +1,9 @@
 // Hardcoded module "node:tls"
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
+const { addServerName } = require("../internal/net");
 const net = require("node:net");
 const { Server: NetServer, [Symbol.for("::bunternal::")]: InternalTCPSocket } = net;
+
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
@@ -529,10 +531,25 @@ class Server extends NetServer {
   _requestCert;
   servername;
   ALPNProtocols;
+  #contexts: Map<string, typeof InternalSecureContext> | null = null;
 
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
     this.setSecureContext(options);
+  }
+  addContext(hostname: string, context: typeof InternalSecureContext | object) {
+    if (typeof hostname !== "string") {
+      throw new TypeError("hostname must be a string");
+    }
+    if (!(context instanceof InternalSecureContext)) {
+      context = createSecureContext(context);
+    }
+    if (this[bunSocketInternal]) {
+      addServerName(this[bunSocketInternal], hostname, context);
+    } else {
+      if (!this.#contexts) this.#contexts = new Map();
+      this.#contexts.set(hostname, context as typeof InternalSecureContext);
+    }
   }
   setSecureContext(options) {
     if (options instanceof InternalSecureContext) {
@@ -627,6 +644,7 @@ class Server extends NetServer {
         ALPNProtocols: this.ALPNProtocols,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
+        contexts: this.#contexts,
       },
       SocketClass,
     ];

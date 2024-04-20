@@ -2820,13 +2820,17 @@ pub fn serve(
         const exception = &exception_;
 
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
-        const config_ = JSC.API.ServerConfig.fromJS(globalObject.ptr(), &args, exception);
+        var config_ = JSC.API.ServerConfig.fromJS(globalObject.ptr(), &args, exception);
         if (exception[0] != null) {
+            config_.deinit();
+
             globalObject.throwValue(exception_[0].?.value());
             return .undefined;
         }
 
         if (globalObject.hasException()) {
+            config_.deinit();
+
             return .zero;
         }
 

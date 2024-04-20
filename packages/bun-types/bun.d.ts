@@ -2414,7 +2414,7 @@ declare module "bun" {
     extends WebSocketServeOptions<WebSocketDataType>,
       TLSOptions {
     unix?: never;
-    tls?: TLSOptions;
+    tls?: TLSOptions | Array<TLSOptions>;
   }
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
@@ -2424,7 +2424,7 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix: string;
-    tls?: TLSOptions;
+    tls?: TLSOptions | Array<TLSOptions>;
   }
   interface ErrorLike extends Error {
     code?: string;
@@ -2493,23 +2493,11 @@ declare module "bun" {
   }
 
   interface TLSServeOptions extends ServeOptions, TLSOptions {
-    /**
-     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
-     *  The values are SSL options objects.
-     */
-    serverNames?: Record<string, TLSOptions>;
-
-    tls?: TLSOptions;
+    tls?: TLSOptions | Array<TLSOptions>;
   }
 
   interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
-    /**
-     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
-     *  The values are SSL options objects.
-     */
-    serverNames?: Record<string, TLSOptions>;
-
-    tls?: TLSOptions;
+    tls?: TLSOptions | Array<TLSOptions>;
   }
 
   interface SocketAddress {

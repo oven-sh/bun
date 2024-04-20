@@ -159,6 +159,10 @@ function generate(ssl) {
         fn: "setServername",
         length: 1,
       },
+      getServername: {
+        fn: "getServername",
+        length: 0,
+      },
     },
     finalize: true,
     construct: true,
@@ -200,7 +204,6 @@ export default [
         fn: "reload",
         length: 1,
       },
-
       hostname: {
         getter: "getHostname",
         cache: true,

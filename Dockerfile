@@ -115,12 +115,12 @@ RUN install_packages \
   ln -sf llvm-ar /usr/bin/ar && \ 
   ln -sf llvm-ranlib /usr/bin/ranlib && \
   ln -sf ld.lld /usr/bin/ld \
-  && ln -s /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
-  && ln -s /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
-  && ln -s /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \
-  && ln -s /usr/bin/lldb-${LLVM_VERSION} /usr/bin/lldb \
-  && ln -s /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
-  && ln -s /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
+  && ln -sf /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
+  && ln -sf /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
+  && ln -sf /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \
+  && ln -sf /usr/bin/lldb-${LLVM_VERSION} /usr/bin/lldb \
+  && ln -sf /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
+  && ln -sf /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
   && arch="$(dpkg --print-architecture)" \
   && case "${arch##*-}" in \
   amd64) variant="x64";; \

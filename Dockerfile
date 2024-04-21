@@ -107,14 +107,6 @@ RUN install_packages \
   golang \
   nodejs && \
   for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done && \
-  ln -sf clang /usr/bin/cc && \
-  ln -sf clang /usr/bin/c89 && \
-  ln -sf clang /usr/bin/c99 && \
-  ln -sf clang++ /usr/bin/c++ && \
-  ln -sf clang++ /usr/bin/g++ && \
-  ln -sf llvm-ar /usr/bin/ar && \ 
-  ln -sf llvm-ranlib /usr/bin/ranlib && \
-  ln -sf ld.lld /usr/bin/ld \
   && ln -sf /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
   && ln -sf /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
   && ln -sf /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \

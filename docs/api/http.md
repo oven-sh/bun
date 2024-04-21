@@ -319,11 +319,32 @@ interface Bun {
 }
 
 interface Server {
-  development: boolean;
-  hostname: string;
-  port: number;
-  pendingRequests: number;
-  stop(): void;
+  fetch(request: Request | string): Response | Promise<Response>;
+  publish(
+    topic: string,
+    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    compress?: boolean,
+  ): ServerWebSocketSendStatus;
+  ref(): void;
+  reload(options: Serve): void;
+  requestIP(request: Request): SocketAddress | null;
+  stop(closeActiveConnections?: boolean): void;
+  unref(): void;
+  upgrade<T = undefined>(
+    request: Request,
+    options?: {
+      data?: T;
+      headers?: Bun.HeadersInit;
+    },
+  ): boolean;
+
+  readonly development: boolean;
+  readonly hostname: string;
+  readonly id: string;
+  readonly pendingRequests: number;
+  readonly pendingWebSockets: number;
+  readonly port: number;
+  readonly url: URL;
 }
 ```
 

@@ -67,7 +67,7 @@ jobs:
           key: bun-${{ inputs.tag }}-deps-${{ steps.hash.outputs.hash }}
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Install LLVM
-        uses: KyleMayes/install-llvm-action@v2.0.2
+        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
         with:
           version: ${{ env.LLVM_VERSION }}
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
@@ -145,7 +145,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
         with:
           version: ${{ env.LLVM_VERSION }}
       - name: Install Ninja
@@ -224,7 +224,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
         with:
           version: ${{ env.LLVM_VERSION }}
       - name: Install Ninja

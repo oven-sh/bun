@@ -106,7 +106,7 @@ RUN install_packages \
   ruby-dev \
   golang \
   nodejs && \
-  for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done && \
+  for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done \
   && ln -sf /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
   && ln -sf /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
   && ln -sf /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \

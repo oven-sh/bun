@@ -117,7 +117,7 @@ RUN apt-get update -y \
   ln -sf clang++ /usr/bin/g++ && \
   ln -sf llvm-ar /usr/bin/ar && \ 
   ln -sf llvm-ranlib /usr/bin/ranlib && \
-  ln -sf ld.lld /usr/bin/ld && \
+  ln -sf ld.lld /usr/bin/ld \
   && ln -s /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
   && ln -s /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
   && ln -s /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \

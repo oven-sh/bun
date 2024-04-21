@@ -364,7 +364,7 @@ const State = struct {
             if (handle.process) |proc| {
                 switch (proc.status) {
                     .exited => |exited| if (exited.code != 0) return exited.code,
-                    .signaled => |signal| return @intFromEnum(signal),
+                    .signaled => |signal| return signal.toExitCode() orelse 1,
                     else => return 1,
                 }
             }

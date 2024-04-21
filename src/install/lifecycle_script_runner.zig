@@ -123,6 +123,11 @@ pub const LifecycleScriptSubprocess = struct {
 
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
 
+        const install_script = .{ .normal = "bun install", .debug = "bun-debug install" };
+        if ((combined_script.len >= install_script.normal.len and std.mem.eql(u8, combined_script[0..install_script.normal.len], install_script.normal)) or (combined_script.len >= install_script.debug.len and std.mem.eql(u8, combined_script[0..install_script.debug.len], install_script.debug))) {
+            Global.exit(0);
+        }
+
         if (this.foreground and this.manager.options.log_level != .silent) {
             Output.prettyError("<r><d><magenta>$<r> <d><b>{s}<r>\n", .{combined_script});
             Output.flush();

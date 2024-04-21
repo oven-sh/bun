@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.4")
+set(Bun_VERSION "1.1.5")
 set(WEBKIT_TAG e3a2d89a0b1644cc8d5c245bd2ffee4d4bd6c1d5)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")

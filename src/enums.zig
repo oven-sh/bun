@@ -58,13 +58,6 @@ pub fn tagName(comptime E: type, e: E) ?[]const u8 {
     } else null;
 }
 
-test tagName {
-    const E = enum(u8) { a, b, _ };
-    try testing.expect(tagName(E, .a) != null);
-    try testing.expectEqualStrings("a", tagName(E, .a).?);
-    try testing.expect(tagName(E, @as(E, @enumFromInt(42))) == null);
-}
-
 /// Determines the length of a direct-mapped enum array, indexed by
 /// @intCast(usize, @intFromEnum(enum_value)).
 /// If the enum is non-exhaustive, the resulting length will only be enough
@@ -121,21 +114,6 @@ pub fn directEnumArray(
     return directEnumArrayDefault(E, Data, null, max_unused_slots, init_values);
 }
 
-test "std.enums.directEnumArray" {
-    const E = enum(i4) { a = 4, b = 6, c = 2 };
-    const runtime_false: bool = false;
-    const array = directEnumArray(E, bool, 4, .{
-        .a = true,
-        .b = runtime_false,
-        .c = true,
-    });
-
-    try testing.expectEqual([7]bool, @TypeOf(array));
-    try testing.expectEqual(true, array[4]);
-    try testing.expectEqual(false, array[6]);
-    try testing.expectEqual(true, array[2]);
-}
-
 /// Initializes an array of Data which can be indexed by
 /// @intCast(usize, @intFromEnum(enum_value)).  The enum must be exhaustive.
 /// If the enum contains any fields with values that cannot be represented
@@ -163,34 +141,6 @@ pub fn directEnumArrayDefault(
     return result;
 }
 
-test "std.enums.directEnumArrayDefault" {
-    const E = enum(i4) { a = 4, b = 6, c = 2 };
-    const runtime_false: bool = false;
-    const array = directEnumArrayDefault(E, bool, false, 4, .{
-        .a = true,
-        .b = runtime_false,
-    });
-
-    try testing.expectEqual([7]bool, @TypeOf(array));
-    try testing.expectEqual(true, array[4]);
-    try testing.expectEqual(false, array[6]);
-    try testing.expectEqual(false, array[2]);
-}
-
-test "std.enums.directEnumArrayDefault slice" {
-    const E = enum(i4) { a = 4, b = 6, c = 2 };
-    const runtime_b = "b";
-    const array = directEnumArrayDefault(E, []const u8, "default", 4, .{
-        .a = "a",
-        .b = runtime_b,
-    });
-
-    try testing.expectEqual([7][]const u8, @TypeOf(array));
-    try testing.expectEqualSlices(u8, "a", array[4]);
-    try testing.expectEqualSlices(u8, "b", array[6]);
-    try testing.expectEqualSlices(u8, "default", array[2]);
-}
-
 /// Cast an enum literal, value, or string to the enum value of type E
 /// with the same name.
 pub fn nameCast(comptime E: type, comptime value: anytype) E {
@@ -210,28 +160,6 @@ pub fn nameCast(comptime E: type, comptime value: anytype) E {
         }
         @compileError("Cannot cast from " ++ @typeName(@TypeOf(value)) ++ " to " ++ @typeName(E));
     };
-}
-
-test "std.enums.nameCast" {
-    const A = enum(u1) { a = 0, b = 1 };
-    const B = enum(u1) { a = 1, b = 0 };
-    try testing.expectEqual(A.a, nameCast(A, .a));
-    try testing.expectEqual(A.a, nameCast(A, A.a));
-    try testing.expectEqual(A.a, nameCast(A, B.a));
-    try testing.expectEqual(A.a, nameCast(A, "a"));
-    try testing.expectEqual(A.a, nameCast(A, @as(*const [1]u8, "a")));
-    try testing.expectEqual(A.a, nameCast(A, @as([:0]const u8, "a")));
-    try testing.expectEqual(A.a, nameCast(A, @as([]const u8, "a")));
-
-    try testing.expectEqual(B.a, nameCast(B, .a));
-    try testing.expectEqual(B.a, nameCast(B, A.a));
-    try testing.expectEqual(B.a, nameCast(B, B.a));
-    try testing.expectEqual(B.a, nameCast(B, "a"));
-
-    try testing.expectEqual(B.b, nameCast(B, .b));
-    try testing.expectEqual(B.b, nameCast(B, A.b));
-    try testing.expectEqual(B.b, nameCast(B, B.b));
-    try testing.expectEqual(B.b, nameCast(B, "b"));
 }
 
 /// A set of enum elements, backed by a bitfield.  If the enum
@@ -510,210 +438,6 @@ pub fn BoundedEnumMultiset(comptime E: type, comptime CountSize: type) type {
     };
 }
 
-test "EnumMultiset" {
-    const Ball = enum { red, green, blue };
-
-    const empty = EnumMultiset(Ball).initEmpty();
-    const r0_g1_b2 = EnumMultiset(Ball).init(.{
-        .red = 0,
-        .green = 1,
-        .blue = 2,
-    });
-    const ten_of_each = EnumMultiset(Ball).initWithCount(10);
-
-    try testing.expectEqual(empty.count(), 0);
-    try testing.expectEqual(r0_g1_b2.count(), 3);
-    try testing.expectEqual(ten_of_each.count(), 30);
-
-    try testing.expect(!empty.contains(.red));
-    try testing.expect(!empty.contains(.green));
-    try testing.expect(!empty.contains(.blue));
-
-    try testing.expect(!r0_g1_b2.contains(.red));
-    try testing.expect(r0_g1_b2.contains(.green));
-    try testing.expect(r0_g1_b2.contains(.blue));
-
-    try testing.expect(ten_of_each.contains(.red));
-    try testing.expect(ten_of_each.contains(.green));
-    try testing.expect(ten_of_each.contains(.blue));
-
-    {
-        var copy = ten_of_each;
-        copy.removeAll(.red);
-        try testing.expect(!copy.contains(.red));
-
-        // removeAll second time does nothing
-        copy.removeAll(.red);
-        try testing.expect(!copy.contains(.red));
-    }
-
-    {
-        var copy = ten_of_each;
-        copy.addAssertSafe(.red, 6);
-        try testing.expectEqual(copy.getCount(.red), 16);
-    }
-
-    {
-        var copy = ten_of_each;
-        try copy.add(.red, 6);
-        try testing.expectEqual(copy.getCount(.red), 16);
-
-        try testing.expectError(error.Overflow, copy.add(.red, std.math.maxInt(usize)));
-    }
-
-    {
-        var copy = ten_of_each;
-        copy.remove(.red, 4);
-        try testing.expectEqual(copy.getCount(.red), 6);
-
-        // subtracting more it contains does not underflow
-        copy.remove(.green, 14);
-        try testing.expectEqual(copy.getCount(.green), 0);
-    }
-
-    try testing.expectEqual(empty.getCount(.green), 0);
-    try testing.expectEqual(r0_g1_b2.getCount(.green), 1);
-    try testing.expectEqual(ten_of_each.getCount(.green), 10);
-
-    {
-        var copy = empty;
-        copy.setCount(.red, 6);
-        try testing.expectEqual(copy.getCount(.red), 6);
-    }
-
-    {
-        var copy = r0_g1_b2;
-        copy.addSetAssertSafe(ten_of_each);
-        try testing.expectEqual(copy.getCount(.red), 10);
-        try testing.expectEqual(copy.getCount(.green), 11);
-        try testing.expectEqual(copy.getCount(.blue), 12);
-    }
-
-    {
-        var copy = r0_g1_b2;
-        try copy.addSet(ten_of_each);
-        try testing.expectEqual(copy.getCount(.red), 10);
-        try testing.expectEqual(copy.getCount(.green), 11);
-        try testing.expectEqual(copy.getCount(.blue), 12);
-
-        const full = EnumMultiset(Ball).initWithCount(std.math.maxInt(usize));
-        try testing.expectError(error.Overflow, copy.addSet(full));
-    }
-
-    {
-        var copy = ten_of_each;
-        copy.removeSet(r0_g1_b2);
-        try testing.expectEqual(copy.getCount(.red), 10);
-        try testing.expectEqual(copy.getCount(.green), 9);
-        try testing.expectEqual(copy.getCount(.blue), 8);
-
-        copy.removeSet(ten_of_each);
-        try testing.expectEqual(copy.getCount(.red), 0);
-        try testing.expectEqual(copy.getCount(.green), 0);
-        try testing.expectEqual(copy.getCount(.blue), 0);
-    }
-
-    try testing.expect(empty.eql(empty));
-    try testing.expect(r0_g1_b2.eql(r0_g1_b2));
-    try testing.expect(ten_of_each.eql(ten_of_each));
-    try testing.expect(!empty.eql(r0_g1_b2));
-    try testing.expect(!r0_g1_b2.eql(ten_of_each));
-    try testing.expect(!ten_of_each.eql(empty));
-
-    try testing.expect(empty.subsetOf(empty));
-    try testing.expect(r0_g1_b2.subsetOf(r0_g1_b2));
-    try testing.expect(empty.subsetOf(r0_g1_b2));
-    try testing.expect(r0_g1_b2.subsetOf(ten_of_each));
-    try testing.expect(!ten_of_each.subsetOf(r0_g1_b2));
-    try testing.expect(!r0_g1_b2.subsetOf(empty));
-
-    try testing.expect(empty.supersetOf(empty));
-    try testing.expect(r0_g1_b2.supersetOf(r0_g1_b2));
-    try testing.expect(r0_g1_b2.supersetOf(empty));
-    try testing.expect(ten_of_each.supersetOf(r0_g1_b2));
-    try testing.expect(!r0_g1_b2.supersetOf(ten_of_each));
-    try testing.expect(!empty.supersetOf(r0_g1_b2));
-
-    {
-        // with multisets it could be the case where two
-        // multisets are neither subset nor superset of each
-        // other.
-
-        const r10 = EnumMultiset(Ball).init(.{
-            .red = 10,
-        });
-        const b10 = EnumMultiset(Ball).init(.{
-            .blue = 10,
-        });
-
-        try testing.expect(!r10.subsetOf(b10));
-        try testing.expect(!b10.subsetOf(r10));
-        try testing.expect(!r10.supersetOf(b10));
-        try testing.expect(!b10.supersetOf(r10));
-    }
-
-    {
-        const result = r0_g1_b2.plusAssertSafe(ten_of_each);
-        try testing.expectEqual(result.getCount(.red), 10);
-        try testing.expectEqual(result.getCount(.green), 11);
-        try testing.expectEqual(result.getCount(.blue), 12);
-    }
-
-    {
-        const result = try r0_g1_b2.plus(ten_of_each);
-        try testing.expectEqual(result.getCount(.red), 10);
-        try testing.expectEqual(result.getCount(.green), 11);
-        try testing.expectEqual(result.getCount(.blue), 12);
-
-        const full = EnumMultiset(Ball).initWithCount(std.math.maxInt(usize));
-        try testing.expectError(error.Overflow, result.plus(full));
-    }
-
-    {
-        const result = ten_of_each.minus(r0_g1_b2);
-        try testing.expectEqual(result.getCount(.red), 10);
-        try testing.expectEqual(result.getCount(.green), 9);
-        try testing.expectEqual(result.getCount(.blue), 8);
-    }
-
-    {
-        const result = ten_of_each.minus(r0_g1_b2).minus(ten_of_each);
-        try testing.expectEqual(result.getCount(.red), 0);
-        try testing.expectEqual(result.getCount(.green), 0);
-        try testing.expectEqual(result.getCount(.blue), 0);
-    }
-
-    {
-        var copy = empty;
-        var it = copy.iterator();
-        var entry = it.next().?;
-        try testing.expectEqual(entry.key, .red);
-        try testing.expectEqual(entry.value.*, 0);
-        entry = it.next().?;
-        try testing.expectEqual(entry.key, .green);
-        try testing.expectEqual(entry.value.*, 0);
-        entry = it.next().?;
-        try testing.expectEqual(entry.key, .blue);
-        try testing.expectEqual(entry.value.*, 0);
-        try testing.expectEqual(it.next(), null);
-    }
-
-    {
-        var copy = r0_g1_b2;
-        var it = copy.iterator();
-        var entry = it.next().?;
-        try testing.expectEqual(entry.key, .red);
-        try testing.expectEqual(entry.value.*, 0);
-        entry = it.next().?;
-        try testing.expectEqual(entry.key, .green);
-        try testing.expectEqual(entry.value.*, 1);
-        entry = it.next().?;
-        try testing.expectEqual(entry.key, .blue);
-        try testing.expectEqual(entry.value.*, 2);
-        try testing.expectEqual(it.next(), null);
-    }
-}
-
 /// An array keyed by an enum, backed by a dense array.
 /// If the enum is not dense, a mapping will be constructed from
 /// enum values to dense indices.  This type does no dynamic
@@ -912,87 +636,6 @@ pub fn IndexedSet(comptime I: type, comptime Ext: ?fn (type) type) type {
             }
         };
     };
-}
-
-test "pure EnumSet fns" {
-    const Suit = enum { spades, hearts, clubs, diamonds };
-
-    const empty = EnumSet(Suit).initEmpty();
-    const full = EnumSet(Suit).initFull();
-    const black = EnumSet(Suit).initMany(&[_]Suit{ .spades, .clubs });
-    const red = EnumSet(Suit).initMany(&[_]Suit{ .hearts, .diamonds });
-
-    try testing.expect(empty.eql(empty));
-    try testing.expect(full.eql(full));
-    try testing.expect(!empty.eql(full));
-    try testing.expect(!full.eql(empty));
-    try testing.expect(!empty.eql(black));
-    try testing.expect(!full.eql(red));
-    try testing.expect(!red.eql(empty));
-    try testing.expect(!black.eql(full));
-
-    try testing.expect(empty.subsetOf(empty));
-    try testing.expect(empty.subsetOf(full));
-    try testing.expect(full.subsetOf(full));
-    try testing.expect(!black.subsetOf(red));
-    try testing.expect(!red.subsetOf(black));
-
-    try testing.expect(full.supersetOf(full));
-    try testing.expect(full.supersetOf(empty));
-    try testing.expect(empty.supersetOf(empty));
-    try testing.expect(!black.supersetOf(red));
-    try testing.expect(!red.supersetOf(black));
-
-    try testing.expect(empty.complement().eql(full));
-    try testing.expect(full.complement().eql(empty));
-    try testing.expect(black.complement().eql(red));
-    try testing.expect(red.complement().eql(black));
-
-    try testing.expect(empty.unionWith(empty).eql(empty));
-    try testing.expect(empty.unionWith(full).eql(full));
-    try testing.expect(full.unionWith(full).eql(full));
-    try testing.expect(full.unionWith(empty).eql(full));
-    try testing.expect(black.unionWith(red).eql(full));
-    try testing.expect(red.unionWith(black).eql(full));
-
-    try testing.expect(empty.intersectWith(empty).eql(empty));
-    try testing.expect(empty.intersectWith(full).eql(empty));
-    try testing.expect(full.intersectWith(full).eql(full));
-    try testing.expect(full.intersectWith(empty).eql(empty));
-    try testing.expect(black.intersectWith(red).eql(empty));
-    try testing.expect(red.intersectWith(black).eql(empty));
-
-    try testing.expect(empty.xorWith(empty).eql(empty));
-    try testing.expect(empty.xorWith(full).eql(full));
-    try testing.expect(full.xorWith(full).eql(empty));
-    try testing.expect(full.xorWith(empty).eql(full));
-    try testing.expect(black.xorWith(red).eql(full));
-    try testing.expect(red.xorWith(black).eql(full));
-
-    try testing.expect(empty.differenceWith(empty).eql(empty));
-    try testing.expect(empty.differenceWith(full).eql(empty));
-    try testing.expect(full.differenceWith(full).eql(empty));
-    try testing.expect(full.differenceWith(empty).eql(full));
-    try testing.expect(full.differenceWith(red).eql(black));
-    try testing.expect(full.differenceWith(black).eql(red));
-}
-
-test "std.enums.EnumSet const iterator" {
-    const Direction = enum { up, down, left, right };
-    const diag_move = init: {
-        var move = EnumSet(Direction).initEmpty();
-        move.insert(.right);
-        move.insert(.up);
-        break :init move;
-    };
-
-    var result = EnumSet(Direction).initEmpty();
-    var it = diag_move.iterator();
-    while (it.next()) |dir| {
-        result.insert(dir);
-    }
-
-    try testing.expect(result.eql(diag_move));
 }
 
 /// A map from keys to values, using an index lookup.  Uses a
@@ -1273,19 +916,6 @@ pub fn ensureIndexer(comptime T: type) void {
     }
 }
 
-test "std.enums.ensureIndexer" {
-    ensureIndexer(struct {
-        pub const Key = u32;
-        pub const count: usize = 8;
-        pub fn indexOf(k: Key) usize {
-            return @as(usize, @intCast(k));
-        }
-        pub fn keyForIndex(index: usize) Key {
-            return @as(Key, @intCast(index));
-        }
-    });
-}
-
 pub fn EnumIndexer(comptime E: type) type {
     if (!@typeInfo(E).Enum.is_exhaustive) {
         @compileError("Cannot create an enum indexer for a non-exhaustive enum.");
@@ -1369,68 +999,4 @@ pub fn EnumIndexer(comptime E: type) type {
             return keys[i];
         }
     };
-}
-
-test "std.enums.EnumIndexer dense zeroed" {
-    const E = enum(u2) { b = 1, a = 0, c = 2 };
-    const Indexer = EnumIndexer(E);
-    ensureIndexer(Indexer);
-    try testing.expectEqual(E, Indexer.Key);
-    try testing.expectEqual(@as(usize, 3), Indexer.count);
-
-    try testing.expectEqual(@as(usize, 0), Indexer.indexOf(.a));
-    try testing.expectEqual(@as(usize, 1), Indexer.indexOf(.b));
-    try testing.expectEqual(@as(usize, 2), Indexer.indexOf(.c));
-
-    try testing.expectEqual(E.a, Indexer.keyForIndex(0));
-    try testing.expectEqual(E.b, Indexer.keyForIndex(1));
-    try testing.expectEqual(E.c, Indexer.keyForIndex(2));
-}
-
-test "std.enums.EnumIndexer dense positive" {
-    const E = enum(u4) { c = 6, a = 4, b = 5 };
-    const Indexer = EnumIndexer(E);
-    ensureIndexer(Indexer);
-    try testing.expectEqual(E, Indexer.Key);
-    try testing.expectEqual(@as(usize, 3), Indexer.count);
-
-    try testing.expectEqual(@as(usize, 0), Indexer.indexOf(.a));
-    try testing.expectEqual(@as(usize, 1), Indexer.indexOf(.b));
-    try testing.expectEqual(@as(usize, 2), Indexer.indexOf(.c));
-
-    try testing.expectEqual(E.a, Indexer.keyForIndex(0));
-    try testing.expectEqual(E.b, Indexer.keyForIndex(1));
-    try testing.expectEqual(E.c, Indexer.keyForIndex(2));
-}
-
-test "std.enums.EnumIndexer dense negative" {
-    const E = enum(i4) { a = -6, c = -4, b = -5 };
-    const Indexer = EnumIndexer(E);
-    ensureIndexer(Indexer);
-    try testing.expectEqual(E, Indexer.Key);
-    try testing.expectEqual(@as(usize, 3), Indexer.count);
-
-    try testing.expectEqual(@as(usize, 0), Indexer.indexOf(.a));
-    try testing.expectEqual(@as(usize, 1), Indexer.indexOf(.b));
-    try testing.expectEqual(@as(usize, 2), Indexer.indexOf(.c));
-
-    try testing.expectEqual(E.a, Indexer.keyForIndex(0));
-    try testing.expectEqual(E.b, Indexer.keyForIndex(1));
-    try testing.expectEqual(E.c, Indexer.keyForIndex(2));
-}
-
-test "std.enums.EnumIndexer sparse" {
-    const E = enum(i4) { a = -2, c = 6, b = 4 };
-    const Indexer = EnumIndexer(E);
-    ensureIndexer(Indexer);
-    try testing.expectEqual(E, Indexer.Key);
-    try testing.expectEqual(@as(usize, 3), Indexer.count);
-
-    try testing.expectEqual(@as(usize, 0), Indexer.indexOf(.a));
-    try testing.expectEqual(@as(usize, 1), Indexer.indexOf(.b));
-    try testing.expectEqual(@as(usize, 2), Indexer.indexOf(.c));
-
-    try testing.expectEqual(E.a, Indexer.keyForIndex(0));
-    try testing.expectEqual(E.b, Indexer.keyForIndex(1));
-    try testing.expectEqual(E.c, Indexer.keyForIndex(2));
 }

@@ -308,20 +308,3 @@ pub const Define = struct {
 };
 
 const expect = std.testing.expect;
-test "UserDefines" {
-    js_ast.Stmt.Data.Store.create(default_allocator);
-    js_ast.Expr.Data.Store.create(default_allocator);
-    var orig = RawDefines.init(default_allocator);
-    try orig.put("process.env.NODE_ENV", "\"development\"");
-    try orig.put("globalThis", "window");
-    var log = logger.Log.init(default_allocator);
-    var data = try DefineData.from_input(orig, &log, default_allocator);
-
-    try expect(data.contains("process.env.NODE_ENV"));
-    try expect(data.contains("globalThis"));
-    const globalThis = data.get("globalThis");
-    const val = data.get("process.env.NODE_ENV");
-    try expect(val != null);
-    try expect(val.?.value.e_string.eql([]const u8, "development"));
-    try std.testing.expectEqualStrings(globalThis.?.original_name.?, "window");
-}

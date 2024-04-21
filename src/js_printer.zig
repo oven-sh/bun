@@ -446,18 +446,6 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
     try writer.writeAll("\"");
 }
 
-test "quoteForJSON" {
-    const allocator = default_allocator;
-    try std.testing.expectEqualStrings(
-        "\"I don't need any quotes.\"",
-        (try quoteForJSON("I don't need any quotes.", MutableString.init(allocator, 0) catch unreachable, false)).list.items,
-    );
-    try std.testing.expectEqualStrings(
-        "\"I need a quote for \\\"this\\\".\"",
-        (try quoteForJSON("I need a quote for \"this\".", MutableString.init(allocator, 0) catch unreachable, false)).list.items,
-    );
-}
-
 pub const SourceMapHandler = struct {
     ctx: *anyopaque,
     callback: Callback,

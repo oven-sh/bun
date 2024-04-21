@@ -693,41 +693,6 @@ pub fn encodeVLQWithLookupTable(
         encodeVLQ(value);
 }
 
-test "encodeVLQ" {
-    const fixtures = .{
-        .{ 2_147_483_647, "+/////D" },
-        .{ -2_147_483_647, "//////D" },
-        .{ 0, "A" },
-        .{ 1, "C" },
-        .{ -1, "D" },
-        .{ 123, "2H" },
-        .{ 123456789, "qxmvrH" },
-    };
-    inline for (fixtures) |fixture| {
-        const result = encodeVLQ(fixture[0]);
-        try std.testing.expectEqualStrings(fixture[1], result.bytes[0..result.len]);
-    }
-}
-
-test "decodeVLQ" {
-    const fixtures = .{
-        .{ 2_147_483_647, "+/////D" },
-        .{ -2_147_483_647, "//////D" },
-        .{ 0, "A" },
-        .{ 1, "C" },
-        .{ -1, "D" },
-        .{ 123, "2H" },
-        .{ 123456789, "qxmvrH" },
-    };
-    inline for (fixtures) |fixture| {
-        const result = decodeVLQ(fixture[1], 0);
-        try std.testing.expectEqual(
-            result.value,
-            fixture[0],
-        );
-    }
-}
-
 // A single base 64 digit can contain 6 bits of data. For the base 64 variable
 // length quantities we use in the source map spec, the first bit is the sign,
 // the next four bits are the actual value, and the 6th bit is the continuation

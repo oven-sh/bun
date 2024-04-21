@@ -319,13 +319,3 @@ pub fn main() anyerror!void {
         }
     }
 }
-
-// TODO(sno2): update SHA256 test to include BoringSSL engine
-// test "sha256" {
-//     const value: []const u8 = "hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world!";
-//     var hash: SHA256.Digest = undefined;
-//     var hash2: SHA256.Digest = undefined;
-//     SHA256.hash(value, &hash);
-//     std.crypto.hash.sha2.Sha256.hash(value, &hash2, .{});
-//     try std.testing.expectEqual(hash, hash2);
-// }

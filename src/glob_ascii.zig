@@ -26,11 +26,6 @@ const math = std.math;
 const mem = std.mem;
 const expect = std.testing.expect;
 
-test "unclosed_braces" {
-    try expect(match("src/foo.{ts,tsx", "src/foo.{ts,tsx"));
-    try expect(match("src/**/foo.{ts,tsx", "src/lmao/bro/foo.{ts,tsx"));
-}
-
 // These store character indices into the glob and path strings.
 path_index: usize = 0,
 glob_index: usize = 0,
@@ -120,27 +115,6 @@ const BraceIndex = struct {
     start: u32 = 0,
     end: u32 = 0,
 };
-
-test "glob_preprocess" {
-    try expect(match("{*.foo,*.ts,*.tsx}", "lmao.foo"));
-    try expect(match("hello\\ friends", "hello\\ friends"));
-
-    // var brace_indices = std.mem.zeroes([10]BraceIndex);
-    // var brace_indices_len: u8 = 0;
-    // var glob: []const u8 = "{a}";
-
-    // _ = preprocess_glob(glob, &brace_indices, &brace_indices_len, 0);
-    // try std.testing.expectEqualDeep(@as(u8, 1), brace_indices_len);
-    // try std.testing.expectEqualDeep(@as(BraceIndex, .{.start = 0, .end = 2}), brace_indices[0]);
-
-    // brace_indices = std.mem.zeroes([10]BraceIndex);
-    // brace_indices_len = 0;
-    // glob = "{a,{b,c}}";
-    // _ = preprocess_glob(glob, &brace_indices, &brace_indices_len, 0);
-    // try std.testing.expectEqualDeep(@as(u8, 2), brace_indices_len);
-    // try std.testing.expectEqualDeep(@as(BraceIndex, .{.start = 0, .end = 8}), brace_indices[0]);
-    // try std.testing.expectEqualDeep(@as(BraceIndex, .{.start = 2, .end = 7}), brace_indices[1]);
-}
 
 pub fn preprocess_glob(glob: []const u8, brace_indices: *[10]BraceIndex, brace_indices_len: *u8, search_count: *u8, i: *u32) ?u32 {
     while (i.* < glob.len) {

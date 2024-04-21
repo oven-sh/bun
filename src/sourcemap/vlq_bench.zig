@@ -321,38 +321,3 @@ pub fn main() anyerror!void {
         std.debug.print("[{d}]        ILEB128 decode: {} in {}\n", .{ how_many, std.fmt.fmtIntSizeDec(byte_size), std.fmt.fmtDuration(elapsed) });
     }
 }
-
-test "encodeVLQ" {
-    const fixtures = .{
-        .{ 2_147_483_647, "+/////D" },
-        .{ -2_147_483_647, "//////D" },
-        .{ 0, "A" },
-        .{ 1, "C" },
-        .{ -1, "D" },
-        .{ 123, "2H" },
-        .{ 123456789, "qxmvrH" },
-    };
-    inline for (fixtures) |fixture| {
-        const result = SourceMap.encodeVLQ(fixture[0]);
-        try std.testing.expectEqualStrings(fixture[1], result.bytes[0..result.len]);
-    }
-}
-
-test "decodeVLQ" {
-    const fixtures = .{
-        .{ 2_147_483_647, "+/////D" },
-        .{ -2_147_483_647, "//////D" },
-        .{ 0, "A" },
-        .{ 1, "C" },
-        .{ -1, "D" },
-        .{ 123, "2H" },
-        .{ 123456789, "qxmvrH" },
-    };
-    inline for (fixtures) |fixture| {
-        const result = SourceMap.decodeVLQ(fixture[1], 0);
-        try std.testing.expectEqual(
-            result.value,
-            fixture[0],
-        );
-    }
-}

@@ -567,21 +567,30 @@ pub const SlotCounts = struct {
     }
 };
 
+const char_freq_count = 64;
 pub const CharAndCount = struct {
     char: u8 = 0,
     count: i32 = 0,
     index: usize = 0,
 
-    pub const Array = [64]CharAndCount;
+    pub const Array = [char_freq_count]CharAndCount;
 
     pub fn lessThan(_: void, a: CharAndCount, b: CharAndCount) bool {
-        return a.count > b.count or (a.count == b.count and a.index < b.index);
+        if (a.count != b.count) {
+            return a.count > b.count;
+        }
+
+        if (a.index != b.index) {
+            return a.index < b.index;
+        }
+
+        return a.char < b.char;
     }
 };
 
 pub const CharFreq = struct {
-    const Vector = @Vector(64, i32);
-    const Buffer = [64]i32;
+    const Vector = @Vector(char_freq_count, i32);
+    const Buffer = [char_freq_count]i32;
 
     freqs: Buffer align(1) = undefined,
 
@@ -601,7 +610,7 @@ pub const CharFreq = struct {
         // https://zig.godbolt.org/z/P5dPojWGK
         var freqs = out.*;
         defer out.* = freqs;
-        var deltas: [255]i32 = [_]i32{0} ** 255;
+        var deltas: [256]i32 = [_]i32{0} ** 256;
         var remain = text;
 
         bun.assert(remain.len >= scan_big_chunk_size);
@@ -613,8 +622,7 @@ pub const CharFreq = struct {
 
         while (unrolled_ptr != remain_end) : (unrolled_ptr += scan_big_chunk_size) {
             const chunk = unrolled_ptr[0..scan_big_chunk_size].*;
-            comptime var i: usize = 0;
-            inline while (i < scan_big_chunk_size) : (i += scan_big_chunk_size) {
+            inline for (0..scan_big_chunk_size) |i| {
                 deltas[@as(usize, chunk[i])] += delta;
             }
         }
@@ -631,7 +639,7 @@ pub const CharFreq = struct {
     }
 
     fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {
-        var freqs: [64]i32 = out.*;
+        var freqs: [char_freq_count]i32 = out.*;
         defer out.* = freqs;
 
         for (text) |c| {
@@ -649,29 +657,28 @@ pub const CharFreq = struct {
 
     pub fn include(this: *CharFreq, other: CharFreq) void {
         // https://zig.godbolt.org/z/Mq8eK6K9s
-        var left: @Vector(64, i32) = this.freqs;
-        defer this.freqs = left;
-        const right: @Vector(64, i32) = other.freqs;
+        const left: @Vector(char_freq_count, i32) = this.freqs;
+        const right: @Vector(char_freq_count, i32) = other.freqs;
 
-        left += right;
+        this.freqs = left + right;
     }
 
     pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier {
-        var array: CharAndCount.Array = brk: {
+        const array: CharAndCount.Array = brk: {
             var _array: CharAndCount.Array = undefined;
-            const freqs = this.freqs;
 
-            for (&_array, NameMinifier.default_tail, &freqs, 0..) |*dest, char, freq, i| {
+            for (&_array, NameMinifier.default_tail, this.freqs, 0..) |*dest, char, freq, i| {
                 dest.* = CharAndCount{
                     .char = char,
                     .index = i,
                     .count = freq,
                 };
             }
+
+            std.sort.pdq(CharAndCount, &_array, {}, CharAndCount.lessThan);
+
             break :brk _array;
         };
-
-        std.sort.pdq(CharAndCount, &array, {}, CharAndCount.lessThan);
 
         var minifier = NameMinifier.init(allocator);
         minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
@@ -711,9 +718,9 @@ pub const NameMinifier = struct {
 
         while (i > 0) {
             i -= 1;
-            j = @as(usize, @intCast(@mod(i, 64)));
+            j = @as(usize, @intCast(@mod(i, char_freq_count)));
             try name.appendSlice(this.tail.items[j .. j + 1]);
-            i = @divFloor(i, 64);
+            i = @divFloor(i, char_freq_count);
         }
     }
 
@@ -726,9 +733,9 @@ pub const NameMinifier = struct {
 
         while (i > 0) {
             i -= 1;
-            j = @as(usize, @intCast(@mod(i, 64)));
+            j = @as(usize, @intCast(@mod(i, char_freq_count)));
             try name.appendSlice(default_tail[j .. j + 1]);
-            i = @divFloor(i, 64);
+            i = @divFloor(i, char_freq_count);
         }
 
         return name.items;
@@ -5481,10 +5488,6 @@ pub const Expr = struct {
         }
     };
 };
-
-test "Byte size of Expr" {
-    try std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("\n\nByte Size {d}\n\n", .{@sizeOf(Expr.Data)}));
-}
 
 pub const EnumValue = struct {
     loc: logger.Loc,

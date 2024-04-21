@@ -47,7 +47,7 @@ pub const StandaloneModuleGraph = struct {
 
     // by normalized file path
     pub fn find(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
-        if (!bun.strings.hasPrefixComptime(name, base_path)) {
+        if (!isBunStandaloneFilePath(base_path)) {
             return null;
         }
         if (Environment.isWindows) {
@@ -170,7 +170,7 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile) ![]u8 {
-        var serialize_trace = bun.tracy.traceNamed(@src(), "ModuleGraph.serialize");
+        var serialize_trace = bun.tracy.traceNamed(@src(), "StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
         var entry_point_id: ?usize = null;
         var string_builder = bun.StringBuilder{};
@@ -218,10 +218,7 @@ pub const StandaloneModuleGraph = struct {
                 continue;
             }
 
-            var dest_path = output_file.dest_path;
-            if (bun.strings.hasPrefixComptime(dest_path, "./")) {
-                dest_path = dest_path[2..];
-            }
+            const dest_path = bun.strings.removeLeadingDotSlash(output_file.dest_path);
 
             var module = CompiledModuleGraphFile{
                 .name = string_builder.fmtAppendCount("{s}{s}", .{
@@ -694,7 +691,7 @@ pub const StandaloneModuleGraph = struct {
 
     fn openSelf() std.fs.OpenSelfExeError!bun.FileDescriptor {
         if (!Environment.isWindows) {
-            const argv = bun.argv();
+            const argv = bun.argv;
             if (argv.len > 0) {
                 if (isBuiltInExe(u8, argv[0])) {
                     return error.FileNotFound;
@@ -707,14 +704,14 @@ pub const StandaloneModuleGraph = struct {
                 if (std.fs.openFileAbsoluteZ("/proc/self/exe", .{})) |easymode| {
                     return bun.toFD(easymode.handle);
                 } else |_| {
-                    if (bun.argv().len > 0) {
+                    if (bun.argv.len > 0) {
                         // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
                         var whichbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
                         if (bun.which(
                             &whichbuf,
                             bun.getenvZ("PATH") orelse return error.FileNotFound,
                             "",
-                            bun.argv()[0],
+                            bun.argv[0],
                         )) |path| {
                             return bun.toFD((try std.fs.cwd().openFileZ(path, .{})).handle);
                         }

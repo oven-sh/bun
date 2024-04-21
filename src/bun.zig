@@ -28,6 +28,7 @@ else
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
+pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
@@ -53,7 +54,7 @@ pub const shell = struct {
 };
 
 pub const Output = @import("./output.zig");
-pub const Global = @import("./__global.zig");
+pub const Global = @import("./Global.zig");
 
 // make this non-pub after https://github.com/ziglang/zig/issues/18462 is resolved
 pub const FileDescriptorInt = if (Environment.isBrowser)
@@ -696,7 +697,8 @@ pub const uws = @import("./deps/uws.zig");
 pub const BoringSSL = @import("./boringssl.zig");
 pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
-pub const analytics = @import("./analytics.zig");
+pub const analytics = @import("./analytics/analytics_thread.zig");
+pub const zlib = @import("./zlib.zig");
 
 pub var start_time: i128 = 0;
 
@@ -771,7 +773,7 @@ pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 
 /// This wrapper exists to avoid the call to sliceTo(0)
 /// Zig's sliceTo(0) is scalar
-pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
+pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     if (comptime !Environment.isNative) {
         return null;
     }
@@ -781,8 +783,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
         for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            const key = line[0..key_end];
-            if (strings.eqlInsensitive(key, path_)) {
+            if (strings.eqlInsensitive(line[0..key_end], key)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }
@@ -790,7 +791,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
         return null;
     }
 
-    const ptr = std.c.getenv(path_.ptr) orelse return null;
+    const ptr = std.c.getenv(key.ptr) orelse return null;
     return sliceTo(ptr, 0);
 }
 
@@ -1533,7 +1534,7 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
 
 var __reload_in_progress__ = std.atomic.Value(bool).init(false);
 threadlocal var __reload_in_progress__on_current_thread = false;
-fn isProcessReloadInProgressOnAnotherThread() bool {
+pub fn isProcessReloadInProgressOnAnotherThread() bool {
     @fence(.Acquire);
     return __reload_in_progress__.load(.Monotonic) and !__reload_in_progress__on_current_thread;
 }
@@ -1561,18 +1562,26 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 }
 
-/// Reload Bun's process
+/// Reload Bun's process. This clones envp, argv, and gets the current
+/// executable path.
 ///
-/// This clones envp, argv, and gets the current executable path
+/// On posix, this overwrites the current process with the new process using
+/// `execve`. On Windows, we dont have this API, instead relying on a dummy
+/// parent process that we can signal via a special exit code.
 ///
-/// Overwrites the current process with the new process
-///
-/// Must be able to allocate memory. malloc is not signal safe, but it's
+/// Must be able to allocate memory. `malloc` is not signal safe, but it's
 /// best-effort. Not much we can do if it fails.
+///
+/// Note that this function is called during the crash handler, in which it is
+/// passed true to `may_return`. If failure occurs, one line of standard error
+/// is printed and then this returns void. If `may_return == false`, then a
+/// panic will occur on failure. The crash handler will not schedule two reloads
+/// at once.
 pub fn reloadProcess(
     allocator: std.mem.Allocator,
     clear_terminal: bool,
-) noreturn {
+    comptime may_return: bool,
+) if (may_return) void else noreturn {
     __reload_in_progress__.store(true, .Monotonic);
     __reload_in_progress__on_current_thread = true;
 
@@ -1581,23 +1590,33 @@ pub fn reloadProcess(
         Output.disableBuffering();
         Output.resetTerminalAll();
     }
+
     Output.Source.Stdio.restore();
     const bun = @This();
 
     if (comptime Environment.isWindows) {
         // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
         // see becomeWatcherManager
-        const rc = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), win32.watcher_reload_exit);
+        const rc = bun.windows.TerminateProcess(bun.windows.GetCurrentProcess(), win32.watcher_reload_exit);
         if (rc == 0) {
             const err = bun.windows.GetLastError();
+            if (may_return) {
+                Output.errGeneric("Failed to reload process: {s}", .{@tagName(err)});
+                return;
+            }
             Output.panic("Error while reloading process: {s}", .{@tagName(err)});
         } else {
+            if (may_return) {
+                Output.errGeneric("Failed to reload process", .{});
+                return;
+            }
             Output.panic("Unexpected error while reloading process\n", .{});
         }
     }
+
     const PosixSpawn = posix.spawn;
-    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
-    for (bun.argv(), dupe_argv) |src, *dest| {
+    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv.len, null) catch unreachable;
+    for (bun.argv, dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, src) catch unreachable).ptr;
     }
 
@@ -1641,9 +1660,17 @@ pub fn reloadProcess(
         ) catch unreachable;
         switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
+                if (may_return) {
+                    Output.errGeneric("Failed to reload process: {s}", .{@tagName(err.getErrno())});
+                    return;
+                }
                 Output.panic("Unexpected error while reloading: {d} {s}", .{ err.errno, @tagName(err.getErrno()) });
             },
             .result => |_| {
+                if (may_return) {
+                    Output.errGeneric("Failed to reload process", .{});
+                    return;
+                }
                 Output.panic("Unexpected error while reloading: posix_spawn returned a result", .{});
             },
         }
@@ -1658,6 +1685,10 @@ pub fn reloadProcess(
             newargv,
             envp,
         );
+        if (may_return) {
+            Output.errGeneric("Failed to reload process: {s}", .{@errorName(err)});
+            return;
+        }
         Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
     } else {
         @compileError("unsupported platform for reloadProcess");
@@ -2058,14 +2089,10 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
-var _argv: [][:0]const u8 = &[_][:0]const u8{};
-
-pub inline fn argv() [][:0]const u8 {
-    return _argv;
-}
+pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
 pub fn initArgv(allocator: std.mem.Allocator) !void {
-    _argv = try std.process.argsAlloc(allocator);
+    argv = try std.process.argsAlloc(allocator);
 }
 
 pub const posix = struct {
@@ -2701,9 +2728,7 @@ pub const Dirname = struct {
 
 pub noinline fn outOfMemory() noreturn {
     @setCold(true);
-
-    // TODO: In the future, we should print jsc + mimalloc heap statistics
-    @panic("Bun ran out of memory!");
+    crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
 pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
@@ -3013,7 +3038,7 @@ pub inline fn markPosixOnly() if (Environment.isPosix) void else noreturn {
 
 pub fn linuxKernelVersion() Semver.Version {
     if (comptime !Environment.isLinux) @compileError("linuxKernelVersion() is only available on Linux");
-    return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+    return analytics.GenerateHeader.GeneratePlatform.kernelVersion();
 }
 
 pub fn selfExePath() ![:0]u8 {
@@ -3070,13 +3095,16 @@ pub fn SliceIterator(comptime T: type) type {
 
 pub const Futex = @import("./futex.zig");
 
+pub const crash_handler = @import("crash_handler.zig");
+pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
+
 noinline fn assertionFailure() noreturn {
     if (@inComptime()) {
         @compileError("assertion failure");
     }
 
     @setCold(true);
-    Output.panic("Internal assertion failure. This is a bug in Bun.", .{});
+    Output.panic("Internal assertion failure", .{});
 }
 
 pub inline fn debugAssert(cheap_value_only_plz: bool) void {
@@ -3089,7 +3117,7 @@ pub inline fn debugAssert(cheap_value_only_plz: bool) void {
     }
 }
 
-pub inline fn assert(value: bool) void {
+pub fn assert(value: bool) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }
@@ -3098,6 +3126,16 @@ pub inline fn assert(value: bool) void {
         if (comptime Environment.isDebug) unreachable;
         assertionFailure();
     }
+}
+
+/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+pub inline fn assert_eql(a: anytype, b: anytype) void {
+    return assert(a == b);
+}
+
+/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+pub inline fn assert_neql(a: anytype, b: anytype) void {
+    return assert(a != b);
 }
 
 pub inline fn unsafeAssert(condition: bool) void {

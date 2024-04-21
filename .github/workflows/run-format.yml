@@ -1,22 +1,19 @@
-name: autofix.ci # Must be named this for autofix.ci to work
+name: Format
 
 permissions:
-  contents: read
+  contents: write
 
 on:
-  workflow_dispatch:
-  pull_request:
-  push:
-    branches:
-      - main
-
-env:
-  ZIG_VERSION: 0.12.0-dev.1828+225fe6ddb
+  workflow_call:
+    inputs:
+      zig-version:
+        type: string
+        required: true
 
 jobs:
   format:
-    name: format
-    runs-on: ${{ vars.RUNNER_LINUX_X64 || 'ubuntu-latest' }}
+    name: Format
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,13 +31,17 @@ jobs:
       - name: Setup Zig
         uses: goto-bus-stop/setup-zig@c7b6cdd3adba8f8b96984640ff172c37c93f73ee
         with:
-          version: ${{ env.ZIG_VERSION }}
+          version: ${{ inputs.zig-version }}
       - name: Install Dependencies
         run: |
           bun install
       - name: Format
         run: |
           bun fmt
+      - name: Format Zig
+        run: |
           bun fmt:zig
-      - name: Commit # https://autofix.ci/
-        uses: autofix-ci/action@d3e591514b99d0fca6779455ff8338516663f7cc
+      - name: Commit
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Apply formatting changes

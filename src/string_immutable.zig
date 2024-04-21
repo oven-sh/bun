@@ -32,6 +32,17 @@ pub inline fn contains(self: string, str: string) bool {
     return indexOf(self, str) != null;
 }
 
+pub inline fn removeLeadingDotSlash(slice: []const u8) []const u8 {
+    if (slice.len >= 2) {
+        if ((@as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, "./", .little)) or
+            (Environment.isWindows and @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, ".\\", .little)))
+        {
+            return slice[2..];
+        }
+    }
+    return slice;
+}
+
 pub inline fn w(comptime str: []const u8) [:0]const u16 {
     if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
     comptime var output: [str.len + 1]u16 = undefined;
@@ -5400,6 +5411,20 @@ pub fn convertUTF8toUTF16InBuffer(
     if (input.len == 0) return buf[0..0];
     const result = bun.simdutf.convert.utf8.to.utf16.le(input, buf);
     return buf[0..result];
+}
+
+pub fn convertUTF8toUTF16InBufferZ(
+    buf: []u16,
+    input: []const u8,
+) [:0]u16 {
+    // TODO: see convertUTF8toUTF16InBuffer
+    if (input.len == 0) {
+        buf[0] = 0;
+        return buf[0..0 :0];
+    }
+    const result = bun.simdutf.convert.utf8.to.utf16.le(input, buf);
+    buf[result] = 0;
+    return buf[0..result :0];
 }
 
 pub fn convertUTF16toUTF8InBuffer(

@@ -93,7 +93,7 @@ const z_streamp = @import("zlib-internal").z_streamp;
 
 const DataType = @import("zlib-internal").DataType;
 const FlushValue = @import("zlib-internal").FlushValue;
-const ReturnCode = @import("zlib-internal").ReturnCode;
+pub const ReturnCode = @import("zlib-internal").ReturnCode;
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 

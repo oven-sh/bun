@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.3")
+set(Bun_VERSION "1.1.4")
 set(WEBKIT_TAG e3a2d89a0b1644cc8d5c245bd2ffee4d4bd6c1d5)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -555,6 +555,7 @@ else()
             add_compile_definitions("BUN_DEBUG=1")
             set(ASSERT_ENABLED "1")
         endif()
+
         message(STATUS "Using WebKit from ${WEBKIT_DIR}")
     else()
         if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
@@ -737,7 +738,7 @@ if(NOT NO_CODEGEN)
         OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
         MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
         DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
-        COMMAND ${ZIG_COMPILER} run "${BUN_SRC}/js_lexer/identifier_data.zig"
+        COMMAND ${ZIG_COMPILER} run "--zig-lib-dir" "${ZIG_LIB_DIR}" "${BUN_SRC}/js_lexer/identifier_data.zig"
         VERBATIM
         COMMENT "Building Identifier Cache"
     )
@@ -762,6 +763,7 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/node/*.ts"
         "${BUN_SRC}/js/thirdparty/*.js"
         "${BUN_SRC}/js/thirdparty/*.ts"
+        "${BUN_SRC}/js/internal-for-testing.ts"
     )
 
     file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")
@@ -1013,7 +1015,7 @@ endif()
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -g3 -O0 -gdwarf-4
+        target_compile_options(${bun} PUBLIC -O0 -g -g3 -ggdb -gdwarf-4
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
@@ -1060,8 +1062,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             list(APPEND LTO_LINK_FLAG "/LTCG")
         endif()
 
-        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG /Z7)
-        target_link_options(${bun} PUBLIC ${LTO_LINK_FLAG} /DEBUG)
+        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG:FULL)
+        target_link_options(${bun} PUBLIC ${LTO_LINK_FLAG} /DEBUG:FULL)
     endif()
 endif()
 

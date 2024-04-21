@@ -356,10 +356,20 @@ const State = struct {
         }
     }
 
-    pub fn finalize(this: *This) void {
+    pub fn finalize(this: *This) u8 {
         if (this.aborted) {
             this.redraw(true) catch {};
         }
+        for (this.handles) |handle| {
+            if (handle.process) |proc| {
+                switch (proc.status) {
+                    .exited => |exited| if (exited.code != 0) return exited.code,
+                    .signaled => |signal| return signal.toExitCode() orelse 1,
+                    else => return 1,
+                }
+            }
+        }
+        return 0;
     }
 };
 
@@ -617,9 +627,9 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         event_loop.tickOnce(&state);
     }
 
-    state.finalize();
+    const status = state.finalize();
 
-    Global.exit(0);
+    Global.exit(status);
 }
 
 fn hasCycle(current: *ProcessHandle) bool {

@@ -82,6 +82,14 @@ try {
   exit 1
 }
 
+# Remove autocomplete loader from user's PROFILE, Do not fail if an error happens here
+try {
+  $profileContent = Get-Content $PROFILE.CurrentUserCurrentHost -Raw -ErrorAction SilentlyContinue
+  if ($profileContent | Select-String -SimpleMatch "bun.completion.ps1" -Quiet) {
+    $profileContent -replace "^.+bun\.completion\.ps1.+$", "" | Set-Content -Path $PROFILE.CurrentUserCurrentHost
+  }
+} catch {}
+
 # Delete some tempdir files. Do not fail if an error happens here
 try {
   Remove-Item "${Temp}\bun-*" -Recurse -Force

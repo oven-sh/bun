@@ -20,12 +20,14 @@ pub const Shell = enum {
     const bash_completions = @import("root").completions.bash;
     const zsh_completions = @import("root").completions.zsh;
     const fish_completions = @import("root").completions.fish;
+    const pwsh_completions = @import("root").completions.pwsh;
 
     pub fn completions(this: Shell) []const u8 {
         return switch (this) {
             .bash => bun.asByteSlice(bash_completions),
             .zsh => bun.asByteSlice(zsh_completions),
             .fish => bun.asByteSlice(fish_completions),
+            .pwsh => bun.asByteSlice(pwsh_completions),
             else => "",
         };
     }

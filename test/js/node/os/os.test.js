@@ -209,7 +209,16 @@ describe("toString works like node", () => {
     });
 
     it(`${key} + ''`, () => {
-      expect(os[key] + "").toBe(os[key]() + "");
+      const left = os[key] + "";
+      const right = os[key]() + "";
+      if (left !== right) {
+        // uptime, totalmem, and a few others might differ slightly on each call
+        // we just want to check we're not getting NaN, Infinity, or -Infinity
+        expect(Number.isFinite(Math.trunc(parseFloat(left)))).toBeTrue();
+        expect(Number.isFinite(Math.trunc(parseFloat(right)))).toBeTrue();
+      } else {
+        expect(left).toBe(right);
+      }
     });
   }
 });

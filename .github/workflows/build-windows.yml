@@ -67,7 +67,7 @@ jobs:
           key: bun-${{ inputs.tag }}-deps-${{ steps.hash.outputs.hash }}
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Install LLVM
-        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+        uses: KyleMayes/install-llvm-action@v2.0.2
         with:
           version: ${{ env.LLVM_VERSION }}
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}

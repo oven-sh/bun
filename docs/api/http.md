@@ -302,7 +302,7 @@ interface Bun {
     maxRequestBodySize?: number;
     port?: string | number;
     reusePort?: boolean;
-    serverNames?: Record<string, TLSOptions>;
+    serverNames?: Record<string, TLSOptions>; // Server Name Indication (SNI) / TLS virtual hosts
     tls?: {
       ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
       cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;

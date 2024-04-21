@@ -13,7 +13,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+
+# WebKit uses -std=gnu++20 on non-macOS non-Windows
+# If we do not set this, it will crash at startup on the first memory allocation.
+if (NOT WIN32 AND NOT APPLE)
+set(CMAKE_CXX_EXTENSIONS ON)
+endif()
 
 # --- Build Type ---
 if(NOT CMAKE_BUILD_TYPE)
@@ -1108,7 +1113,6 @@ else()
         -fno-rtti
         -fno-omit-frame-pointer
     )
-    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a")
 endif()
 
 if(APPLE)
@@ -1149,6 +1153,7 @@ if(UNIX AND NOT APPLE)
         "-Wl,--wrap=mknod"
         "-Wl,--wrap=mknodat"
         "-Wl,--wrap=statx"
+        "-Wl,--wrap=fmod"
         "-Wl,--compress-debug-sections=zlib"
         "-Bsymbolics-functions"
         "-rdynamic"

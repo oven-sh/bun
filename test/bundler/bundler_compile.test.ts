@@ -15,6 +15,22 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  // https://github.com/oven-sh/bun/issues/8697
+  itBundled("compile/EmbeddedFileOutfile", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import bar from './foo.file' with {type: "file"};
+        if ((await Bun.file(bar).text()).trim() !== "abcd") throw "fail";
+        console.log("Hello, world!");
+      `,
+      "/foo.file": /* js */ `
+      abcd
+    `.trim(),
+    },
+    outfile: "dist/out",
+    run: { stdout: "Hello, world!" },
+  });
   itBundled("compile/pathToFileURLWorks", {
     compile: true,
     files: {

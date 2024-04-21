@@ -293,28 +293,28 @@ The `Bun.serve` server can handle roughly 2.5x more requests per second than Nod
 ```ts
 interface Bun {
   serve(options: {
-    fetch: (req: Request, server: Server) => Response | Promise<Response>;
-    hostname?: string;
-    port?: number;
     development?: boolean;
-    error?: (error: Error) => Response | Promise<Response>;
-    tls?: {
-      key?:
-        | string
-        | TypedArray
-        | BunFile
-        | Array<string | TypedArray | BunFile>;
-      cert?:
-        | string
-        | TypedArray
-        | BunFile
-        | Array<string | TypedArray | BunFile>;
-      ca?: string | TypedArray | BunFile | Array<string | TypedArray | BunFile>;
-      passphrase?: string;
-      dhParamsFile?: string;
-    };
-    maxRequestBodySize?: number;
+    error?: (request: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
+    fetch(request: Request, server: Server): Response | Promise<Response>;
+    hostname?: string;
+    id?: string | null;
     lowMemoryMode?: boolean;
+    maxRequestBodySize?: number;
+    port?: string | number;
+    reusePort?: boolean;
+    serverNames?: Record<string, TLSOptions>;
+    tls?: {
+      ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+      cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+      dhParamsFile?: string;
+      key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+      lowMemoryMode?: boolean;
+      passphrase?: string;
+      secureOptions?: number | undefined;
+      serverName?: string;
+    };
+    unix: string;
+    websocket: WebSocketHandler<WebSocketDataType>;
   }): Server;
 }
 

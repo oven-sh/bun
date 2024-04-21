@@ -34,7 +34,7 @@ ARG SCCACHE_ENDPOINT
 ARG AWS_ACCESS_KEY_ID
 ARG AWS_SECRET_ACCESS_KEY
 
-FROM bitnami/minideb:bullseye as bun-base
+FROM bitnami/minideb:bookworm as bun-base
 
 ARG BUN_DOWNLOAD_URL_BASE
 ARG DEBIAN_FRONTEND
@@ -68,8 +68,8 @@ RUN apt-get update -y \
   ca-certificates \
   curl \
   gnupg \
-  && echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list \
-  && echo "deb-src https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-${LLVM_VERSION} main" >> /etc/apt/sources.list.d/llvm.list \
+  && echo "deb https://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list \
+  && echo "deb-src https://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-${LLVM_VERSION} main" >> /etc/apt/sources.list.d/llvm.list \
   && curl -fsSL "https://apt.llvm.org/llvm-snapshot.gpg.key" | apt-key add - \
   && echo "deb https://deb.nodesource.com/node_${NODE_VERSION}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
   && curl -fsSL "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" | apt-key add - \
@@ -88,6 +88,8 @@ RUN apt-get update -y \
   lld-${LLVM_VERSION} \
   lldb-${LLVM_VERSION} \
   clangd-${LLVM_VERSION} \
+  libc++-${LLVM_VERSION}-dev \
+  libc++abi-${LLVM_VERSION}-dev \
   make \
   cmake \
   ninja-build \
@@ -104,8 +106,18 @@ RUN apt-get update -y \
   perl \
   python3 \
   ruby \
+  ruby-dev \
   golang \
-  nodejs \
+  nodejs && \
+  for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done && \
+  ln -sf clang /usr/bin/cc && \
+  ln -sf clang /usr/bin/c89 && \
+  ln -sf clang /usr/bin/c99 && \
+  ln -sf clang++ /usr/bin/c++ && \
+  ln -sf clang++ /usr/bin/g++ && \
+  ln -sf llvm-ar /usr/bin/ar && \ 
+  ln -sf llvm-ranlib /usr/bin/ranlib && \
+  ln -sf ld.lld /usr/bin/ld && \
   && ln -s /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
   && ln -s /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
   && ln -s /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \

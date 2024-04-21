@@ -28,7 +28,7 @@ on:
 
 env:
   # Must specify exact version of LLVM for Windows
-  LLVM_VERSION: 16.0.6
+  LLVM_VERSION: 17.0.6
   BUN_VERSION: 1.1.2
 
 jobs:

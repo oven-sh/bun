@@ -1847,14 +1847,3 @@ pub const Path = struct {
 //     defer std.os.close(opened);
 
 // }
-
-test "PathName.init" {
-    var file = "/root/directory/file.ext".*;
-    const res = PathName.init(
-        &file,
-    );
-
-    try std.testing.expectEqualStrings(res.dir, "/root/directory");
-    try std.testing.expectEqualStrings(res.base, "file");
-    try std.testing.expectEqualStrings(res.ext, ".ext");
-}

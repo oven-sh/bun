@@ -59,10 +59,6 @@ inline fn @"is .. with type"(comptime T: type, slice: []const T) bool {
     return slice.len >= 2 and slice[0] == '.' and slice[1] == '.';
 }
 
-inline fn isDotSlash(slice: []const u8) bool {
-    return @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, "./", .little);
-}
-
 inline fn @"is ../"(slice: []const u8) bool {
     return strings.hasPrefixComptime(slice, "../");
 }

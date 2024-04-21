@@ -47,7 +47,7 @@ pub const StandaloneModuleGraph = struct {
 
     // by normalized file path
     pub fn find(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
-        if (!bun.strings.hasPrefixComptime(name, base_path)) {
+        if (!isBunStandaloneFilePath(base_path)) {
             return null;
         }
         if (Environment.isWindows) {
@@ -170,7 +170,7 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile) ![]u8 {
-        var serialize_trace = bun.tracy.traceNamed(@src(), "ModuleGraph.serialize");
+        var serialize_trace = bun.tracy.traceNamed(@src(), "StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
         var entry_point_id: ?usize = null;
         var string_builder = bun.StringBuilder{};
@@ -218,10 +218,7 @@ pub const StandaloneModuleGraph = struct {
                 continue;
             }
 
-            var dest_path = output_file.dest_path;
-            if (bun.strings.hasPrefixComptime(dest_path, "./")) {
-                dest_path = dest_path[2..];
-            }
+            const dest_path = bun.strings.removeLeadingDotSlash(output_file.dest_path);
 
             var module = CompiledModuleGraphFile{
                 .name = string_builder.fmtAppendCount("{s}{s}", .{

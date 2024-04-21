@@ -63,8 +63,7 @@ ENV SCCACHE_ENDPOINT=${SCCACHE_ENDPOINT}
 ENV AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
 ENV AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
 
-RUN apt-get update -y \
-  && install_packages \
+RUN install_packages \
   ca-certificates \
   curl \
   gnupg \
@@ -73,8 +72,6 @@ RUN apt-get update -y \
   && curl -fsSL "https://apt.llvm.org/llvm-snapshot.gpg.key" | apt-key add - \
   && echo "deb https://deb.nodesource.com/node_${NODE_VERSION}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
   && curl -fsSL "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" | apt-key add - \
-  && echo "deb https://apt.kitware.com/ubuntu/ focal main" > /etc/apt/sources.list.d/kitware.list \
-  && curl -fsSL "https://apt.kitware.com/keys/kitware-archive-latest.asc" | apt-key add - \
   && install_packages \
   wget \
   bash \

@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 import readline from "node:readline/promises";
 
 const testPath = new URL("./", import.meta.url);
-const nodePath = new URL("node/", testPath);
+const nodePath = new URL("upstream/", testPath);
 const nodeTestPath = new URL("test/", nodePath);
 const metadataScriptPath = new URL("metadata.mjs", testPath);
 const testJsonPath = new URL("tests.json", testPath);
@@ -81,9 +81,9 @@ function pullTests(force) {
   console.log("Pulling tests...");
   const { status, error, stderr } = spawnSync(
     "git",
-    ["submodule", "update", "--init", "--recursive", "--progress", "--depth=1", "--checkout", "test/node/node"],
+    ["submodule", "update", "--init", "--recursive", "--progress", "--depth=1", "--checkout", "upstream"],
     {
-      cwd,
+      cwd: testPath,
       stdio: "inherit",
     },
   );

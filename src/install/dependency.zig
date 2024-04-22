@@ -693,6 +693,23 @@ pub fn eql(
     return a.name_hash == b.name_hash and a.name.len() == b.name.len() and a.version.eql(&b.version, lhs_buf, rhs_buf);
 }
 
+pub fn isWindowsAbsPathWithLeadingSlashes(dep: string) ?string {
+    var i: usize = 0;
+    if (dep.len > 2 and dep[i] == '/') {
+        while (dep[i] == '/') {
+            i += 1;
+
+            // not possible to have windows drive letter and colon
+            if (i > dep.len - 3) return null;
+        }
+        if (strings.startsWithWindowsDriveLetter(dep[i..])) {
+            return dep[i..];
+        }
+    }
+
+    return null;
+}
+
 pub inline fn parse(
     allocator: std.mem.Allocator,
     alias: String,
@@ -1010,10 +1027,10 @@ pub fn parseWithTag(
                     // turn /C:/blah info just C:/blah on windows
                     // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
                     if (comptime Environment.isWindows) {
-                        if (folder.len > 2 and folder[0] == '/' and strings.startsWithWindowsDriveLetter(folder[1..])) {
+                        if (isWindowsAbsPathWithLeadingSlashes(folder)) |dep| {
                             return .{
                                 .literal = sliced.value(),
-                                .value = .{ .folder = sliced.sub(folder[1..]).value() },
+                                .value = .{ .folder = sliced.sub(dep).value() },
                                 .tag = .folder,
                             };
                         }
@@ -1028,28 +1045,24 @@ pub fn parseWithTag(
 
                 // check for absolute windows paths
                 if (comptime Environment.isWindows) {
-                    if (protocol == 1 or protocol == 2) {
-                        if (protocol == 1 and strings.startsWithWindowsDriveLetter(dependency)) {
-                            return .{
-                                .literal = sliced.value(),
-                                .value = .{ .folder = sliced.sub(dependency).value() },
-                                .tag = .folder,
-                            };
-                        }
+                    if (protocol == 1 and strings.startsWithWindowsDriveLetter(dependency)) {
+                        return .{
+                            .literal = sliced.value(),
+                            .value = .{ .folder = sliced.sub(dependency).value() },
+                            .tag = .folder,
+                        };
+                    }
 
-                        // from npm:
-                        //
-                        // turn /C:/blah info just C:/blah on windows
-                        // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
-                        //
-                        // protocol == 2
-                        if (dependency.len > 2 and dependency[0] == '/' and strings.startsWithWindowsDriveLetter(dependency[1..])) {
-                            return .{
-                                .literal = sliced.value(),
-                                .value = .{ .folder = sliced.sub(dependency[1..]).value() },
-                                .tag = .folder,
-                            };
-                        }
+                    // from npm:
+                    //
+                    // turn /C:/blah info just C:/blah on windows
+                    // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
+                    if (isWindowsAbsPathWithLeadingSlashes(dependency)) |dep| {
+                        return .{
+                            .literal = sliced.value(),
+                            .value = .{ .folder = sliced.sub(dep).value() },
+                            .tag = .folder,
+                        };
                     }
                 }
 

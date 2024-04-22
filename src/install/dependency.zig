@@ -397,7 +397,8 @@ pub const Version = struct {
             // empty string means `latest`
             if (dependency.len == 0) return .dist_tag;
 
-            if (strings.startsWithWindowsDriveLetter(dependency) and dependency[2] == '\\' or dependency[2] == '/') {
+            if (strings.startsWithWindowsDriveLetter(dependency) and (std.fs.path.isSep(dependency[2]))) {
+                if (isTarball(dependency)) return .tarball;
                 return .folder;
             }
 

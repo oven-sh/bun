@@ -192,6 +192,7 @@ jobs:
         working-directory: test/node
         env:
           TMPDIR: ${{ runner.temp }}
+          BUN_GARBAGE_COLLECTOR_LEVEL: "0"
           BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
         run: |
           node runner.mjs

@@ -45,6 +45,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             this.i = 0;
         }
 
+        /// The bun.String returned has not incremented it's reference count.
         pub fn next(this: *@This()) ?bun.String {
             const i: usize = this.iter_i;
             if (i >= this.len) {

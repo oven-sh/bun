@@ -1989,7 +1989,7 @@ pub const H2FrameParser = struct {
 
         // TODO: support CONTINUE for more headers if headers are too big
         while (iter.next()) |header_name| {
-            const name_slice = header_name.toSlice(bun.default_allocator);
+            const name_slice = header_name.toUTF8(bun.default_allocator);
             defer name_slice.deinit();
             const name = name_slice.slice();
 
@@ -2191,7 +2191,7 @@ pub const H2FrameParser = struct {
             iter.reset();
 
             while (iter.next()) |header_name| {
-                const name_slice = header_name.toSlice(bun.default_allocator);
+                const name_slice = header_name.toUTF8(bun.default_allocator);
                 defer name_slice.deinit();
                 const name = name_slice.slice();
 

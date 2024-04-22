@@ -53,7 +53,7 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
 
 extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
 {
-    const auto& prop = iter->properties.get()->propertyNameVector()[i];
+    const auto& prop = iter->properties->propertyNameVector()[i];
 
     auto scope = DECLARE_THROW_SCOPE(iter->vm);
     JSValue result = object->get(globalObject, prop);
@@ -66,7 +66,7 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIte
 
 extern "C" void Bun__JSPropertyIterator__getName(JSPropertyIterator* iter, BunString* propertyName, size_t i)
 {
-    const auto& prop = iter->properties.get()->propertyNameVector()[i];
+    const auto& prop = iter->properties->propertyNameVector()[i];
     *propertyName = Bun::toString(prop.impl());
 }
 

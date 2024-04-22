@@ -1136,7 +1136,7 @@ pub fn GlobWalker_(
         }
 
         /// A file can only match if:
-        /// a) it matches against the the last pattern, or
+        /// a) it matches against the last pattern, or
         /// b) it matches the next pattern, provided the current
         ///    pattern is a double wildcard and the next pattern is
         ///    not a double wildcard

@@ -112,10 +112,11 @@ export function hideFromStackTrace(block: CallableFunction) {
 }
 
 type DirectoryTree = {
-  [name: string]: string | Buffer | DirectoryTree;
+  [name: string]: string | ((path: string) => string) | Buffer | DirectoryTree;
 };
 
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
+  const tempdir = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
   function makeTree(base: string, tree: DirectoryTree) {
     for (const [name, contents] of Object.entries(tree)) {
       const joined = join(base, name);
@@ -128,12 +129,12 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
         makeTree(joined, contents);
         continue;
       }
-      fs.writeFileSync(joined, contents);
+      const actualContents = typeof contents === "function" ? contents(tempdir) : contents;
+      fs.writeFileSync(joined, actualContents);
     }
   }
-  const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
-  makeTree(base, files);
-  return base;
+  makeTree(tempdir, files);
+  return tempdir;
 }
 
 export function bunRun(file: string, env?: Record<string, string>) {

@@ -6764,7 +6764,7 @@ it("should handle installing packages from inside a workspace without prefix", a
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should handle more complicated globs", async () => {
+it("should handle installing workspaces with more complicated globs", async () => {
   const package_dir = tempDirWithFiles("complicated-glob", {
     "package.json": JSON.stringify({
       name: "package3",
@@ -6809,6 +6809,150 @@ it("should handle more complicated globs", async () => {
       },
     },
   });
+
+  const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
+  const err1 = stderr.toString();
+  expect(err1).toContain("Saved lockfile");
+  expect(
+    stdout
+      .toString()
+      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+      .split(/\r?\n/)
+      .sort(),
+  ).toEqual(
+    [
+      "",
+      ` + backend@workspace:packages/backend`,
+      ` + components@workspace:packages/frontend/components`,
+      ` + frontend@workspace:packages/frontend`,
+      ` + types@workspace:packages/types`,
+      "",
+      " 4 packages installed",
+    ].sort(),
+  );
+});
+
+it("should handle installing workspaces with multiple glob patterns", async () => {
+  const package_dir = tempDirWithFiles("multi-glob", {
+    "package.json": JSON.stringify({
+      name: "main",
+      version: "0.0.1",
+      workspaces: ["backend/**/*", "client/**/*", "types/**/*"],
+    }),
+    "backend": {
+      "server": {
+        "package.json": JSON.stringify({
+          name: "server",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+            "db": "workspace:*",
+          },
+        }),
+      },
+      "db": {
+        "package.json": JSON.stringify({
+          name: "db",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+          },
+        }),
+      },
+    },
+    "client": {
+      "clientlib": {
+        "package.json": JSON.stringify({
+          name: "clientlib",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+          },
+        }),
+      },
+    },
+    "types": {
+      "types": {
+        "package.json": JSON.stringify({
+          name: "types",
+          version: "0.0.1",
+          dependencies: {},
+        }),
+      },
+    },
+  });
+
+  console.log("TEMPDIR", package_dir);
+
+  const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
+  const err1 = stderr.toString();
+  expect(err1).toContain("Saved lockfile");
+  expect(
+    stdout
+      .toString()
+      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+      .split(/\r?\n/)
+      .sort(),
+  ).toEqual(
+    [
+      "",
+      " + clientlib@workspace:client/clientlib",
+      " + db@workspace:backend/db",
+      " + server@workspace:backend/server",
+      " + types@workspace:types/types",
+      "",
+      " 4 packages installed",
+    ].sort(),
+  );
+});
+
+it.todo("should handle installing workspaces with absolute glob patterns", async () => {
+  const package_dir = tempDirWithFiles("absolute-glob", {
+    "package.json": base =>
+      JSON.stringify({
+        name: "package3",
+        version: "0.0.1",
+        workspaces: [join(base, "packages/**/*")],
+      }),
+    "packages": {
+      "frontend": {
+        "package.json": JSON.stringify({
+          name: "frontend",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+            "components": "workspace:*",
+          },
+        }),
+        "components": {
+          "package.json": JSON.stringify({
+            name: "components",
+            version: "0.0.1",
+            dependencies: {
+              "types": "workspace:*",
+            },
+          }),
+        },
+      },
+      "backend": {
+        "package.json": JSON.stringify({
+          name: "backend",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+          },
+        }),
+      },
+      "types": {
+        "package.json": JSON.stringify({
+          name: "types",
+          version: "0.0.1",
+          dependencies: {},
+        }),
+      },
+    },
+  });
+  console.log("TEMP DIR", package_dir);
 
   const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
   const err1 = stderr.toString();

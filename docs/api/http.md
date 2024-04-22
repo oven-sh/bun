@@ -346,6 +346,27 @@ interface Server {
   readonly port: number;
   readonly url: URL;
 }
+
+interface WebSocketHandler<T = undefined> {
+  backpressureLimit?: number;
+  close?(ws: ServerWebSocket<T>, code: number, reason: string): void | Promise<void>;
+  closeOnBackpressureLimit?: boolean;
+  drain?(ws: ServerWebSocket<T>): void | Promise<void>;
+  idleTimeout?: number;
+  maxPayloadLength?: number;
+  message(ws: ServerWebSocket<T>, message: string | Buffer): void | Promise<void>;
+  open?(ws: ServerWebSocket<T>): void | Promise<void>;
+  perMessageDeflate?:
+    | boolean
+    | {
+        compress?: WebSocketCompressor | boolean;
+        decompress?: WebSocketCompressor | boolean;
+      };
+  ping?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
+  pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
+  publishToSelf?: boolean;
+  sendPings?: boolean;
+}
 ```
 
 {% /details %}

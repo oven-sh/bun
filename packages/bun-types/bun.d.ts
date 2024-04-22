@@ -4025,13 +4025,13 @@ declare module "bun" {
 
     export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
       readonly remoteAddress: SocketAddress;
-      sendMany(packets: Data[]): number;
+      sendMany(packets: readonly Data[]): number;
       send(data: Data): boolean;
       reload(handler: ConnectedSocketHandler<DataBinaryType>): void;
     }
 
     export interface Socket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
-      sendMany(packets: (Data | string | number)[]): number;
+      sendMany(packets: readonly (Data | string | number)[]): number;
       send(data: Data, port: number, address: string): boolean;
       reload(handler: SocketHandler<DataBinaryType>): void;
     }

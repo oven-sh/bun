@@ -634,13 +634,12 @@ pub const UDPSocket = struct {
     }
 
     pub fn deinit(this: *This) void {
+        if (!this.closed) {
+            this.socket.close();
+        }
+
         this.poll_ref.unref(this.vm);
 
-        // Cast into a us_poll_t pointer so uSockets can free the memory
-        var poll: *uws.Poll = @ptrCast(this.socket);
-        poll.deinit(this.loop);
-
-        // uws.us_destroy_udp_packet_buffer(this.send_buf);
         this.send_buf.destroy();
 
         this.config.deinit();

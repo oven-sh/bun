@@ -139,6 +139,33 @@ describe("udpSocket()", () => {
     });
   });
 
+  const validateRecv = (socket, data, port, address, binaryType, bytes) => {
+    expect(socket).toBeInstanceOf(Object);
+    expect(socket.binaryType).toBe(binaryType || "buffer");
+    expect(data).toHaveLength(bytes.length);
+    if (data instanceof ArrayBuffer) {
+      expect(new Uint8Array(data)).toStrictEqual(new Uint8Array(bytes));
+    } else {
+      expect(Buffer.from(data)).toStrictEqual(Buffer.from(bytes));
+    }
+    expect(port).toBeInteger();
+    expect(port).toBeWithin(1, 65535 + 1);
+    expect(port).not.toBe(socket.port);
+    expect(address).toBeString();
+    expect(address).not.toBeEmpty();
+  }
+
+  const validateSend = (res) => {
+    expect(res).toBeBoolean();
+  }
+
+  const validateSendMany = (res, count) => {
+    expect(res).toBeNumber();
+    expect(res).toBeGreaterThanOrEqual(0);
+    expect(res).toBeLessThanOrEqual(count);
+  }
+
+
   for (const { binaryType, type } of dataTypes) {
     for (const { label, data, bytes } of dataCases) {
       test(`send ${label} (${binaryType || "undefined"})`, async (done) => {
@@ -147,20 +174,7 @@ describe("udpSocket()", () => {
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
-              expect(socket).toBeInstanceOf(Object);
-              expect(socket.binaryType).toBe(binaryType || "buffer");
-              expect(data).toHaveLength(bytes.length);
-              if (data instanceof ArrayBuffer) {
-                expect(new Uint8Array(data)).toStrictEqual(new Uint8Array(bytes));
-              } else {
-                expect(Buffer.from(data)).toStrictEqual(Buffer.from(bytes));
-              }
-              expect(data).toBeInstanceOf(type);
-              expect(port).toBeInteger();
-              expect(port).toBeWithin(1, 65535 + 1);
-              expect(port).not.toBe(socket.port);
-              expect(address).toBeString();
-              expect(address).not.toBeEmpty();
+              validateRecv(socket, data, port, address, binaryType, bytes);
               
               server.close();
               client.close();
@@ -172,7 +186,7 @@ describe("udpSocket()", () => {
         // handle unreliable transmission in UDP
         function sendRec() {
           if (!client.closed) {
-            expect(client.send(data, server.port, '127.0.0.1')).toBeBoolean();
+            validateSend(client.send(data, server.port, '127.0.0.1'));
             setTimeout(sendRec, 100);
           }
         }
@@ -185,20 +199,7 @@ describe("udpSocket()", () => {
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
-              expect(socket).toBeInstanceOf(Object);
-              expect(socket.binaryType).toBe(binaryType || "buffer");
-              expect(data).toHaveLength(bytes.length);
-              if (data instanceof ArrayBuffer) {
-                expect(new Uint8Array(data)).toStrictEqual(new Uint8Array(bytes));
-              } else {
-                expect(Buffer.from(data)).toStrictEqual(Buffer.from(bytes));
-              }
-              expect(data).toBeInstanceOf(type);
-              expect(port).toBeInteger();
-              expect(port).toBeWithin(1, 65535 + 1);
-              expect(port).not.toBe(socket.port);
-              expect(address).toBeString();
-              expect(address).not.toBeEmpty();
+              validateRecv(socket, data, port, address, binaryType, bytes);
               
               server.close();
               client.close();
@@ -216,7 +217,77 @@ describe("udpSocket()", () => {
         // handle unreliable transmission in UDP
         function sendRec() {
           if (!client.closed) {
-            expect(client.send(data)).toBeBoolean();
+            validateSend(client.send(data));
+            setTimeout(sendRec, 100);
+          }
+        }
+        sendRec();
+      });
+
+      test(`sendMany ${label} (${binaryType || "undefined"})`, async (done) => {
+        const client = await udpSocket({});
+        let count = 0;
+        const server = await udpSocket({
+          binaryType: binaryType,
+          socket: {
+            data(socket, data, port, address) {
+              validateRecv(socket, data, port, address, binaryType, bytes);
+
+              count += 1;
+              if (count === 100) {
+                server.close();
+                client.close();
+                done();
+              }
+            },
+          },
+        });
+
+        const payload = Array(100).fill([data, server.port, '127.0.0.1']).flat();
+
+        // handle unreliable transmission in UDP
+        function sendRec() {
+          if (!client.closed) {
+            validateSendMany(client.sendMany(payload), 100);
+            setTimeout(sendRec, 100);
+          }
+        }
+        sendRec();
+      });
+      
+      test(`sendMany connected ${label} (${binaryType || "undefined"})`, async (done) => {
+        // const client = await udpSocket({});
+        let client;
+        let count = 0;
+        const server = await udpSocket({
+          binaryType: binaryType,
+          socket: {
+            data(socket, data, port, address) {
+              validateRecv(socket, data, port, address, binaryType, bytes);
+
+              count += 1;
+              if (count === 100) {
+                server.close();
+                client.close();
+                done();
+              }
+            },
+          },
+        });
+
+        client = await udpSocket({
+          connect: {
+            port: server.port,
+            hostname: server.hostname,
+          }
+        });
+
+        const payload = Array(100).fill(data);
+
+        // handle unreliable transmission in UDP
+        function sendRec() {
+          if (!client.closed) {
+            validateSendMany(client.sendMany(payload), 100);
             setTimeout(sendRec, 100);
           }
         }

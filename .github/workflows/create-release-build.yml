@@ -11,10 +11,10 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      label:
+      version:
         type: string
         required: true
-        description: The label to use for the release
+        description: "Version to use for the release build. Example: 1.1.4. Exclude the 'v' prefix."
       tag:
         type: string
         required: true
@@ -34,19 +34,19 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_PUBLIC }}
           nodetail: true
-          color: "#FF0000"
-          title: "Bun v${{ inputs.label }} is compiling"
+          color: "#1F6FEB"
+          title: "Bun v${{ inputs.version }} is compiling"
           description: |
-            @${{ github.actor }} started compiling a release build
+            ### @${{ github.actor }} started compiling Bun v${{inputs.version}}
       - name: Send Message
         uses: sarisia/actions-status-discord@v1
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           nodetail: true
-          color: "#FF0000"
-          title: "Bun v${{ inputs.label }} is compiling"
+          color: "#1F6FEB"
+          title: "Bun v${{ inputs.version }} is compiling"
           description: |
-            @${{ github.actor }} started compiling a release build
+            ### @${{ github.actor }} started compiling  Bun v${{inputs.version}}
 
             **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**
   linux-x64:

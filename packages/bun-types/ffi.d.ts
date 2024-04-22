@@ -592,7 +592,10 @@ declare module "bun:ffi" {
    * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
    * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
    */
-  function dlopen<Fns extends Record<string, FFIFunction>>(name: string, symbols: Fns): Library<Fns>;
+  function dlopen<Fns extends Record<string, FFIFunction>>(
+    name: string | import("bun").BunFile | URL,
+    symbols: Fns,
+  ): Library<Fns>;
 
   /**
    * Turn a native library's function pointer into a JavaScript function

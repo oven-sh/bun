@@ -16,8 +16,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
-if (NOT WIN32 AND NOT APPLE)
-set(CMAKE_CXX_EXTENSIONS ON)
+if(NOT WIN32 AND NOT APPLE)
+    set(CMAKE_CXX_EXTENSIONS ON)
 endif()
 
 # --- Build Type ---
@@ -1119,6 +1119,7 @@ if(APPLE)
     target_link_options(${bun} PUBLIC "-dead_strip")
     target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
     target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
+    target_link_options(${bun} PUBLIC "-ld64") # fixes macOS x64 linking issue
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
 

@@ -53,7 +53,7 @@ $ brew install bun
 
 ## Install LLVM
 
-Bun requires LLVM 16/Clang 16 or LLVM 17/Clang 17 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 17/Clang 17 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs %}
 
@@ -63,7 +63,7 @@ $ brew install llvm@17
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 17 all
 ```
 
 ```bash#Arch
@@ -77,14 +77,14 @@ $ sudo dnf install llvm clang lld
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install clang16 lld16 llvm16
+$ sudo zypper install clang17 lld17 llvm17
 ```
 
 {% /codetabs %}
 
 If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-17.0.6).
 
-Make sure Clang/LLVM is in your path:
+Make sure Clang/LLVM 17 is in your path:
 
 ```bash
 $ which clang-17
@@ -102,7 +102,7 @@ $ export PATH="$(brew --prefix llvm@17)/bin:$PATH"
 
 ```bash#Arch
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm16/bin"
+$ export PATH="$PATH:/usr/lib/llvm17/bin"
 ```
 
 {% /codetabs %}

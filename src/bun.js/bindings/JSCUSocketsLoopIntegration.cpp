@@ -1,5 +1,5 @@
 #include "root.h"
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/VM.h>
 
 // On Linux, signals are used to suspend/resume threads in JavaScriptCore
 // When `.acquireAccess` is called, the signal might be raised.

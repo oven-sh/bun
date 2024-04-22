@@ -1,9 +1,10 @@
 #include "config.h"
 
-#include "BunBroadcastChannelRegistry.h"
+#include <wtf/CallbackAggregator.h>
 #include "webcore/BroadcastChannel.h"
 #include "webcore/MessageWithMessagePorts.h"
-#include <wtf/CallbackAggregator.h>
+
+#include "BunBroadcastChannelRegistry.h"
 
 namespace WebCore {
 

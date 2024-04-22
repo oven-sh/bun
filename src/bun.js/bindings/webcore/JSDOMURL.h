@@ -20,9 +20,9 @@
 
 #pragma once
 
+#include <wtf/NeverDestroyed.h>
 #include "DOMURL.h"
 #include "JSDOMWrapper.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 

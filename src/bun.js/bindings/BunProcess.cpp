@@ -1,5 +1,5 @@
 #include "BunProcess.h"
-#include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/Bun_InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>

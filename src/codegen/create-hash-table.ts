@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import path from "path";
-import { writeIfNotChanged } from "./helpers";
+import { writeIfChanged } from "./helpers";
 
 const input = process.argv[2];
 const output = process.argv[3];
@@ -45,4 +45,4 @@ str = str.replaceAll(`namespace JSC {`, "");
 str = str.replaceAll(`} // namespace JSC`, "");
 str = "// File generated via `static-hash-table.ts`\n" + str.trim() + "\n";
 
-writeIfNotChanged(output, str);
+writeIfChanged(output, str);

@@ -1,36 +1,39 @@
-
 #include "root.h"
-#include "ZigGlobalObject.h"
-#include "JavaScriptCore/ArgList.h"
-#include "JSDOMURL.h"
+#include "headers.h"
 #include "helpers.h"
-#include "IDLTypes.h"
-#include "DOMURL.h"
-#include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/JSBase.h>
+
+#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/BuiltinNames.h>
-#include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/JSBase.h>
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "headers.h"
+#include <wtf/Compiler.h>
+
+#include "JSDOMURL.h"
 #include "BunObject.h"
-#include "WebCoreJSBuiltins.h"
-#include <JavaScriptCore/JSObject.h>
+
+#include "BunObject+exports.h"
 #include "DOMJITIDLConvert.h"
 #include "DOMJITIDLType.h"
 #include "DOMJITIDLTypeFilter.h"
+#include "DOMURL.h"
 #include "Exception.h"
-#include "BunObject+exports.h"
-#include "JSDOMException.h"
+#include "IDLTypes.h"
 #include "JSDOMConvert.h"
-#include "wtf/Compiler.h"
+#include "JSDOMException.h"
+#include "JSDOMURL.h"
 #include "PathInlines.h"
+#include "ScriptExecutionContext.h"
+#include "WebCoreJSBuiltins.h"
+#include "WebCoreJSClientData.h"
+#include "ZigGlobalObject.h"
 
 namespace Bun {
 

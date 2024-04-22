@@ -29,49 +29,46 @@
  * different value. In that case, it will have a stale value.
  */
 
-#include "headers.h"
-#include "JavaScriptCore/JSCast.h"
-#include <JavaScriptCore/JSMapInlines.h>
 #include "root.h"
-#include "JavaScriptCore/SourceCode.h"
-#include "headers-handwritten.h"
-#include "ZigGlobalObject.h"
+#include "headers.h"
+
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/DFGAbstractHeap.h>
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/OptionsList.h>
-#include <JavaScriptCore/ParserError.h>
-#include <JavaScriptCore/ScriptExecutable.h>
-#include <JavaScriptCore/SourceOrigin.h>
-#include <JavaScriptCore/StackFrame.h>
-#include <JavaScriptCore/StackVisitor.h>
-#include "BunClientData.h"
-#include <JavaScriptCore/Identifier.h>
-#include "ImportMetaObject.h"
-
-#include <JavaScriptCore/TypedArrayInlines.h>
-#include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/JSWeakMap.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
 #include <JavaScriptCore/JSWithScope.h>
-
-#include <JavaScriptCore/DFGAbstractHeap.h>
-#include <JavaScriptCore/Completion.h>
-#include "ModuleLoader.h"
-#include <JavaScriptCore/JSMap.h>
-
-#include <JavaScriptCore/JSMapInlines.h>
-#include <JavaScriptCore/GetterSetter.h>
-#include "ZigSourceProvider.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include "CommonJSModuleRecord.h"
-#include <JavaScriptCore/JSModuleNamespaceObject.h>
-#include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/OptionsList.h>
+#include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/ScriptExecutable.h>
+#include <JavaScriptCore/SourceCode.h>
+#include <JavaScriptCore/SourceOrigin.h>
+#include <JavaScriptCore/StackFrame.h>
+#include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/TypedArrayInlines.h>
+#include <wtf/NakedPtr.h>
+#include <wtf/URL.h>
+
+#include "ModuleLoader.h"
+#include "CommonJSModuleRecord.h"
+
+#include "BunClientData.h"
+#include "ImportMetaObject.h"
 #include "PathInlines.h"
-#include "wtf/NakedPtr.h"
-#include "wtf/URL.h"
+#include "ZigGlobalObject.h"
+#include "ZigSourceProvider.h"
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 

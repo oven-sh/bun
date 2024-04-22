@@ -1,19 +1,18 @@
 #include "root.h"
-#include "ZigGlobalObject.h"
-#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
-#include "BunClientData.h"
 
-#include "JavaScriptCore/AggregateError.h"
-#include "JavaScriptCore/InternalFieldTuple.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/JSFunction.h"
-#include "wtf/URL.h"
-#include "JSFetchHeaders.h"
-#include "JSDOMExceptionHandling.h"
 #include <bun-uws/src/App.h>
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/Bun_InternalFieldTuple.h>
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <wtf/URL.h>
+
+#include "BunClientData.h"
+#include "JSDOMExceptionHandling.h"
+#include "JSFetchHeaders.h"
 #include "ZigGeneratedClasses.h"
+#include "ZigGlobalObject.h"
 
 namespace Bun {
 
@@ -262,7 +261,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
     JSValue requestValue = callFrame->argument(0);
     JSObject* objectValue = callFrame->argument(1).getObject();
 
-    JSC::InternalFieldTuple* tuple = JSC::InternalFieldTuple::create(vm, globalObject->m_internalFieldTupleStructure.get());
+    JSC::InternalFieldTuple* tuple = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
 
     JSValue headersValue = JSValue();
     JSValue urlValue = JSValue();

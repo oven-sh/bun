@@ -1,7 +1,7 @@
 // The object returned by Bun.serve's .requestIP()
 #pragma once
 #include "root.h"
-#include "JavaScriptCore/JSObjectInlines.h"
+#include <JavaScriptCore/JSObjectInlines.h>
 
 using namespace JSC;
 

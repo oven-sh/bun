@@ -1,8 +1,10 @@
 #include "ProcessBindingUV.h"
+
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/JSMap.h"
-#include "JavaScriptCore/JSMapInlines.h"
 
 // clang-format off
 

@@ -65,10 +65,10 @@ export function getStdinStream(fd) {
   // but we need to extend TTY/FS ReadStream
   const native = Bun.stdin.stream();
 
-  var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  var readerRef;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let readerRef;
 
-  var shouldUnref = false;
+  let shouldUnref = false;
 
   function ref() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
@@ -162,7 +162,7 @@ export function getStdinStream(fd) {
   async function internalRead(stream) {
     $debug("internalRead();");
     try {
-      var done: boolean, value: Uint8Array[];
+      let done: boolean, value: Uint8Array[];
       $assert(reader);
       const pendingRead = reader.readMany();
 
@@ -238,34 +238,30 @@ export function getStdinStream(fd) {
 }
 
 export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn, reportUncaughtExceptionFn) {
-  var queue;
-  var process;
-  var nextTickQueue = nextTickQueue;
-  var drainMicrotasks = drainMicrotasksFn;
-  var reportUncaughtException = reportUncaughtExceptionFn;
+  let queue;
+  let drainMicrotasks = drainMicrotasksFn;
+  let reportUncaughtException = reportUncaughtExceptionFn;
 
-  function validateFunction(cb) {
+  const validateFunction = cb => {
     if (typeof cb !== "function") {
       const err = new TypeError(`The "callback" argument must be of type "function". Received type ${typeof cb}`);
       err.code = "ERR_INVALID_ARG_TYPE";
       throw err;
     }
-  }
+  };
 
-  var setup;
+  let setup;
   setup = () => {
     const { FixedQueue } = require("internal/fixed_queue");
     queue = new FixedQueue();
 
     function processTicksAndRejections() {
-      var tock;
+      let tock;
       do {
         while ((tock = queue.shift()) !== null) {
-          var callback = tock.callback;
-          var args = tock.args;
-          var frame = tock.frame;
-          var restore = $getInternalField($asyncContext, 0);
-          $putInternalField($asyncContext, 0, frame);
+          const { args, callback } = tock;
+          const oldAsyncContextData = $getInternalField($asyncContextTuple, 0);
+          $putInternalField($asyncContextTuple, 0, tock.frame);
           try {
             if (args === undefined) {
               callback();
@@ -291,7 +287,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
           } catch (e) {
             reportUncaughtException(e);
           } finally {
-            $putInternalField($asyncContext, 0, restore);
+            $putInternalField($asyncContextTuple, 0, oldAsyncContextData);
           }
         }
 
@@ -305,7 +301,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
     setup = undefined;
   };
 
-  function nextTick(cb, args) {
+  const nextTick = cb => {
     validateFunction(cb);
     if (setup) {
       setup();
@@ -316,17 +312,17 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
     queue.push({
       callback: cb,
       args: $argumentCount() > 1 ? Array.prototype.slice.$call(arguments, 1) : undefined,
-      frame: $getInternalField($asyncContext, 0),
+      frame: $getInternalField($asyncContextTuple, 0),
     });
     $putInternalField(nextTickQueue, 0, 1);
-  }
+  };
 
   return nextTick;
 }
 
 $getter;
 export function mainModule() {
-  var existing = $getByIdDirectPrivate(this, "main");
+  const existing = $getByIdDirectPrivate(this, "main");
   // note: this doesn't handle "process.mainModule = undefined"
   if (typeof existing !== "undefined") {
     return existing;

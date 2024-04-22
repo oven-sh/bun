@@ -58,7 +58,7 @@ using namespace JSC;
 
 SubtleCrypto::SubtleCrypto(ScriptExecutionContext* context)
     : ContextDestructionObserver(context)
-    , m_workQueue(WorkQueue::create("com.apple.WebKit.CryptoQueue"))
+    , m_workQueue(WorkQueue::create("com.apple.WebKit.CryptoQueue"_s))
 {
 }
 

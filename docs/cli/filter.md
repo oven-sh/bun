@@ -39,7 +39,7 @@ Path patterns are specified by starting the pattern with `./`, and will select a
 
 ## Workspaces
 
-Filters respect your [workspace configuration](/docs/install/workspaces.md): If you have a `package.json` file that specifies which packages are part of the workspace,
+Filters respect your [workspace configuration](/docs/install/workspaces): If you have a `package.json` file that specifies which packages are part of the workspace,
 `--filter` will be restricted to only these packages. Also, in a workspace you can use `--filter` to run scripts in packages that are located anywhere in the workspace:
 
 ```bash

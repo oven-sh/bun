@@ -175,7 +175,7 @@ In the bundler, `.node` files are handled using the [`file`](#file) loader.
 
 **SQLite loader**. `with { "type": "sqlite" }` import attribute
 
-In the runtime and bundler, SQLite databases can be directly imported. This will load the database using [`bun:sqlite`](/docs/api/sqlite.md).
+In the runtime and bundler, SQLite databases can be directly imported. This will load the database using [`bun:sqlite`](/docs/api/sqlite).
 
 ```ts
 import db from "./my.db" with { type: "sqlite" };

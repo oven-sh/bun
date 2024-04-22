@@ -1542,7 +1542,7 @@ pub const Interpreter = struct {
         var object_iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalThis, value1.asObjectRef());
+        }).init(globalThis, value1);
         defer object_iter.deinit();
 
         this.root_shell.export_env.clearRetainingCapacity();

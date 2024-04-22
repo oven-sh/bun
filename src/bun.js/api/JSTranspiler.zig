@@ -343,7 +343,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 .skip_empty_name = true,
 
                 .include_value = true,
-            }).init(globalThis, define.asObjectRef());
+            }).init(globalThis, define);
             defer define_iter.deinit();
 
             // cannot be a temporary because it may be loaded on different threads.
@@ -657,7 +657,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             var iter = JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
                 .include_value = true,
-            }).init(globalThis, replace.asObjectRef());
+            }).init(globalThis, replace);
 
             if (iter.len > 0) {
                 errdefer iter.deinit();
@@ -1196,7 +1196,7 @@ pub fn transformSync(
 
 fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExports) JSC.JSValue {
     if (named_exports.count() == 0)
-        return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArray(global, 0, null, null));
+        return JSValue.createEmptyArray(global, 0);
 
     var named_exports_iter = named_exports.iterator();
     var stack_fallback = std.heap.stackFallback(@sizeOf(bun.String) * 32, getAllocator(global));

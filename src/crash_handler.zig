@@ -33,7 +33,7 @@ const debug = std.debug;
 pub const enable = true;
 
 /// Override with BUN_CRASH_REPORT_URL enviroment variable.
-const default_report_base_url = "https://bun.report/";
+const default_report_base_url = "https://bun.report";
 
 /// Only print the `Bun has crashed` message once. Once this is true, control
 /// flow is not returned to the main application.
@@ -583,7 +583,7 @@ pub fn reportBaseUrl() []const u8 {
     return static.base_url orelse {
         const computed = computed: {
             if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |url| {
-                break :computed url;
+                break :computed bun.strings.withoutTrailingSlash(url);
             }
             break :computed default_report_base_url;
         };
@@ -682,6 +682,13 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
             windows.EXCEPTION_ACCESS_VIOLATION => .{ .segmentation_fault = info.ExceptionRecord.ExceptionInformation[1] },
             windows.EXCEPTION_ILLEGAL_INSTRUCTION => .{ .illegal_instruction = info.ContextRecord.getRegs().ip },
             windows.EXCEPTION_STACK_OVERFLOW => .{ .stack_overflow = {} },
+
+            // exception used for thread naming
+            // https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2017/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2017#set-a-thread-name-by-throwing-an-exception
+            // related commit
+            // https://github.com/go-delve/delve/pull/1384
+            bun.windows.MS_VC_EXCEPTION => return bun.windows.EXCEPTION_CONTINUE_EXECUTION,
+
             else => return windows.EXCEPTION_CONTINUE_SEARCH,
         },
         null,
@@ -1332,7 +1339,10 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     // order to get the demangled stack traces.
     var name_bytes: [1024]u8 = undefined;
     for (trace.instruction_addresses[0..trace.index]) |addr| {
-        const line = StackLine.fromAddress(addr, &name_bytes);
+        const line = StackLine.fromAddress(addr, &name_bytes) orelse {
+            stderr.print("- ??? at 0x{X}\n", .{addr}) catch break;
+            continue;
+        };
         stderr.print("- {}\n", .{line}) catch break;
     }
     const program = switch (bun.Environment.os) {

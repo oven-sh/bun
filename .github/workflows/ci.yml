@@ -5,7 +5,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.run-id  || github.ref }}
   cancel-in-progress: true
 
 on:
@@ -15,13 +15,21 @@ on:
         type: string
         description: The workflow ID to download artifacts (skips the build step)
   pull_request:
+    paths-ignore:
+      - .vscode/**/*
+      - docs/**/*
+      - examples/**/*
   push:
     branches:
       - main
+    paths-ignore:
+      - .vscode/**/*
+      - docs/**/*
+      - examples/**/*
 
 jobs:
   format:
-    if: ${{ !github.event.inputs.run-id }}
+    if: ${{ !inputs.run-id }}
     name: Format
     uses: ./.github/workflows/run-format.yml
     secrets: inherit
@@ -30,12 +38,12 @@ jobs:
     permissions:
       contents: write
   lint:
-    if: ${{ !github.event.inputs.run-id }}
+    if: ${{ !inputs.run-id }}
     name: Lint
     uses: ./.github/workflows/run-lint.yml
     secrets: inherit
   linux-x64:
-    if: ${{ !github.event.inputs.run-id }}
+    if: ${{ !inputs.run-id }}
     name: Build linux-x64
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -44,8 +52,9 @@ jobs:
       tag: linux-x64
       arch: x64
       cpu: haswell
+      canary: true
   linux-x64-baseline:
-    if: ${{ !github.event.inputs.run-id }}
+    if: ${{ !inputs.run-id }}
     name: Build linux-x64-baseline
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -54,8 +63,9 @@ jobs:
       tag: linux-x64-baseline
       arch: x64
       cpu: nehalem
+      canary: true
   linux-aarch64:
-    if: ${{ !github.event.inputs.run-id && github.repository_owner == 'oven-sh' }}
+    if: ${{ !inputs.run-id && github.repository_owner == 'oven-sh' }}
     name: Build linux-aarch64
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -64,38 +74,42 @@ jobs:
       tag: linux-aarch64
       arch: aarch64
       cpu: native
+      canary: true
   darwin-x64:
-    if: ${{ !github.event.inputs.run-id }}
+    if: ${{ !inputs.run-id }}
     name: Build darwin-x64
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
       tag: darwin-x64
       arch: x64
       cpu: haswell
+      canary: true
   darwin-x64-baseline:
-    if: ${{ !github.event.inputs.run-id }}
+    if: ${{ !inputs.run-id }}
     name: Build darwin-x64-baseline
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
       tag: darwin-x64-baseline
       arch: x64
       cpu: nehalem
+      canary: true
   darwin-aarch64:
-    if: ${{ !github.event.inputs.run-id }}
+    if: ${{ !inputs.run-id }}
     name: Build darwin-aarch64
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-14' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-13' }}
       tag: darwin-aarch64
       arch: aarch64
       cpu: native
+      canary: true
   windows-x64:
-    if: ${{ !github.event.inputs.run-id }}
+    if: ${{ !inputs.run-id }}
     name: Build windows-x64
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
@@ -104,8 +118,9 @@ jobs:
       tag: windows-x64
       arch: x64
       cpu: haswell
+      canary: true
   windows-x64-baseline:
-    if: ${{ !github.event.inputs.run-id }}
+    if: ${{ !inputs.run-id }}
     name: Build windows-x64-baseline
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
@@ -114,8 +129,9 @@ jobs:
       tag: windows-x64-baseline
       arch: x64
       cpu: nehalem
+      canary: true
   linux-x64-test:
-    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test linux-x64
     needs: linux-x64
     uses: ./.github/workflows/run-test.yml
@@ -126,7 +142,7 @@ jobs:
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
       tag: linux-x64
   linux-x64-baseline-test:
-    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test linux-x64-baseline
     needs: linux-x64-baseline
     uses: ./.github/workflows/run-test.yml
@@ -137,7 +153,7 @@ jobs:
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
       tag: linux-x64-baseline
   linux-aarch64-test:
-    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'}}
+    if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'}}
     name: Test linux-aarch64
     needs: linux-aarch64
     uses: ./.github/workflows/run-test.yml
@@ -148,7 +164,7 @@ jobs:
       runs-on: namespace-profile-bun-ci-linux-aarch64
       tag: linux-aarch64
   darwin-x64-test:
-    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test darwin-x64
     needs: darwin-x64
     uses: ./.github/workflows/run-test.yml
@@ -156,10 +172,10 @@ jobs:
     with:
       run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
       tag: darwin-x64
   darwin-x64-baseline-test:
-    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test darwin-x64-baseline
     needs: darwin-x64-baseline
     uses: ./.github/workflows/run-test.yml
@@ -167,10 +183,10 @@ jobs:
     with:
       run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
       tag: darwin-x64-baseline
   darwin-aarch64-test:
-    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test darwin-aarch64
     needs: darwin-aarch64
     uses: ./.github/workflows/run-test.yml
@@ -178,10 +194,10 @@ jobs:
     with:
       run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-14' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-13' }}
       tag: darwin-aarch64
   windows-x64-test:
-    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test windows-x64
     needs: windows-x64
     uses: ./.github/workflows/run-test.yml
@@ -192,7 +208,7 @@ jobs:
       runs-on: windows
       tag: windows-x64
   windows-x64-baseline-test:
-    if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test windows-x64-baseline
     needs: windows-x64-baseline
     uses: ./.github/workflows/run-test.yml

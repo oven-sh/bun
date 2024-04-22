@@ -3757,11 +3757,38 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("putRecord", .{ value, global, key, values, values_len });
     }
 
-    /// Note: key can't be numeric (if so, use putMayBeIndex instead)
-    pub fn put(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
-        return cppFn("put", .{ value, global, key, result });
+    fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
+        @import("./headers.zig").JSC__JSValue__put(value, global, key, result);
     }
 
+    extern "C" fn JSC__JSValue__putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: JSC.JSValue) void;
+    fn putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: JSC.JSValue) void {
+        if (comptime bun.Environment.isDebug)
+            JSC.markBinding(@src());
+        JSC__JSValue__putBunString(value, global, key, result);
+    }
+
+    pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: JSC.JSValue) void {
+        const Key = @TypeOf(key);
+        if (comptime @typeInfo(Key) == .Pointer) {
+            const Elem = @typeInfo(Key).Pointer.child;
+            if (Elem == ZigString) {
+                putZigString(value, global, key, result);
+            } else if (Elem == bun.String) {
+                putBunString(value, global, key, result);
+            } else {
+                @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Elem));
+            }
+        } else if (comptime Key == ZigString) {
+            putZigString(value, global, &key, result);
+        } else if (comptime Key == bun.String) {
+            putBunString(value, global, &key, result);
+        } else {
+            @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Key));
+        }
+    }
+
+    /// Note: key can't be numeric (if so, use putMayBeIndex instead)
     extern fn JSC__JSValue__putMayBeIndex(target: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSC.JSValue) void;
 
     /// Same as `.put` but accepts both non-numeric and numeric keys.
@@ -3876,10 +3903,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn getErrorsProperty(this: JSValue, globalObject: *JSGlobalObject) JSValue {
         return cppFn("getErrorsProperty", .{ this, globalObject });
-    }
-
-    pub fn makeWithNameAndPrototype(globalObject: *JSGlobalObject, class: ?*anyopaque, instance: ?*anyopaque, name_: *const ZigString) JSValue {
-        return cppFn("makeWithNameAndPrototype", .{ globalObject, class, instance, name_ });
     }
 
     pub fn createBufferFromLength(globalObject: *JSGlobalObject, len: usize) JSValue {
@@ -5356,7 +5379,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "jsonStringify",
         "keys",
         "kind_",
-        "makeWithNameAndPrototype",
         "parseJSON",
         "put",
         "putDirect",
@@ -6193,108 +6215,7 @@ pub fn Thenable(comptime name: []const u8, comptime Then: type, comptime onResol
     };
 }
 
-pub const JSPropertyIteratorOptions = struct {
-    skip_empty_name: bool,
-    include_value: bool,
-};
-
-pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
-    return struct {
-        /// Position in the property list array
-        /// Update is deferred until the next iteration
-        i: u32 = 0,
-
-        iter_i: u32 = 0,
-        len: u32,
-        array_ref: JSC.C.JSPropertyNameArrayRef,
-
-        /// The `JSValue` of the current property.
-        ///
-        /// Invokes undefined behavior if an iteration has not yet occurred and
-        /// zero-sized when `options.include_value` is not enabled.
-        value: if (options.include_value) JSC.JSValue else void,
-        /// Zero-sized when `options.include_value` is not enabled.
-        object: if (options.include_value) JSC.C.JSObjectRef else void,
-        /// Zero-sized when `options.include_value` is not enabled.
-        global: if (options.include_value) JSC.C.JSContextRef else void,
-
-        const Self = @This();
-
-        inline fn initInternal(global: JSC.C.JSContextRef, object: JSC.C.JSObjectRef) Self {
-            const array_ref = JSC.C.JSObjectCopyPropertyNames(global, object);
-            return .{
-                .array_ref = array_ref,
-                .len = @as(u32, @truncate(JSC.C.JSPropertyNameArrayGetCount(array_ref))),
-                .object = if (comptime options.include_value) object else .{},
-                .global = if (comptime options.include_value) global else .{},
-                .value = undefined,
-            };
-        }
-
-        /// Initializes the iterator. Make sure you `deinit()` it!
-        ///
-        /// Not recommended for use when using the CString buffer mode as the
-        /// buffer must be manually initialized. Instead, see
-        /// `JSPropertyIterator.initCStringBuffer()`.
-        pub inline fn init(global: JSC.C.JSContextRef, object: JSC.C.JSObjectRef) Self {
-            return Self.initInternal(global, object);
-        }
-
-        /// Deinitializes the property name array and all of the string
-        /// references constructed by the copy.
-        pub inline fn deinit(self: *Self) void {
-            JSC.C.JSPropertyNameArrayRelease(self.array_ref);
-        }
-
-        pub fn hasLongNames(self: *Self) bool {
-            var estimated_length: usize = 0;
-            for (self.i..self.len) |i| {
-                estimated_length += JSC.C.JSStringGetLength(JSC.C.JSPropertyNameArrayGetNameAtIndex(self.array_ref, i));
-                if (estimated_length > 14) return true;
-            }
-            return false;
-        }
-
-        /// Finds the next property string and, if `options.include_value` is
-        /// enabled, updates the `iter.value` to respect the latest property's
-        /// value. Also note the behavior of the other options.
-        pub fn next(self: *Self) ?ZigString {
-            return nextMaybeFirstValue(self, .zero);
-        }
-
-        pub fn reset(self: *Self) void {
-            self.iter_i = 0;
-            self.i = 0;
-        }
-
-        pub fn nextMaybeFirstValue(self: *Self, first_value: JSValue) ?ZigString {
-            if (self.iter_i >= self.len) {
-                self.i = self.iter_i;
-                return null;
-            }
-            self.i = self.iter_i;
-            var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(self.array_ref, self.iter_i);
-            self.iter_i += 1;
-
-            if (comptime options.skip_empty_name) {
-                const len = JSC.C.JSStringGetLength(property_name_ref);
-                if (len == 0) return self.next();
-            }
-
-            const prop = property_name_ref.toZigString();
-
-            if (comptime options.include_value) {
-                if (self.i == 0 and first_value != .zero) {
-                    self.value = first_value;
-                } else {
-                    self.value = JSC.JSValue.fromRef(JSC.C.JSObjectGetProperty(self.global, self.object, property_name_ref, null));
-                }
-            }
-
-            return prop;
-        }
-    };
-}
+pub usingnamespace @import("./JSPropertyIterator.zig");
 
 // DOMCall Fields
 const Bun = JSC.API.Bun;

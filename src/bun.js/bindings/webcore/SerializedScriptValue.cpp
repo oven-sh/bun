@@ -3241,7 +3241,7 @@ private:
         if (is8Bit) {
             if ((end - ptr) < static_cast<int>(length))
                 return false;
-            str = Identifier::fromString(vm, reinterpret_cast<const LChar*>(ptr), length);
+            str = Identifier::fromString(vm, {reinterpret_cast<const LChar*>(ptr), length});
             ptr += length;
             return true;
         }
@@ -3251,7 +3251,7 @@ private:
             return false;
 
 #if ASSUME_LITTLE_ENDIAN
-        str = Identifier::fromString(vm, reinterpret_cast<const UChar*>(ptr), length);
+        str = Identifier::fromString(vm, {reinterpret_cast<const UChar*>(ptr), length});
         ptr += length * sizeof(UChar);
 #else
         UChar* characters;

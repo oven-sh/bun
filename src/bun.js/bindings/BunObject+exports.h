@@ -13,7 +13,6 @@
     macro(SHA256) \
     macro(SHA384) \
     macro(SHA512) \
-    macro(SHA512_224) \
     macro(SHA512_256) \
     macro(ShellInterpreter) \
     macro(TOML) \

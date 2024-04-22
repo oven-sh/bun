@@ -1,8 +1,8 @@
-import { sha, MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_224, SHA512_256, gc, CryptoHasher } from "bun";
+import { sha, MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc, CryptoHasher } from "bun";
 import { it, expect, describe } from "bun:test";
 import crypto from "crypto";
 import { hashesFixture } from "./fixtures/sign.fixture.ts";
-const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_224, SHA512_256];
+const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
 
 describe("CryptoHasher", () => {
   it("CryptoHasher.algorithms", () => {

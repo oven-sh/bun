@@ -44,7 +44,6 @@ pub const Classes = struct {
     pub const SHA256 = JSC.API.Bun.Crypto.SHA256;
     pub const SHA384 = JSC.API.Bun.Crypto.SHA384;
     pub const SHA512 = JSC.API.Bun.Crypto.SHA512;
-    pub const SHA512_224 = JSC.API.Bun.Crypto.SHA512_224;
     pub const SHA512_256 = JSC.API.Bun.Crypto.SHA512_256;
     pub const ServerWebSocket = JSC.API.ServerWebSocket;
     pub const Stats = JSC.Node.StatsSmall;

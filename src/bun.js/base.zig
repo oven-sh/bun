@@ -785,7 +785,6 @@ const SHA224 = JSC.API.Bun.Crypto.SHA224;
 const SHA512 = JSC.API.Bun.Crypto.SHA512;
 const SHA384 = JSC.API.Bun.Crypto.SHA384;
 const SHA256 = JSC.API.Bun.Crypto.SHA256;
-const SHA512_224 = JSC.API.Bun.Crypto.SHA512_224;
 const SHA512_256 = JSC.API.Bun.Crypto.SHA512_256;
 const MD5_SHA1 = JSC.API.Bun.Crypto.MD5_SHA1;
 const FFI = JSC.FFI;

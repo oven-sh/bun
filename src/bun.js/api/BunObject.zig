@@ -52,7 +52,6 @@ pub const BunObject = struct {
     pub const SHA256 = Crypto.SHA256.getter;
     pub const SHA384 = Crypto.SHA384.getter;
     pub const SHA512 = Crypto.SHA512.getter;
-    pub const SHA512_224 = Crypto.SHA512_224.getter;
     pub const SHA512_256 = Crypto.SHA512_256.getter;
     pub const TOML = Bun.getTOMLObject;
     pub const Glob = Bun.getGlobConstructor;
@@ -101,7 +100,6 @@ pub const BunObject = struct {
         @export(BunObject.SHA256, .{ .name = getterName("SHA256") });
         @export(BunObject.SHA384, .{ .name = getterName("SHA384") });
         @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
-        @export(BunObject.SHA512_224, .{ .name = getterName("SHA512_224") });
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
         @export(BunObject.Glob, .{ .name = getterName("Glob") });
@@ -2961,7 +2959,6 @@ pub const Crypto = struct {
     pub const SHA256 = StaticCryptoHasher(Hashers.SHA256, "SHA256");
     pub const SHA384 = StaticCryptoHasher(Hashers.SHA384, "SHA384");
     pub const SHA512 = StaticCryptoHasher(Hashers.SHA512, "SHA512");
-    pub const SHA512_224 = StaticCryptoHasher(Hashers.SHA512_224, "SHA512_224");
     pub const SHA512_256 = StaticCryptoHasher(Hashers.SHA512_256, "SHA512_256");
 };
 

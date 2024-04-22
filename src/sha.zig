@@ -84,8 +84,6 @@ pub const EVP = struct {
     pub const SHA512 = NewEVP(std.crypto.hash.sha2.Sha512.digest_length, "EVP_sha512");
     pub const SHA384 = NewEVP(std.crypto.hash.sha2.Sha384.digest_length, "EVP_sha384");
     pub const SHA256 = NewEVP(std.crypto.hash.sha2.Sha256.digest_length, "EVP_sha256");
-    // std.crypto decl for this doesn't exist yet. added in https://github.com/ziglang/zig/pull/19697. added in 0.12.0-dev.3687+f03829a2d.
-    pub const SHA512_224 = NewEVP(28, "EVP_sha512_224");
     pub const SHA512_256 = NewEVP(std.crypto.hash.sha2.Sha512256.digest_length, "EVP_sha512_256");
     pub const MD5_SHA1 = NewEVP(std.crypto.hash.Sha1.digest_length, "EVP_md5_sha1");
     pub const Blake2 = NewEVP(256 / 8, "EVP_blake2b256");
@@ -98,7 +96,6 @@ pub const SHA224 = EVP.SHA224;
 pub const SHA512 = EVP.SHA512;
 pub const SHA384 = EVP.SHA384;
 pub const SHA256 = EVP.SHA256;
-pub const SHA512_224 = EVP.SHA512_224;
 pub const SHA512_256 = EVP.SHA512_256;
 pub const MD5_SHA1 = EVP.MD5_SHA1;
 

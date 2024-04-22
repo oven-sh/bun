@@ -2539,20 +2539,20 @@ pub const Crypto = struct {
             const this = bun.default_allocator.create(CryptoHasher) catch return null;
             const evp = EVP.byName(algorithm, globalThis) orelse {
                 if (bun.strings.eqlComptime(algorithm.slice(), "sha3-224")) {
-                    const state = bun.newCatchable(std.crypto.hash.sha3.Sha3_224, .{}) catch return null;
+                    const state = bun.new(std.crypto.hash.sha3.Sha3_224, .{});
                     this.* = .{ .zig = .{ .algorithm = .@"sha3-224", .state = state } };
                     return this;
                 }
                 if (bun.strings.eqlComptime(algorithm.slice(), "sha3-256")) {
-                    this.* = .{ .zig = .{ .algorithm = .@"sha3-256", .state = bun.newCatchable(std.crypto.hash.sha3.Sha3_256, .{}) catch return null } };
+                    this.* = .{ .zig = .{ .algorithm = .@"sha3-256", .state = bun.new(std.crypto.hash.sha3.Sha3_256, .{}) } };
                     return this;
                 }
                 if (bun.strings.eqlComptime(algorithm.slice(), "sha3-384")) {
-                    this.* = .{ .zig = .{ .algorithm = .@"sha3-384", .state = bun.newCatchable(std.crypto.hash.sha3.Sha3_384, .{}) catch return null } };
+                    this.* = .{ .zig = .{ .algorithm = .@"sha3-384", .state = bun.new(std.crypto.hash.sha3.Sha3_384, .{}) } };
                     return this;
                 }
                 if (bun.strings.eqlComptime(algorithm.slice(), "sha3-512")) {
-                    this.* = .{ .zig = .{ .algorithm = .@"sha3-512", .state = bun.newCatchable(std.crypto.hash.sha3.Sha3_512, .{}) catch return null } };
+                    this.* = .{ .zig = .{ .algorithm = .@"sha3-512", .state = bun.new(std.crypto.hash.sha3.Sha3_512, .{}) } };
                     return this;
                 }
 

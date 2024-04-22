@@ -26,6 +26,12 @@ jobs:
           merge-multiple: true
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
+      - name: Check if artifacts exist
+        run: |
+          if [ -z "$(ls -A bun)" ]; then
+            echo "No artifacts found"
+            exit 1
+          fi
       - name: Upload to GitHub Releases
         uses: ncipollo/release-action@v1
         with:

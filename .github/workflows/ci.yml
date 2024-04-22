@@ -14,6 +14,10 @@ on:
       run-id:
         type: string
         description: The workflow ID to download artifacts (skips the build step)
+      canary:
+        type: boolean
+        description: "Is this a canary build?"
+        default: true
   pull_request:
   push:
     branches:
@@ -44,6 +48,7 @@ jobs:
       tag: linux-x64
       arch: x64
       cpu: haswell
+      canary: ${{ inputs.canary }}
   linux-x64-baseline:
     if: ${{ !github.event.inputs.run-id }}
     name: Build linux-x64-baseline
@@ -54,6 +59,7 @@ jobs:
       tag: linux-x64-baseline
       arch: x64
       cpu: nehalem
+      canary: ${{ inputs.canary }}
   linux-aarch64:
     if: ${{ !github.event.inputs.run-id && github.repository_owner == 'oven-sh' }}
     name: Build linux-aarch64
@@ -64,26 +70,29 @@ jobs:
       tag: linux-aarch64
       arch: aarch64
       cpu: native
+      canary: ${{ inputs.canary }}
   darwin-x64:
     if: ${{ !github.event.inputs.run-id }}
     name: Build darwin-x64
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
       tag: darwin-x64
       arch: x64
       cpu: haswell
+      canary: ${{ inputs.canary }}
   darwin-x64-baseline:
     if: ${{ !github.event.inputs.run-id }}
     name: Build darwin-x64-baseline
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
       tag: darwin-x64-baseline
       arch: x64
       cpu: nehalem
+      canary: ${{ inputs.canary }}
   darwin-aarch64:
     if: ${{ !github.event.inputs.run-id }}
     name: Build darwin-aarch64
@@ -94,6 +103,7 @@ jobs:
       tag: darwin-aarch64
       arch: aarch64
       cpu: native
+      canary: ${{ inputs.canary }}
   windows-x64:
     if: ${{ !github.event.inputs.run-id }}
     name: Build windows-x64
@@ -104,6 +114,7 @@ jobs:
       tag: windows-x64
       arch: x64
       cpu: haswell
+      canary: ${{ inputs.canary }}
   windows-x64-baseline:
     if: ${{ !github.event.inputs.run-id }}
     name: Build windows-x64-baseline
@@ -114,6 +125,7 @@ jobs:
       tag: windows-x64-baseline
       arch: x64
       cpu: nehalem
+      canary: ${{ inputs.canary }}
   linux-x64-test:
     if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test linux-x64
@@ -156,7 +168,7 @@ jobs:
     with:
       run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
       tag: darwin-x64
   darwin-x64-baseline-test:
     if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
@@ -167,7 +179,7 @@ jobs:
     with:
       run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
       tag: darwin-x64-baseline
   darwin-aarch64-test:
     if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}

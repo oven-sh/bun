@@ -353,50 +353,37 @@ pub const UDPSocket = struct {
         const arg0 = arguments.ptr[0];
 
         var iter = arg0.arrayIterator(globalThis);
-        var i: usize = 0;
+        var i: u16 = 0;
+        var vals: [3]JSValue = .{ .zero, .zero, .zero };
         while (iter.next()) |val| : (i += 1) {
-            if (i >= 1024) {
-                globalThis.throwInvalidArguments("Too many elements in array, maximum is 1024", .{});
-                return .zero;
-            }
-            const data = val.getTruthyComptime(globalThis, "data") orelse {
-                globalThis.throwInvalidArguments("Expected \"data\" property in array element", .{});
-                return .zero;
-            };
-            const dst: ?Destination = brk: {
-                if (this.connect_info != null) {
-                    const port = val.getTruthyComptime(globalThis, "port");
-                    const addr = val.getTruthyComptime(globalThis, "address");
-                    if (port != null) {
-                        globalThis.throwInvalidArguments("Cannot specify destination port on connected socket", .{});
-                        return .zero;
-                    }
-                    if (addr != null) {
-                        globalThis.throwInvalidArguments("Cannot specify destination address on connected socket", .{});
-                        return .zero;
-                    }
-                    break :brk null;
-                } else {
-                    const port = val.getTruthyComptime(globalThis, "port") orelse {
-                        globalThis.throwInvalidArguments("Expected \"port\" property in array element", .{});
-                        return .zero;
-                    };
-                    const addr = val.getTruthyComptime(globalThis, "address") orelse {
-                        globalThis.throwInvalidArguments("Expected \"address\" property in array element", .{});
-                        return .zero;
-                    };
-                    break :brk .{
-                        .port = port,
-                        .address = addr,
-                    };
+            if (this.connect_info != null) {
+                if (this.setupPacket(globalThis, i, val, null)) |ex| {
+                    return ex;
                 }
-            };
-            if (this.setupPacket(globalThis, i, data, dst)) |ex| {
-                // we threw an exception
-                return ex;
+            } else {
+                vals[i % 3] = val;
+                if (i % 3 == 2) {
+                    if (this.setupPacket(globalThis, i / 3, vals[0], .{
+                        .port = vals[1],
+                        .address = vals[2],
+                    })) |ex| {
+                        return ex;
+                    }
+                }
             }
         }
-        return this.doSend(globalThis);
+        if (this.connect_info == null and i % 3 != 0) {
+            globalThis.throwInvalidArguments("Expected 3 arguments for each packet", .{});
+            return .zero;
+        }
+        const ret = this.doSend(globalThis, i);
+        if (ret) |val| {
+            // number of packets sent
+            return JSValue.jsNumber(val);
+        } else {
+            // exception
+            return .zero;
+        }
     }
 
     pub fn send(
@@ -438,19 +425,24 @@ pub const UDPSocket = struct {
             return val;
         }
 
-        return this.doSend(globalThis);
+        const sent = this.doSend(globalThis, 1);
+        if (sent) |val| {
+            // val can only be zero or one
+            return JSValue.jsBoolean(val > 0);
+        } else {
+            return .zero;
+        }
     }
 
-    fn doSend(this: *This, globalThis: *JSGlobalObject) JSValue {
-        const res = this.socket.send(this.send_buf, 1);
+    fn doSend(this: *This, globalThis: *JSGlobalObject, count: u16) ?c_int {
+        const res = this.socket.send(this.send_buf, count);
         if (res == -1) {
             const errno = @as(std.c.E, @enumFromInt(std.c._errno().*));
             const err = bun.sys.Error.fromCode(errno, .sendmmsg);
             globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
-            return .zero;
+            return null;
         }
-
-        return JSValue.jsNumber(res);
+        return res;
     }
 
     const Destination = struct {
@@ -465,6 +457,10 @@ pub const UDPSocket = struct {
         data_val: JSValue,
         dest: ?Destination,
     ) ?JSValue {
+        if (index >= 1024) {
+            globalThis.throwInvalidArguments("Too many packets to send, maximum is 1024", .{});
+            return .zero;
+        }
         const arg0 = data_val;
         const payload = init: {
             if (arg0.asArrayBuffer(globalThis)) |arrayBuffer| {

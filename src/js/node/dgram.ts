@@ -768,17 +768,11 @@ function doSend(ex, self, ip, list, address, port, callback) {
       const packets = [];
       if (port) {
         for (const buf of list) {
-          packets.push({
-            data: buf,
-            port,
-            address: ip,
-          });
+          packets.push(buf, port, address);
         }
       } else {
         for (const buf of list) {
-          packets.push({
-            data: buf,
-          });
+          packets.push(buf);
         }
       }
       sent += socket.sendMany(packets);

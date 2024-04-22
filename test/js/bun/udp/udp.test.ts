@@ -172,7 +172,7 @@ describe("udpSocket()", () => {
         // handle unreliable transmission in UDP
         function sendRec() {
           if (!client.closed) {
-            client.send(data, server.port, '127.0.0.1');
+            expect(client.send(data, server.port, '127.0.0.1')).toBeBoolean();
             setTimeout(sendRec, 100);
           }
         }
@@ -216,7 +216,7 @@ describe("udpSocket()", () => {
         // handle unreliable transmission in UDP
         function sendRec() {
           if (!client.closed) {
-            client.send(data);
+            expect(client.send(data)).toBeBoolean();
             setTimeout(sendRec, 100);
           }
         }

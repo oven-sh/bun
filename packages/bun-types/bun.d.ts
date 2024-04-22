@@ -3979,6 +3979,8 @@ declare module "bun" {
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
 
   namespace udp {
+    type Data = string | ArrayBufferView | ArrayBufferLike;
+
     export interface SocketHandler<DataBinaryType extends BinaryType> {
       data?(socket: Socket<DataBinaryType>, data: BinaryTypeList[DataBinaryType], port: number, address: string): void | Promise<void>;
       drain?(socket: Socket<DataBinaryType>): void | Promise<void>;
@@ -4010,15 +4012,6 @@ declare module "bun" {
       }
     }
 
-    interface BasePacket {
-      data: string | ArrayBufferView | ArrayBufferLike;
-    }
-
-    interface FullPacket extends BasePacket {
-      port: number;
-      address: string;
-    }
-
     export interface BaseUDPSocket {
       readonly hostname: string;
       readonly port: number;
@@ -4032,18 +4025,28 @@ declare module "bun" {
 
     export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
       readonly remoteAddress: SocketAddress;
-      sendMany(packets: BasePacket[]): number;
-      send(data: string | ArrayBufferView | ArrayBufferLike): boolean;
+      sendMany(packets: Data[]): number;
+      send(data: Data): boolean;
       reload(handler: ConnectedSocketHandler<DataBinaryType>): void;
     }
 
     export interface Socket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
-      sendMany(packets: FullPacket[]): number;
-      send(data: string | ArrayBufferView | ArrayBufferLike, port: number, address: string): boolean;
+      sendMany(packets: (Data | string | number)[]): number;
+      send(data: Data, port: number, address: string): boolean;
       reload(handler: SocketHandler<DataBinaryType>): void;
     }
   }
 
+  /**
+   * Create a UDP socket
+   *
+   * @param options The options to use when creating the server
+   * @param options.socket The socket handler to use
+   * @param options.hostname The hostname to listen on
+   * @param options.port The port to listen on
+   * @param options.binaryType The binary type to use for the socket
+   * @param options.connect The hostname and port to connect to
+   */
   export function udpSocket<DataBinaryType extends BinaryType = "buffer">(options: udp.SocketOptions<DataBinaryType>): Promise<udp.Socket<DataBinaryType>>;
   export function udpSocket<DataBinaryType extends BinaryType = "buffer">(options: udp.ConnectSocketOptions<DataBinaryType>): Promise<udp.ConnectedSocket<DataBinaryType>>;
 

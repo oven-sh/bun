@@ -2380,7 +2380,7 @@ pub const Expect = struct {
                         .skip_empty_name = false,
 
                         .include_value = true,
-                    }).init(globalObject, value.asObjectRef());
+                    }).init(globalObject, value);
                     defer props_iter.deinit();
                     pass = props_iter.len == 0;
                 }
@@ -4044,10 +4044,10 @@ pub const Expect = struct {
             var iter = JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
                 .include_value = true,
-            }).init(globalObject, matchers_to_register.asObjectRef());
+            }).init(globalObject, matchers_to_register);
             defer iter.deinit();
 
-            while (iter.next()) |matcher_name| {
+            while (iter.next()) |*matcher_name| {
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {
@@ -4060,11 +4060,11 @@ pub const Expect = struct {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                const wrapper_fn = Bun__JSWrappingFunction__create(globalObject, &matcher_name, &Expect.applyCustomMatcher, matcher_fn, true);
+                const wrapper_fn = Bun__JSWrappingFunction__create(globalObject, matcher_name, &Expect.applyCustomMatcher, matcher_fn, true);
 
-                expect_proto.put(globalObject, &matcher_name, wrapper_fn);
-                expect_constructor.put(globalObject, &matcher_name, wrapper_fn);
-                expect_static_proto.put(globalObject, &matcher_name, wrapper_fn);
+                expect_proto.put(globalObject, matcher_name, wrapper_fn);
+                expect_constructor.put(globalObject, matcher_name, wrapper_fn);
+                expect_static_proto.put(globalObject, matcher_name, wrapper_fn);
             }
         }
 
@@ -5136,7 +5136,7 @@ extern fn JSMockFunction__getCalls(JSValue) JSValue;
 /// If there were no calls, it returns an empty JSArray*
 extern fn JSMockFunction__getReturns(JSValue) JSValue;
 
-extern fn Bun__JSWrappingFunction__create(globalObject: *JSC.JSGlobalObject, symbolName: *const ZigString, functionPointer: JSC.JSHostFunctionPtr, wrappedFn: JSValue, strong: bool) JSValue;
+extern fn Bun__JSWrappingFunction__create(globalObject: *JSC.JSGlobalObject, symbolName: *const bun.String, functionPointer: JSC.JSHostFunctionPtr, wrappedFn: JSValue, strong: bool) JSValue;
 extern fn Bun__JSWrappingFunction__getWrappedFunction(this: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSValue;
 
 extern fn ExpectMatcherUtils__getSingleton(globalObject: *JSC.JSGlobalObject) JSC.JSValue;

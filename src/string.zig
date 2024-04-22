@@ -499,6 +499,18 @@ pub const String = extern struct {
         };
     }
 
+    pub fn trunc(this: String, len: usize) String {
+        if (this.length() <= len) {
+            return this;
+        }
+
+        return String.init(this.toZigString().trunc(len));
+    }
+
+    pub fn toOwnedSliceZ(this: String, allocator: std.mem.Allocator) ![:0]u8 {
+        return this.toZigString().toOwnedSliceZ(allocator);
+    }
+
     /// Create a bun.String from a slice. This is never a copy.
     /// For strings created from static string literals, use `String.static`
     pub fn init(value: anytype) String {

@@ -7,8 +7,8 @@ export BUN_DEPS_DIR=${BUN_DEPS_DIR:-$BUN_BASE_DIR/src/deps/}
 export BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR:-$BUN_BASE_DIR/src/deps/}
 
 # this compiler detection could be better
-export CC=${CC:-$(which clang-16 || which clang || which cc)}
-export CXX=${CXX:-$(which clang++-16 || which clang++ || which c++)}
+export CC=${CC:-$(which clang-17 || which clang || which cc)}
+export CXX=${CXX:-$(which clang++-17 || which clang++ || which c++)}
 export AR=${AR:-$(which llvm-ar || which ar)}
 export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
 
@@ -16,7 +16,7 @@ export CMAKE_CXX_COMPILER=${CXX}
 export CMAKE_C_COMPILER=${CC}
 
 export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden'
-export CXXFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden'
+export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden'
 
 export CMAKE_FLAGS=(
   -DCMAKE_C_COMPILER="${CC}"
@@ -24,14 +24,19 @@ export CMAKE_FLAGS=(
   -DCMAKE_C_FLAGS="$CFLAGS"
   -DCMAKE_CXX_FLAGS="$CXXFLAGS"
   -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_CXX_STANDARD=20
+  -DCMAKE_C_STANDARD=17
+  -DCMAKE_CXX_STANDARD_REQUIRED=ON
+  -DCMAKE_C_STANDARD_REQUIRED=ON
 )
 
+if [[ $(uname -s) == 'Linux' ]]; then
+    # Ensure we always use -std=gnu++20 on Linux
+    export CMAKE_FLAGS+=( -DCMAKE_CXX_EXTENSIONS=ON )
+fi
+
 if [[ $(uname -s) == 'Darwin' ]]; then
-    if ! [[ $(uname -m) == 'arm64' ]]; then
-        export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-10.14}
-    else
-        export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-11.0}
-    fi
+    export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-12.0}
 
     CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
     export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}"

@@ -350,7 +350,7 @@ const TablePrinter = struct {
                 var cols_iter = JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(this.globalObject, row_value.asObjectRef());
+                }).init(this.globalObject, row_value);
                 defer cols_iter.deinit();
 
                 while (cols_iter.next()) |col_key| {
@@ -524,7 +524,7 @@ const TablePrinter = struct {
                 var rows_iter = JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(globalObject, this.tabular_data.asObjectRef());
+                }).init(globalObject, this.tabular_data);
                 defer rows_iter.deinit();
 
                 while (rows_iter.next()) |row_key| {
@@ -597,7 +597,7 @@ const TablePrinter = struct {
                 var rows_iter = JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(globalObject, this.tabular_data.asObjectRef());
+                }).init(globalObject, this.tabular_data);
                 defer rows_iter.deinit();
 
                 while (rows_iter.next()) |row_key| {
@@ -1043,8 +1043,6 @@ pub const Formatter = struct {
                 .cell = js_type,
             };
 
-            // Cell is the "unknown" type
-            // if we call JSObjectGetPrivate, it can segfault
             if (js_type == .Cell) {
                 return .{
                     .tag = .{ .NativeCode = {} },
@@ -2724,7 +2722,7 @@ pub const Formatter = struct {
                         .skip_empty_name = true,
 
                         .include_value = true,
-                    }).init(this.globalThis, props.asObjectRef());
+                    }).init(this.globalThis, props);
                     defer props_iter.deinit();
 
                     const children_prop = props.get(this.globalThis, "children");

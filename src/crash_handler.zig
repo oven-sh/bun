@@ -1339,7 +1339,10 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     // order to get the demangled stack traces.
     var name_bytes: [1024]u8 = undefined;
     for (trace.instruction_addresses[0..trace.index]) |addr| {
-        const line = StackLine.fromAddress(addr, &name_bytes) orelse continue;
+        const line = StackLine.fromAddress(addr, &name_bytes) orelse {
+            stderr.print("- ??? at 0x{X}\n", .{addr}) catch break;
+            continue;
+        };
         stderr.print("- {}\n", .{line}) catch break;
     }
     const program = switch (bun.Environment.os) {

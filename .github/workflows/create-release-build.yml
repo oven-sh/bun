@@ -46,7 +46,7 @@ jobs:
           color: "#1F6FEB"
           title: "Bun v${{ inputs.version }} is compiling"
           description: |
-            ### @${{ github.actor }} started compiling  Bun v${{inputs.version}}
+            ### @${{ github.actor }} started compiling Bun v${{inputs.version}}
 
             **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**
   linux-x64:

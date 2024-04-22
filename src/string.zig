@@ -337,16 +337,6 @@ pub const String = extern struct {
         }
     }
 
-    pub fn toOwnedSliceZ(this: String, allocator: std.mem.Allocator) ![:0]u8 {
-        switch (this.tag) {
-            .ZigString => return try this.value.ZigString.toOwnedSliceZ(allocator),
-            .WTFStringImpl => return this.value.WTFStringImpl.toOwnedSliceZ(allocator),
-            .StaticZigString => return try this.value.StaticZigString.toOwnedSliceZ(allocator),
-            .Empty => return allocator.dupeZ(u8, ""),
-            else => unreachable,
-        }
-    }
-
     pub fn createIfDifferent(other: String, utf8_slice: []const u8) String {
         if (other.tag == .WTFStringImpl) {
             if (other.eqlUTF8(utf8_slice)) {

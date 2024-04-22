@@ -1,6 +1,6 @@
 import { udpSocket } from "bun";
 import { describe, test, expect, it } from "bun:test";
-import { randomPort, hasIP } from "harness";
+import { randomPort } from "harness";
 import { createSocket } from "dgram";
 
 const nodeDataTypes = [
@@ -126,10 +126,10 @@ describe("udpSocket()", () => {
 
   describe.each([
     { hostname: "localhost" },
-    { hostname: "127.0.0.1", skip: !hasIP("IPv4") },
-    { hostname: "::1", skip: !hasIP("IPv6") },
-  ])("can create a socket with given hostname", ({ hostname, skip }) => {
-    test.skipIf(skip)(hostname, async () => {
+    { hostname: "127.0.0.1"},
+    { hostname: "::1" },
+  ])("can create a socket with given hostname", ({ hostname }) => {
+    test(hostname, async () => {
       const socket = await udpSocket({ hostname });
       expect(socket.hostname).toBe(hostname);
       expect(socket.port).toBeInteger();
@@ -341,7 +341,7 @@ describe("createSocket()", () => {
     socket.bind(0, '127.0.0.1');
   });
 
-  test.skipIf(!hasIP("IPv6"))("IPv6 address", (done) => {
+  test("IPv6 address", (done) => {
     const socket = createSocket('udp6');
     const localhost = '::1';
 

@@ -2494,22 +2494,23 @@ pub const Crypto = struct {
             }
 
             var h = Algorithm.init(.{});
-            var out: [Algorithm.digest_length]u8 = undefined;
+            const digest_length = Algorithm.digest_length;
 
             if (output) |output_buf| {
-                if (output_buf.byteSlice().len < out.len) {
-                    globalThis.throwInvalidArguments("TypedArray must be at least {d} bytes", .{out.len});
+                if (output_buf.byteSlice().len < digest_length) {
+                    globalThis.throwInvalidArguments("TypedArray must be at least {d} bytes", .{digest_length});
                     return JSC.JSValue.zero;
                 }
             }
 
             h.update(input.slice());
-            h.final(&out);
 
             if (output) |output_buf| {
-                @memcpy(output_buf.slice()[0..out.len], &out);
+                h.final(output_buf.slice()[0..digest_length]);
                 return output_buf.value;
             } else {
+                var out: [Algorithm.digest_length]u8 = undefined;
+                h.final(&out);
                 // Clone to GC-managed memory
                 return JSC.ArrayBuffer.create(globalThis, &out, .Buffer);
             }

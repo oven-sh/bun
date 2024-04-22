@@ -2328,6 +2328,7 @@ pub const Crypto = struct {
         const Digest = EVP.Digest;
 
         pub usingnamespace JSC.Codegen.JSCryptoHasher;
+        usingnamespace bun.New(@This());
 
         pub const digest = JSC.wrapInstanceMethod(CryptoHasher, "digest_", false);
         pub const hash = JSC.wrapStaticMethod(CryptoHasher, "hash_", false);
@@ -2534,32 +2535,31 @@ pub const Crypto = struct {
                 return null;
             }
 
-            const this = bun.default_allocator.create(CryptoHasher) catch return null;
+            var this: CryptoHasher = undefined;
             const evp = EVP.byName(algorithm, globalThis) orelse {
                 if (bun.strings.eqlComptime(algorithm.slice(), "sha3-224")) {
                     const state = bun.new(std.crypto.hash.sha3.Sha3_224, .{});
-                    this.* = .{ .zig = .{ .algorithm = .@"sha3-224", .state = state } };
-                    return this;
+                    this = .{ .zig = .{ .algorithm = .@"sha3-224", .state = state } };
+                    return CryptoHasher.new(this);
                 }
                 if (bun.strings.eqlComptime(algorithm.slice(), "sha3-256")) {
-                    this.* = .{ .zig = .{ .algorithm = .@"sha3-256", .state = bun.new(std.crypto.hash.sha3.Sha3_256, .{}) } };
-                    return this;
+                    this = .{ .zig = .{ .algorithm = .@"sha3-256", .state = bun.new(std.crypto.hash.sha3.Sha3_256, .{}) } };
+                    return CryptoHasher.new(this);
                 }
                 if (bun.strings.eqlComptime(algorithm.slice(), "sha3-384")) {
-                    this.* = .{ .zig = .{ .algorithm = .@"sha3-384", .state = bun.new(std.crypto.hash.sha3.Sha3_384, .{}) } };
-                    return this;
+                    this = .{ .zig = .{ .algorithm = .@"sha3-384", .state = bun.new(std.crypto.hash.sha3.Sha3_384, .{}) } };
+                    return CryptoHasher.new(this);
                 }
                 if (bun.strings.eqlComptime(algorithm.slice(), "sha3-512")) {
-                    this.* = .{ .zig = .{ .algorithm = .@"sha3-512", .state = bun.new(std.crypto.hash.sha3.Sha3_512, .{}) } };
-                    return this;
+                    this = .{ .zig = .{ .algorithm = .@"sha3-512", .state = bun.new(std.crypto.hash.sha3.Sha3_512, .{}) } };
+                    return CryptoHasher.new(this);
                 }
 
-                bun.default_allocator.destroy(this);
                 globalThis.throwInvalidArguments("Unsupported algorithm {any}", .{algorithm});
                 return null;
             };
-            this.* = .{ .evp = evp };
-            return this;
+            this = .{ .evp = evp };
+            return CryptoHasher.new(this);
         }
 
         pub fn getter(
@@ -2615,22 +2615,22 @@ pub const Crypto = struct {
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            const new = bun.default_allocator.create(CryptoHasher) catch @panic("Out of memory");
+            var new: CryptoHasher = undefined;
             switch (this.*) {
                 .evp => {
-                    new.* = .{ .evp = this.evp.copy(globalObject.bunVM().rareData().boringEngine()) catch @panic("Out of memory") };
+                    new = .{ .evp = this.evp.copy(globalObject.bunVM().rareData().boringEngine()) catch @panic("Out of memory") };
                 },
                 .zig => |*inner| {
                     switch (inner.algorithm) {
                         else => @panic("unreachable"),
-                        .@"sha3-224" => new.* = .{ .zig = .{ .algorithm = inner.algorithm, .state = bun.dupe(std.crypto.hash.sha3.Sha3_224, @ptrCast(@alignCast(inner.state))) } },
-                        .@"sha3-256" => new.* = .{ .zig = .{ .algorithm = inner.algorithm, .state = bun.dupe(std.crypto.hash.sha3.Sha3_256, @ptrCast(@alignCast(inner.state))) } },
-                        .@"sha3-384" => new.* = .{ .zig = .{ .algorithm = inner.algorithm, .state = bun.dupe(std.crypto.hash.sha3.Sha3_384, @ptrCast(@alignCast(inner.state))) } },
-                        .@"sha3-512" => new.* = .{ .zig = .{ .algorithm = inner.algorithm, .state = bun.dupe(std.crypto.hash.sha3.Sha3_512, @ptrCast(@alignCast(inner.state))) } },
+                        .@"sha3-224" => new = .{ .zig = .{ .algorithm = inner.algorithm, .state = bun.dupe(std.crypto.hash.sha3.Sha3_224, @ptrCast(@alignCast(inner.state))) } },
+                        .@"sha3-256" => new = .{ .zig = .{ .algorithm = inner.algorithm, .state = bun.dupe(std.crypto.hash.sha3.Sha3_256, @ptrCast(@alignCast(inner.state))) } },
+                        .@"sha3-384" => new = .{ .zig = .{ .algorithm = inner.algorithm, .state = bun.dupe(std.crypto.hash.sha3.Sha3_384, @ptrCast(@alignCast(inner.state))) } },
+                        .@"sha3-512" => new = .{ .zig = .{ .algorithm = inner.algorithm, .state = bun.dupe(std.crypto.hash.sha3.Sha3_512, @ptrCast(@alignCast(inner.state))) } },
                     }
                 },
             }
-            return new.toJS(globalObject);
+            return CryptoHasher.new(new).toJS(globalObject);
         }
 
         pub fn digest_(
@@ -2732,7 +2732,7 @@ pub const Crypto = struct {
                     }
                 },
             }
-            bun.default_allocator.destroy(this);
+            this.destroy();
         }
     };
 

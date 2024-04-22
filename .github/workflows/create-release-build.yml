@@ -11,6 +11,10 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      label:
+        type: string
+        required: true
+        description: The label to use for the release
       tag:
         type: string
         required: true
@@ -28,14 +32,21 @@ jobs:
       - name: Send Message
         uses: sarisia/actions-status-discord@v1
         with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_PUBLIC }}
+          nodetail: true
+          color: "#FF0000"
+          title: "Bun v${{ inputs.label }} is compiling"
+          description: |
+            @${{ github.actor }} started compiling a release build
+      - name: Send Message
+        uses: sarisia/actions-status-discord@v1
+        with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           nodetail: true
           color: "#FF0000"
-          title: "Bun Release Build Started"
+          title: "Bun v${{ inputs.label }} is compiling"
           description: |
-            ### A new release build is starting
-
-            @${{ github.actor }}, the build for bun-${{ github.event.release.tag_name }} is starting.
+            @${{ github.actor }} started compiling a release build
 
             **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**
   linux-x64:

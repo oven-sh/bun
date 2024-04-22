@@ -7,8 +7,6 @@ import { cp } from "fs/promises";
 
 const root = join(import.meta.dir, "../");
 
-let build_passed = false;
-
 async function tempDirToBuildIn() {
   const dir = mkdtempSync(join(tmpdir(), "bun-next-build-"));
   const copy = [
@@ -25,7 +23,18 @@ async function tempDirToBuildIn() {
   await Promise.all(copy.map(x => cp(join(root, x), join(dir, x), { recursive: true })));
   cpSync(join(root, "src/Counter1.txt"), join(dir, "src/Counter.tsx"));
   cpSync(join(root, "tsconfig_for_build.json"), join(dir, "tsconfig.json"));
-  symlinkSync(join(root, "node_modules"), join(dir, "node_modules"));
+
+  const install = Bun.spawn([bunExe(), "i"], {
+    cwd: dir,
+    env: bunEnv,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if ((await install.exited) !== 0) {
+    throw new Error("Failed to install dependencies");
+  }
+
   return dir;
 }
 
@@ -56,34 +65,33 @@ async function hashAllFiles(dir: string) {
 }
 
 function normalizeOutput(stdout: string) {
-  // remove timestamps from output
-  return stdout.replace(/\(\d+(?:\.\d+)? m?s\)/gi, data => " ".repeat(data.length));
+  return (
+    stdout
+      // remove timestamps from output
+      .replace(/\(\d+(?:\.\d+)? m?s\)/gi, data => " ".repeat(data.length))
+      // displayed file sizes are in post-gzip compression, however
+      // the gzip / node:zlib implementation is different in bun and node
+      .replace(/\d+(\.\d+)? [km]?b/gi, data => " ".repeat(data.length))
+
+      .split("\n")
+      .map(x => x.trim())
+      .join("\n")
+  );
 }
 
 test("next build works", async () => {
   rmSync(join(root, ".next"), { recursive: true, force: true });
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
-  const install = Bun.spawn([bunExe(), "i"], {
-    cwd: root,
-    env: bunEnv,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if ((await install.exited) !== 0) {
-    throw new Error("Failed to install dependencies");
-  }
-
-  console.log("Starting build...");
-
   const bunDir = await tempDirToBuildIn();
   const nodeDir = await tempDirToBuildIn();
+
+  console.log("Bun Dir: " + bunDir);
+  console.log("Node Dir: " + nodeDir);
 
   console.time("[bun] next build");
   const bunBuild = Bun.spawn([bunExe(), "--bun", "node_modules/.bin/next", "build"], {
     cwd: bunDir,
-    // env: bunEnv,
     stdio: ["ignore", "pipe", "inherit"],
     env: {
       ...bunEnv,
@@ -121,6 +129,7 @@ test("next build works", async () => {
   const bunBuildDir = join(bunDir, ".next");
   const nodeBuildDir = join(nodeDir, ".next");
 
+  // Remove some build files that Next.js does not make deterministic.
   const toRemove = [
     // these have timestamps and absolute paths in them
     "trace",
@@ -132,7 +141,7 @@ test("next build works", async () => {
     // these are similar but i feel like there might be something we can fix to make them the same
     "next-minimal-server.js.nft.json",
     "next-server.js.nft.json",
-    // not sorted lol
+    // this file is not deterministically sorted
     "server/pages-manifest.json",
   ];
   for (const key of toRemove) {
@@ -164,8 +173,4 @@ test("next build works", async () => {
     }
     throw error;
   }
-
-  build_passed = true;
 }, 60_0000);
-
-const version_string = "[production needs a constant string]";

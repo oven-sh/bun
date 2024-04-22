@@ -60,7 +60,7 @@ jobs:
       - name: Announce on Discord
         uses: sarisia/actions-status-discord@v1
         with:
-          webhook: ${{ secrets.GITHUB_DISCORD_WEBHOOK }}
+          webhook: ${{ secrets.BUN_DISCORD_GITHUB_CHANNEL_WEBHOOK }}
           nodetail: true
           color: "#1F6FEB"
           title: "Bun Canary #${{ github.sha }} is available!"

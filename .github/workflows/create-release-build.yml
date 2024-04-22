@@ -1,0 +1,149 @@
+name: Create Release Build
+
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        type: string
+        required: true
+        description: The tag to use for the release
+  release:
+    types:
+      - created
+
+jobs:
+  notify-start:
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    name: Notify Start
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Message
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          nodetail: true
+          color: "#FF0000"
+          title: "Bun Release Build Started"
+          description: |
+            ### A new release build is starting
+
+            @${{ github.actor }}, the build for bun-${{ github.event.release.tag_name }} is starting.
+
+            **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**
+  linux-x64:
+    name: Build linux-x64
+    uses: ./.github/workflows/build-linux.yml
+    secrets: inherit
+    with:
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
+      tag: linux-x64
+      arch: x64
+      cpu: haswell
+      canary: false
+  linux-x64-baseline:
+    name: Build linux-x64-baseline
+    uses: ./.github/workflows/build-linux.yml
+    secrets: inherit
+    with:
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
+      tag: linux-x64-baseline
+      arch: x64
+      cpu: nehalem
+      canary: false
+  linux-aarch64:
+    name: Build linux-aarch64
+    uses: ./.github/workflows/build-linux.yml
+    secrets: inherit
+    with:
+      runs-on: namespace-profile-bun-ci-linux-aarch64
+      tag: linux-aarch64
+      arch: aarch64
+      cpu: native
+      canary: false
+  darwin-x64:
+    name: Build darwin-x64
+    uses: ./.github/workflows/build-darwin.yml
+    secrets: inherit
+    with:
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
+      tag: darwin-x64
+      arch: x64
+      cpu: haswell
+      canary: false
+  darwin-x64-baseline:
+    name: Build darwin-x64-baseline
+    uses: ./.github/workflows/build-darwin.yml
+    secrets: inherit
+    with:
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
+      tag: darwin-x64-baseline
+      arch: x64
+      cpu: nehalem
+      canary: false
+  darwin-aarch64:
+    name: Build darwin-aarch64
+    uses: ./.github/workflows/build-darwin.yml
+    secrets: inherit
+    with:
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-13' }}
+      tag: darwin-aarch64
+      arch: aarch64
+      cpu: native
+      canary: false
+  windows-x64:
+    name: Build windows-x64
+    uses: ./.github/workflows/build-windows.yml
+    secrets: inherit
+    with:
+      runs-on: windows
+      tag: windows-x64
+      arch: x64
+      cpu: haswell
+      canary: false
+  windows-x64-baseline:
+    name: Build windows-x64-baseline
+    uses: ./.github/workflows/build-windows.yml
+    secrets: inherit
+    with:
+      runs-on: windows
+      tag: windows-x64-baseline
+      arch: x64
+      cpu: nehalem
+      canary: false
+
+  upload-artifacts:
+    needs:
+      - linux-x64
+      - linux-x64-baseline
+      - linux-aarch64
+      - darwin-x64
+      - darwin-x64-baseline
+      - darwin-aarch64
+      - windows-x64
+      - windows-x64-baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Message
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          nodetail: true
+          color: "#FF0000"
+          title: "Uploading Release Build Artifacts"
+          description: |
+            Release build is uploading artifacts.
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: bun-*
+          path: bun-releases
+      - name: "Upload Artifacts"
+        run: |
+          gh release upload ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} --clobber bun-releases/*

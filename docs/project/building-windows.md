@@ -55,7 +55,7 @@ By default, running unverified scripts are blocked.
 
 After Visual Studio, you need the following:
 
-- LLVM 16
+- LLVM 17
 - Go
 - Rust
 - NASM

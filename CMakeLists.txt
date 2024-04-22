@@ -101,7 +101,7 @@ endif()
 # any case possible. Sorry for the complexity...
 #
 # Bun and WebKit must be compiled with the same compiler, so we do as much as we can to ensure that
-# the compiler used for the prebuilt WebKit, LLVM 16, is the one that we detect in this process.
+# the compiler used for the prebuilt WebKit is the same as we install as a dependency.
 #
 # It has to be done before project() is called, so that CMake doesnt pick a compiler for us, but even then
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.

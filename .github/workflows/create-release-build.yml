@@ -1,4 +1,5 @@
 name: Create Release Build
+run-name: Compile Bun v${{ inputs.version }} by ${{ github.actor }}
 
 concurrency:
   group: release

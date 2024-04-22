@@ -30,3 +30,16 @@ export const shellInternals = {
    */
   builtinDisabled: $newZigFunction("shell.zig", "TestingAPIs.disabledOnThisPlatform", 1),
 };
+
+export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
+  getMachOImageZeroOffset: () => number;
+  segfault: () => void;
+  panic: () => void;
+  rootError: () => void;
+  outOfMemory: () => void;
+};
+
+export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bindings.generate") as {
+  openTempDirWithoutSharingDelete: () => void;
+  closeTempDirHandle: () => void;
+};

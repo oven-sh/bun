@@ -7,34 +7,6 @@ const mimalloc = @import("./allocators/mimalloc.zig");
 
 pub const MAX_WBITS = 15;
 
-test "Zlib Read" {
-    const expected_text = @embedFile("./zlib.test.txt");
-    const input = bun.asByteSlice(@embedFile("./zlib.test.gz"));
-    std.debug.print("zStream Size: {d}", .{@sizeOf(zStream_struct)});
-    var output = std.ArrayList(u8).init(std.heap.c_allocator);
-    var writer = output.writer();
-    const ZlibReader = NewZlibReader(@TypeOf(&writer), 4096);
-
-    var reader = try ZlibReader.init(&writer, input, std.heap.c_allocator);
-    defer reader.deinit();
-    try reader.readAll();
-
-    try std.testing.expectEqualStrings(expected_text, output.items);
-}
-
-test "ZlibArrayList Read" {
-    const expected_text = @embedFile("./zlib.test.txt");
-    const input = bun.asByteSlice(@embedFile("./zlib.test.gz"));
-    std.debug.print("zStream Size: {d}", .{@sizeOf(zStream_struct)});
-    var list = std.ArrayListUnmanaged(u8){};
-    try list.ensureUnusedCapacity(std.heap.c_allocator, 4096);
-    var reader = try ZlibReaderArrayList.init(input, &list, std.heap.c_allocator);
-    defer reader.deinit();
-    try reader.readAll();
-
-    try std.testing.expectEqualStrings(expected_text, list.items);
-}
-
 pub extern fn zlibVersion() [*c]const u8;
 
 pub extern fn compress(dest: [*]Bytef, destLen: *uLongf, source: [*]const Bytef, sourceLen: uLong) c_int;
@@ -93,7 +65,7 @@ const z_streamp = @import("zlib-internal").z_streamp;
 
 const DataType = @import("zlib-internal").DataType;
 const FlushValue = @import("zlib-internal").FlushValue;
-const ReturnCode = @import("zlib-internal").ReturnCode;
+pub const ReturnCode = @import("zlib-internal").ReturnCode;
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 

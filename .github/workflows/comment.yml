@@ -37,7 +37,7 @@ jobs:
           else
             echo -e "✅ @${{ github.actor }}, all tests passed!" > comment.md
           fi
-          echo -e "\n**[View logs](${{ github.event.workflow_run.html_url }})**" >> comment.md
+          echo -e "\n**[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**" >> comment.md
           echo -e "<!-- generated-comment workflow=${{ github.workflow }} -->" >> comment.md
       - name: Find Comment
         id: comment

@@ -1,0 +1,22 @@
+[
+  {
+    "label": "node:buffer",
+    "pattern": "parallel/test-buffer",
+    "skip": [
+      {
+        "file": "backing-arraybuffer.js",
+        "reason": "Internal binding checks if the buffer is on the heap"
+      }
+    ],
+    "todo": [
+      {
+        "file": "constants.js",
+        "reason": "Hangs"
+      },
+      {
+        "file": "tostring-rangeerror.js",
+        "reason": "Hangs"
+      }
+    ]
+  }
+]

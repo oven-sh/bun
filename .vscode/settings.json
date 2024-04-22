@@ -14,6 +14,7 @@
     ".git": true,
     "src/bun.js/WebKit": true,
     "src/deps/*/**": true,
+    "test/node.js/upstream": true,
   },
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,

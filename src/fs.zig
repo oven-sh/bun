@@ -58,9 +58,9 @@ pub const FileSystem = struct {
         }
     }
 
-    pub fn tmpdir(fs: *FileSystem) std.fs.Dir {
+    pub fn tmpdir(fs: *FileSystem) !std.fs.Dir {
         if (tmpdir_handle == null) {
-            tmpdir_handle = fs.fs.openTmpDir() catch unreachable;
+            tmpdir_handle = try fs.fs.openTmpDir();
         }
 
         return tmpdir_handle.?;
@@ -597,6 +597,15 @@ pub const FileSystem = struct {
             if (!tmpdir_path_set) {
                 tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
                 tmpdir_path_set = true;
+            }
+
+            if (comptime Environment.isWindows) {
+                return (try bun.sys.openDirAtWindowsA(bun.invalid_fd, tmpdir_path, .{
+                    .iterable = true,
+                    // we will not delete the temp directory
+                    .can_rename_or_delete = false,
+                    .read_only = true,
+                }).unwrap()).asDir();
             }
 
             return try bun.openDirAbsolute(tmpdir_path);
@@ -1838,14 +1847,3 @@ pub const Path = struct {
 //     defer std.os.close(opened);
 
 // }
-
-test "PathName.init" {
-    var file = "/root/directory/file.ext".*;
-    const res = PathName.init(
-        &file,
-    );
-
-    try std.testing.expectEqualStrings(res.dir, "/root/directory");
-    try std.testing.expectEqualStrings(res.base, "file");
-    try std.testing.expectEqualStrings(res.ext, ".ext");
-}

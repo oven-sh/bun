@@ -1,4 +1,5 @@
 name: Upload Artifacts
+run-name: Canary release ${{github.sha}} upload
 
 permissions:
   contents: write
@@ -26,6 +27,14 @@ jobs:
           merge-multiple: true
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
+      - name: Check for Artifacts
+        run: |
+          if [ ! -d "bun" ] || [ -z "$(ls -A bun)" ]; then
+            echo "Error: No artifacts were downloaded or 'bun' directory does not exist."
+            exit 1  # Fail the job if the condition is met
+          else
+            echo "Artifacts downloaded successfully."
+          fii
       - name: Upload to GitHub Releases
         uses: ncipollo/release-action@v1
         with:
@@ -57,3 +66,17 @@ jobs:
           aws_bucket: ${{ secrets.AWS_BUCKET }}
           source_dir: bun
           destination_dir: releases/canary
+      - name: Announce on Discord
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.BUN_DISCORD_GITHUB_CHANNEL_WEBHOOK }}
+          nodetail: true
+          color: "#1F6FEB"
+          title: "New Bun Canary available"
+          url: https://github.com/oven-sh/bun/commit/${{ github.sha }}
+          description: |
+            A new canary build of Bun has been automatically uploaded. To upgrade, run:
+            ```sh
+            bun upgrade --canary
+            # bun upgrade --stable <- to downgrade
+            ```

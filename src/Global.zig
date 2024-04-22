@@ -72,9 +72,8 @@ pub fn setThreadName(name: [:0]const u8) void {
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
     } else if (Environment.isWindows) {
-        var name_buf: [1024]u16 = undefined;
-        const name_wide = bun.strings.convertUTF8toUTF16InBufferZ(&name_buf, name);
-        _ = SetThreadDescription(std.os.windows.kernel32.GetCurrentThread(), name_wide);
+        // TODO: use SetThreadDescription or NtSetInformationThread with 0x26 (ThreadNameInformation)
+        // without causing exit code 0xC0000409 (stack buffer overrun) in child process
     }
 }
 

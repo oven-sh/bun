@@ -162,7 +162,7 @@ bun run --filter 'ba*' <script>
 ```
 will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
-Find more details in the docs page for [filter](/docs/cli/filter.md).
+Find more details in the docs page for [filter](/docs/cli/filter).
 
 ## `bun run -` to pipe code from stdin
 

@@ -223,7 +223,7 @@ pub export fn napi_get_boolean(_: napi_env, value: bool, result: *napi_value) na
 }
 pub export fn napi_create_array(env: napi_env, result: *napi_value) napi_status {
     log("napi_create_array", .{});
-    result.* = JSValue.c(JSC.C.JSObjectMakeArray(env.ref(), 0, null, null));
+    result.* = JSValue.createEmptyArray(env, 0);
     return .ok;
 }
 const prefilled_undefined_args_array: [128]JSC.JSValue = brk: {
@@ -887,21 +887,7 @@ pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool)
     is_promise.* = value.asAnyPromise() != null;
     return .ok;
 }
-pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status {
-    log("napi_run_script", .{});
-    // TODO: don't copy
-    const ref = JSC.C.JSValueToStringCopy(env.ref(), script.asObjectRef(), TODO_EXCEPTION);
-    defer JSC.C.JSStringRelease(ref);
-
-    var exception = [_]JSC.C.JSValueRef{null};
-    const val = JSC.C.JSEvaluateScript(env.ref(), ref, env.ref(), null, 0, &exception);
-    if (exception[0] != null) {
-        return genericFailure();
-    }
-
-    result.* = JSValue.c(val);
-    return .ok;
-}
+pub extern fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_adjust_external_memory(env: napi_env, change_in_bytes: i64, adjusted_value: [*c]i64) napi_status;
 pub export fn napi_create_date(env: napi_env, time: f64, result: *napi_value) napi_status {
     log("napi_create_date", .{});

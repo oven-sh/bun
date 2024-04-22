@@ -42,7 +42,7 @@ jobs:
       - name: Send Message
         uses: sarisia/actions-status-discord@v1
         with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          webhook: ${{ secrets.BUN_DISCORD_GITHUB_CHANNEL_WEBHOOK }}
           nodetail: true
           color: "#1F6FEB"
           title: "Bun v${{ inputs.version }} is compiling"
@@ -143,20 +143,26 @@ jobs:
       - windows-x64-baseline
     runs-on: ubuntu-latest
     steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: bun-*
+          path: bun-releases
+      - name: Check for Artifacts
+        run: |
+          if [ ! -d "bun-releases" ] || [ -z "$(ls -A bun-releases)" ]; then
+            echo "Error: No artifacts were downloaded or 'bun-releases' directory does not exist."
+            exit 1  # Fail the job if the condition is met
+          else
+            echo "Artifacts downloaded successfully."
+          fi
       - name: Send Message
         uses: sarisia/actions-status-discord@v1
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           nodetail: true
           color: "#FF0000"
-          title: "Uploading Release Build Artifacts"
-          description: |
-            Release build is uploading artifacts.
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: bun-*
-          path: bun-releases
+          title: "Bun v${{ inputs.version }} release artifacts uploaded"
       - name: "Upload Artifacts"
         run: |
           gh release upload ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} --clobber bun-releases/*

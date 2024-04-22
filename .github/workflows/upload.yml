@@ -73,15 +73,10 @@ jobs:
           nodetail: true
           color: "#1F6FEB"
           title: "New Bun Canary available"
+          url: https://github.com/oven-sh/bun/commit/${{ github.sha }}
           description: |
-            A new canary build of Bun has been automatically uploaded.
-
-            To upgrade to the canary release, run:
+            A new canary build of Bun has been automatically uploaded. To upgrade, run:
             ```sh
             bun upgrade --canary
             # bun upgrade --stable <- to downgrade
             ```
-
-            We do not recommend using canary releases of Bun in production.
-
-            [`#${{ github.sha }}`](https://github.com/oven-sh/bun/commit/${{ github.sha }})

@@ -487,9 +487,6 @@ pub const RunCommand = struct {
     fn runBinaryGenericError(executable: []const u8, silent: bool, err: bun.sys.Error) noreturn {
         if (!silent) {
             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{}", .{ basenameOrBun(executable), err.withPath(executable) });
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
         }
 
         Global.exit(1);
@@ -533,6 +530,8 @@ pub const RunCommand = struct {
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
             } else {},
         }) catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
             // an error occurred before the process was spawned
             print_error: {
                 if (!silent) {
@@ -557,9 +556,6 @@ pub const RunCommand = struct {
                     }
 
                     Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to <r><red>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
-                    if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpStackTrace(trace.*);
-                    }
                 }
             }
             Global.exit(1);
@@ -583,9 +579,6 @@ pub const RunCommand = struct {
                                 basenameOrBun(executable),
                                 signal.name() orelse "unknown",
                             });
-                            if (@errorReturnTrace()) |trace| {
-                                std.debug.dumpStackTrace(trace.*);
-                            }
                         }
 
                         Output.flush();
@@ -600,9 +593,6 @@ pub const RunCommand = struct {
                                     basenameOrBun(executable),
                                     exit_code.signal.name() orelse "unknown",
                                 });
-                                if (@errorReturnTrace()) |trace| {
-                                    std.debug.dumpStackTrace(trace.*);
-                                }
                             }
 
                             Output.flush();
@@ -639,10 +629,6 @@ pub const RunCommand = struct {
                                         basenameOrBun(executable),
                                         code,
                                     });
-                                }
-
-                                if (@errorReturnTrace()) |trace| {
-                                    std.debug.dumpStackTrace(trace.*);
                                 }
                             }
                         }
@@ -716,9 +702,9 @@ pub const RunCommand = struct {
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
-            if (bun.argv()[0][0] == '/') {
-                optional_bun_path.* = bun.argv()[0];
-                argv0 = bun.argv()[0];
+            if (bun.argv[0][0] == '/') {
+                optional_bun_path.* = bun.argv[0];
+                argv0 = bun.argv[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
                 const self = try bun.selfExePath();
@@ -729,7 +715,7 @@ pub const RunCommand = struct {
             }
 
             if (optional_bun_path.len == 0) {
-                argv0 = bun.argv()[0];
+                argv0 = bun.argv[0];
             }
 
             if (Environment.isDebug) {
@@ -1319,15 +1305,14 @@ pub const RunCommand = struct {
             (script_name_to_search.len == 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
         {
             Run.boot(ctx, ".") catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                 ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     script_name_to_search,
                     @errorName(err),
                 });
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
                 Global.exit(1);
             };
             return true;
@@ -1403,7 +1388,7 @@ pub const RunCommand = struct {
 
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (strings.hasPrefixComptime(shebang, "#!")) {
-                            const first_arg: string = if (bun.argv().len > 0) bun.argv()[0] else "";
+                            const first_arg: string = if (bun.argv.len > 0) bun.argv[0] else "";
                             const filename = std.fs.path.basename(first_arg);
                             // are we attempting to run the script with bun?
                             if (!strings.contains(shebang, filename)) {
@@ -1415,15 +1400,14 @@ pub const RunCommand = struct {
                     Global.configureAllocator(.{ .long_running = true });
                     const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
                     Run.boot(ctx, out_path) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                         ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                         Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                             std.fs.path.basename(file_path),
                             @errorName(err),
                         });
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpStackTrace(trace.*);
-                        }
                         Global.exit(1);
                     };
 
@@ -1517,15 +1501,14 @@ pub const RunCommand = struct {
             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
         {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                 ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     std.fs.path.basename(script_name_to_search),
                     @errorName(err),
                 });
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
                 Global.exit(1);
             };
         }
@@ -1552,9 +1535,7 @@ pub const RunCommand = struct {
                     std.fs.path.basename(script_name_to_search),
                     @errorName(err),
                 });
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 Global.exit(1);
             };
             return true;
@@ -1744,109 +1725,3 @@ pub const BunXFastPath = struct {
         };
     }
 };
-
-test "replacePackageManagerRun" {
-    var copy_script = std.ArrayList(u8).init(default_allocator);
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "bun run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn install foo");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn install foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn --prod");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn --prod");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn -prod");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn -prod");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn ");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn ");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "npm ");
-        try std.testing.expectEqualStrings(copy_script.items, "npm ");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "npm bacon run");
-        try std.testing.expectEqualStrings(copy_script.items, "npm bacon run");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn bacon foo");
-        try std.testing.expectEqualStrings(copy_script.items, "bun run bacon foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn npm run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn npm run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "npm run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "bun run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "bpm run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "bpm run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "pnpm run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "bun run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "foopnpm run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "foopnpm run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "foopnpm rune foo");
-        try std.testing.expectEqualStrings(copy_script.items, "foopnpm rune foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "foopnpm ru foo");
-        try std.testing.expectEqualStrings(copy_script.items, "foopnpm ru foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "'npm run foo'");
-        try std.testing.expectEqualStrings(copy_script.items, "'bun run foo'");
-    }
-}

@@ -206,7 +206,3 @@ pub fn checkServerIdentity(
     }
     return false;
 }
-
-test "load" {
-    load();
-}

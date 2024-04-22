@@ -277,7 +277,7 @@ function Install-Bun {
       New-ItemProperty -Path $RegistryKey -Name "DisplayName" -Value "Bun" -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "InstallLocation" -Value "${BunRoot}" -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "DisplayIcon" -Value $BunBin\bun.exe -PropertyType String -Force | Out-Null
-      New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`' -PauseOnError`"" -PropertyType String -Force | Out-Null
+      New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`' -PauseOnError`" -ExecutionPolicy Bypass" -PropertyType String -Force | Out-Null
     } catch {
       if ($rootKey -ne $null) {
         Remove-Item -Path $RegistryKey -Force

@@ -2822,13 +2822,17 @@ pub fn serve(
         const exception = &exception_;
 
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
-        const config_ = JSC.API.ServerConfig.fromJS(globalObject.ptr(), &args, exception);
+        var config_ = JSC.API.ServerConfig.fromJS(globalObject.ptr(), &args, exception);
         if (exception[0] != null) {
+            config_.deinit();
+
             globalObject.throwValue(exception_[0].?.value());
             return .undefined;
         }
 
         if (globalObject.hasException()) {
+            config_.deinit();
+
             return .zero;
         }
 
@@ -3327,7 +3331,6 @@ const UnsafeObject = struct {
         const object = JSValue.createEmptyObject(globalThis, 3);
         const fields = comptime .{
             .gcAggressionLevel = &gcAggressionLevel,
-            .segfault = &__debug__doSegfault,
             .arrayBufferToString = &arrayBufferToString,
             .mimallocDump = &dump_mimalloc,
         };
@@ -3357,15 +3360,6 @@ const UnsafeObject = struct {
             }
         }
         return ret;
-    }
-
-    // For testing the segfault handler
-    pub fn __debug__doSegfault(
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const Reporter = @import("../../report.zig");
-        Reporter.globalError(error.SegfaultTest, null);
     }
 
     pub fn arrayBufferToString(

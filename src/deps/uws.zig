@@ -1202,7 +1202,7 @@ pub extern fn us_socket_wrap_with_tls(ssl: i32, s: *Socket, options: us_bun_sock
 extern fn us_socket_verify_error(ssl: i32, context: *Socket) us_bun_verify_error_t;
 extern fn SocketContextimestamp(ssl: i32, context: ?*SocketContext) c_ushort;
 pub extern fn us_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_socket_context_options_t, ?*anyopaque) void;
-extern fn us_socket_context_remove_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8) void;
+pub extern fn us_socket_context_remove_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8) void;
 extern fn us_socket_context_on_server_name(ssl: i32, context: ?*SocketContext, cb: ?*const fn (?*SocketContext, [*c]const u8) callconv(.C) void) void;
 extern fn us_socket_context_get_native_handle(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 pub extern fn us_create_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_socket_context_options_t) ?*SocketContext;
@@ -1843,6 +1843,9 @@ pub fn NewApp(comptime ssl: bool) type {
             }
             uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
+        pub fn domain(app: *ThisApp, pattern: [:0]const u8) void {
+            uws_app_domain(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern);
+        }
         pub fn run(app: *ThisApp) void {
             if (comptime is_bindgen) {
                 unreachable;
@@ -1902,7 +1905,7 @@ pub fn NewApp(comptime ssl: bool) type {
             comptime UserData: type,
             user_data: UserData,
             comptime handler: fn (UserData, ?*ThisApp.ListenSocket) void,
-            domain: [:0]const u8,
+            domain_name: [:0]const u8,
             flags: i32,
         ) void {
             const Wrapper = struct {
@@ -1920,8 +1923,8 @@ pub fn NewApp(comptime ssl: bool) type {
             return uws_app_listen_domain_with_options(
                 ssl_flag,
                 @as(*uws_app_t, @ptrCast(app)),
-                domain.ptr,
-                domain.len,
+                domain_name.ptr,
+                domain_name.len,
                 flags,
                 Wrapper.handle,
                 user_data,
@@ -1946,7 +1949,7 @@ pub fn NewApp(comptime ssl: bool) type {
         pub fn addServerName(app: *ThisApp, hostname_pattern: [*:0]const u8) void {
             return uws_add_server_name(ssl_flag, @as(*uws_app_t, @ptrCast(app)), hostname_pattern);
         }
-        pub fn addServerNameWithOptions(app: *ThisApp, hostname_pattern: [:0]const u8, opts: us_bun_socket_context_options_t) void {
+        pub fn addServerNameWithOptions(app: *ThisApp, hostname_pattern: [*:0]const u8, opts: us_bun_socket_context_options_t) void {
             return uws_add_server_name_with_options(ssl_flag, @as(*uws_app_t, @ptrCast(app)), hostname_pattern, opts);
         }
         pub fn missingServerName(app: *ThisApp, handler: uws_missing_server_handler, user_data: ?*anyopaque) void {
@@ -2362,6 +2365,7 @@ extern fn uws_app_connect(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, hand
 extern fn uws_app_trace(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_any(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_run(ssl: i32, *uws_app_t) void;
+extern fn uws_app_domain(ssl: i32, app: *uws_app_t, domain: [*c]const u8) void;
 extern fn uws_app_listen(ssl: i32, app: *uws_app_t, port: i32, handler: uws_listen_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_listen_with_config(
     ssl: i32,

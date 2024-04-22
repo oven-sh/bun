@@ -1734,11 +1734,11 @@ pub const WindowsSymlinkOptions = packed struct {
     pub var has_failed_to_create_symlink = false;
 };
 
-pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe(void) {
+pub fn symlinkOrJunctionOnWindows(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
         var sym16: bun.WPathBuffer = undefined;
         var target16: bun.WPathBuffer = undefined;
-        const sym_path = bun.strings.toNTPath(&sym16, sym);
+        const sym_path = bun.strings.toNTPath(&sym16, dest);
         const target_path = bun.strings.toNTPath(&target16, target);
         switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
             .result => {
@@ -1752,17 +1752,17 @@ pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe
         }
     }
 
-    return sys_uv.symlinkUV(sym, target, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
+    return sys_uv.symlinkUV(target, dest, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
 }
 
-pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
+pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
     while (true) {
         const flags = options.flags();
 
-        if (windows.kernel32.CreateSymbolicLinkW(sym, target, flags) == 0) {
+        if (windows.kernel32.CreateSymbolicLinkW(dest, target, flags) == 0) {
             const errno = bun.windows.Win32Error.get();
             log("CreateSymbolicLinkW({}, {}, {any}) = {s}", .{
-                bun.fmt.fmtPath(u16, sym, .{}),
+                bun.fmt.fmtPath(u16, dest, .{}),
                 bun.fmt.fmtPath(u16, target, .{}),
                 flags,
                 @tagName(errno),
@@ -1789,7 +1789,7 @@ pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymli
         }
 
         log("CreateSymbolicLinkW({}, {}, {any}) = 0", .{
-            bun.fmt.fmtPath(u16, sym, .{}),
+            bun.fmt.fmtPath(u16, dest, .{}),
             bun.fmt.fmtPath(u16, target, .{}),
             flags,
         });
@@ -2161,14 +2161,14 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     }
 
     if (comptime !has_sentinel) {
-        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.oom };
+        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
         return directoryExistsAt(dir_fd, path);
     }
 
     if (comptime Environment.isLinux) {
         // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
-        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.O.DIRECTORY | linux.O.RDONLY, 0);
-        syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), rc });
+        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
+        syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(linux.getErrno(rc)) });
         if (rc == 0) {
             return JSC.Maybe(bool){ .result = true };
         }
@@ -2176,9 +2176,9 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
         return JSC.Maybe(bool){ .result = false };
     }
 
-    // on toher platforms use faccessat from libc
-    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.O.DIRECTORY | std.os.O.RDONLY, 0);
-    syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), rc });
+    // on other platforms use faccessat from libc
+    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.F_OK, 0);
+    syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(std.c.getErrno(rc)) });
     if (rc == 0) {
         return JSC.Maybe(bool){ .result = true };
     }
@@ -2188,7 +2188,7 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
 
 pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
     if (comptime Environment.isPosix) {
-        return system.faccessat(bun.toFD(fd), &(std.os.toPosixPath(subpath) catch return false), 0, 0) == 0;
+        return system.faccessat(fd.cast(), &(std.os.toPosixPath(subpath) catch return false), 0, 0) == 0;
     }
 
     if (comptime Environment.isWindows) {

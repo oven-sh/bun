@@ -22,7 +22,7 @@ export function fmtCPPCharArray(str: string, nullTerminated: boolean = true) {
 }
 
 export function declareASCIILiteral(name: string, value: string) {
-  const [chars, count] = fmtCPPCharArray(value);
+  const [chars, count] = fmtCPPCharArray(value, true);
   return `static constexpr const char ${name}Bytes[${count}] = ${chars};
 static constexpr ASCIILiteral ${name} = ASCIILiteral::fromLiteralUnsafe(${name}Bytes);`;
 }

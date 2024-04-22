@@ -10,7 +10,8 @@ import { $ } from "bun";
 import path from "path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { ShellOutput } from "bun";
-import { TestBuilder, sortedShellOutput } from "../util";
+import { createTestBuilder, sortedShellOutput } from "../util";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 const fileExists = async (path: string): Promise<boolean> =>
   $`ls -d ${path}`.then(o => o.stdout.toString() === `${path}\n`);

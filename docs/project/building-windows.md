@@ -55,7 +55,7 @@ By default, running unverified scripts are blocked.
 
 After Visual Studio, you need the following:
 
-- LLVM 16
+- LLVM 17
 - Go
 - Rust
 - NASM
@@ -73,7 +73,7 @@ The Zig compiler is automatically downloaded, installed, and updated by the buil
 > irm https://get.scoop.sh | iex
 > scoop install nodejs-lts go rust nasm ruby perl
 # scoop seems to be buggy if you install llvm and the rest at the same time
-> scoop llvm@16.0.4
+> scoop llvm@17.0.6
 ```
 
 If you intend on building WebKit locally (optional), you should install these packages:

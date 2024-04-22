@@ -33,7 +33,7 @@ const debug = std.debug;
 pub const enable = true;
 
 /// Override with BUN_CRASH_REPORT_URL enviroment variable.
-const default_report_base_url = "https://bun.report/";
+const default_report_base_url = "https://bun.report";
 
 /// Only print the `Bun has crashed` message once. Once this is true, control
 /// flow is not returned to the main application.
@@ -583,7 +583,7 @@ pub fn reportBaseUrl() []const u8 {
     return static.base_url orelse {
         const computed = computed: {
             if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |url| {
-                break :computed url;
+                break :computed bun.strings.withoutTrailingSlash(url);
             }
             break :computed default_report_base_url;
         };

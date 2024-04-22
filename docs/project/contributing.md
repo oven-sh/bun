@@ -53,7 +53,7 @@ $ brew install bun
 
 ## Install LLVM
 
-Bun requires LLVM 16 and Clang 16 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 16/Clang 16 or LLVM 17/Clang 17 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs %}
 
@@ -84,18 +84,19 @@ $ sudo zypper install clang16 lld16 llvm16
 
 If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-17.0.6).
 
-Make sure LLVM 16 is in your path:
+Make sure Clang/LLVM is in your path:
 
 ```bash
 $ which clang-17
 ```
 
-If not, run this to manually link it:
+If not, run this to manually add it:
 
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
+# use path+="$(brew --prefix llvm@17)/bin" if you are using zsh
 $ export PATH="$(brew --prefix llvm@17)/bin:$PATH"
 ```
 

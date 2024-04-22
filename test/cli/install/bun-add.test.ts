@@ -131,49 +131,52 @@ it("should reject missing package", async () => {
   );
 });
 
-it.each(["file://", "file:/", "file:"])("should accept file protocol with prefix %s", async protocolPrefix => {
-  await writeFile(
-    join(add_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "1.2.3",
-    }),
-  );
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "bar",
-      version: "2.3.4",
-    }),
-  );
-  const add_path = relative(package_dir, add_dir);
-  const dep = `${protocolPrefix}${add_path.replace(/\\/g, "/")}`;
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", dep],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
+it.each(["file:///", "file://", "file:/", "file:"])(
+  "should accept file protocol with prefix %s",
+  async protocolPrefix => {
+    await writeFile(
+      join(add_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.2.3",
+      }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "bar",
+        version: "2.3.4",
+      }),
+    );
+    const add_path = relative(package_dir, add_dir);
+    const dep = `${protocolPrefix}${add_path.replace(/\\/g, "/")}`;
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", dep],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
 
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
-  expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
-  expect(err).toContain("Saved lockfile");
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    ` installed foo@${add_path.replace(/\\/g, "/")}`,
-    "",
-    " 1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-});
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      ` installed foo@${add_path.replace(/\\/g, "/")}`,
+      "",
+      " 1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+  },
+);
 
-it.each(["fileblah://", "file:///"])("should reject invalid path without segfault: %s", async protocolPrefix => {
+it.each(["fileblah://"])("should reject invalid path without segfault: %s", async protocolPrefix => {
   await writeFile(
     join(add_dir, "package.json"),
     JSON.stringify({

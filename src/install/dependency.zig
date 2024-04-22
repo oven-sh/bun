@@ -970,28 +970,87 @@ pub fn parseWithTag(
             };
         },
         .folder => {
-            if (strings.startsWithWindowsDriveLetter(dependency)) {
-                return .{
-                    .literal = sliced.value(),
-                    .value = .{ .folder = sliced.sub(dependency).value() },
-                    .tag = .folder,
-                };
-            }
-
             if (strings.indexOfChar(dependency, ':')) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
-                    const folder = brk: {
-                        if (dependency.len > protocol + 1 and dependency[protocol + 1] == '/') {
-                            if (dependency.len > protocol + 2 and dependency[protocol + 2] == '/') {
-                                break :brk dependency[protocol + 3 ..];
+                    const folder = folder: {
+
+                        // from npm:
+                        //
+                        // turn file://../foo into file:../foo
+                        // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L269
+                        //
+                        // something like this won't behave the same
+                        // file://bar/../../foo
+                        const maybe_dot_dot = maybe_dot_dot: {
+                            if (dependency.len > protocol + 1 and dependency[protocol + 1] == '/') {
+                                if (dependency.len > protocol + 2 and dependency[protocol + 2] == '/') {
+                                    if (dependency.len > protocol + 3 and dependency[protocol + 3] == '/') {
+                                        break :maybe_dot_dot dependency[protocol + 4 ..];
+                                    }
+                                    break :maybe_dot_dot dependency[protocol + 3 ..];
+                                }
+                                break :maybe_dot_dot dependency[protocol + 2 ..];
                             }
-                            break :brk dependency[protocol + 2 ..];
+                            break :folder dependency[protocol + 1 ..];
+                        };
+
+                        if (maybe_dot_dot.len > 1 and maybe_dot_dot[0] == '.' and maybe_dot_dot[1] == '.') {
+                            return .{
+                                .literal = sliced.value(),
+                                .value = .{ .folder = sliced.sub(maybe_dot_dot).value() },
+                                .tag = .folder,
+                            };
                         }
 
-                        break :brk dependency[protocol + 1 ..];
+                        break :folder dependency[protocol + 1 ..];
                     };
 
-                    return .{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(folder).value() }, .tag = .folder };
+                    // from npm:
+                    //
+                    // turn /C:/blah info just C:/blah on windows
+                    // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
+                    if (comptime Environment.isWindows) {
+                        if (folder.len > 2 and folder[0] == '/' and strings.startsWithWindowsDriveLetter(folder[1..])) {
+                            return .{
+                                .literal = sliced.value(),
+                                .value = .{ .folder = sliced.sub(folder[1..]).value() },
+                                .tag = .folder,
+                            };
+                        }
+                    }
+
+                    return .{
+                        .literal = sliced.value(),
+                        .value = .{ .folder = sliced.sub(folder).value() },
+                        .tag = .folder,
+                    };
+                }
+
+                // check for absolute windows paths
+                if (comptime Environment.isWindows) {
+                    if (protocol == 1 or protocol == 2) {
+                        if (protocol == 1 and strings.startsWithWindowsDriveLetter(dependency)) {
+                            return .{
+                                .literal = sliced.value(),
+                                .value = .{ .folder = sliced.sub(dependency).value() },
+                                .tag = .folder,
+                            };
+                        }
+
+                        // from npm:
+                        //
+                        // turn /C:/blah info just C:/blah on windows
+                        // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
+                        //
+                        // protocol == 2
+                        if (dependency.len > 2 and dependency[0] == '/' and strings.startsWithWindowsDriveLetter(dependency[1..])) {
+                            return .{
+                                .literal = sliced.value(),
+                                .value = .{ .folder = sliced.sub(dependency[1..]).value() },
+                                .tag = .folder,
+                            };
+                        }
+                    }
                 }
 
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;

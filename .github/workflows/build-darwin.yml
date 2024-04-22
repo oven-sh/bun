@@ -78,6 +78,7 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
+            golang \
             gnu-sed --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
@@ -134,6 +135,7 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
+            golang \
             gnu-sed --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
@@ -215,6 +217,7 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
+            golang \
             gnu-sed --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "../../../harness";
+import { bunEnv, bunExe, isWindows } from "../../../harness";
 import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, promises as fs } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -89,8 +89,10 @@ test("next build works", async () => {
   console.log("Bun Dir: " + bunDir);
   console.log("Node Dir: " + nodeDir);
 
+  const nextPath = "node_modules/next/dist/bin/next";
+
   console.time("[bun] next build");
-  const bunBuild = Bun.spawn([bunExe(), "--bun", "node_modules/.bin/next", "build"], {
+  const bunBuild = Bun.spawn([bunExe(), "--bun", nextPath, "build"], {
     cwd: bunDir,
     stdio: ["ignore", "pipe", "inherit"],
     env: {
@@ -100,7 +102,7 @@ test("next build works", async () => {
   });
 
   console.time("[node] next build");
-  const nodeBuild = Bun.spawn(["node", "node_modules/.bin/next", "build"], {
+  const nodeBuild = Bun.spawn(["node", nextPath, "build"], {
     cwd: nodeDir,
     env: { ...bunEnv, NODE_NO_WARNINGS: "1", NODE_ENV: "production" },
     stdio: ["ignore", "pipe", "inherit"],

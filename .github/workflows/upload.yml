@@ -57,3 +57,26 @@ jobs:
           aws_bucket: ${{ secrets.AWS_BUCKET }}
           source_dir: bun
           destination_dir: releases/canary
+      - name: Announce on Discord
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.GITHUB_DISCORD_WEBHOOK }}
+          nodetail: true
+          color: "#1F6FEB"
+          title: "Bun Canary #${{ github.sha }} is available!"
+          description: |
+            Bun Canary [#${{ github.sha }}](https://github.com/oven-sh/bun/commit/${{ github.sha }}) has been released!  
+
+            To upgrade to the canary release, run:
+            ```sh
+            bun upgrade --canary
+            ```
+
+            We do not recommend using canary releases of Bun in production.
+      - name: Announce in other Discord
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          nodetail: true
+          title: "Bun ##${{ github.sha }} (canary) uploaded"
+          description: "A new canary build of Bun has been uploaded!"

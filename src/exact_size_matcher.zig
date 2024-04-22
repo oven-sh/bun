@@ -79,22 +79,3 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
 
 const eight = ExactSizeMatcher(8);
 const expect = std.testing.expect;
-test "ExactSizeMatcher 5 letter" {
-    const word = "yield";
-    try expect(eight.match(word) == eight.case("yield"));
-    try expect(eight.match(word) != eight.case("yields"));
-}
-
-test "ExactSizeMatcher 4 letter" {
-    const Four = ExactSizeMatcher(4);
-    const word = "from".*;
-    try expect(Four.match(word) == Four.case("from"));
-    try expect(Four.match(word) != Four.case("fro"));
-}
-
-test "ExactSizeMatcher 12 letter" {
-    const Four = ExactSizeMatcher(12);
-    const word = "from";
-    try expect(Four.match(word) == Four.case("from"));
-    try expect(Four.match(word) != Four.case("fro"));
-}

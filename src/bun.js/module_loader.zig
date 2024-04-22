@@ -721,6 +721,49 @@ pub const ModuleLoader = struct {
         }
     }
 
+    pub fn resolveEmbeddedFile(vm: *JSC.VirtualMachine, input_path: []const u8, extname: []const u8) ?[]const u8 {
+        if (input_path.len == 0) return null;
+        var graph = vm.standalone_module_graph orelse return null;
+        const file = graph.find(input_path) orelse return null;
+
+        if (comptime Environment.isLinux) {
+            // TODO: use /proc/fd/12346 instead! Avoid the copy!
+        }
+
+        // atomically write to a tmpfile and then move it to the final destination
+        var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null, 0);
+
+        const tmpdir = bun.fs.FileSystem.instance.tmpdir() catch return null;
+
+        // First we open the tmpfile, to avoid any other work in the event of failure.
+        const tmpfile = bun.Tmpfile.create(bun.toFD(tmpdir.fd), tmpfilename).unwrap() catch return null;
+        defer {
+            _ = bun.sys.close(tmpfile.fd);
+        }
+
+        switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+            &tmpname_buf, // not used
+
+            .{
+                .data = .{
+                    .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(file.contents),
+                },
+                .dirfd = bun.toFD(tmpdir.fd),
+                .file = .{
+                    .fd = tmpfile.fd,
+                },
+                .encoding = .buffer,
+            },
+        )) {
+            .err => {
+                return null;
+            },
+            else => {},
+        }
+        return bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename);
+    }
+
     pub const AsyncModule = struct {
 
         // This is all the state used by the printer to print the module
@@ -2911,47 +2954,11 @@ pub const HardcodedModule = enum {
 
 /// Support embedded .node files
 export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun.String) bool {
-    var graph = vm.standalone_module_graph orelse return false;
-    const utf8 = in_out_str.toUTF8(bun.default_allocator);
-    defer utf8.deinit();
-    const file = graph.find(utf8.slice()) orelse return false;
+    if (vm.standalone_module_graph == null) return false;
 
-    if (comptime Environment.isLinux) {
-        // TODO: use /proc/fd/12346 instead! Avoid the copy!
-    }
-
-    // atomically write to a tmpfile and then move it to the final destination
-    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname("node", &tmpname_buf, bun.hash(file.name)) catch return false, 0);
-
-    const tmpdir = bun.fs.FileSystem.instance.tmpdir();
-
-    // First we open the tmpfile, to avoid any other work in the event of failure.
-    const tmpfile = bun.Tmpfile.create(bun.toFD(tmpdir.fd), tmpfilename).unwrap() catch return false;
-    defer {
-        _ = bun.sys.close(tmpfile.fd);
-    }
-
-    switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
-        &tmpname_buf, // not used
-
-        .{
-            .data = .{
-                .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(file.contents),
-            },
-            .dirfd = bun.toFD(tmpdir.fd),
-            .file = .{
-                .fd = tmpfile.fd,
-            },
-            .encoding = .buffer,
-        },
-    )) {
-        .err => {
-            return false;
-        },
-        else => {},
-    }
-
-    in_out_str.* = bun.String.createUTF8(bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename));
+    const input_path = in_out_str.toUTF8(bun.default_allocator);
+    defer input_path.deinit();
+    const result = ModuleLoader.resolveEmbeddedFile(vm, input_path.slice(), "node") orelse return false;
+    in_out_str.* = bun.String.createUTF8(result);
     return true;
 }

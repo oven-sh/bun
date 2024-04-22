@@ -298,32 +298,32 @@ interface Bun {
     fetch(request: Request, server: Server): Response | Promise<Response>;
     hostname?: string;
     id?: string | null;
-    lowMemoryMode?: boolean;
     maxRequestBodySize?: number;
     port?: string | number;
     reusePort?: boolean;
-    serverNames?: Record<string, TLSOptions>; // Server Name Indication (SNI) / TLS virtual hosts
-    tls?: {
-      ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
-      cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
-      dhParamsFile?: string;
-      key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
-      lowMemoryMode?: boolean;
-      passphrase?: string;
-      secureOptions?: number | undefined;
-      serverName?: string;
-    };
+    tls?: TLSOptions | Array<TLSOptions>;
     unix: string;
     websocket: WebSocketHandler<WebSocketDataType>;
   }): Server;
 }
 
+interface TLSOptions {
+  ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+  cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+  dhParamsFile?: string;
+  key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+  lowMemoryMode?: boolean;
+  passphrase?: string;
+  secureOptions?: number | undefined;
+  serverName?: string;
+}
+
 interface Server {
   fetch(request: Request | string): Response | Promise<Response>;
   publish(
-    topic: string,
-    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
     compress?: boolean,
+    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    topic: string,
   ): ServerWebSocketSendStatus;
   ref(): void;
   reload(options: Serve): void;
@@ -331,11 +331,11 @@ interface Server {
   stop(closeActiveConnections?: boolean): void;
   unref(): void;
   upgrade<T = undefined>(
-    request: Request,
     options?: {
       data?: T;
       headers?: Bun.HeadersInit;
     },
+    request: Request,
   ): boolean;
 
   readonly development: boolean;

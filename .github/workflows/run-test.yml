@@ -22,7 +22,7 @@ on:
 
 jobs:
   test:
-    name: Run Tests
+    name: Tests
     runs-on: ${{ inputs.runs-on }}
     steps:
       - if: ${{ runner.os == 'Windows' }}
@@ -129,3 +129,77 @@ jobs:
         run: |
           echo "There are ${{ steps.test.outputs.failing_tests_count || 'some' }} failing tests on bun-${{ inputs.tag }}."
           exit 1
+  test-node:
+    name: Node.js Tests
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - if: ${{ runner.os == 'Windows' }}
+        name: Setup Git
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            test/node
+      - name: Setup Environment
+        shell: bash
+        run: |
+          echo "${{ inputs.pr-number }}" > pr-number.txt
+      - name: Download Bun
+        uses: actions/download-artifact@v4
+        with:
+          name: bun-${{ inputs.tag }}
+          path: bun
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run-id || github.run_id }}
+      - if: ${{ runner.os != 'Windows' }}
+        name: Setup Bun
+        shell: bash
+        run: |
+          unzip bun/bun-*.zip
+          cd bun-*
+          pwd >> $GITHUB_PATH
+      - if: ${{ runner.os == 'Windows' }}
+        name: Setup Cygwin
+        uses: secondlife/setup-cygwin@v3
+        with:
+          packages: bash
+      - if: ${{ runner.os == 'Windows' }}
+        name: Setup Bun (Windows)
+        run: |
+          unzip bun/bun-*.zip
+          cd bun-*
+          pwd >> $env:GITHUB_PATH
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Checkout Tests
+        shell: bash
+        working-directory: test/node
+        run: |
+          node runner.mjs --pull
+      - name: Install Dependencies
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          bun install --cwd test/node
+      - name: Run Tests
+        timeout-minutes: 10 # Increase when more tests are added
+        shell: bash
+        working-directory: test/node
+        env:
+          TMPDIR: ${{ runner.temp }}
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
+        run: |
+          node runner.mjs
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-${{ inputs.tag }}-node-tests
+          path: |
+            test/node/summary/*.json
+          if-no-files-found: error
+          overwrite: true

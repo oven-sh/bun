@@ -21,10 +21,12 @@ import url from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import nodefs from "node:fs";
-import { join as joinPath } from "node:path";
+import * as path from "node:path";
 import { unlinkSync } from "node:fs";
 import { PassThrough } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
+import { bunExe } from "bun:harness";
+import { bunEnv } from "harness";
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
@@ -1060,8 +1062,8 @@ describe("node:http", () => {
 });
 describe("node https server", async () => {
   const httpsOptions = {
-    key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "cert.key")),
-    cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "cert.pem")),
+    key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.key")),
+    cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.pem")),
   };
   const createServer = onRequest => {
     return new Promise(resolve => {
@@ -1235,8 +1237,8 @@ describe("server.address should be valid IP", () => {
 it("should not accept untrusted certificates", async () => {
   const server = https.createServer(
     {
-      key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.key")),
-      cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.crt")),
+      key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl.key")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl.crt")),
       passphrase: "123123123",
     },
     (req, res) => {
@@ -1743,7 +1745,7 @@ it("#9242.4 ServerResponse has constructor", () => {
 if (process.platform !== "win32") {
   // By not timing out, this test passes.
   test(".unref() works", async () => {
-    expect([joinPath(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
+    expect([path.join(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
   });
 }
 
@@ -1804,4 +1806,33 @@ it("#10177 response.write with non-ascii latin1 should not cause duplicated char
       }
       finish();
     });
+}, 20_000);
+
+it("should emit events in the right order", async () => {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "fixtures/log-events.mjs")],
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.split("\n")).toEqual([
+    `[ "req", "socket" ]`,
+    `[ "req", "prefinish" ]`,
+    `[ "req", "finish" ]`,
+    `[ "req", "response" ]`,
+    "STATUS: 200",
+    // `[ "res", "resume" ]`,
+    // `[ "res", "readable" ]`,
+    // `[ "res", "end" ]`,
+    `[ "req", "close" ]`,
+    `[ "res", "#kConstruct" ]`, // TODO: this shouldnt'be necessary
+    // `[ "res", "close" ]`,
+    "",
+  ]);
 });

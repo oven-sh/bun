@@ -1810,8 +1810,6 @@ var require_destroy = __commonJS({
         }
         if (err2) {
           runOnNextTick(emitErrorCloseNT, self, err2);
-        } else {
-          runOnNextTick(emitCloseNT, self);
         }
       }
       try {
@@ -1822,20 +1820,6 @@ var require_destroy = __commonJS({
     }
     function emitErrorCloseNT(self, err) {
       emitErrorNT(self, err);
-      emitCloseNT(self);
-    }
-    function emitCloseNT(self) {
-      const r = self._readableState;
-      const w = self._writableState;
-      if (w) {
-        w.closeEmitted = true;
-      }
-      if (r) {
-        r.closeEmitted = true;
-      }
-      if ((w && w.emitClose) || (r && r.emitClose)) {
-        self.emit("close");
-      }
     }
     function emitErrorNT(self, err) {
       const r = self?._readableState;
@@ -3892,7 +3876,7 @@ var require_writable = __commonJS({
           errorOrDestroy(stream, err, state.sync);
         } else if (needFinish(state)) {
           state.prefinished = true;
-          stream.emit("prefinish");
+          process.nextTick(() => stream.emit("prefinish"));
           state.pendingcb++;
           runOnNextTick(finish, stream, state);
         }
@@ -3913,7 +3897,7 @@ var require_writable = __commonJS({
           callFinal(stream, state);
         } else {
           state.prefinished = true;
-          stream.emit("prefinish");
+          process.nextTick(() => stream.emit("prefinish"));
         }
       }
     }

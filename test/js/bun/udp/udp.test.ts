@@ -12,7 +12,7 @@ const nodeDataTypes = [
     binaryType: "uint8array",
     type: Uint8Array,
   },
-]
+];
 
 const dataTypes = [
   ...nodeDataTypes,
@@ -67,7 +67,7 @@ const nodeDataCases = [
     data: Buffer.from([]),
     bytes: [],
   },
-]
+];
 
 const dataCases = [
   ...nodeDataCases,
@@ -82,7 +82,6 @@ const dataCases = [
     bytes: [],
   },
 ];
-
 
 describe("udpSocket()", () => {
   test("can create a socket", async () => {
@@ -124,20 +123,19 @@ describe("udpSocket()", () => {
     socket.close();
   });
 
-  describe.each([
-    { hostname: "localhost" },
-    { hostname: "127.0.0.1"},
-    { hostname: "::1" },
-  ])("can create a socket with given hostname", ({ hostname }) => {
-    test(hostname, async () => {
-      const socket = await udpSocket({ hostname });
-      expect(socket.hostname).toBe(hostname);
-      expect(socket.port).toBeInteger();
-      expect(socket.port).toBeWithin(1, 65535 + 1);
-      expect(socket.address).toMatchObject({ port: socket.port });
-      socket.close();
-    });
-  });
+  describe.each([{ hostname: "localhost" }, { hostname: "127.0.0.1" }, { hostname: "::1" }])(
+    "can create a socket with given hostname",
+    ({ hostname }) => {
+      test(hostname, async () => {
+        const socket = await udpSocket({ hostname });
+        expect(socket.hostname).toBe(hostname);
+        expect(socket.port).toBeInteger();
+        expect(socket.port).toBeWithin(1, 65535 + 1);
+        expect(socket.address).toMatchObject({ port: socket.port });
+        socket.close();
+      });
+    },
+  );
 
   const validateRecv = (socket, data, port, address, binaryType, bytes) => {
     expect(socket).toBeInstanceOf(Object);
@@ -153,29 +151,28 @@ describe("udpSocket()", () => {
     expect(port).not.toBe(socket.port);
     expect(address).toBeString();
     expect(address).not.toBeEmpty();
-  }
+  };
 
-  const validateSend = (res) => {
+  const validateSend = res => {
     expect(res).toBeBoolean();
-  }
+  };
 
   const validateSendMany = (res, count) => {
     expect(res).toBeNumber();
     expect(res).toBeGreaterThanOrEqual(0);
     expect(res).toBeLessThanOrEqual(count);
-  }
-
+  };
 
   for (const { binaryType, type } of dataTypes) {
     for (const { label, data, bytes } of dataCases) {
-      test(`send ${label} (${binaryType || "undefined"})`, async (done) => {
+      test(`send ${label} (${binaryType || "undefined"})`, async done => {
         const client = await udpSocket({});
         const server = await udpSocket({
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
               validateRecv(socket, data, port, address, binaryType, bytes);
-              
+
               server.close();
               client.close();
               done();
@@ -186,21 +183,21 @@ describe("udpSocket()", () => {
         // handle unreliable transmission in UDP
         function sendRec() {
           if (!client.closed) {
-            validateSend(client.send(data, server.port, '127.0.0.1'));
+            validateSend(client.send(data, server.port, "127.0.0.1"));
             setTimeout(sendRec, 100);
           }
         }
         sendRec();
       });
 
-      test(`send connected ${label} (${binaryType || "undefined"})`, async (done) => {
+      test(`send connected ${label} (${binaryType || "undefined"})`, async done => {
         let client;
         const server = await udpSocket({
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
               validateRecv(socket, data, port, address, binaryType, bytes);
-              
+
               server.close();
               client.close();
               done();
@@ -211,7 +208,7 @@ describe("udpSocket()", () => {
           connect: {
             port: server.port,
             hostname: server.hostname,
-          }
+          },
         });
 
         // handle unreliable transmission in UDP
@@ -224,7 +221,7 @@ describe("udpSocket()", () => {
         sendRec();
       });
 
-      test(`sendMany ${label} (${binaryType || "undefined"})`, async (done) => {
+      test(`sendMany ${label} (${binaryType || "undefined"})`, async done => {
         const client = await udpSocket({});
         let count = 0;
         const server = await udpSocket({
@@ -243,7 +240,7 @@ describe("udpSocket()", () => {
           },
         });
 
-        const payload = Array(100).fill([data, server.port, '127.0.0.1']).flat();
+        const payload = Array(100).fill([data, server.port, "127.0.0.1"]).flat();
 
         // handle unreliable transmission in UDP
         function sendRec() {
@@ -254,8 +251,8 @@ describe("udpSocket()", () => {
         }
         sendRec();
       });
-      
-      test(`sendMany connected ${label} (${binaryType || "undefined"})`, async (done) => {
+
+      test(`sendMany connected ${label} (${binaryType || "undefined"})`, async done => {
         // const client = await udpSocket({});
         let client;
         let count = 0;
@@ -279,7 +276,7 @@ describe("udpSocket()", () => {
           connect: {
             port: server.port,
             hostname: server.hostname,
-          }
+          },
         });
 
         const payload = Array(100).fill(data);
@@ -295,68 +292,67 @@ describe("udpSocket()", () => {
       });
     }
   }
-
 });
 
 describe("createSocket()", () => {
-  test("connect", (done) => {
+  test("connect", done => {
     const PORT = 12345;
     const client = createSocket("udp4");
-    client.on('close', done);
+    client.on("close", done);
 
     client.connect(PORT, () => {
       const remoteAddr = client.remoteAddress();
       expect(remoteAddr.port).toBe(PORT);
       expect(() => client.connect(PORT)).toThrow();
-    
+
       client.disconnect();
       expect(() => client.disconnect()).toThrow();
-    
+
       expect(() => client.remoteAddress()).toThrow();
-    
-      client.once('connect', () => client.close());
+
+      client.once("connect", () => client.close());
       client.connect(PORT);
     });
   });
 
-  test("IPv4 address", (done) => {
-    const socket = createSocket('udp4');
+  test("IPv4 address", done => {
+    const socket = createSocket("udp4");
 
-    socket.on('listening', () => {
+    socket.on("listening", () => {
       const address = socket.address();
 
-      expect(address.address).toBe('127.0.0.1');
+      expect(address.address).toBe("127.0.0.1");
       expect(address.port).toBeNumber();
       expect(address.port).toBeFinite();
       expect(address.port).toBeGreaterThan(0);
-      expect(address.family).toBe('IPv4');
+      expect(address.family).toBe("IPv4");
       socket.close(done);
     });
 
-    socket.on('error', (err) => {
+    socket.on("error", err => {
       socket.close(done);
       expect(err).toBeNull();
     });
 
-    socket.bind(0, '127.0.0.1');
+    socket.bind(0, "127.0.0.1");
   });
 
-  test("IPv6 address", (done) => {
-    const socket = createSocket('udp6');
-    const localhost = '::1';
+  test("IPv6 address", done => {
+    const socket = createSocket("udp6");
+    const localhost = "::1";
 
-    socket.on('listening', () => {
+    socket.on("listening", () => {
       const address = socket.address();
 
       expect(address.address).toBe(localhost);
       expect(address.port).toBeNumber();
       expect(address.port).toBeFinite();
       expect(address.port).toBeGreaterThan(0);
-      expect(address.family).toBe('IPv6');
+      expect(address.family).toBe("IPv6");
       socket.close(done);
     });
 
-    socket.on('error', (err) => {
+    socket.on("error", err => {
       socket.close(done);
       expect(err).toBeNull();
     });
@@ -372,43 +368,46 @@ describe("createSocket()", () => {
     expect(rinfo.address).toBeString();
     expect(rinfo.address).not.toBeEmpty();
     expect(rinfo.port).not.toBe(server.address().port);
-  }
+  };
 
   for (const { label, data, bytes } of nodeDataCases) {
-    test(`send ${label}`, (done) => {
-      const client = createSocket('udp4');
+    test(`send ${label}`, done => {
+      const client = createSocket("udp4");
       const closed = { closed: false };
-      client.on('close', () => { closed.closed = true });
-      const server = createSocket('udp4');
-      server.on('message', (data, rinfo) => {
+      client.on("close", () => {
+        closed.closed = true;
+      });
+      const server = createSocket("udp4");
+      server.on("message", (data, rinfo) => {
         validateRecv(server, data, rinfo, bytes);
-        
+
         server.close();
         client.close();
         done();
       });
       function sendRec() {
         if (!closed.closed) {
-          client.send(data, server.address().port, '127.0.0.1', () => {
+          client.send(data, server.address().port, "127.0.0.1", () => {
             setTimeout(sendRec, 100);
           });
         }
       }
-      server.on('listening', () => {
+      server.on("listening", () => {
         sendRec();
       });
       server.bind();
     });
 
-
-    test(`send connected ${label}`, (done) => {
-      const client = createSocket('udp4');
+    test(`send connected ${label}`, done => {
+      const client = createSocket("udp4");
       const closed = { closed: false };
-      client.on('close', () => { closed.closed = true });
-      const server = createSocket('udp4');
-      server.on('message', (data, rinfo) => {
+      client.on("close", () => {
+        closed.closed = true;
+      });
+      const server = createSocket("udp4");
+      server.on("message", (data, rinfo) => {
         validateRecv(server, data, rinfo, bytes);
-        
+
         server.close();
         client.close();
         done();
@@ -420,22 +419,24 @@ describe("createSocket()", () => {
           });
         }
       }
-      server.on('listening', () => {
+      server.on("listening", () => {
         const addr = server.address();
         client.connect(addr.port, addr.address, () => {
           sendRec();
-        })
+        });
       });
       server.bind();
     });
 
-    test(`send batch ${label}`, (done) => {
-      const client = createSocket('udp4');
+    test(`send batch ${label}`, done => {
+      const client = createSocket("udp4");
       const closed = { closed: false };
-      client.on('close', () => { closed.closed = true });
-      const server = createSocket('udp4');
+      client.on("close", () => {
+        closed.closed = true;
+      });
+      const server = createSocket("udp4");
       let count = 0;
-      server.on('message', (data, rinfo) => {
+      server.on("message", (data, rinfo) => {
         validateRecv(server, data, rinfo, bytes);
 
         count += 1;
@@ -447,26 +448,28 @@ describe("createSocket()", () => {
       });
       function sendRec() {
         if (!closed.closed) {
-          client.send(Array(100).fill(data), server.address().port, '127.0.0.1', () => {
+          client.send(Array(100).fill(data), server.address().port, "127.0.0.1", () => {
             setTimeout(sendRec, 100);
           });
         }
       }
-      server.on('listening', () => {
+      server.on("listening", () => {
         sendRec();
       });
       server.bind();
     });
 
-    test(`send batch connected ${label}`, (done) => {
-      const client = createSocket('udp4');
+    test(`send batch connected ${label}`, done => {
+      const client = createSocket("udp4");
       const closed = { closed: false };
-      client.on('close', () => { closed.closed = true });
-      const server = createSocket('udp4');
+      client.on("close", () => {
+        closed.closed = true;
+      });
+      const server = createSocket("udp4");
       let count = 0;
-      server.on('message', (data, rinfo) => {
+      server.on("message", (data, rinfo) => {
         validateRecv(server, data, rinfo, bytes);
-        
+
         count += 1;
         if (count === 100) {
           server.close();
@@ -481,15 +484,13 @@ describe("createSocket()", () => {
           });
         }
       }
-      server.on('listening', () => {
+      server.on("listening", () => {
         const addr = server.address();
         client.connect(addr.port, addr.address, () => {
           sendRec();
-        })
+        });
       });
       server.bind();
     });
-
   }
-
 });

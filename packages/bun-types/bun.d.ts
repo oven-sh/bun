@@ -3970,17 +3970,26 @@ declare module "bun" {
     type Data = string | ArrayBufferView | ArrayBufferLike;
 
     export interface SocketHandler<DataBinaryType extends BinaryType> {
-      data?(socket: Socket<DataBinaryType>, data: BinaryTypeList[DataBinaryType], port: number, address: string): void | Promise<void>;
+      data?(
+        socket: Socket<DataBinaryType>,
+        data: BinaryTypeList[DataBinaryType],
+        port: number,
+        address: string,
+      ): void | Promise<void>;
       drain?(socket: Socket<DataBinaryType>): void | Promise<void>;
       error?(socket: Socket<DataBinaryType>, error: Error): void | Promise<void>;
     }
 
     export interface ConnectedSocketHandler<DataBinaryType extends BinaryType> {
-      data?(socket: ConnectedSocket<DataBinaryType>, data: BinaryTypeList[DataBinaryType], port: number, address: string): void | Promise<void>;
+      data?(
+        socket: ConnectedSocket<DataBinaryType>,
+        data: BinaryTypeList[DataBinaryType],
+        port: number,
+        address: string,
+      ): void | Promise<void>;
       drain?(socket: ConnectedSocket<DataBinaryType>): void | Promise<void>;
-      error?(socket:ConnectedSocket<DataBinaryType>, error: Error): void | Promise<void>;
+      error?(socket: ConnectedSocket<DataBinaryType>, error: Error): void | Promise<void>;
     }
-
 
     export interface SocketOptions<DataBinaryType extends BinaryType> {
       hostname?: string;
@@ -3997,7 +4006,7 @@ declare module "bun" {
       connect: {
         hostname: string;
         port: number;
-      }
+      };
     }
 
     export interface BaseUDPSocket {
@@ -4035,8 +4044,12 @@ declare module "bun" {
    * @param options.binaryType The binary type to use for the socket
    * @param options.connect The hostname and port to connect to
    */
-  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(options: udp.SocketOptions<DataBinaryType>): Promise<udp.Socket<DataBinaryType>>;
-  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(options: udp.ConnectSocketOptions<DataBinaryType>): Promise<udp.ConnectedSocket<DataBinaryType>>;
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
+    options: udp.SocketOptions<DataBinaryType>,
+  ): Promise<udp.Socket<DataBinaryType>>;
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
+    options: udp.ConnectSocketOptions<DataBinaryType>,
+  ): Promise<udp.ConnectedSocket<DataBinaryType>>;
 
   namespace SpawnOptions {
     /**
@@ -4895,7 +4908,6 @@ declare module "bun" {
      */
     match(str: string): boolean;
   }
-
 }
 
 // extends lib.dom.d.ts

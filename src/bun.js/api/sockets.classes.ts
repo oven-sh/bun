@@ -273,7 +273,7 @@ export default [
       },
       closed: {
         getter: "getClosed",
-      }
+      },
     },
     klass: {},
   }),

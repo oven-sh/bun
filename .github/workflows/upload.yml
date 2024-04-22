@@ -26,12 +26,14 @@ jobs:
           merge-multiple: true
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
-      - name: Check if artifacts exist
+      - name: Check for Artifacts
         run: |
-          if [ -z "$(ls -A bun)" ]; then
-            echo "No artifacts found"
-            exit 1
-          fi
+          if [ ! -d "bun" ] || [ -z "$(ls -A bun)" ]; then
+            echo "Error: No artifacts were downloaded or 'bun' directory does not exist."
+            exit 1  # Fail the job if the condition is met
+          else
+            echo "Artifacts downloaded successfully."
+          fii
       - name: Upload to GitHub Releases
         uses: ncipollo/release-action@v1
         with:
@@ -69,9 +71,9 @@ jobs:
           webhook: ${{ secrets.BUN_DISCORD_GITHUB_CHANNEL_WEBHOOK }}
           nodetail: true
           color: "#1F6FEB"
-          title: "Bun Canary #${{ github.sha }} is available!"
+          title: "New Bun Canary available"
           description: |
-            Bun Canary [#${{ github.sha }}](https://github.com/oven-sh/bun/commit/${{ github.sha }}) has been released!  
+            ### Bun Canary [#${{ github.sha }}](https://github.com/oven-sh/bun/commit/${{ github.sha }}) has been released!  
 
             To upgrade to the canary release, run:
             ```sh

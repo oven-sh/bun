@@ -34,7 +34,7 @@ jobs:
             exit 1  # Fail the job if the condition is met
           else
             echo "Artifacts downloaded successfully."
-          fii
+          fi
       - name: Upload to GitHub Releases
         uses: ncipollo/release-action@v1
         with:

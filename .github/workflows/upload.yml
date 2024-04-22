@@ -1,4 +1,5 @@
 name: Upload Artifacts
+run-name: Canary release ${{github.sha}} upload
 
 permissions:
   contents: write
@@ -73,7 +74,7 @@ jobs:
           color: "#1F6FEB"
           title: "New Bun Canary available"
           description: |
-            ### Bun Canary [`#${{ github.sha }}`](https://github.com/oven-sh/bun/commit/${{ github.sha }}) has been released!
+            A new canary build of Bun has been automatically uploaded.
 
             To upgrade to the canary release, run:
             ```sh
@@ -82,10 +83,5 @@ jobs:
             ```
 
             We do not recommend using canary releases of Bun in production.
-      - name: Announce in other Discord
-        uses: sarisia/actions-status-discord@v1
-        with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK }}
-          nodetail: true
-          title: "Bun ##${{ github.sha }} (canary) uploaded"
-          description: "A new canary build of Bun has been uploaded!"
+
+            [`#${{ github.sha }}`](https://github.com/oven-sh/bun/commit/${{ github.sha }})

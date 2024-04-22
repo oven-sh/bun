@@ -364,6 +364,16 @@ describe("createSocket()", () => {
     socket.bind(0, localhost);
   });
 
+  const validateRecv = (server, data, rinfo, bytes) => {
+    expect(data).toHaveLength(bytes.length);
+    expect(data).toStrictEqual(Buffer.from(bytes));
+    expect(rinfo.port).toBeInteger();
+    expect(rinfo.port).toBeWithin(1, 65535 + 1);
+    expect(rinfo.address).toBeString();
+    expect(rinfo.address).not.toBeEmpty();
+    expect(rinfo.port).not.toBe(server.address().port);
+  }
+
   for (const { label, data, bytes } of nodeDataCases) {
     test(`send ${label}`, (done) => {
       const client = createSocket('udp4');
@@ -371,13 +381,7 @@ describe("createSocket()", () => {
       client.on('close', () => { closed.closed = true });
       const server = createSocket('udp4');
       server.on('message', (data, rinfo) => {
-        expect(data).toHaveLength(bytes.length);
-        expect(data).toStrictEqual(Buffer.from(bytes));
-        expect(rinfo.port).toBeInteger();
-        expect(rinfo.port).toBeWithin(1, 65535 + 1);
-        expect(rinfo.port).not.toBe(server.address().port);
-        expect(rinfo.address).toBeString();
-        expect(rinfo.address).not.toBeEmpty();
+        validateRecv(server, data, rinfo, bytes);
         
         server.close();
         client.close();
@@ -390,8 +394,7 @@ describe("createSocket()", () => {
           });
         }
       }
-      server.on('listening', (err) => {
-        expect(err).toBeFalsy();
+      server.on('listening', () => {
         sendRec();
       });
       server.bind();
@@ -404,13 +407,7 @@ describe("createSocket()", () => {
       client.on('close', () => { closed.closed = true });
       const server = createSocket('udp4');
       server.on('message', (data, rinfo) => {
-        expect(data).toHaveLength(bytes.length);
-        expect(data).toStrictEqual(Buffer.from(bytes));
-        expect(rinfo.port).toBeInteger();
-        expect(rinfo.port).toBeWithin(1, 65535 + 1);
-        expect(rinfo.port).not.toBe(server.address().port);
-        expect(rinfo.address).toBeString();
-        expect(rinfo.address).not.toBeEmpty();
+        validateRecv(server, data, rinfo, bytes);
         
         server.close();
         client.close();
@@ -431,6 +428,68 @@ describe("createSocket()", () => {
       });
       server.bind();
     });
+
+    test(`send batch ${label}`, (done) => {
+      const client = createSocket('udp4');
+      const closed = { closed: false };
+      client.on('close', () => { closed.closed = true });
+      const server = createSocket('udp4');
+      let count = 0;
+      server.on('message', (data, rinfo) => {
+        validateRecv(server, data, rinfo, bytes);
+
+        count += 1;
+        if (count === 100) {
+          server.close();
+          client.close();
+          done();
+        }
+      });
+      function sendRec() {
+        if (!closed.closed) {
+          client.send(Array(100).fill(data), server.address().port, '127.0.0.1', () => {
+            setTimeout(sendRec, 100);
+          });
+        }
+      }
+      server.on('listening', () => {
+        sendRec();
+      });
+      server.bind();
+    });
+
+    test(`send batch connected ${label}`, (done) => {
+      const client = createSocket('udp4');
+      const closed = { closed: false };
+      client.on('close', () => { closed.closed = true });
+      const server = createSocket('udp4');
+      let count = 0;
+      server.on('message', (data, rinfo) => {
+        validateRecv(server, data, rinfo, bytes);
+        
+        count += 1;
+        if (count === 100) {
+          server.close();
+          client.close();
+          done();
+        }
+      });
+      function sendRec() {
+        if (!closed.closed) {
+          client.send(Array(100).fill(data), () => {
+            setTimeout(sendRec, 100);
+          });
+        }
+      }
+      server.on('listening', () => {
+        const addr = server.address();
+        client.connect(addr.port, addr.address, () => {
+          sendRec();
+        })
+      });
+      server.bind();
+    });
+
   }
 
 });

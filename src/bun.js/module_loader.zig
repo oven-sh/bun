@@ -2924,7 +2924,7 @@ export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun
     var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname("node", &tmpname_buf, bun.hash(file.name)) catch return false, 0);
 
-    const tmpdir = bun.fs.FileSystem.instance.tmpdir();
+    const tmpdir = bun.fs.FileSystem.instance.tmpdir() catch return false;
 
     // First we open the tmpfile, to avoid any other work in the event of failure.
     const tmpfile = bun.Tmpfile.create(bun.toFD(tmpdir.fd), tmpfilename).unwrap() catch return false;

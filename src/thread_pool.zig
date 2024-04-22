@@ -1145,7 +1145,7 @@ pub const Node = struct {
                 const buffer_head = buffer.head.load(.Acquire);
                 const buffer_tail = buffer.tail.load(.Acquire);
 
-                // Overly large size indicates the the tail was updated a lot after the head was loaded.
+                // Overly large size indicates the tail was updated a lot after the head was loaded.
                 // Reload both and try again.
                 const buffer_size = buffer_tail -% buffer_head;
                 if (buffer_size > capacity) {

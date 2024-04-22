@@ -142,7 +142,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           sparse-checkout: |
-            test/node
+            test/node.js
       - name: Setup Environment
         shell: bash
         run: |
@@ -178,18 +178,19 @@ jobs:
           node-version: 20
       - name: Checkout Tests
         shell: bash
-        working-directory: test/node
+        working-directory: test/node.js
         run: |
           node runner.mjs --pull
       - name: Install Dependencies
         timeout-minutes: 5
         shell: bash
+        working-directory: test/node.js
         run: |
-          bun install --cwd test/node
+          bun install
       - name: Run Tests
         timeout-minutes: 10 # Increase when more tests are added
         shell: bash
-        working-directory: test/node
+        working-directory: test/node.js
         env:
           TMPDIR: ${{ runner.temp }}
           BUN_GARBAGE_COLLECTOR_LEVEL: "0"

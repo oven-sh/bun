@@ -48,7 +48,7 @@ jobs:
       tag: linux-x64
       arch: x64
       cpu: haswell
-      canary: ${{ github.event.inputs.canary }}
+      canary: ${{ github.event_name == 'workflow_dispatch' && inputs.canary || true }}
   linux-x64-baseline:
     if: ${{ !github.event.inputs.run-id }}
     name: Build linux-x64-baseline
@@ -59,7 +59,7 @@ jobs:
       tag: linux-x64-baseline
       arch: x64
       cpu: nehalem
-      canary: ${{ github.event.inputs.canary }}
+      canary: ${{ github.event_name == 'workflow_dispatch' && inputs.canary || true }}
   linux-aarch64:
     if: ${{ !github.event.inputs.run-id && github.repository_owner == 'oven-sh' }}
     name: Build linux-aarch64
@@ -70,7 +70,7 @@ jobs:
       tag: linux-aarch64
       arch: aarch64
       cpu: native
-      canary: ${{ github.event.inputs.canary }}
+      canary: ${{ github.event_name == 'workflow_dispatch' && inputs.canary || true }}
   darwin-x64:
     if: ${{ !github.event.inputs.run-id }}
     name: Build darwin-x64
@@ -81,7 +81,7 @@ jobs:
       tag: darwin-x64
       arch: x64
       cpu: haswell
-      canary: ${{ github.event.inputs.canary }}
+      canary: ${{ github.event_name == 'workflow_dispatch' && inputs.canary || true }}
   darwin-x64-baseline:
     if: ${{ !github.event.inputs.run-id }}
     name: Build darwin-x64-baseline
@@ -92,7 +92,7 @@ jobs:
       tag: darwin-x64-baseline
       arch: x64
       cpu: nehalem
-      canary: ${{ github.event.inputs.canary }}
+      canary: ${{ github.event_name == 'workflow_dispatch' && inputs.canary || true }}
   darwin-aarch64:
     if: ${{ !github.event.inputs.run-id }}
     name: Build darwin-aarch64
@@ -103,7 +103,7 @@ jobs:
       tag: darwin-aarch64
       arch: aarch64
       cpu: native
-      canary: ${{ github.event.inputs.canary }}
+      canary: ${{ github.event_name == 'workflow_dispatch' && inputs.canary || true }}
   windows-x64:
     if: ${{ !github.event.inputs.run-id }}
     name: Build windows-x64
@@ -114,7 +114,7 @@ jobs:
       tag: windows-x64
       arch: x64
       cpu: haswell
-      canary: ${{ github.event.inputs.canary }}
+      canary: ${{ github.event_name == 'workflow_dispatch' && inputs.canary || true }}
   windows-x64-baseline:
     if: ${{ !github.event.inputs.run-id }}
     name: Build windows-x64-baseline
@@ -125,7 +125,7 @@ jobs:
       tag: windows-x64-baseline
       arch: x64
       cpu: nehalem
-      canary: ${{ github.event.inputs.canary }}
+      canary: ${{ github.event_name == 'workflow_dispatch' && inputs.canary || true }}
   linux-x64-test:
     if: ${{ github.event.inputs.run-id && always() || github.event_name == 'pull_request' }}
     name: Test linux-x64

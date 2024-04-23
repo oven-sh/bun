@@ -1,0 +1,11 @@
+{
+  "name": "cache-key",
+  "module": "index.ts",
+  "type": "module",
+  "dependencies": {
+    "@actions/core": "^1.10.1"
+  },
+  "scripts": {
+    "build": "bun build --target=node --outdir dist action.mjs && mv dist/action.js dist/action.mjs"
+  }
+}

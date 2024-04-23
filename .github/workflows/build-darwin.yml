@@ -34,22 +34,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Hash Submodules
-        id: hash
-        run: |
-          print_versions() {
-            git submodule | grep -v WebKit
-            echo "LLVM_VERSION=${{ env.LLVM_VERSION }}"
-            cat $(echo scripts/build*.sh scripts/all-dependencies.sh | tr " " "\n" | sort)
-          }
-          echo "hash=$(print_versions | shasum)" >> $GITHUB_OUTPUT
+      - name: Cache Key
+        id: cache-key
+        uses: ./.github/actions/cache-key
+        with:
+          paths: |
+            src/deps
+            scripts
       - if: ${{ !inputs.no-cache }}
         name: Restore Cache
         id: cache
         uses: ./.github/actions/cache/restore
         with:
           path: ${{ runner.temp }}/bun-deps
-          key: bun-${{ inputs.tag }}-deps-${{ steps.hash.outputs.hash }}
+          key: bun-${{ inputs.tag }}-deps-${{ steps.cache-key.outputs.cache-key }}
           restore-keys: |
             bun-${{ inputs.tag }}-deps-
       - name: Setup Dependencies

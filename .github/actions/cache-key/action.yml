@@ -1,0 +1,15 @@
+name: Cache Key
+description: Generate a cache key based on a set of inputs
+
+inputs:
+  paths:
+    description: The paths to use for the cache key
+    required: true
+
+outputs:
+  cache-key:
+    description: The cache key
+
+runs:
+  using: node20
+  main: dist/action.mjs

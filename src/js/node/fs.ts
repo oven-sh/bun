@@ -4,6 +4,12 @@ var WriteStream;
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const Stream = require("node:stream");
+const types = require("node:util/types");
+
+const NumberIsFinite = Number.isFinite;
+const DateNow = Date.now;
+const DatePrototypeGetTime = Date.prototype.getTime;
+const isDate = types.isDate;
 
 // Private exports
 const { FileHandle, kRef, kUnref, kFd, fs } = promises.$data;
@@ -319,7 +325,13 @@ var access = function access(...args) {
   appendFileSync = fs.appendFileSync.bind(fs),
   closeSync = fs.closeSync.bind(fs),
   copyFileSync = fs.copyFileSync.bind(fs),
-  existsSync = fs.existsSync.bind(fs),
+  existsSync = function existsSync() {
+    try {
+      return fs.existsSync.$apply(fs, arguments);
+    } catch (e) {
+      return false;
+    }
+  },
   chownSync = fs.chownSync.bind(fs),
   chmodSync = fs.chmodSync.bind(fs),
   fchmodSync = fs.fchmodSync.bind(fs),

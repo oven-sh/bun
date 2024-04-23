@@ -80,6 +80,9 @@ TOML files can be directly imported. Bun will parse them with its fast native TO
 ```ts
 import config from "./bunfig.toml";
 config.logLevel; // => "debug"
+
+// via import attribute:
+// import myCustomTOML from './my.config' with {type: "toml"};
 ```
 
 During bundling, the parsed TOML is inlined into the bundle as a JavaScript object.
@@ -122,6 +125,10 @@ Text files can be directly imported. The file is read and returned as a string.
 ```ts
 import contents from "./file.txt";
 console.log(contents); // => "Hello, world!"
+
+// To import an html file as text
+// The "type' attribute can be used to override the default loader.
+import html from "./index.html" with { type: "text" };
 ```
 
 When referenced during a build, the contents are into the bundle as a string.

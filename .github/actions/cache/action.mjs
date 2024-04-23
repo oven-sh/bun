@@ -74,7 +74,8 @@ export async function saveCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
     try {
-      return await saveGithubCache([path], key);
+      const cacheId = await saveGithubCache([path], key);
+      return !!cacheId;
     } catch (error) {
       console.error("Failed to save cache:", error);
       return false;

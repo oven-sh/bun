@@ -69689,7 +69689,8 @@ async function saveCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
     try {
-      return await cache.saveCache([path], key);
+      const cacheId = await cache.saveCache([path], key);
+      return !!cacheId;
     } catch (error) {
       console.error("Failed to save cache:", error);
       return false;

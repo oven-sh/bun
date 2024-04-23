@@ -69689,7 +69689,8 @@ async function saveCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
     try {
-      return await cache.saveCache([path], key);
+      const cacheId = await cache.saveCache([path], key);
+      return !!cacheId;
     } catch (error) {
       console.error("Failed to save cache:", error);
       return false;
@@ -69732,15 +69733,14 @@ var cacheDir = core.getInput("cache-dir") || join(tmpdir(), ".github", "cache");
 
 // save/action.mjs
 async function main() {
-  try {
-    const ok = await saveCache();
-    if (ok) {
-      console.log("Cache saved");
-      return;
-    }
-  } catch (error) {
-    console.error("Failed to restore cache:", error);
+  const saved = await saveCache();
+  if (saved) {
+    console.log("Cache saved");
+  } else {
+    process.exit(1);
   }
-  process.exit(1);
 }
-main();
+main().catch((error) => {
+  console.error("Failed to save cache:", error);
+  process.exit(1);
+});

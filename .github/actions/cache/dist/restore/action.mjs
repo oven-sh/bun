@@ -69689,7 +69689,8 @@ async function saveCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
     try {
-      return await cache.saveCache([path], key);
+      const cacheId = await cache.saveCache([path], key);
+      return !!cacheId;
     } catch (error) {
       console.error("Failed to save cache:", error);
       return false;
@@ -69733,21 +69734,19 @@ var cacheDir = core.getInput("cache-dir") || join(tmpdir(), ".github", "cache");
 // restore/action.mjs
 var core2 = __toESM(require_core(), 1);
 async function main() {
-  try {
-    const result = await restoreCache();
-    if (result) {
-      const { cacheHit, cacheKey } = result;
-      console.log("Cache key:", cacheKey, cacheHit ? "(hit)" : "(miss)");
-      core2.setOutput("cache-hit", cacheHit);
-      core2.setOutput("cache-matched-key", cacheKey);
-      if (cacheHit) {
-        core2.setOutput("cache-primary-key", cacheKey);
-      }
-      return;
-    }
-  } catch (error) {
-    console.error("Failed to restore cache:", error);
+  const result = await restoreCache();
+  if (!result) {
+    process.exit(1);
   }
-  process.exit(1);
+  const { cacheHit, cacheKey } = result;
+  console.log("Cache key:", cacheKey, cacheHit ? "(hit)" : "(miss)");
+  core2.setOutput("cache-hit", cacheHit);
+  core2.setOutput("cache-matched-key", cacheKey);
+  if (cacheHit) {
+    core2.setOutput("cache-primary-key", cacheKey);
+  }
 }
-main();
+main().catch((error) => {
+  console.error("Failed to restore cache:", error);
+  process.exit(1);
+});

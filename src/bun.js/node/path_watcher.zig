@@ -21,6 +21,8 @@ const Semaphore = sync.Semaphore;
 var default_manager_mutex: Mutex = Mutex.init();
 var default_manager: ?*PathWatcherManager = null;
 
+const Event = bun.JSC.Node.FSWatcher.Event;
+
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
     pub const Watcher = GenericWatcher.NewWatcher(*PathWatcherManager);
@@ -71,11 +73,11 @@ pub const PathWatcherManager = struct {
             this.deinit();
         }
     }
-    // TODO: switch to using JSC.Maybe to avoid using "unreachable" and improve error messages
+
     fn _fdFromAbsolutePathZ(
         this: *PathWatcherManager,
         path: [:0]const u8,
-    ) !PathInfo {
+    ) bun.JSC.Maybe(PathInfo) {
         this.mutex.lock();
         defer this.mutex.unlock();
 
@@ -84,43 +86,47 @@ pub const PathWatcherManager = struct {
             info.refs += 1;
             return info.*;
         }
-        const cloned_path = try bun.default_allocator.dupeZ(u8, path);
-        errdefer bun.default_allocator.free(cloned_path);
 
-        if (std.fs.openDirAbsoluteZ(cloned_path, .{
-            .access_sub_paths = true,
-            .iterate = true,
-        })) |iterable_dir| {
-            const result = PathInfo{
-                .fd = bun.toFD(iterable_dir.fd),
-                .is_file = false,
-                .path = cloned_path,
-                .dirname = cloned_path,
-                .hash = GenericWatcher.getHash(cloned_path),
-                .refs = 1,
-            };
-            _ = try this.file_paths.put(cloned_path, result);
-            return result;
-        } else |err| {
-            if (err == error.NotDir) {
-                const file = try std.fs.openFileAbsoluteZ(cloned_path, .{ .mode = .read_only });
+        switch (switch (Environment.os) {
+            else => bun.sys.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0),
+            // windows bun.sys.open does not pass iterable=true,
+            .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, .{ .iterable = true, .read_only = true }),
+        }) {
+            .err => |e| {
+                if (e == .NOTDIR) {
+                    const file = switch (std.sys.open(path, 0, 0)) {
+                        .err => return .{ .err = e.withPath(path) },
+                        .result => |r| r,
+                    };
+                    const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                    const result = PathInfo{
+                        .fd = bun.toFD(file.handle),
+                        .is_file = true,
+                        .path = cloned_path,
+                        // if is really a file we need to get the dirname
+                        .dirname = std.fs.path.dirname(cloned_path) orelse cloned_path,
+                        .hash = GenericWatcher.getHash(cloned_path),
+                        .refs = 1,
+                    };
+                    _ = this.file_paths.put(cloned_path, result) catch bun.outOfMemory();
+                    return result;
+                }
+                return .{ .err = e.withPath(path) };
+            },
+            .result => |iterable_dir| {
+                const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
                 const result = PathInfo{
-                    .fd = bun.toFD(file.handle),
-                    .is_file = true,
+                    .fd = bun.toFD(iterable_dir.fd),
+                    .is_file = false,
                     .path = cloned_path,
-                    // if is really a file we need to get the dirname
-                    .dirname = std.fs.path.dirname(cloned_path) orelse cloned_path,
+                    .dirname = cloned_path,
                     .hash = GenericWatcher.getHash(cloned_path),
                     .refs = 1,
                 };
-                _ = try this.file_paths.put(cloned_path, result);
+                _ = this.file_paths.put(cloned_path, result) catch bun.outOfMemory();
                 return result;
-            } else {
-                return err;
-            }
+            },
         }
-
-        unreachable;
     }
 
     pub fn init(vm: *JSC.VirtualMachine) !*PathWatcherManager {
@@ -246,7 +252,7 @@ pub const PathWatcherManager = struct {
                                 if (path.len == 0 or (bun.strings.containsChar(path, '/') and !watcher.recursive)) {
                                     continue;
                                 }
-                                watcher.emit(path, hash, timestamp, true, event_type);
+                                watcher.emit(event_type.toEvent(path), hash, timestamp, true);
                             }
                         }
                     }
@@ -298,7 +304,7 @@ pub const PathWatcherManager = struct {
                                     continue;
                                 }
 
-                                watcher.emit(path, hash, timestamp, false, event_type);
+                                watcher.emit(event_type.toEvent(path), hash, timestamp, false);
                             }
                         }
                     }
@@ -318,7 +324,7 @@ pub const PathWatcherManager = struct {
 
     pub fn onError(
         this: *PathWatcherManager,
-        err: anyerror,
+        err: bun.JSC.SystemError,
     ) void {
         {
             this.mutex.lock();
@@ -330,7 +336,7 @@ pub const PathWatcherManager = struct {
             for (watchers) |w| {
                 if (w) |watcher| {
                     log("[watch] error: {s}", .{@errorName(err)});
-                    watcher.emit(@errorName(err), 0, timestamp, false, .@"error");
+                    watcher.emit(.{ .@"error" = err }, 0, timestamp, false);
                     watcher.flush();
                 }
             }
@@ -340,6 +346,7 @@ pub const PathWatcherManager = struct {
             defer default_manager_mutex.unlock();
             default_manager = null;
         }
+
         // deinit manager when all watchers are closed
         this.deinit();
     }
@@ -429,10 +436,8 @@ pub const PathWatcherManager = struct {
             watcher: *PathWatcher,
             buf: *[bun.MAX_PATH_BYTES + 1]u8,
         ) !void {
-            if (comptime Environment.isWindows) {
-                bun.todo(@src(), "implement directory watching on windows");
-                return;
-            }
+            if (Environment.isWindows) @compileError("use win_watcher.zig");
+
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
@@ -484,7 +489,7 @@ pub const PathWatcherManager = struct {
                 defer watcher.unrefPendingDirectory();
                 this.processWatcher(watcher, &buf) catch |err| {
                     log("[watch] error registering directory: {s}", .{@errorName(err)});
-                    watcher.emit(@errorName(err), 0, std.time.milliTimestamp(), false, .@"error");
+                    watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
                     watcher.flush();
                 };
             }
@@ -696,9 +701,15 @@ pub const PathWatcher = struct {
     pub const EventType = enum {
         rename,
         change,
-        @"error",
+
+        pub fn toEvent(event_type: EventType, path: []const u8) Event {
+            return switch (event_type) {
+                inline else => |t| @unionInit(Event, @tagName(t), path),
+            };
+        }
     };
-    const Callback = *const fn (ctx: ?*anyopaque, path: string, is_file: bool, event_type: EventType) void;
+
+    const Callback = *const fn (ctx: ?*anyopaque, detail: Event, is_file: bool) void;
     const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(manager: *PathWatcherManager, path: PathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
@@ -805,17 +816,32 @@ pub const PathWatcher = struct {
         }
     }
 
-    pub fn emit(this: *PathWatcher, path: string, hash: GenericWatcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
-        const time_diff = time_stamp - this.last_change_event.time_stamp;
-        // skip consecutive duplicates
-        if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != hash) {
-            this.last_change_event.time_stamp = time_stamp;
-            this.last_change_event.event_type = event_type;
-            this.last_change_event.hash = hash;
-            this.needs_flush = true;
-            if (this.isClosed()) return;
-            this.callback(this.ctx, path, is_file, event_type);
+    pub fn emit(this: *PathWatcher, event: Event, hash: GenericWatcher.HashType, time_stamp: i64, is_file: bool) void {
+        switch (event) {
+            .change, .rename => {
+                const event_type = switch (event) {
+                    inline .change, .rename => |_, t| @field(EventType, @tagName(t)),
+                    else => unreachable, // above switch guarentees this subset
+                };
+
+                const time_diff = time_stamp - this.last_change_event.time_stamp;
+                if (!((this.last_change_event.time_stamp == 0 or time_diff > 1) or
+                    this.last_change_event.event_type != event_type and
+                    this.last_change_event.hash != hash))
+                {
+                    // skip consecutive duplicates
+                    return;
+                }
+
+                this.last_change_event.time_stamp = time_stamp;
+                this.last_change_event.event_type = event_type;
+            },
+            else => {},
         }
+
+        this.needs_flush = true;
+        if (this.isClosed()) return;
+        this.callback(this.ctx, event, is_file);
     }
 
     pub fn flush(this: *PathWatcher) void {

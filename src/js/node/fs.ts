@@ -39,23 +39,32 @@ class FSWatcher extends EventEmitter {
     }
 
     if (typeof listener !== "function") {
-      listener = () => {};
+      listener = () => { };
     }
 
     this.#listener = listener;
     try {
       this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
-    } catch (e) {
-      if (!e.message?.startsWith("FileNotFound")) {
-        throw e;
+    } catch (e: any) {
+      if (e.message?.startsWith("FileNotFound")) {
+        const notFound = new Error(`ENOENT: no such file or directory, watch '${path}'`);
+        notFound.code = "ENOENT";
+        notFound.errno = -2;
+        notFound.path = path;
+        notFound.syscall = "watch";
+        notFound.filename = path;
+        throw notFound;
       }
-      const notFound = new Error(`ENOENT: no such file or directory, watch '${path}'`);
-      notFound.code = "ENOENT";
-      notFound.errno = -2;
-      notFound.path = path;
-      notFound.syscall = "watch";
-      notFound.filename = path;
-      throw notFound;
+      if (e.message?.startsWith("AccessDenied")) {
+        const notFound = new Error(`EPERM: access denied, watch '${path}'`);
+        notFound.code = "EPERM";
+        notFound.errno = -1;
+        notFound.path = path;
+        notFound.syscall = "watch";
+        notFound.filename = path;
+        throw notFound;
+      }
+      throw e;
     }
   }
 
@@ -68,6 +77,7 @@ class FSWatcher extends EventEmitter {
       });
       return;
     } else if (eventType === "error") {
+      console.log({ filenameOrError });
       this.emit(eventType, filenameOrError);
     } else {
       this.emit("change", eventType, filenameOrError);
@@ -89,7 +99,7 @@ class FSWatcher extends EventEmitter {
   }
 
   // https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L259-L263
-  start() {}
+  start() { }
 }
 
 /** Implemented in `node_fs_stat_watcher.zig` */
@@ -116,7 +126,7 @@ class StatWatcher extends EventEmitter {
   }
 
   // https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L259-L263
-  start() {}
+  start() { }
 
   stop() {
     this._handle?.close();
@@ -133,8 +143,8 @@ class StatWatcher extends EventEmitter {
 }
 
 var access = function access(...args) {
-    callbackify(fs.access, args);
-  },
+  callbackify(fs.access, args);
+},
   appendFile = function appendFile(...args) {
     callbackify(fs.appendFile, args);
   },
@@ -142,7 +152,7 @@ var access = function access(...args) {
     if ($isCallable(callback)) {
       fs.close(fd).then(() => callback(), callback);
     } else if (callback == undefined) {
-      fs.close(fd).then(() => {});
+      fs.close(fd).then(() => { });
     } else {
       const err = new TypeError("Callback must be a function");
       err.code = "ERR_INVALID_ARG_TYPE";
@@ -1041,7 +1051,7 @@ Object.defineProperties(WriteStreamPrototype, {
 WriteStreamPrototype.destroySoon = WriteStreamPrototype.end;
 
 // noop, node has deprecated this
-WriteStreamPrototype.open = function open() {};
+WriteStreamPrototype.open = function open() { };
 
 WriteStreamPrototype[writeStreamPathFastPathCallSymbol] = function WriteStreamPathFastPathCallSymbol(
   readStream,
@@ -1162,12 +1172,12 @@ WriteStreamPrototype.write = function write(chunk, encoding, cb) {
   var native = this.pos === undefined;
   const callback = native
     ? (err, bytes) => {
-        this[kIoDone] = false;
-        WriteStream_handleWrite.$call(this, err, bytes);
-        this.emit(kIoDone);
-        if (cb) !err ? cb() : cb(err);
-      }
-    : () => {};
+      this[kIoDone] = false;
+      WriteStream_handleWrite.$call(this, err, bytes);
+      this.emit(kIoDone);
+      if (cb) !err ? cb() : cb(err);
+    }
+    : () => { };
   this[kIoDone] = true;
   if (this._write) {
     return this._write(chunk, encoding, callback);

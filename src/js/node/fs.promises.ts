@@ -161,7 +161,7 @@ const exports = {
   cp,
   exists: async function exists() {
     try {
-      return fs.exists.$apply(fs, arguments);
+      return await fs.exists.$apply(fs, arguments);
     } catch (e) {
       return false;
     }

@@ -3866,8 +3866,25 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
         resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
     }
 
+    // This gets passed through the "parameters" argument to moduleLoaderFetch.
+    // Therefore, we modify it in place.
+    if (parameters && parameters.isObject()) {
+        auto* object = parameters.toObject(globalObject);
+        if (auto withObject = object->getIfPropertyExists(globalObject, vm.propertyNames->withKeyword)) {
+            if (withObject.isObject()) {
+                auto* with = jsCast<JSObject*>(withObject);
+                if (auto type = with->getIfPropertyExists(globalObject, vm.propertyNames->type)) {
+                    if (type.isString()) {
+                        const auto typeString = type.toWTFString(globalObject);
+                        parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
+                    }
+                }
+            }
+        }
+    }
+
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
-        JSC::jsUndefined(), parameters, JSC::jsUndefined());
+        JSC::jsUndefined(), parameters, jsUndefined());
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
     return result;

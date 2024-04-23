@@ -37,12 +37,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            .github
-            .gitmodules
-            src/deps
-            scripts
+        # with:
+        #   sparse-checkout: |
+        #     .github
+        #     .gitmodules
+        #     src/deps
+        #     scripts
       - name: Hash Submodules
         id: hash
         run: |

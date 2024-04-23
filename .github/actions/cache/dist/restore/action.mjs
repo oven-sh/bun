@@ -69724,9 +69724,8 @@ var copyFiles = function(src, dst) {
   });
 };
 var isGithubHosted = function() {
-  return process.env.RUNNER_ENVIRONMENT === "github-hosted";
+  return process.env.RUNNER_ENVIRONMENT === "github-hosted" || process.env.RUNNER_NAME?.startsWith("nsc-runner-");
 };
-console.log("ENV:", process.env);
 var path = core.getInput("path", { required: true });
 var key = core.getInput("key", { required: true });
 var restoreKeys = core.getMultilineInput("restore-keys");

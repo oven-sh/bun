@@ -4,8 +4,6 @@ import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-console.log("ENV:", process.env);
-
 const path = getInput("path", { required: true });
 const key = getInput("key", { required: true });
 const restoreKeys = getMultilineInput("restore-keys");
@@ -116,5 +114,5 @@ function copyFiles(src, dst) {
 }
 
 function isGithubHosted() {
-  return process.env.RUNNER_ENVIRONMENT === "github-hosted";
+  return process.env.RUNNER_ENVIRONMENT === "github-hosted" || process.env.RUNNER_NAME?.startsWith("nsc-runner-");
 }

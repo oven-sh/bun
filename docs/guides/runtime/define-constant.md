@@ -51,6 +51,8 @@ if (true) {
 
 And finally, Bun detects the `else` branch is not reachable, and eliminates it.
 
+---
+
 ```ts
 console.log("Production mode");
 ```
@@ -62,6 +64,8 @@ Values can be strings, identifiers, properties, or JSON.
 ### Replace global identifiers
 
 To make all usages of `window` be `undefined`, you can use the following command.
+
+---
 
 ```sh
 bun --define window="undefined" src/index.ts

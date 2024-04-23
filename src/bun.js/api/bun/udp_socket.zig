@@ -436,13 +436,14 @@ pub const UDPSocket = struct {
 
     fn doSend(this: *This, globalThis: *JSGlobalObject, count: u16) ?c_int {
         const res = this.socket.send(this.send_buf, count);
-        if (res == -1) {
-            const errno = @as(std.c.E, @enumFromInt(std.c._errno().*));
-            const err = bun.sys.Error.fromCode(errno, .sendmmsg);
-            globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
-            return null;
+        switch (std.c.getErrno(res)) {
+            .SUCCESS => return res,
+            else => |errno| {
+                const err = bun.sys.Error.fromCode(errno, .sendmmsg);
+                globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
+                return null;
+            },
         }
-        return res;
     }
 
     const Destination = struct {

@@ -2,10 +2,12 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { getInput, setOutput } from "@actions/core";
 
+const cwd = process.env.GITHUB_WORKSPACE ?? process.cwd();
 const paths = getInput("paths", { required: true });
 
 function getCacheKey() {
   const { error, status, stdout, stderr } = spawnSync("git", ["ls-files", "-s", ...paths], {
+    cwd,
     encoding: "utf-8",
     stdio: "pipe",
   });

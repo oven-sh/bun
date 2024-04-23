@@ -18049,6 +18049,7 @@ import {spawnSync} from "node:child_process";
 import {createHash} from "node:crypto";
 var getCacheKey = function() {
   const { error, status, stdout, stderr } = spawnSync("git", ["ls-files", "-s", ...paths], {
+    cwd,
     encoding: "utf-8",
     stdio: "pipe"
   });
@@ -18065,5 +18066,6 @@ var main = function() {
   console.log("Cache key:", cacheKey);
   core.setOutput("cache-key", cacheKey);
 };
+var cwd = process.env.GITHUB_WORKSPACE ?? process.cwd();
 var paths = core.getInput("paths", { required: true });
 main();

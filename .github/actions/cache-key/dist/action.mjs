@@ -18048,7 +18048,7 @@ var core = __toESM(require_core(), 1);
 import {spawnSync} from "node:child_process";
 import {createHash} from "node:crypto";
 var getCacheKey = function() {
-  console.log("Getting cache key...", ["git", "ls-files", "-s", ...paths]);
+  console.log("Getting cache key...", paths);
   const { error, status, stdout, stderr } = spawnSync("git", ["ls-files", "-s", ...paths], {
     encoding: "utf-8",
     stdio: "pipe"
@@ -18066,5 +18066,5 @@ var main = function() {
   console.log("Cache key:", cacheKey);
   core.setOutput("cache-key", cacheKey);
 };
-var paths = core.getInput("paths", { required: true });
+var paths = core.getMultilineInput("paths", { required: true });
 main();

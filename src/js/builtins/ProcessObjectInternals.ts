@@ -119,8 +119,7 @@ export function getStdinStream(fd) {
   }
 
   const tty = require("node:tty");
-  const fs = require("node:fs");
-  const ReadStream = tty.isatty(fd) ? tty.ReadStream : fs.ReadStream;
+  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
   const stream = new ReadStream(fd);
 
   const originalOn = stream.on;

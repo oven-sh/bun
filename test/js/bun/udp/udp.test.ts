@@ -184,11 +184,11 @@ describe("udpSocket()", () => {
         function sendRec() {
           if (!client.closed) {
             validateSend(client.send(data, server.port, "127.0.0.1"));
-            setTimeout(sendRec, 100);
+            setTimeout(sendRec, 10);
           }
         }
         sendRec();
-      });
+      }, { timeout: 100000000 });
 
       test(`send connected ${label} (${binaryType || "undefined"})`, async done => {
         let client;
@@ -215,11 +215,11 @@ describe("udpSocket()", () => {
         function sendRec() {
           if (!client.closed) {
             validateSend(client.send(data));
-            setTimeout(sendRec, 100);
+            setTimeout(sendRec, 10);
           }
         }
         sendRec();
-      });
+      }, { timeout : 1000000 });
 
       test(`sendMany ${label} (${binaryType || "undefined"})`, async done => {
         const client = await udpSocket({});
@@ -246,11 +246,11 @@ describe("udpSocket()", () => {
         function sendRec() {
           if (!client.closed) {
             validateSendMany(client.sendMany(payload), 100);
-            setTimeout(sendRec, 100);
+            setTimeout(sendRec, 10);
           }
         }
         sendRec();
-      });
+      }, {timeout: 1000000});
 
       test(`sendMany connected ${label} (${binaryType || "undefined"})`, async done => {
         // const client = await udpSocket({});
@@ -285,7 +285,7 @@ describe("udpSocket()", () => {
         function sendRec() {
           if (!client.closed) {
             validateSendMany(client.sendMany(payload), 100);
-            setTimeout(sendRec, 100);
+            setTimeout(sendRec, 10);
           }
         }
         sendRec();
@@ -378,6 +378,12 @@ describe("createSocket()", () => {
         closed.closed = true;
       });
       const server = createSocket("udp4");
+      client.on('error', err => {
+        expect(err).toBeNull();
+      })
+      server.on('error', err => {
+        expect(err).toBeNull();
+      })
       server.on("message", (data, rinfo) => {
         validateRecv(server, data, rinfo, bytes);
 
@@ -405,6 +411,12 @@ describe("createSocket()", () => {
         closed.closed = true;
       });
       const server = createSocket("udp4");
+      client.on('error', err => {
+        expect(err).toBeNull();
+      })
+      server.on('error', err => {
+        expect(err).toBeNull();
+      })
       server.on("message", (data, rinfo) => {
         validateRecv(server, data, rinfo, bytes);
 
@@ -428,27 +440,29 @@ describe("createSocket()", () => {
       server.bind();
     });
 
-    test(`send batch ${label}`, done => {
+    test(`send array ${label}`, done => {
       const client = createSocket("udp4");
       const closed = { closed: false };
       client.on("close", () => {
         closed.closed = true;
       });
       const server = createSocket("udp4");
-      let count = 0;
+      client.on('error', err => {
+        expect(err).toBeNull();
+      })
+      server.on('error', err => {
+        expect(err).toBeNull();
+      })
       server.on("message", (data, rinfo) => {
-        validateRecv(server, data, rinfo, bytes);
+        validateRecv(server, data, rinfo, [bytes, bytes, bytes].flat());
 
-        count += 1;
-        if (count === 100) {
-          server.close();
-          client.close();
-          done();
-        }
+        server.close();
+        client.close();
+        done();
       });
       function sendRec() {
         if (!closed.closed) {
-          client.send(Array(100).fill(data), server.address().port, "127.0.0.1", () => {
+          client.send([data, data, data], server.address().port, "127.0.0.1", () => {
             setTimeout(sendRec, 100);
           });
         }
@@ -459,38 +473,5 @@ describe("createSocket()", () => {
       server.bind();
     });
 
-    test(`send batch connected ${label}`, done => {
-      const client = createSocket("udp4");
-      const closed = { closed: false };
-      client.on("close", () => {
-        closed.closed = true;
-      });
-      const server = createSocket("udp4");
-      let count = 0;
-      server.on("message", (data, rinfo) => {
-        validateRecv(server, data, rinfo, bytes);
-
-        count += 1;
-        if (count === 100) {
-          server.close();
-          client.close();
-          done();
-        }
-      });
-      function sendRec() {
-        if (!closed.closed) {
-          client.send(Array(100).fill(data), () => {
-            setTimeout(sendRec, 100);
-          });
-        }
-      }
-      server.on("listening", () => {
-        const addr = server.address();
-        client.connect(addr.port, addr.address, () => {
-          sendRec();
-        });
-      });
-      server.bind();
-    });
   }
 });

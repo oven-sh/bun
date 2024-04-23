@@ -155,6 +155,8 @@ struct us_udp_socket_t *us_create_udp_socket(
     /* This should really be ext like everything else */
     udp->user = user;
 
+    udp->closed = 0;
+    udp->connected = 0;
     udp->on_data = data_cb;
     udp->receive_buf = buf;
     udp->on_drain = drain_cb;

@@ -344,6 +344,10 @@ pub const UDPSocket = struct {
     }
 
     pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        if (this.closed) {
+            globalThis.throw("Socket is closed", .{});
+            return .zero;
+        }
         const arguments = callframe.arguments(1);
         if (arguments.len != 1) {
             globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
@@ -376,7 +380,7 @@ pub const UDPSocket = struct {
             globalThis.throwInvalidArguments("Expected 3 arguments for each packet", .{});
             return .zero;
         }
-        const ret = this.doSend(globalThis, i);
+        const ret = this.doSend(globalThis, i / 3);
         if (ret) |val| {
             // number of packets sent
             return JSValue.jsNumber(val);
@@ -391,6 +395,10 @@ pub const UDPSocket = struct {
         globalThis: *JSGlobalObject,
         callframe: *CallFrame,
     ) callconv(.C) JSValue {
+        if (this.closed) {
+            globalThis.throw("Socket is closed", .{});
+            return .zero;
+        }
         const arguments = callframe.arguments(3);
         const dst: ?Destination = brk: {
             if (this.connect_info != null) {

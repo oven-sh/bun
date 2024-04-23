@@ -676,27 +676,13 @@ function doSend(ex, self, ip, list, address, port, callback) {
   }
 
   let err = null;
-  let sent = 0;
+  let success = false;
+  const data = Buffer.concat(list);
   try {
-    if (list.length === 1) {
-      if (port) {
-        socket.send(list[0], port, ip);
-      } else {
-        socket.send(list[0]);
-      }
-      sent = 1;
+    if (port) {
+      success = socket.send(data, port, ip);
     } else {
-      const packets = [];
-      if (port) {
-        for (const buf of list) {
-          packets.push(buf, port, address);
-        }
-      } else {
-        for (const buf of list) {
-          packets.push(buf);
-        }
-      }
-      sent += socket.sendMany(packets);
+      success = socket.send(data);
     }
   } catch (e) {
     err = e;
@@ -706,6 +692,7 @@ function doSend(ex, self, ip, list, address, port, callback) {
     if (err) {
       process.nextTick(callback, err);
     } else {
+      const sent = success ? data.length : 0;
       process.nextTick(callback, null, sent);
     }
   }

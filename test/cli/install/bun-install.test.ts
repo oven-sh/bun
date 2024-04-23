@@ -20,7 +20,7 @@ expect.extend({
   toBeWorkspaceLink,
   toBeValidBin,
   toHaveBins,
-  toHaveWorkspaceLink: async function(package_dir: string, [link, real]: [string, string]) {
+  toHaveWorkspaceLink: async function (package_dir: string, [link, real]: [string, string]) {
     const isWindows = process.platform === "win32";
     if (!isWindows) {
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
@@ -28,7 +28,7 @@ expect.extend({
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, real));
     }
   },
-  toHaveWorkspaceLink2: async function(package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
+  toHaveWorkspaceLink2: async function (package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
     const isWindows = process.platform === "win32";
     if (!isWindows) {
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", realPosix));
@@ -67,10 +67,10 @@ it("should not run install script, issue#10376", async () => {
     setTimeout(() => {
       reject(false);
     }, 2000);
-    expect(await exited).toBe(0);
+    expect(await exited).toBe(1);
     expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
-    expect(err).toContain("post install script has been canceled to prevent an infinite loop");
+    expect(err).toContain('package.json script calling "bun install" causes an infinite loop.');
     resolve(true);
   });
   if (!run) {
@@ -221,7 +221,7 @@ registry = "http://${server.hostname}:${server.port}/"
   expect(await exited).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => { }).toThrow();
+    expect(() => {}).toThrow();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -257,7 +257,7 @@ it("should handle missing package", async () => {
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => { }).toThrow();
+    expect(() => {}).toThrow();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -310,7 +310,7 @@ foo = { token = "bar" }
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => { }).toThrow();
+    expect(() => {}).toThrow();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -1534,7 +1534,7 @@ it("should handle ^1 in dependencies", async () => {
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => { }).toThrow();
+    expect(() => {}).toThrow();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -1615,7 +1615,7 @@ it("should handle ^0.1 in dependencies", async () => {
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => { }).toThrow();
+    expect(() => {}).toThrow();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -1652,7 +1652,7 @@ it("should handle ^0.0.0 in dependencies", async () => {
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => { }).toThrow();
+    expect(() => {}).toThrow();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -4722,7 +4722,7 @@ it("should fail on invalid Git URL", async () => {
   expect(requested).toBe(0);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => { }).toThrow();
+    expect(() => {}).toThrow();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -4762,7 +4762,7 @@ it("should fail on Git URL with invalid committish", async () => {
   expect(requested).toBe(0);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => { }).toThrow();
+    expect(() => {}).toThrow();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -7287,7 +7287,7 @@ it("should not override npm dependency by workspace with mismatched version", as
   expect(requested).toBe(2);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => { }).toThrow();
+    expect(() => {}).toThrow();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }

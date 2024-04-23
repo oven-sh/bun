@@ -123,10 +123,9 @@ pub const LifecycleScriptSubprocess = struct {
 
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
 
-        const install_script = "bun install";
-        if (combined_script.len >= install_script.len and bun.strings.eqlComptime(combined_script[0..install_script.len], install_script)) {
-            Output.errGeneric("post install script has been canceled to prevent an infinite loop", .{});
-            Global.exit(0);
+        if (bun.strings.hasPrefixComptime(combined_script, "bun install")) {
+            Output.errGeneric("\"{s}\" package.json script calling \"bun install\" causes an infinite loop.", .{this.scriptName()});
+            Global.exit(1);
         }
 
         if (this.foreground and this.manager.options.log_level != .silent) {

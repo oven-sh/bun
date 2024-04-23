@@ -51,11 +51,11 @@ if (true) {
 
 And finally, Bun detects the `else` branch is not reachable, and eliminates it.
 
----
-
 ```ts
 console.log("Production mode");
 ```
+
+---
 
 ## What types of values are supported?
 
@@ -64,8 +64,6 @@ Values can be strings, identifiers, properties, or JSON.
 ### Replace global identifiers
 
 To make all usages of `window` be `undefined`, you can use the following command.
-
----
 
 ```sh
 bun --define window="undefined" src/index.ts
@@ -81,9 +79,7 @@ if (typeof window !== "undefined") {
 }
 ```
 
-You can also set the value to be another identifier.
-
-For example, to make all usages of `global` be `globalThis`, you can use the following command.
+You can also set the value to be another identifier. For example, to make all usages of `global` be `globalThis`, you can use the following command.
 
 ```sh
 bun --define global="globalThis" src/index.ts
@@ -161,20 +157,3 @@ if (process.env.NODE_ENV === "production") {
 The `--define` flag operates on the AST (Abstract Syntax Tree) level, not on the text level. It happens during the transpilation process, which means it can be used in optimizations like dead code elimination.
 
 String replacement tools tend to have escaping issues and replace unintended parts of the code.
-
-```ts
-export default `${MY_DEFINE_VALUE}`;
-```
-
-Using `--define=MY_DEFINE_VALUE="}ABC"`,
-
-```ts
-export default "}ABC";
-```
-
-Using a string replacement tool:
-
-```ts
-// Note the missing "}" at the beginning:
-export default `${}ABC`;
-```

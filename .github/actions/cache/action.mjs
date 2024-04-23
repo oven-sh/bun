@@ -4,28 +4,6 @@ import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-process.on("unhandledRejection", error => {
-  console.log("Unhandled rejection:", error);
-  process.exit(1);
-});
-
-process.on("uncaughtException", error => {
-  console.log("Uncaught exception:", error);
-  process.exit(1);
-});
-
-process.on("warning", warning => {
-  console.warn("Warning:", warning);
-});
-
-process.on("exit", code => {
-  console.log("Exit code:", code);
-});
-
-process.on("beforeExit", code => {
-  console.log("Before exit code:", code);
-});
-
 const path = getInput("path", { required: true });
 const key = getInput("key", { required: true });
 const restoreKeys = getMultilineInput("restore-keys");
@@ -34,43 +12,32 @@ const cacheDir = getInput("cache-dir") || join(tmpdir(), ".github", "cache");
 export async function restoreCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
-    try {
-      const cacheKey = await restoreGithubCache([path], key, restoreKeys);
-      return {
-        cacheHit: !!cacheKey,
-        cacheKey: cacheKey ?? key,
-      };
-    } catch (error) {
-      console.log("Failed to restore cache:", error);
-      return null;
-    }
+    const cacheKey = await restoreGithubCache([path], key, restoreKeys);
+    return {
+      cacheHit: !!cacheKey,
+      cacheKey: cacheKey ?? key,
+    };
   }
 
-  console.log("Using local cache...");
-  process.stderr.write("HERE!\n");
-  if (!existsSync(cacheDir)) {
-    process.stderr.write("HERE! 2\n");
-    console.log("Cache directory does not exist, creating it...", cacheDir);
-    try {
-      mkdirSync(cacheDir, { recursive: true });
-    } catch (error) {
-      console.log("Failed to create cache directory:", error);
-      return null;
-    }
-  }
+  console.log("Using local cache...", cacheDir);
+  // if (!existsSync(cacheDir)) {
+  //   console.log("Cache directory does not exist, creating it...");
+  //   try {
+  //     mkdirSync(cacheDir, { recursive: true });
+  //   } catch (error) {
+  //     console.log("Failed to create cache directory:", error);
+  //     return null;
+  //   }
+  // }
 
   const targetDir = join(cacheDir, key);
   if (existsSync(targetDir)) {
     console.log("Found cache directory, restoring...", targetDir, "(hit)");
-    try {
-      copyFiles(targetDir, path);
-      return {
-        cacheHit: true,
-        cacheKey: key,
-      };
-    } catch (error) {
-      console.log("Failed to restore cache:", error);
-    }
+    copyFiles(targetDir, path);
+    return {
+      cacheHit: true,
+      cacheKey: key,
+    };
   }
 
   for (const dirname of readdirSync(cacheDir)) {
@@ -80,18 +47,17 @@ export async function restoreCache() {
 
     const targetDir = join(cacheDir, dirname);
     console.log("Found cache directory, restoring...", targetDir, "(miss)");
-    try {
-      copyFiles(targetDir, path);
-      return {
-        cacheHit: false,
-        cacheKey: dirname,
-      };
-    } catch (error) {
-      console.log("Failed to restore cache:", error);
-    }
+    copyFiles(targetDir, path);
+    return {
+      cacheHit: false,
+      cacheKey: dirname,
+    };
   }
 
-  return null;
+  return {
+    cacheHit: false,
+    cacheKey: key,
+  };
 }
 
 export async function saveCache() {

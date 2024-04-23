@@ -75455,23 +75455,6 @@ var import_cache = __toESM(require_cache2(), 1);
 var import_node_fs = require("node:fs");
 var import_node_os = require("node:os");
 var import_node_path = require("node:path");
-process.on("unhandledRejection", (error) => {
-  console.log("Unhandled rejection:", error);
-  process.exit(1);
-});
-process.on("uncaughtException", (error) => {
-  console.log("Uncaught exception:", error);
-  process.exit(1);
-});
-process.on("warning", (warning) => {
-  console.warn("Warning:", warning);
-});
-process.on("exit", (code) => {
-  console.log("Exit code:", code);
-});
-process.on("beforeExit", (code) => {
-  console.log("Before exit code:", code);
-});
 var path = (0, import_core.getInput)("path", { required: true });
 var key = (0, import_core.getInput)("key", { required: true });
 var restoreKeys = (0, import_core.getMultilineInput)("restore-keys");
@@ -75479,41 +75462,21 @@ var cacheDir = (0, import_core.getInput)("cache-dir") || (0, import_node_path.jo
 async function restoreCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
-    try {
-      const cacheKey = await (0, import_cache.restoreCache)([path], key, restoreKeys);
-      return {
-        cacheHit: !!cacheKey,
-        cacheKey: cacheKey ?? key
-      };
-    } catch (error) {
-      console.log("Failed to restore cache:", error);
-      return null;
-    }
+    const cacheKey = await (0, import_cache.restoreCache)([path], key, restoreKeys);
+    return {
+      cacheHit: !!cacheKey,
+      cacheKey: cacheKey ?? key
+    };
   }
-  console.log("Using local cache...");
-  process.stderr.write("HERE!\n");
-  if (!(0, import_node_fs.existsSync)(cacheDir)) {
-    process.stderr.write("HERE! 2\n");
-    console.log("Cache directory does not exist, creating it...", cacheDir);
-    try {
-      (0, import_node_fs.mkdirSync)(cacheDir, { recursive: true });
-    } catch (error) {
-      console.log("Failed to create cache directory:", error);
-      return null;
-    }
-  }
+  console.log("Using local cache...", cacheDir);
   const targetDir = (0, import_node_path.join)(cacheDir, key);
   if ((0, import_node_fs.existsSync)(targetDir)) {
     console.log("Found cache directory, restoring...", targetDir, "(hit)");
-    try {
-      copyFiles(targetDir, path);
-      return {
-        cacheHit: true,
-        cacheKey: key
-      };
-    } catch (error) {
-      console.log("Failed to restore cache:", error);
-    }
+    copyFiles(targetDir, path);
+    return {
+      cacheHit: true,
+      cacheKey: key
+    };
   }
   for (const dirname of (0, import_node_fs.readdirSync)(cacheDir)) {
     if (!dirname.startsWith(key)) {
@@ -75521,17 +75484,16 @@ async function restoreCache() {
     }
     const targetDir2 = (0, import_node_path.join)(cacheDir, dirname);
     console.log("Found cache directory, restoring...", targetDir2, "(miss)");
-    try {
-      copyFiles(targetDir2, path);
-      return {
-        cacheHit: false,
-        cacheKey: dirname
-      };
-    } catch (error) {
-      console.log("Failed to restore cache:", error);
-    }
+    copyFiles(targetDir2, path);
+    return {
+      cacheHit: false,
+      cacheKey: dirname
+    };
   }
-  return null;
+  return {
+    cacheHit: false,
+    cacheKey: key
+  };
 }
 function copyFiles(src, dst) {
   (0, import_node_fs.cpSync)(src, dst, {

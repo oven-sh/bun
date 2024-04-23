@@ -2,18 +2,10 @@ import { setOutput } from "@actions/core";
 import { restoreCache } from "../action.mjs";
 
 async function main() {
-  const result = await restoreCache();
-  console.log("RESULT:", result);
-  if (!result) {
-    process.exit(1);
-  }
-  const { cacheHit, cacheKey } = result;
-  console.log("Cache key:", cacheKey, cacheHit ? "(hit)" : "(miss)");
+  const { cacheHit, cacheKey, cacheMatchedKey } = await restoreCache();
   setOutput("cache-hit", cacheHit);
-  setOutput("cache-matched-key", cacheKey);
-  if (cacheHit) {
-    setOutput("cache-primary-key", cacheKey);
-  }
+  setOutput("cache-primary-key", cacheKey);
+  setOutput("cache-matched-key", cacheMatchedKey ?? cacheKey);
 }
 
 main().catch(error => {

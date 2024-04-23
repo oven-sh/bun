@@ -75472,10 +75472,14 @@ async function restoreCache() {
     };
   }
   console.log("Using local cache...", cacheDir);
-  const targetDir = (0, import_node_path.join)(cacheDir, key);
-  if ((0, import_node_fs.existsSync)(targetDir)) {
-    console.log("Found cache directory, restoring...", targetDir, "(hit)");
-    copyFiles(targetDir, path);
+  if (!(0, import_node_fs.existsSync)(cacheDir)) {
+    console.log("Cache directory does not exist, creating it...");
+    (0, import_node_fs.mkdirSync)(cacheDir, { recursive: true });
+  }
+  const cacheEntry = (0, import_node_path.join)(cacheDir, key);
+  if ((0, import_node_fs.existsSync)(cacheEntry)) {
+    console.log("Found cache directory, restoring...", cacheEntry, "(hit)");
+    copyFiles(cacheEntry, path);
     return {
       cacheHit: true,
       cacheKey: key
@@ -75485,14 +75489,16 @@ async function restoreCache() {
     if (!dirname.startsWith(key)) {
       continue;
     }
-    const targetDir2 = (0, import_node_path.join)(cacheDir, dirname);
-    console.log("Found cache directory, restoring...", targetDir2, "(miss)");
-    copyFiles(targetDir2, path);
+    const cacheEntry2 = (0, import_node_path.join)(cacheDir, dirname);
+    console.log("Found cache directory, restoring...", cacheEntry2, "(miss)");
+    copyFiles(cacheEntry2, path);
     return {
       cacheHit: false,
-      cacheKey: dirname
+      cacheKey: key,
+      cacheMatchedKey: dirname
     };
   }
+  console.log("No cache found...", key);
   return {
     cacheHit: false,
     cacheKey: key
@@ -75501,33 +75507,17 @@ async function restoreCache() {
 async function saveCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
-    try {
-      const cacheId = await (0, import_cache.saveCache)([path], key);
-      return !!cacheId;
-    } catch (error) {
-      console.log("Failed to save cache:", error);
-      return false;
-    }
+    const cacheId = await (0, import_cache.saveCache)([path], key);
+    return !!cacheId;
   }
-  console.log("Using local cache...");
+  console.log("Using local cache...", cacheDir);
   if (!(0, import_node_fs.existsSync)(cacheDir)) {
-    console.log("Cache directory does not exist, creating it...", cacheDir);
-    try {
-      (0, import_node_fs.mkdirSync)(cacheDir, { recursive: true });
-    } catch (error) {
-      console.log("Failed to create cache directory:", error);
-      return false;
-    }
+    console.log("Cache directory does not exist, creating it...");
+    (0, import_node_fs.mkdirSync)(cacheDir, { recursive: true });
   }
-  const targetDir = (0, import_node_path.join)(cacheDir, key);
-  console.log("Copying files to cache...", targetDir);
-  try {
-    copyFiles(path, targetDir);
-  } catch (error) {
-    console.log("Failed to copy files to cache:", error);
-    return false;
-  }
-  return true;
+  const cacheEntry = (0, import_node_path.join)(cacheDir, key);
+  console.log("Copying files to cache...", cacheEntry);
+  copyFiles(path, cacheEntry);
 }
 function copyFiles(src, dst) {
   (0, import_node_fs.cpSync)(src, dst, {

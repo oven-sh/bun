@@ -1,12 +1,7 @@
 import { saveCache } from "../action.mjs";
 
 async function main() {
-  const saved = await saveCache();
-  if (saved) {
-    console.log("Cache saved");
-  } else {
-    process.exit(1);
-  }
+  await saveCache();
 }
 
 main().catch(error => {

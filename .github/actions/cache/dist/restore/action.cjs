@@ -75469,10 +75469,14 @@ async function restoreCache() {
     };
   }
   console.log("Using local cache...", cacheDir);
-  const targetDir = (0, import_node_path.join)(cacheDir, key);
-  if ((0, import_node_fs.existsSync)(targetDir)) {
-    console.log("Found cache directory, restoring...", targetDir, "(hit)");
-    copyFiles(targetDir, path);
+  if (!(0, import_node_fs.existsSync)(cacheDir)) {
+    console.log("Cache directory does not exist, creating it...");
+    (0, import_node_fs.mkdirSync)(cacheDir, { recursive: true });
+  }
+  const cacheEntry = (0, import_node_path.join)(cacheDir, key);
+  if ((0, import_node_fs.existsSync)(cacheEntry)) {
+    console.log("Found cache directory, restoring...", cacheEntry, "(hit)");
+    copyFiles(cacheEntry, path);
     return {
       cacheHit: true,
       cacheKey: key
@@ -75482,14 +75486,16 @@ async function restoreCache() {
     if (!dirname.startsWith(key)) {
       continue;
     }
-    const targetDir2 = (0, import_node_path.join)(cacheDir, dirname);
-    console.log("Found cache directory, restoring...", targetDir2, "(miss)");
-    copyFiles(targetDir2, path);
+    const cacheEntry2 = (0, import_node_path.join)(cacheDir, dirname);
+    console.log("Found cache directory, restoring...", cacheEntry2, "(miss)");
+    copyFiles(cacheEntry2, path);
     return {
       cacheHit: false,
-      cacheKey: dirname
+      cacheKey: key,
+      cacheMatchedKey: dirname
     };
   }
+  console.log("No cache found...", key);
   return {
     cacheHit: false,
     cacheKey: key
@@ -75508,18 +75514,10 @@ function isGithubHosted() {
 
 // restore/action.mjs
 async function main() {
-  const result = await restoreCache();
-  console.log("RESULT:", result);
-  if (!result) {
-    process.exit(1);
-  }
-  const { cacheHit, cacheKey } = result;
-  console.log("Cache key:", cacheKey, cacheHit ? "(hit)" : "(miss)");
+  const { cacheHit, cacheKey, cacheMatchedKey } = await restoreCache();
   (0, import_core2.setOutput)("cache-hit", cacheHit);
-  (0, import_core2.setOutput)("cache-matched-key", cacheKey);
-  if (cacheHit) {
-    (0, import_core2.setOutput)("cache-primary-key", cacheKey);
-  }
+  (0, import_core2.setOutput)("cache-primary-key", cacheKey);
+  (0, import_core2.setOutput)("cache-matched-key", cacheMatchedKey ?? cacheKey);
 }
 main().catch((error) => {
   console.error("Failed to restore cache:", error);

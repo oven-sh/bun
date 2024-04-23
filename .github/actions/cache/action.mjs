@@ -20,20 +20,15 @@ export async function restoreCache() {
   }
 
   console.log("Using local cache...", cacheDir);
-  // if (!existsSync(cacheDir)) {
-  //   console.log("Cache directory does not exist, creating it...");
-  //   try {
-  //     mkdirSync(cacheDir, { recursive: true });
-  //   } catch (error) {
-  //     console.log("Failed to create cache directory:", error);
-  //     return null;
-  //   }
-  // }
+  if (!existsSync(cacheDir)) {
+    console.log("Cache directory does not exist, creating it...");
+    mkdirSync(cacheDir, { recursive: true });
+  }
 
-  const targetDir = join(cacheDir, key);
-  if (existsSync(targetDir)) {
-    console.log("Found cache directory, restoring...", targetDir, "(hit)");
-    copyFiles(targetDir, path);
+  const cacheEntry = join(cacheDir, key);
+  if (existsSync(cacheEntry)) {
+    console.log("Found cache directory, restoring...", cacheEntry, "(hit)");
+    copyFiles(cacheEntry, path);
     return {
       cacheHit: true,
       cacheKey: key,
@@ -45,15 +40,17 @@ export async function restoreCache() {
       continue;
     }
 
-    const targetDir = join(cacheDir, dirname);
-    console.log("Found cache directory, restoring...", targetDir, "(miss)");
-    copyFiles(targetDir, path);
+    const cacheEntry = join(cacheDir, dirname);
+    console.log("Found cache directory, restoring...", cacheEntry, "(miss)");
+    copyFiles(cacheEntry, path);
     return {
       cacheHit: false,
-      cacheKey: dirname,
+      cacheKey: key,
+      cacheMatchedKey: dirname,
     };
   }
 
+  console.log("No cache found...", key);
   return {
     cacheHit: false,
     cacheKey: key,
@@ -63,36 +60,19 @@ export async function restoreCache() {
 export async function saveCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
-    try {
-      const cacheId = await saveGithubCache([path], key);
-      return !!cacheId;
-    } catch (error) {
-      console.log("Failed to save cache:", error);
-      return false;
-    }
+    const cacheId = await saveGithubCache([path], key);
+    return !!cacheId;
   }
 
-  console.log("Using local cache...");
+  console.log("Using local cache...", cacheDir);
   if (!existsSync(cacheDir)) {
-    console.log("Cache directory does not exist, creating it...", cacheDir);
-    try {
-      mkdirSync(cacheDir, { recursive: true });
-    } catch (error) {
-      console.log("Failed to create cache directory:", error);
-      return false;
-    }
+    console.log("Cache directory does not exist, creating it...");
+    mkdirSync(cacheDir, { recursive: true });
   }
 
-  const targetDir = join(cacheDir, key);
-  console.log("Copying files to cache...", targetDir);
-  try {
-    copyFiles(path, targetDir);
-  } catch (error) {
-    console.log("Failed to copy files to cache:", error);
-    return false;
-  }
-
-  return true;
+  const cacheEntry = join(cacheDir, key);
+  console.log("Copying files to cache...", cacheEntry);
+  copyFiles(path, cacheEntry);
 }
 
 function copyFiles(src, dst) {

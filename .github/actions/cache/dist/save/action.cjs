@@ -75459,33 +75459,17 @@ var cacheDir = (0, import_core.getInput)("cache-dir") || (0, import_node_path.jo
 async function saveCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
-    try {
-      const cacheId = await (0, import_cache.saveCache)([path], key);
-      return !!cacheId;
-    } catch (error) {
-      console.log("Failed to save cache:", error);
-      return false;
-    }
+    const cacheId = await (0, import_cache.saveCache)([path], key);
+    return !!cacheId;
   }
-  console.log("Using local cache...");
+  console.log("Using local cache...", cacheDir);
   if (!(0, import_node_fs.existsSync)(cacheDir)) {
-    console.log("Cache directory does not exist, creating it...", cacheDir);
-    try {
-      (0, import_node_fs.mkdirSync)(cacheDir, { recursive: true });
-    } catch (error) {
-      console.log("Failed to create cache directory:", error);
-      return false;
-    }
+    console.log("Cache directory does not exist, creating it...");
+    (0, import_node_fs.mkdirSync)(cacheDir, { recursive: true });
   }
-  const targetDir = (0, import_node_path.join)(cacheDir, key);
-  console.log("Copying files to cache...", targetDir);
-  try {
-    copyFiles(path, targetDir);
-  } catch (error) {
-    console.log("Failed to copy files to cache:", error);
-    return false;
-  }
-  return true;
+  const cacheEntry = (0, import_node_path.join)(cacheDir, key);
+  console.log("Copying files to cache...", cacheEntry);
+  copyFiles(path, cacheEntry);
 }
 function copyFiles(src, dst) {
   (0, import_node_fs.cpSync)(src, dst, {
@@ -75500,12 +75484,7 @@ function isGithubHosted() {
 
 // save/action.mjs
 async function main() {
-  const saved = await saveCache();
-  if (saved) {
-    console.log("Cache saved");
-  } else {
-    process.exit(1);
-  }
+  await saveCache();
 }
 main().catch((error) => {
   console.error("Failed to save cache:", error);

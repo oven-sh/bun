@@ -445,7 +445,7 @@ test("glob.scan('.')", async () => {
   expect(entries).toContain("README.md");
 });
 
-describe("DEBUG", async () => {
+describe("literal fast path", async () => {
   let tempdir = "";
   beforeAll(() => {
     tempdir = tempDirWithFiles("glob-scan-literal-fast-path", {

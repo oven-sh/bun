@@ -11,4 +11,4 @@ inputs:
 
 runs:
   using: node20
-  main: ../dist/save/action.mjs
+  main: ../dist/save/action.js

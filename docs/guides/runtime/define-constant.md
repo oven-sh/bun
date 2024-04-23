@@ -67,8 +67,6 @@ To make all usages of `window` be `undefined`, you can use the following command
 bun --define window="undefined" src/index.ts
 ```
 
----
-
 This can be useful when Server-Side Rendering (SSR) or when you want to make sure that the code doesn't depend on the `window` object.
 
 ```js
@@ -78,8 +76,6 @@ if (typeof window !== "undefined") {
   console.log("Server-side code");
 }
 ```
-
----
 
 You can also set the value to be another identifier.
 
@@ -102,8 +98,6 @@ To replace all usages of `AWS` with the JSON object `{"ACCESS_KEY":"abc","SECRET
 bun --define:AWS='{"ACCESS_KEY":"abc","SECRET_KEY":"def"}' src/index.ts
 ```
 
----
-
 Those will be transformed into the equivalent JavaScript code.
 
 From:
@@ -118,8 +112,6 @@ To:
 console.log("abc");
 ```
 
----
-
 ### Replace values with other properties
 
 You can also pass properties to the `--define` flag.
@@ -130,23 +122,17 @@ For example, to replace all usages of `console.write` with `console.log`, you ca
 bun --define:console.write=console.log src/index.ts
 ```
 
----
-
 That transforms the following input:
 
 ```ts
 console.write("Hello, world!");
 ```
 
----
-
 Into the following output:
 
 ```ts
 console.log("Hello, world!");
 ```
-
----
 
 ## How is this different than setting a variable?
 
@@ -166,15 +152,11 @@ if (process.env.NODE_ENV === "production") {
 }
 ```
 
----
-
 ## How is this different than find-and-replace or string replacement?
 
 The `--define` flag operates on the AST (Abstract Syntax Tree) level, not on the text level. It happens during the transpilation process, which means it can be used in optimizations like dead code elimination.
 
 String replacement tools tend to have escaping issues and replace unintended parts of the code.
-
----
 
 ```ts
 export default `${MY_DEFINE_VALUE}`;
@@ -185,8 +167,6 @@ Using `--define=MY_DEFINE_VALUE="}ABC"`,
 ```ts
 export default "}ABC";
 ```
-
----
 
 Using a string replacement tool:
 

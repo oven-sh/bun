@@ -36,7 +36,6 @@ const primordials = require("internal/primordials");
 const {
   Array,
   ArrayFrom,
-  ArrayIsArray,
   ArrayPrototypeFilter,
   ArrayPrototypeFlat,
   ArrayPrototypeForEach,
@@ -239,7 +238,7 @@ const codes = {}; // exported from errors.js
   const sym = "ERR_INVALID_ARG_TYPE";
   messages.set(sym, (name, expected, actual) => {
     assert(typeof name === "string", "'name' must be a string");
-    if (!ArrayIsArray(expected)) expected = [expected];
+    if (!$isJSArray(expected)) expected = [expected];
 
     let msg = "The ";
     if (StringPrototypeEndsWith(name, " argument"))
@@ -346,7 +345,7 @@ const codes = {}; // exported from errors.js
 const validateObject = (value, name, allowArray = false) => {
   if (
     value === null ||
-    (!allowArray && ArrayIsArray(value)) ||
+    (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && typeof value !== "function")
   )
     throw new codes.ERR_INVALID_ARG_TYPE(name, "Object", value);
@@ -1221,7 +1220,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   // Otherwise it would not possible to identify all types properly.
   if (SymbolIterator in value || constructor === null) {
     noIterator = false;
-    if (ArrayIsArray(value)) {
+    if ($isJSArray(value)) {
       // Only set the constructor for non ordinary ("Array [...]") arrays.
       const prefix =
         constructor !== "Array" || tag !== "" ? getPrefix(constructor, tag, "Array", `(${value.length})`) : "";
@@ -1725,7 +1724,7 @@ function formatError(err, constructor, tag, ctx, keys) {
   }
 
   // Print errors aggregated into AggregateError
-  if (ArrayIsArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes(keys, "errors"))) {
+  if ($isJSArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes(keys, "errors"))) {
     ArrayPrototypePush(keys, "errors");
   }
 

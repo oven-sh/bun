@@ -9,7 +9,7 @@ on:
     inputs:
       runs-on:
         type: string
-        default: windows-latest
+        default: windows
       tag:
         type: string
         required: true
@@ -28,7 +28,7 @@ on:
 
 env:
   # Must specify exact version of LLVM for Windows
-  LLVM_VERSION: 16.0.6
+  LLVM_VERSION: 17.0.6
   BUN_VERSION: 1.1.2
 
 jobs:
@@ -67,7 +67,7 @@ jobs:
           key: bun-${{ inputs.tag }}-deps-${{ steps.hash.outputs.hash }}
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Install LLVM
-        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
         with:
           version: ${{ env.LLVM_VERSION }}
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
@@ -145,7 +145,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
         with:
           version: ${{ env.LLVM_VERSION }}
       - name: Install Ninja
@@ -224,7 +224,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
         with:
           version: ${{ env.LLVM_VERSION }}
       - name: Install Ninja
@@ -294,6 +294,9 @@ jobs:
           cp -r build\bun.exe "$Dist\bun.exe"
           cp -r build\bun.pdb "$Dist\bun.pdb"
           Compress-Archive -Force "$Dist" "$Dist.zip"
+          $env:BUN_GARBAGE_COLLECTOR_LEVEL = "1"
+          $env:BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING = "1"
+          .\build\bun.exe --print "JSON.stringify(require('bun:internal-for-testing').crash_handler.getFeatureData())" > .\features.json
       - name: Upload bun-${{ inputs.tag }}
         uses: actions/upload-artifact@v4
         with:
@@ -306,6 +309,13 @@ jobs:
           name: bun-${{ inputs.tag }}-profile
           path: bun-${{ inputs.tag }}-profile.zip
           if-no-files-found: error
+      - name: Upload bun-feature-data
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-feature-data
+          path: features.json
+          if-no-files-found: error
+          overwrite: true
   on-failure:
     if: ${{ github.repository_owner == 'oven-sh' && failure() }}
     name: On Failure
@@ -324,4 +334,4 @@ jobs:
 
             @${{ github.actor }}, the build for bun-${{ inputs.tag }} failed.
 
-            **[View logs](${{ github.event.workflow_run.html_url }})**
+            **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**

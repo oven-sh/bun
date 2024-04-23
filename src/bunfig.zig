@@ -25,7 +25,6 @@ pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.BundleOverride);
 const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
-const Analytics = bun.Analytics;
 const JSONParser = bun.JSON;
 const Command = @import("cli.zig").Command;
 const TOML = @import("./toml/toml_parser.zig").TOML;
@@ -163,7 +162,7 @@ pub const Bunfig = struct {
         }
 
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
-            Analytics.Features.bunfig += 1;
+            bun.analytics.Features.bunfig += 1;
 
             const json = this.json;
             var allocator = this.allocator;
@@ -222,7 +221,7 @@ pub const Bunfig = struct {
 
                 if (json.get("telemetry")) |expr| {
                     try this.expect(expr, .e_boolean);
-                    Analytics.disabled = !expr.data.e_boolean.value;
+                    bun.analytics.enabled = if (expr.data.e_boolean.value) .yes else .no;
                 }
             }
 
@@ -693,7 +692,7 @@ pub const Bunfig = struct {
                 } else {
                     this.ctx.debug.macros = .{ .map = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source) };
                 }
-                Analytics.Features.macros += 1;
+                bun.analytics.Features.macros += 1;
             }
 
             if (json.get("external")) |expr| {

@@ -323,7 +323,16 @@ pub const BuildCommand = struct {
                     defer Output.flush();
                     var writer = Output.writer();
                     var output_dir = this_bundler.options.output_dir;
-                    if (outfile.len > 0 and output_files.len == 1 and output_files[0].value == .buffer) {
+
+                    const will_be_one_file =
+                        // --outdir is not supported with --compile
+                        // but you can still use --outfile
+                        // in which case, we should set the output dir to the dirname of the outfile
+                        // https://github.com/oven-sh/bun/issues/8697
+                        ctx.bundler_options.compile or
+                        (output_files.len == 1 and output_files[0].value == .buffer);
+
+                    if (output_dir.len == 0 and outfile.len > 0 and will_be_one_file) {
                         output_dir = std.fs.path.dirname(outfile) orelse ".";
                         output_files[0].dest_path = std.fs.path.basename(outfile);
                     }

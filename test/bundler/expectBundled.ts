@@ -813,6 +813,9 @@ function expectBundled(
 
             return testRef(id, opts);
           }
+          if (allErrors.length === 0) {
+            throw new Error("Bundle Failed\ncode: " + exitCode + "\nstdout: " + stdout + "\nstderr: " + stderr);
+          }
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (!expectedErrors) {
           throw new Error("Bundle Failed\n" + stderr?.toUnixString());

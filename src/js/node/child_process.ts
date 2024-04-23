@@ -1359,11 +1359,11 @@ function nodeToBun(item, index) {
   if (typeof item === "number") {
     return item;
   }
-  if (typeof item === "object" && item && typeof item.pipe === "function" && typeof item.on === "function") {
+  if (isNodeStreamReadable(item)) {
     if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
     throw new Error(`TODO: stream.Readable stdio @ ${index}`);
   }
-  if (typeof item === "object" && item && typeof item.write === "function" && typeof item.on === "function") {
+  if (isNodeStreamWritable(item)) {
     if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
     throw new Error(`TODO: stream.Writable stdio @ ${index}`);
   }
@@ -1372,6 +1372,34 @@ function nodeToBun(item, index) {
     throw new Error(`Invalid stdio option[${index}] "${item}"`);
   }
   return result;
+}
+
+/**
+ * Safer version of `item instance of node:stream.Readable`.
+ *
+ * @param item {object}
+ * @returns {boolean}
+ */
+function isNodeStreamReadable(item) {
+  if (typeof item !== "object") return false;
+  if (!item) return false;
+  if (typeof item.on !== "function") return false;
+  if (typeof item.pipe !== "function") return false;
+  return true;
+}
+
+/**
+ * Safer version of `item instance of node:stream.Writable`.
+ *
+ * @param item {objects}
+ * @returns {boolean}
+ */
+function isNodeStreamWritable(item) {
+  if (typeof item !== "object") return false;
+  if (!item) return false;
+  if (typeof item.on !== "function") return false;
+  if (typeof item.write !== "function") return false;
+  return true;
 }
 
 function fdToStdioName(fd) {

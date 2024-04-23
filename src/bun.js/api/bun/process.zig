@@ -261,7 +261,12 @@ pub const Process = struct {
                         if (err_.getErrno() == .SRCH) {
                             break :brk Status.from(pid, &PosixSpawn.wait4(
                                 pid,
-                                if (this.sync) 0 else std.os.W.NOHANG,
+                                // normally we would use WNOHANG to avoid blocking the event loop
+                                // however, there seems to be a race condition where the operating system
+                                // tells us that the process has already exited (ESRCH) but the waitpid
+                                // call with WNOHANG doesn't return the status yet.
+                                // As a workaround, we use 0 to block the event loop until the status is available.
+                                0,
                                 &rusage_result,
                             ));
                         }

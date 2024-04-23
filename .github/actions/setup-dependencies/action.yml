@@ -1,0 +1,18 @@
+name: Setup Dependencies
+description: Sets up system dependencies needed to build bun.
+
+env:
+  LLVM_VERSION: 17
+
+runs:
+  using: composite
+  steps:
+    - if: ${{ runner.os == 'Darwin' }}
+      name: Setup Dependencies
+      shell: bash
+      run: |
+        brew install --force llvm@${{ env.LLVM_VERSION }} ccache rust pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja golang gnu-sed
+        echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
+        echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
+        echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
+        brew link --overwrite llvm@$LLVM_VERSION

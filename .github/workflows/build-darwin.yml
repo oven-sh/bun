@@ -52,32 +52,8 @@ jobs:
           key: bun-${{ inputs.tag }}-deps-${{ steps.hash.outputs.hash }}
           restore-keys: |
             bun-${{ inputs.tag }}-deps-
-      # TODO: Figure out how to cache homebrew dependencies
-      - if: ${{ inputs.no-cache || steps.cache.outputs.cache-hit != 'true' }}
-        name: Install Dependencies
-        env:
-          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALL_CLEANUP: 1
-        run: |
-          brew install \
-            llvm@${{ env.LLVM_VERSION }} \
-            ccache \ 
-            rust \
-            pkg-config \
-            coreutils \
-            libtool \
-            cmake \
-            libiconv \
-            automake \
-            openssl@1.1 \
-            ninja \
-            golang \
-            gnu-sed --force
-          echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
-          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
-          echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
-          brew link --overwrite llvm@$LLVM_VERSION
+      - name: Setup Dependencies
+        uses: ./.github/actions/setup-dependencies
       - if: ${{ inputs.no-cache || steps.cache.outputs.cache-hit != 'true' }}
         name: Clone Submodules
         run: |
@@ -110,18 +86,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      # TODO: Figure out how to cache homebrew dependencies
-      - name: Install Dependencies
-        env:
-          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALL_CLEANUP: 1
-        run: |
-          brew install --force llvm@${{ env.LLVM_VERSION }} ccache rust pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja golang gnu-sed
-          echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
-          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
-          echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
-          brew link --overwrite llvm@$LLVM_VERSION
+      - name: Setup Dependencies
+        uses: ./.github/actions/setup-dependencies
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:

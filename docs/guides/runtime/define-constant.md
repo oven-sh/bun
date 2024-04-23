@@ -69,6 +69,8 @@ To make all usages of `window` be `undefined`, you can use the following command
 bun --define window="undefined" src/index.ts
 ```
 
+---
+
 This can be useful when Server-Side Rendering (SSR) or when you want to make sure that the code doesn't depend on the `window` object.
 
 ```js
@@ -90,8 +92,6 @@ bun --define global="globalThis" src/index.ts
 ```
 
 `global` is a global object in Node.js, but not in web browsers. So, you can use this to fix some cases where the code assumes that `global` is available.
-
----
 
 ### Replace values with JSON
 

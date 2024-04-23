@@ -34,12 +34,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        # with:
-        #   sparse-checkout: |
-        #     .github
-        #     .gitmodules
-        #     src/deps
-        #     scripts
       - name: Hash Submodules
         id: hash
         run: |
@@ -56,6 +50,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/bun-deps
           key: bun-${{ inputs.tag }}-deps-${{ steps.hash.outputs.hash }}
+          restore-keys: |
+            bun-${{ inputs.tag }}-deps-
       # TODO: Figure out how to cache homebrew dependencies
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Install Dependencies
@@ -148,7 +144,7 @@ jobs:
         uses: ./.github/actions/cache
         with:
           path: ${{ runner.temp }}/ccache
-          key: bun-${{ inputs.tag }}-cpp-${{ hashFiles('Dockerfile', 'Makefile', 'CMakeLists.txt', 'build.zig', 'scripts/**', 'src/**', 'packages/bun-usockets/src/**', 'packages/bun-uws/src/**') }}
+          key: bun-${{ inputs.tag }}-cpp-${{ github.ref }}
           restore-keys: |
             bun-${{ inputs.tag }}-cpp-
       - name: Compile

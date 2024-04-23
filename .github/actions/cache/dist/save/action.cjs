@@ -75456,6 +75456,7 @@ var path = (0, import_core.getInput)("path", { required: true });
 var key = (0, import_core.getInput)("key", { required: true });
 var restoreKeys = (0, import_core.getMultilineInput)("restore-keys");
 var cacheDir = (0, import_core.getInput)("cache-dir") || (0, import_node_path.join)((0, import_node_os.tmpdir)(), ".github", "cache");
+console.log("Received inputs:", { path, key, restoreKeys, cacheDir });
 async function saveCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");

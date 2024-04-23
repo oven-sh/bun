@@ -75459,6 +75459,7 @@ var path = (0, import_core.getInput)("path", { required: true });
 var key = (0, import_core.getInput)("key", { required: true });
 var restoreKeys = (0, import_core.getMultilineInput)("restore-keys");
 var cacheDir = (0, import_core.getInput)("cache-dir") || (0, import_node_path.join)((0, import_node_os.tmpdir)(), ".github", "cache");
+console.log("Received inputs:", { path, key, restoreKeys, cacheDir });
 async function restoreCache() {
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
@@ -75515,9 +75516,15 @@ function isGithubHosted() {
 // restore/action.mjs
 async function main() {
   const { cacheHit, cacheKey, cacheMatchedKey } = await restoreCache();
-  (0, import_core2.setOutput)("cache-hit", cacheHit);
-  (0, import_core2.setOutput)("cache-primary-key", cacheKey);
-  (0, import_core2.setOutput)("cache-matched-key", cacheMatchedKey ?? cacheKey);
+  const outputs = {
+    "cache-hit": cacheHit,
+    "cache-primary-key": cacheKey,
+    "cache-matched-key": cacheMatchedKey ?? cacheKey
+  };
+  for (const [key2, value] of Object.entries(outputs)) {
+    (0, import_core2.setOutput)(key2, value);
+  }
+  console.log("Set outputs:", outputs);
 }
 main().catch((error) => {
   console.error("Failed to restore cache:", error);

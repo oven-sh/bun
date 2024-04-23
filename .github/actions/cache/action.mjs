@@ -8,6 +8,7 @@ const path = getInput("path", { required: true });
 const key = getInput("key", { required: true });
 const restoreKeys = getMultilineInput("restore-keys");
 const cacheDir = getInput("cache-dir") || join(tmpdir(), ".github", "cache");
+console.log("Received inputs:", { path, key, restoreKeys, cacheDir });
 
 export async function restoreCache() {
   if (isGithubHosted()) {

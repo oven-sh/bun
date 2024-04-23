@@ -3,9 +3,15 @@ import { restoreCache } from "../action.mjs";
 
 async function main() {
   const { cacheHit, cacheKey, cacheMatchedKey } = await restoreCache();
-  setOutput("cache-hit", cacheHit);
-  setOutput("cache-primary-key", cacheKey);
-  setOutput("cache-matched-key", cacheMatchedKey ?? cacheKey);
+  const outputs = {
+    "cache-hit": cacheHit,
+    "cache-primary-key": cacheKey,
+    "cache-matched-key": cacheMatchedKey ?? cacheKey,
+  };
+  for (const [key, value] of Object.entries(outputs)) {
+    setOutput(key, value);
+  }
+  console.log("Set outputs:", outputs);
 }
 
 main().catch(error => {

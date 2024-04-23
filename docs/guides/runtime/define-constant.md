@@ -136,21 +136,7 @@ console.log("Hello, world!");
 
 ## How is this different than setting a variable?
 
-You can also set `process.env.NODE_ENV` to `"production"` in your code, but that won't help with dead code elimination.
-
-```ts
-// In JavaScript, property accesses can have side effects
-// getters & setters can be functions, and even dynamically defined (due to prototype chains and Proxy)
-// Even if you set process.env.NODE_ENV to "production", on the next line
-// It is not safe for static analysis tools to assume that process.env.NODE_ENV is "production".
-process.env.NODE_ENV = "production";
-
-if (process.env.NODE_ENV === "production") {
-  console.log("Production mode");
-} else {
-  console.log("Development mode");
-}
-```
+You can also set `process.env.NODE_ENV` to `"production"` in your code, but that won't help with dead code elimination. In JavaScript, property accesses can have side effects. Getters & setters can be functions, and even dynamically defined (due to prototype chains and Proxy). Even if you set `process.env.NODE_ENV to "production"`, on the next line, it is not safe for static analysis tools to assume that `process.env.NODE_ENV` is `"production"`.
 
 ## How is this different than find-and-replace or string replacement?
 

@@ -1361,11 +1361,11 @@ function nodeToBun(item, index) {
     return item;
   }
   if (item instanceof StreamModule.Readable) {
-    if (Object.hasOwn(item, "fd") && typeof item.fd === "number" && item.fd >= 0 && item.fd <= 2) return item.fd;
+    if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
     throw new Error(`TODO: stream.Readable stdio @ ${index}`);
   }
   if (item instanceof StreamModule.Writable) {
-    if (Object.hasOwn(item, "fd") && typeof item.fd === "number" && item.fd >= 0 && item.fd <= 2) return item.fd;
+    if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
     throw new Error(`TODO: stream.Writable stdio @ ${index}`);
   }
   const result = nodeToBunLookup[item];

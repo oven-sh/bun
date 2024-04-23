@@ -427,7 +427,7 @@ Url.prototype.format = function () {
   var protocol = this.protocol || "",
     pathname = this.pathname || "",
     hash = this.hash || "",
-    host = false,
+    host = "",
     query = "";
 
   if (this.host) {
@@ -453,7 +453,7 @@ Url.prototype.format = function () {
    * only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
    * unless they had them to begin with.
    */
-  if (this.slashes || ((!protocol || slashedProtocol[protocol]) && host !== false)) {
+  if (this.slashes || ((!protocol || slashedProtocol[protocol]) && host.length > 0)) {
     host = "//" + (host || "");
     if (pathname && pathname.charAt(0) !== "/") {
       pathname = "/" + pathname;

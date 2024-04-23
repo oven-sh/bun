@@ -44,23 +44,6 @@ function error(type) {
 }
 
 /**
- * A generic `Array#map` utility function.
- * @private
- * @param {Array} array The array to iterate over.
- * @param {Function} callback The function that gets called for every array
- * item.
- * @returns {Array} A new array of values returned by the callback function.
- */
-function map(array, callback) {
-  const result = [];
-  let length = array.length;
-  while (length--) {
-    result[length] = callback(array[length]);
-  }
-  return result;
-}
-
-/**
  * A simple `Array#map`-like wrapper to work with domain name strings or email
  * addresses.
  * @private
@@ -82,7 +65,7 @@ function mapDomain(domain, callback) {
   // Avoid `split(regex)` for IE8 compatibility. See #17.
   domain = domain.replace(regexSeparators, "\x2E");
   const labels = domain.split(".");
-  const encoded = map(labels, callback).join(".");
+  const encoded = labels.map(callback).join(".");
   return result + encoded;
 }
 
@@ -100,7 +83,7 @@ function mapDomain(domain, callback) {
  * @returns {Array} The new array of code points.
  */
 function ucs2decode(string) {
-  const output = [];
+  const output: number[] = [];
   let counter = 0;
   const length = string.length;
   while (counter < length) {
@@ -195,9 +178,9 @@ const adapt = function (delta, numPoints, firstTime) {
  * @param {String} input The Punycode string of ASCII-only symbols.
  * @returns {String} The resulting string of Unicode symbols.
  */
-const decode = function (input) {
+const decode = function (input: string) {
   // Don't use UCS-2.
-  const output = [];
+  const output: number[] = [];
   const inputLength = input.length;
   let i = 0;
   let n = initialN;
@@ -285,11 +268,11 @@ const decode = function (input) {
  * @param {String} input The string of Unicode symbols.
  * @returns {String} The resulting Punycode string of ASCII-only symbols.
  */
-const encode = function (input) {
-  const output = [];
+const encode = function (input_: string) {
+  const output: string[] = [];
 
   // Convert the input in UCS-2 to an array of Unicode code points.
-  input = ucs2decode(input);
+  const input = ucs2decode(input_);
 
   // Cache the length.
   const inputLength = input.length;

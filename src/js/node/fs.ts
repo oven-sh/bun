@@ -4,6 +4,12 @@ var WriteStream;
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const Stream = require("node:stream");
+const types = require("node:util/types");
+
+const NumberIsFinite = Number.isFinite;
+const DateNow = Date.now;
+const DatePrototypeGetTime = Date.prototype.getTime;
+const isDate = types.isDate;
 
 // Private exports
 const { FileHandle, kRef, kUnref, kFd, fs } = promises.$data;

@@ -1865,7 +1865,7 @@ var require_wasi = __commonJS({
         }
       }
       getImports(module2) {
-        let namespace = null;
+        let namespace: string | null = null;
         const imports = WebAssembly.Module.imports(module2);
 
         for (let imp of imports) {

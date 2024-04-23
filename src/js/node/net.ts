@@ -612,10 +612,6 @@ const Socket = (function (InternalSocket) {
       process.nextTick(closeNT, this);
     }
 
-    get localAddress() {
-      return "127.0.0.1";
-    }
-
     get localFamily() {
       return "IPv4";
     }

@@ -88,7 +88,6 @@ export default {
   makeSafe, // exported for testing
   Array,
   ArrayFrom: Array.from,
-  ArrayIsArray: Array.isArray,
   ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
   ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
   ArrayPrototypeForEach,

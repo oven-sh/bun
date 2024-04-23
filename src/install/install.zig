@@ -988,36 +988,23 @@ pub const PackageInstall = struct {
         return switch (resolution.tag) {
             .git => this.verifyGitResolution(&resolution.value.git, buf, root_node_modules_dir),
             .github => this.verifyGitResolution(&resolution.value.github, buf, root_node_modules_dir),
-            else => {
-                if (resolution.tag == .folder and this.node_modules.tree_id != 0) {
-                    return this.verifySymlinkedFolder(root_node_modules_dir);
+            .folder => {
+                if (this.node_modules.tree_id != 0) {
+                    return this.verifyTransitiveSymlinkedFolder(root_node_modules_dir);
                 }
                 return this.verifyPackageJSONNameAndVersion(root_node_modules_dir);
             },
+            else => return this.verifyPackageJSONNameAndVersion(root_node_modules_dir),
         };
     }
 
-    fn verifySymlinkedFolder(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {
+    // Only check for the destination directory in node_modules. We can't use package.json
+    // because it might not exist.
+    fn verifyTransitiveSymlinkedFolder(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {
         var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
-        defer {
-            if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
-        }
+        defer destination_dir.close();
 
-        var dir: std.fs.Dir = bun.openDir(destination_dir, this.destination_dir_subpath) catch return false;
-        defer dir.close();
-
-        var iter = bun.DirIterator.iterate(dir, .u8);
-
-        while (switch (iter.next()) {
-            .result => |entry| entry,
-            .err => return false,
-        }) |entry| {
-            if (entry.kind == .file) {
-                return !isDanglingSymlinkAt(bun.toFD(dir.fd), entry.name.sliceAssumeZ());
-            }
-        }
-
-        return true;
+        return bun.sys.directoryExistsAt(destination_dir.fd, this.destination_dir_subpath).unwrap() catch false;
     }
 
     fn verifyPackageJSONNameAndVersion(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {

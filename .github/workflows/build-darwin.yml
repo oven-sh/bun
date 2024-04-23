@@ -33,7 +33,7 @@ env:
 jobs:
   build-submodules:
     name: Build Submodules
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -111,7 +111,7 @@ jobs:
           if-no-files-found: error
   build-cpp:
     name: Build C++
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

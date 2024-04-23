@@ -94,7 +94,6 @@ jobs:
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'darwin-aarch64-studio' || 'macos-13' }}
       tag: darwin-aarch64
       arch: aarch64
       cpu: native

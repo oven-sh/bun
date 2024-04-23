@@ -81,22 +81,26 @@ const INotify = struct {
         this.inotify_fd = try std.os.inotify_init1(std.os.linux.IN.CLOEXEC);
     }
 
-    pub fn read(this: *INotify) ![]*const INotifyEvent {
+    pub fn read(this: *INotify) bun.JSC.Maybe([]*const INotifyEvent) {
         bun.assert(this.loaded_inotify);
 
         restart: while (true) {
-            Futex.wait(&this.watch_count, 0, null) catch unreachable;
+            Futex.wait(&this.watch_count, 0, null) catch |err| switch (err) {
+                error.TimedOut => unreachable, // timeout is infinite
+            };
+
             const rc = std.os.system.read(
                 this.inotify_fd,
                 @as([*]u8, @ptrCast(@alignCast(&this.eventlist))),
                 @sizeOf(EventListBuffer),
             );
 
-            switch (std.os.errno(rc)) {
+            const errno = std.os.errno(rc);
+            switch (errno) {
                 .SUCCESS => {
                     var len = @as(usize, @intCast(rc));
 
-                    if (len == 0) return &[_]*INotifyEvent{};
+                    if (len == 0) return .{.result=&[_]*INotifyEvent{}};
 
                     // IN_MODIFY is very noisy
                     // we do a 0.1ms sleep to try to coalesce events better
@@ -114,15 +118,17 @@ const INotify = struct {
                                     @as([*]u8, @ptrCast(@alignCast(&this.eventlist))) + len,
                                     @sizeOf(EventListBuffer) - len,
                                 );
-                                switch (std.os.errno(new_rc)) {
+                                const e = std.os.errno(new_rc);
+                                switch (e) {
                                     .SUCCESS => {
                                         len += @as(usize, @intCast(new_rc));
                                     },
                                     .AGAIN => continue,
                                     .INTR => continue,
-                                    .INVAL => return error.ShortRead,
-                                    .BADF => return error.INotifyFailedToStart,
-                                    else => unreachable,
+                                    else => return .{ .err = .{
+                                        .errno = @truncate(@intFromEnum(e)),
+                                        .syscall = .read,
+                                    } },
                                 }
                                 break;
                             }
@@ -150,16 +156,15 @@ const INotify = struct {
                         count += 1;
                     }
 
-                    return this.eventlist_ptrs[0..count];
+                    return .{.result=this.eventlist_ptrs[0..count]};
                 },
                 .AGAIN => continue :restart,
-                .INVAL => return error.ShortRead,
-                .BADF => return error.INotifyFailedToStart,
-
-                else => unreachable,
+                else => return .{ .err = .{
+                    .errno = @truncate(@intFromEnum(errno)),
+                    .syscall = .read,
+                } },
             }
         }
-        unreachable;
     }
 
     pub fn stop(this: *INotify) void {
@@ -558,13 +563,16 @@ pub fn NewWatcher(comptime ContextType: type) type {
             defer Output.flush();
             if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});
 
-            this._watchLoop() catch |err| {
-                this.watchloop_handle = null;
-                this.platform.stop();
-                if (this.running) {
-                    this.ctx.onError(err);
-                }
-            };
+            switch (this._watchLoop()) {
+                .err => |err| {
+                    this.watchloop_handle = null;
+                    this.platform.stop();
+                    if (this.running) {
+                        this.ctx.onError(err);
+                    }
+                },
+                .result => {},
+            }
 
             // deinit and close descriptors if needed
             if (this.close_descriptors) {
@@ -618,7 +626,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             }
         }
 
-        fn _watchLoop(this: *Watcher) !void {
+        fn _watchLoop(this: *Watcher) bun.JSC.Maybe(void) {
             if (Environment.isMac) {
                 bun.assert(this.platform.fd > 0);
                 const KEvent = std.c.Kevent;
@@ -690,7 +698,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 restart: while (true) {
                     defer Output.flush();
 
-                    var events = try this.platform.read();
+                    var events = switch (this.platform.read()) {
+                        .result => |result| result,
+                        .err => |err| return .{ .err = err },
+                    };
                     if (events.len == 0) continue :restart;
 
                     // TODO: is this thread safe?
@@ -849,6 +860,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     this.ctx.onFileUpdate(all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
                 }
             }
+
+            return .{ .result = {} };
         }
 
         fn appendFileAssumeCapacity(

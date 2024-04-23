@@ -3566,9 +3566,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub fn onError(
             _: *@This(),
-            err: anyerror,
+            err: bun.sys.Error,
         ) void {
-            Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
+            Output.err(@as(bun.C.E, @enumFromInt(err.errno)), "Watcher crashed", .{});
         }
 
         pub fn getContext(this: *@This()) *@This().Watcher {

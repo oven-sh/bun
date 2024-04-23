@@ -151,7 +151,7 @@ pub const FSWatcher = struct {
     pub const Event = union(EventType) {
         rename: []const u8,
         change: []const u8,
-        @"error": bun.JSC.SystemError,
+        @"error": bun.sys.Error,
         abort: void,
         close: void,
 
@@ -483,12 +483,11 @@ pub const FSWatcher = struct {
             };
         }
 
-        pub fn createFSWatcher(this: Arguments) !JSC.JSValue {
-            const obj = try FSWatcher.init(this);
-            if (obj.js_this != .zero) {
-                return obj.js_this;
-            }
-            return JSC.JSValue.jsUndefined();
+        pub fn createFSWatcher(this: Arguments) JSC.Maybe(JSC.JSValue) {
+            return switch (FSWatcher.init(this)) {
+                .result => |result| .{ .result = result.js_this },
+                .err => |err| .{ .err = err },
+            };
         }
     };
 
@@ -550,7 +549,7 @@ pub const FSWatcher = struct {
             }
         }
     }
-    pub fn emitError(this: *FSWatcher, err: bun.JSC.SystemError) void {
+    pub fn emitError(this: *FSWatcher, err: bun.sys.Error) void {
         if (this.closed) return;
         defer this.close();
 
@@ -562,7 +561,7 @@ pub const FSWatcher = struct {
                 const globalObject = this.globalThis;
                 var args = [_]JSC.JSValue{
                     EventType.@"error".toJS(globalObject),
-                    err.toErrorInstance(globalObject),
+                    err.toJSC(globalObject),
                 };
                 _ = listener.callWithGlobalThis(
                     globalObject,
@@ -715,8 +714,8 @@ pub const FSWatcher = struct {
         this.deinit();
     }
 
-    pub fn init(args: Arguments) !*FSWatcher {
-        var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+    pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
+        var buf: bun.PathBuffer = undefined;
         var slice = args.path.slice();
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
@@ -726,7 +725,10 @@ pub const FSWatcher = struct {
             slice,
         };
 
-        const cwd = try bun.getcwd(&buf);
+        const cwd = switch (bun.sys.getcwd(&buf)) {
+            .result => |r| r,
+            .err => |err| return .{ .err = err },
+        };
         buf[cwd.len] = std.fs.path.sep;
 
         var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
@@ -760,13 +762,17 @@ pub const FSWatcher = struct {
         });
         ctx.current_task.ctx = ctx;
 
-        errdefer ctx.deinit();
-
         ctx.path_watcher = if (args.signal == null or !args.signal.?.aborted())
-            try PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))
+            switch (PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))) {
+                .result => |r| r,
+                .err => |err| {
+                    ctx.deinit();
+                    return .{ .err = err };
+                },
+            }
         else
             null;
         ctx.initJS(args.listener);
-        return ctx;
+        return .{ .result = ctx };
     }
 };

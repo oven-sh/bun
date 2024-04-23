@@ -84,7 +84,7 @@ pub const PathWatcherManager = struct {
         if (this.file_paths.getEntry(path)) |entry| {
             var info = entry.value_ptr;
             info.refs += 1;
-            return info.*;
+            return .{ .result = info.* };
         }
 
         switch (switch (Environment.os) {
@@ -93,14 +93,14 @@ pub const PathWatcherManager = struct {
             .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, .{ .iterable = true, .read_only = true }),
         }) {
             .err => |e| {
-                if (e == .NOTDIR) {
-                    const file = switch (std.sys.open(path, 0, 0)) {
+                if (e.errno == @intFromEnum(bun.C.E.NOTDIR)) {
+                    const file = switch (bun.sys.open(path, 0, 0)) {
                         .err => return .{ .err = e.withPath(path) },
                         .result => |r| r,
                     };
                     const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
                     const result = PathInfo{
-                        .fd = bun.toFD(file.handle),
+                        .fd = file,
                         .is_file = true,
                         .path = cloned_path,
                         // if is really a file we need to get the dirname
@@ -109,14 +109,14 @@ pub const PathWatcherManager = struct {
                         .refs = 1,
                     };
                     _ = this.file_paths.put(cloned_path, result) catch bun.outOfMemory();
-                    return result;
+                    return .{ .result = result };
                 }
                 return .{ .err = e.withPath(path) };
             },
             .result => |iterable_dir| {
                 const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
                 const result = PathInfo{
-                    .fd = bun.toFD(iterable_dir.fd),
+                    .fd = iterable_dir,
                     .is_file = false,
                     .path = cloned_path,
                     .dirname = cloned_path,
@@ -124,19 +124,17 @@ pub const PathWatcherManager = struct {
                     .refs = 1,
                 };
                 _ = this.file_paths.put(cloned_path, result) catch bun.outOfMemory();
-                return result;
+                return .{ .result = result };
             },
         }
     }
 
     pub fn init(vm: *JSC.VirtualMachine) !*PathWatcherManager {
-        const this = try bun.default_allocator.create(PathWatcherManager);
+        const this = bun.default_allocator.create(PathWatcherManager) catch bun.outOfMemory();
         errdefer bun.default_allocator.destroy(this);
-        var watchers = bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1) catch |err| {
-            bun.default_allocator.destroy(this);
-            return err;
-        };
+        var watchers = bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1) catch bun.outOfMemory();
         errdefer watchers.deinitWithAllocator(bun.default_allocator);
+
         const manager = PathWatcherManager{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.default_allocator),
@@ -324,7 +322,7 @@ pub const PathWatcherManager = struct {
 
     pub fn onError(
         this: *PathWatcherManager,
-        err: bun.JSC.SystemError,
+        err: bun.sys.Error,
     ) void {
         {
             this.mutex.lock();
@@ -335,7 +333,7 @@ pub const PathWatcherManager = struct {
             // stop all watchers
             for (watchers) |w| {
                 if (w) |watcher| {
-                    log("[watch] error: {s}", .{@errorName(err)});
+                    // log("[watch] error: {s}", .{@errorName(err)});
                     watcher.emit(.{ .@"error" = err }, 0, timestamp, false);
                     watcher.flush();
                 }
@@ -435,7 +433,7 @@ pub const PathWatcherManager = struct {
             this: *DirectoryRegisterTask,
             watcher: *PathWatcher,
             buf: *[bun.MAX_PATH_BYTES + 1]u8,
-        ) !void {
+        ) !bun.JSC.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
             const manager = this.manager;
@@ -456,7 +454,11 @@ pub const PathWatcherManager = struct {
                 buf[entry_path.len] = 0;
                 const entry_path_z = buf[0..entry_path.len :0];
 
-                const child_path = try manager._fdFromAbsolutePathZ(entry_path_z);
+                const child_path = switch (manager._fdFromAbsolutePathZ(entry_path_z)) {
+                    .result => |result| result,
+                    .err => |e| return .{ .err = e },
+                };
+
                 {
                     watcher.mutex.lock();
                     defer watcher.mutex.unlock();
@@ -476,6 +478,7 @@ pub const PathWatcherManager = struct {
                     }
                 }
             }
+            return .{ .result = {} };
         }
 
         fn run(this: *DirectoryRegisterTask) void {
@@ -487,11 +490,52 @@ pub const PathWatcherManager = struct {
 
             while (this.getNext()) |watcher| {
                 defer watcher.unrefPendingDirectory();
-                this.processWatcher(watcher, &buf) catch |err| {
-                    log("[watch] error registering directory: {s}", .{@errorName(err)});
-                    watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
-                    watcher.flush();
+                const maybe = this.processWatcher(watcher, &buf) catch |err|brk: {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    break:brk JSC.Maybe(void){
+                        .err = .{
+                            .errno = @truncate(@intFromEnum(switch (err) {
+                                error.Unexpected,
+                                error.UnexpectedFailure,
+                                error.WatchAlreadyExists,
+                                error.NameTooLong,
+                                error.BadPathName,
+                                error.InvalidUtf8,
+                                => bun.C.E.INVAL,
+
+                                error.OutOfMemory,
+                                error.SystemResources,
+                                                                => bun.C.E.NOMEM,
+
+                                error.FileNotFound,
+                                error.NetworkNotFound,
+                                error.NoDevice,
+                                                                => bun.C.E.NOENT,
+
+                                error.DeviceBusy =>bun.C.E.BUSY,
+                                error.AccessDenied =>bun.C.E.PERM,
+                                error.InvalidHandle => bun.C.E.BADF,
+                                error.SymLinkLoop => bun.C.E.LOOP,
+                                error.NotDir => bun.C.E.NOTDIR,
+
+                                error.ProcessFdQuotaExceeded,
+                                error.SystemFdQuotaExceeded,
+                                error.UserResourceLimitReached,
+                                => bun.C.E.MFILE,
+                                
+                            })),
+                            .syscall = .watch,
+                        },
+                    };
                 };
+                switch (maybe) {
+                    .err => |err| {
+                        // log("[watch] error registering directory: {s}", .{@errorName(err)});
+                        watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
+                        watcher.flush();
+                    },
+                    .result => {},
+                }
             }
 
             this.manager.unrefPendingTask();
@@ -894,20 +938,72 @@ pub fn watch(
     comptime callback: PathWatcher.Callback,
     comptime updateEnd: PathWatcher.UpdateEndCallback,
     ctx: ?*anyopaque,
-) !*PathWatcher {
-    if (default_manager) |manager| {
-        const path_info = try manager._fdFromAbsolutePathZ(path);
-        errdefer manager._decrementPathRef(path);
-        return try PathWatcher.init(manager, path_info, recursive, callback, updateEnd, ctx);
-    } else {
+) bun.JSC.Maybe(*PathWatcher) {
+    const manager = default_manager orelse brk: {
         default_manager_mutex.lock();
         defer default_manager_mutex.unlock();
         if (default_manager == null) {
-            default_manager = try PathWatcherManager.init(vm);
+            default_manager = PathWatcherManager.init(vm) catch |e| {
+                return .{ .err = .{
+                    .errno = @truncate(@intFromEnum(switch (e) {
+                        error.SystemResources, error.LockedMemoryLimitExceeded, error.OutOfMemory => bun.C.E.NOMEM,
+
+                        error.ProcessFdQuotaExceeded,
+                        error.SystemFdQuotaExceeded,
+                        error.ThreadQuotaExceeded,
+                        => bun.C.E.MFILE,
+
+                        error.Unexpected => bun.C.E.NOMEM,
+                    })),
+                    .syscall = .watch,
+                } };
+            };
         }
-        const manager = default_manager.?;
-        const path_info = try manager._fdFromAbsolutePathZ(path);
-        errdefer manager._decrementPathRef(path);
-        return try PathWatcher.init(manager, path_info, recursive, callback, updateEnd, ctx);
-    }
+        break :brk default_manager.?;
+    };
+
+    const path_info = switch (manager._fdFromAbsolutePathZ(path)) {
+        .result => |result| result,
+        .err => |err| return .{ .err = err },
+    };
+
+    const watcher = PathWatcher.init(manager, path_info, recursive, callback, updateEnd, ctx) catch |e| {
+        bun.handleErrorReturnTrace(e, @errorReturnTrace());
+        manager._decrementPathRef(path);
+
+        return .{ .err = .{
+            .errno = @truncate(@intFromEnum(switch (e) {
+                error.Unexpected,
+                error.UnexpectedFailure,
+                error.WatchAlreadyExists,
+                error.NameTooLong,
+                error.BadPathName,
+                error.InvalidUtf8,
+                => bun.C.E.INVAL,
+
+                error.OutOfMemory,
+                error.SystemResources,
+                                                => bun.C.E.NOMEM,
+
+                error.FileNotFound,
+                error.NetworkNotFound,
+                error.NoDevice,
+                                                => bun.C.E.NOENT,
+
+                error.DeviceBusy =>bun.C.E.BUSY,
+                error.AccessDenied =>bun.C.E.PERM,
+                error.InvalidHandle => bun.C.E.BADF,
+                error.SymLinkLoop => bun.C.E.LOOP,
+                error.NotDir => bun.C.E.NOTDIR,
+
+                error.ProcessFdQuotaExceeded,
+                error.SystemFdQuotaExceeded,
+                error.UserResourceLimitReached,
+                => bun.C.E.MFILE,
+            })),
+            .syscall = .watch,
+        } };
+    };
+
+    return .{ .result = watcher };
 }

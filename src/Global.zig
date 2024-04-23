@@ -99,7 +99,7 @@ pub fn exit(code: u8) noreturn {
 }
 
 pub fn exitWide(code: u32) noreturn {
-    std.c.exit(@bitCast(code));
+    bun.C.quick_exit(@bitCast(code));
 }
 
 pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {

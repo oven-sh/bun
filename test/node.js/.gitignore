@@ -1,0 +1,6 @@
+# Paths copied from Node.js repository
+upstream/
+
+# Paths for test runner
+summary/
+summary.md

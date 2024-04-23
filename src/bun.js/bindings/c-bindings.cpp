@@ -545,7 +545,11 @@ extern "C" void bun_initialize_process()
     Bun__setCTRLHandler(1);
 #endif
 
+#if OS(DARWIN)
     atexit(Bun__onExit);
+#else
+    at_quick_exit(Bun__onExit);
+#endif
 }
 
 #if OS(WINDOWS)

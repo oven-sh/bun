@@ -6,6 +6,6 @@
     "@actions/core": "^1.10.1"
   },
   "scripts": {
-    "build": "bun build --target=node --outdir dist action.mjs restore/action.mjs save/action.mjs"
+    "build": "bun build --target=node --outdir dist action.mjs restore/action.mjs save/action.mjs && mv dist/action.js dist/action.mjs && mv dist/restore/action.js dist/restore/action.mjs && mv dist/save/action.js dist/save/action.mjs"
   }
 }

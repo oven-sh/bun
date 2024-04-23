@@ -2965,7 +2965,7 @@ pub const Arguments = struct {
         }
     };
     pub const Exists = struct {
-        path: ?StringOrBuffer,
+        path: ?PathLike,
 
         pub fn deinit(this: Exists) void {
             if (this.path) |path| {
@@ -2986,13 +2986,8 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Exists {
-            _ = exception;
             return Exists{
-                .path = StringOrBuffer.fromJS(
-                    ctx,
-                    bun.default_allocator,
-                    arguments.next() orelse return null,
-                ),
+                .path = PathLike.fromJS(ctx, arguments, exception),
             };
         }
     };
@@ -4138,9 +4133,7 @@ pub const NodeFS = struct {
         _ = flavor;
         const Ret = Maybe(Return.Exists);
         const path = args.path orelse return Ret{ .result = false };
-        const path_slice = path.slice();
-        if (path_slice.len + 1 > std.fs.MAX_PATH_BYTES) return Ret{ .result = false };
-        const slice = std.fmt.bufPrintZ(&this.sync_error_buf, "{s}", .{path_slice}) catch unreachable;
+        const slice = path.sliceZ(&this.sync_error_buf);
 
         // Use libuv access on windows
         if (Environment.isWindows) {

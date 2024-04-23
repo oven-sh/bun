@@ -159,7 +159,13 @@ const exports = {
   close: fs.close.bind(fs),
   copyFile: fs.copyFile.bind(fs),
   cp,
-  exists: fs.exists.bind(fs),
+  exists: async function exists() {
+    try {
+      return fs.exists.$apply(fs, arguments);
+    } catch (e) {
+      return false;
+    }
+  },
   chown: fs.chown.bind(fs),
   chmod: fs.chmod.bind(fs),
   fchmod: fs.fchmod.bind(fs),

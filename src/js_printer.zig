@@ -233,11 +233,11 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
             0,
         );
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            const remain = text[i + @as(usize, width) ..];
+            const remain = text[i + clamped_width ..];
             if (strings.indexOfNeedsEscape(remain)) |j| {
-                const text_chunk = text[i .. i + width];
+                const text_chunk = text[i .. i + clamped_width];
                 try bytes.appendSlice(text_chunk);
-                i += width;
+                i += clamped_width;
                 try bytes.appendSlice(remain[0..j]);
                 i += j;
                 continue;

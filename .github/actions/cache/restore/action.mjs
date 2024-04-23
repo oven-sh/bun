@@ -3,6 +3,7 @@ import { restoreCache } from "../action.mjs";
 
 async function main() {
   const result = await restoreCache();
+  console.log("RESULT:", result);
   if (!result) {
     process.exit(1);
   }

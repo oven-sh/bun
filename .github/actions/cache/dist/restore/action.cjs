@@ -75455,6 +75455,23 @@ var import_cache = __toESM(require_cache2(), 1);
 var import_node_fs = require("node:fs");
 var import_node_os = require("node:os");
 var import_node_path = require("node:path");
+process.on("unhandledRejection", (error) => {
+  console.error("Unhandled rejection:", error);
+  process.exit(1);
+});
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+  process.exit(1);
+});
+process.on("warning", (warning) => {
+  console.warn("Warning:", warning);
+});
+process.on("exit", (code) => {
+  console.log("Exit code:", code);
+});
+process.on("beforeExit", (code) => {
+  console.log("Before exit code:", code);
+});
 var path = (0, import_core.getInput)("path", { required: true });
 var key = (0, import_core.getInput)("key", { required: true });
 var restoreKeys = (0, import_core.getMultilineInput)("restore-keys");
@@ -75528,6 +75545,7 @@ function isGithubHosted() {
 // restore/action.mjs
 async function main() {
   const result = await restoreCache();
+  console.log("RESULT:", result);
   if (!result) {
     process.exit(1);
   }

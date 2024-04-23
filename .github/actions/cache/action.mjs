@@ -4,6 +4,28 @@ import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+process.on("unhandledRejection", error => {
+  console.error("Unhandled rejection:", error);
+  process.exit(1);
+});
+
+process.on("uncaughtException", error => {
+  console.error("Uncaught exception:", error);
+  process.exit(1);
+});
+
+process.on("warning", warning => {
+  console.warn("Warning:", warning);
+});
+
+process.on("exit", code => {
+  console.log("Exit code:", code);
+});
+
+process.on("beforeExit", code => {
+  console.log("Before exit code:", code);
+});
+
 const path = getInput("path", { required: true });
 const key = getInput("key", { required: true });
 const restoreKeys = getMultilineInput("restore-keys");

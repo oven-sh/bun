@@ -315,4 +315,3 @@ pub const Define = struct {
         return define;
     }
 };
-

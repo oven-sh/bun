@@ -2,7 +2,6 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
-const FsModule = require("node:fs");
 
 var NetModule;
 

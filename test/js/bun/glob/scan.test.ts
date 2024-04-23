@@ -26,7 +26,6 @@ import fg from "fast-glob";
 import * as path from "path";
 import { tempFixturesDir, createTempDirectoryWithBrokenSymlinks, prepareEntries } from "./util";
 import { tempDirWithFiles } from "harness";
-import { TestBuilder } from "../shell/test_builder";
 import * as os from "node:os";
 import * as fs from "node:fs";
 
@@ -537,9 +536,14 @@ test("glob.scan('.')", async () => {
   expect(entries).toContain("README.md");
 });
 
+function makeTmpdir(): string {
+  const tmp = os.tmpdir();
+  return fs.mkdtempSync(path.join(tmp, "test_builder"));
+}
+
 describe("trailing directory separator", async () => {
   test("matches directories absolute", async () => {
-    const tmpdir = TestBuilder.tmpdir();
+    const tmpdir = makeTmpdir();
     const files = [`${tmpdir}${path.sep}bunx-foo`, `${tmpdir}${path.sep}bunx-bar`, `${tmpdir}${path.sep}bunx-baz`];
     await Bun.$`touch ${files[0]}; touch ${files[1]}; mkdir ${files[2]}`;
     const glob = new Glob(`${path.join(tmpdir, "bunx-*")}${path.sep}`);
@@ -548,7 +552,7 @@ describe("trailing directory separator", async () => {
   });
 
   test("matches directories relative", async () => {
-    const tmpdir = TestBuilder.tmpdir();
+    const tmpdir = makeTmpdir();
     const files = [`bunx-foo`, `bunx-bar`, `bunx-baz`];
     await Bun.$`touch ${files[0]}; touch ${files[1]}; mkdir ${files[2]}`.cwd(tmpdir);
     const glob = new Glob(`bunx-*/`);
@@ -559,7 +563,7 @@ describe("trailing directory separator", async () => {
 
 describe("absolute path pattern", async () => {
   test("works *", async () => {
-    const tmpdir = TestBuilder.tmpdir();
+    const tmpdir = makeTmpdir();
     const files = [`${tmpdir}${path.sep}bunx-foo`, `${tmpdir}${path.sep}bunx-bar`, `${tmpdir}${path.sep}bunx-baz`];
     await Bun.$`touch ${files[0]}; touch ${files[1]}; mkdir ${files[2]}`;
     const glob = new Glob(`${path.join(tmpdir, "bunx-*")}`);
@@ -568,7 +572,7 @@ describe("absolute path pattern", async () => {
   });
 
   test("works **", async () => {
-    const tmpdir = TestBuilder.tmpdir();
+    const tmpdir = makeTmpdir();
     const files = [
       `${tmpdir}${path.sep}bunx-foo`,
       `${tmpdir}${path.sep}bunx-bar`,

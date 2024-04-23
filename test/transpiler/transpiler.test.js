@@ -7,6 +7,7 @@ describe("Bun.Transpiler", () => {
     define: {
       "process.env.NODE_ENV": JSON.stringify("development"),
       user_undefined: "undefined",
+      user_nested: "location.origin",
     },
     macro: {
       react: {
@@ -1936,6 +1937,8 @@ console.log(resolve.length)
 
       expectPrinted_(`export default typeof user_undefined !== 'undefined';`, `export default false`);
       expectPrinted_(`export default !user_undefined;`, `export default true`);
+
+      expectPrinted_(`export default user_nested;`, `export default location.origin`);
     });
 
     it("jsx symbol should work", () => {

@@ -69,8 +69,8 @@ pub const DefineData = struct {
         try user_defines.ensureUnusedCapacity(@as(u32, @truncate(defines.count())));
         var iter = defines.iterator();
         while (iter.next()) |entry| {
-            var splitter = std.mem.split(u8, entry.key_ptr.*, ".");
-            while (splitter.next()) |part| {
+            var keySplitter = std.mem.split(u8, entry.key_ptr.*, ".");
+            while (keySplitter.next()) |part| {
                 if (!js_lexer.isIdentifier(part)) {
                     if (strings.eql(part, entry.key_ptr)) {
                         try log.addErrorFmt(null, logger.Loc{}, allocator, "define key \"{s}\" must be a valid identifier", .{entry.key_ptr.*});
@@ -81,7 +81,16 @@ pub const DefineData = struct {
                 }
             }
 
-            if (js_lexer.isIdentifier(entry.value_ptr.*) and !js_lexer.Keywords.has(entry.value_ptr.*)) {
+            // check for nested identifiers
+            var valueSplitter = std.mem.split(u8, entry.value_ptr.*, ".");
+            var isIdent = true;
+            while (valueSplitter.next()) |part| {
+                if (!js_lexer.isIdentifier(part) or js_lexer.Keywords.has(part)) {
+                    isIdent = false;
+                    break;
+                }
+            }
+            if (isIdent) {
 
                 // Special-case undefined. it's not an identifier here
                 // https://github.com/evanw/esbuild/issues/1407
@@ -307,4 +316,3 @@ pub const Define = struct {
     }
 };
 
-const expect = std.testing.expect;

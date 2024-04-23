@@ -1,5 +1,5 @@
 ---
-name: Define static globals & constants
+name: Define and replace static globals & constants
 ---
 
 The `--define` flag lets you declare statically-analyzable constants and globals. It replace all usages of an identifier or property in a JavaScript or TypeScript file with a constant value. This feature is supported at runtime and also in `bun build`. This is sort of similar to `#define` in C/C++, except for JavaScript.
@@ -136,7 +136,7 @@ console.log("Hello, world!");
 
 ## How is this different than setting a variable?
 
-You can also set `process.env.NODE_ENV` to `"production"` in your code, but that won't help with dead code elimination. In JavaScript, property accesses can have side effects. Getters & setters can be functions, and even dynamically defined (due to prototype chains and Proxy). Even if you set `process.env.NODE_ENV to "production"`, on the next line, it is not safe for static analysis tools to assume that `process.env.NODE_ENV` is `"production"`.
+You can also set `process.env.NODE_ENV` to `"production"` in your code, but that won't help with dead code elimination. In JavaScript, property accesses can have side effects. Getters & setters can be functions, and even dynamically defined (due to prototype chains and Proxy). Even if you set `process.env.NODE_ENV` to `"production"`, on the next line, it is not safe for static analysis tools to assume that `process.env.NODE_ENV`is`"production"`.
 
 ## How is this different than find-and-replace or string replacement?
 

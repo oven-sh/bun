@@ -1431,3 +1431,5 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
 }
 
 pub extern fn windows_enable_stdio_inheritance() void;
+
+pub extern "c" fn quick_exit(code: c_int) noreturn;

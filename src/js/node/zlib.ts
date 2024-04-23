@@ -2165,12 +2165,12 @@ var require_inftrees = __commonJS({
       var low;
       var mask;
       var next;
-      var base = null;
+      var base: number[] | null = null;
       var base_index = 0;
       var end;
       var count = new utils.Buf16(MAXBITS + 1);
       var offs = new utils.Buf16(MAXBITS + 1);
-      var extra = null;
+      var extra: number[] | null = null;
       var extra_index = 0;
       var here_bits, here_op, here_val;
       for (len = 0; len <= MAXBITS; len++) {
@@ -2254,8 +2254,8 @@ var require_inftrees = __commonJS({
           here_op = 0;
           here_val = work[sym];
         } else if (work[sym] > end) {
-          here_op = extra[extra_index + work[sym]];
-          here_val = base[base_index + work[sym]];
+          here_op = extra![extra_index + work[sym]];
+          here_val = base![base_index + work[sym]];
         } else {
           here_op = 32 + 64;
           here_val = 0;
@@ -4317,7 +4317,7 @@ var require_lib = __commonJS({
       _close(this, callback);
       process.nextTick(emitCloseNT, this);
     };
-    function _close(engine, callback) {
+    function _close(engine, callback?) {
       if (callback) process.nextTick(callback);
       if (!engine._handle) return;
       engine._handle.close();

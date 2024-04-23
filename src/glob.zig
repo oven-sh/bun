@@ -125,6 +125,21 @@ fn dummyFilterFalse(val: []const u8) bool {
     return false;
 }
 
+pub fn statatWindows(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
+    if (comptime !bun.Environment.isWindows) @compileError("oi don't use this");
+    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    const dir = switch (Syscall.getFdPath(fd, &buf)) {
+        .err => |e| return .{ .err = e },
+        .result => |s| s,
+    };
+    const parts: []const []const u8 = &.{
+        dir[0..dir.len],
+        path,
+    };
+    const statpath = ResolvePath.joinZBuf(&buf, parts, .auto);
+    return Syscall.stat(statpath);
+}
+
 pub const SyscallAccessor = struct {
     const count_fds = true;
 
@@ -162,6 +177,7 @@ pub const SyscallAccessor = struct {
     }
 
     pub fn statat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
+        if (comptime bun.Environment.isWindows) return statatWindows(handle.value, path);
         return switch (Syscall.fstatat(handle.value, path)) {
             .err => |err| .{ .err = err },
             .result => |s| .{ .result = s },
@@ -250,6 +266,7 @@ pub const DirEntryAccessor = struct {
 
     pub fn statat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
         const fd: bun.FileDescriptor = (handle.value orelse @panic("File descriptor is null")).fd; // TODO when is this null?
+        if (comptime bun.Environment.isWindows) return statatWindows(fd, path);
         return Syscall.fstatat(fd, path);
     }
 
@@ -535,7 +552,7 @@ pub fn GlobWalker_(
                         },
                         .result => |stat| stat,
                     };
-                    const matches = (bun.S.ISDIR(stat_result.mode) and !this.walker.only_files) or bun.S.ISREG(stat_result.mode) or !this.walker.only_files;
+                    const matches = (bun.S.ISDIR(@intCast(stat_result.mode)) and !this.walker.only_files) or bun.S.ISREG(@intCast(stat_result.mode)) or !this.walker.only_files;
                     if (matches) {
                         const path = try this.walker.prepareMatchedPath(pathz, dir_path);
                         this.iter_state = .{ .matched = path };

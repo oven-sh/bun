@@ -117,20 +117,7 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install \
-            llvm@${{ env.LLVM_VERSION }} \
-            ccache \
-            rust \
-            pkg-config \
-            coreutils \
-            libtool \
-            cmake \
-            libiconv \
-            automake \
-            openssl@1.1 \
-            ninja \
-            golang \
-            gnu-sed --force
+          brew install --force llvm@${{ env.LLVM_VERSION }} ccache rust pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja golang gnu-sed
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH

@@ -165,92 +165,104 @@ describe("udpSocket()", () => {
 
   for (const { binaryType, type } of dataTypes) {
     for (const { label, data, bytes } of dataCases) {
-      test(`send ${label} (${binaryType || "undefined"})`, async done => {
-        const client = await udpSocket({});
-        const server = await udpSocket({
-          binaryType: binaryType,
-          socket: {
-            data(socket, data, port, address) {
-              validateRecv(socket, data, port, address, binaryType, bytes);
+      test(
+        `send ${label} (${binaryType || "undefined"})`,
+        async done => {
+          const client = await udpSocket({});
+          const server = await udpSocket({
+            binaryType: binaryType,
+            socket: {
+              data(socket, data, port, address) {
+                validateRecv(socket, data, port, address, binaryType, bytes);
 
-              server.close();
-              client.close();
-              done();
-            },
-          },
-        });
-
-        // handle unreliable transmission in UDP
-        function sendRec() {
-          if (!client.closed) {
-            validateSend(client.send(data, server.port, "127.0.0.1"));
-            setTimeout(sendRec, 10);
-          }
-        }
-        sendRec();
-      }, { timeout: 100000000 });
-
-      test(`send connected ${label} (${binaryType || "undefined"})`, async done => {
-        let client;
-        const server = await udpSocket({
-          binaryType: binaryType,
-          socket: {
-            data(socket, data, port, address) {
-              validateRecv(socket, data, port, address, binaryType, bytes);
-
-              server.close();
-              client.close();
-              done();
-            },
-          },
-        });
-        client = await udpSocket({
-          connect: {
-            port: server.port,
-            hostname: server.hostname,
-          },
-        });
-
-        // handle unreliable transmission in UDP
-        function sendRec() {
-          if (!client.closed) {
-            validateSend(client.send(data));
-            setTimeout(sendRec, 10);
-          }
-        }
-        sendRec();
-      }, { timeout : 1000000 });
-
-      test(`sendMany ${label} (${binaryType || "undefined"})`, async done => {
-        const client = await udpSocket({});
-        let count = 0;
-        const server = await udpSocket({
-          binaryType: binaryType,
-          socket: {
-            data(socket, data, port, address) {
-              validateRecv(socket, data, port, address, binaryType, bytes);
-
-              count += 1;
-              if (count === 100) {
                 server.close();
                 client.close();
                 done();
-              }
+              },
             },
-          },
-        });
+          });
 
-        const payload = Array(100).fill([data, server.port, "127.0.0.1"]).flat();
-
-        // handle unreliable transmission in UDP
-        function sendRec() {
-          if (!client.closed) {
-            validateSendMany(client.sendMany(payload), 100);
-            setTimeout(sendRec, 10);
+          // handle unreliable transmission in UDP
+          function sendRec() {
+            if (!client.closed) {
+              validateSend(client.send(data, server.port, "127.0.0.1"));
+              setTimeout(sendRec, 10);
+            }
           }
-        }
-        sendRec();
-      }, {timeout: 1000000});
+          sendRec();
+        },
+        { timeout: 100000000 },
+      );
+
+      test(
+        `send connected ${label} (${binaryType || "undefined"})`,
+        async done => {
+          let client;
+          const server = await udpSocket({
+            binaryType: binaryType,
+            socket: {
+              data(socket, data, port, address) {
+                validateRecv(socket, data, port, address, binaryType, bytes);
+
+                server.close();
+                client.close();
+                done();
+              },
+            },
+          });
+          client = await udpSocket({
+            connect: {
+              port: server.port,
+              hostname: server.hostname,
+            },
+          });
+
+          // handle unreliable transmission in UDP
+          function sendRec() {
+            if (!client.closed) {
+              validateSend(client.send(data));
+              setTimeout(sendRec, 10);
+            }
+          }
+          sendRec();
+        },
+        { timeout: 1000000 },
+      );
+
+      test(
+        `sendMany ${label} (${binaryType || "undefined"})`,
+        async done => {
+          const client = await udpSocket({});
+          let count = 0;
+          const server = await udpSocket({
+            binaryType: binaryType,
+            socket: {
+              data(socket, data, port, address) {
+                validateRecv(socket, data, port, address, binaryType, bytes);
+
+                count += 1;
+                if (count === 100) {
+                  server.close();
+                  client.close();
+                  done();
+                }
+              },
+            },
+          });
+
+          const payload = Array(100).fill([data, server.port, "127.0.0.1"]).flat();
+
+          // handle unreliable transmission in UDP
+          function sendRec() {
+            if (!client.closed) {
+              validateSendMany(client.sendMany(payload), 100);
+              setTimeout(sendRec, 10);
+            }
+          }
+          sendRec();
+        },
+        { timeout: 1000000 },
+      );
 
       test(`sendMany connected ${label} (${binaryType || "undefined"})`, async done => {
         // const client = await udpSocket({});
@@ -378,12 +390,12 @@ describe("createSocket()", () => {
         closed.closed = true;
       });
       const server = createSocket("udp4");
-      client.on('error', err => {
+      client.on("error", err => {
         expect(err).toBeNull();
-      })
-      server.on('error', err => {
+      });
+      server.on("error", err => {
         expect(err).toBeNull();
-      })
+      });
       server.on("message", (data, rinfo) => {
         validateRecv(server, data, rinfo, bytes);
 
@@ -411,12 +423,12 @@ describe("createSocket()", () => {
         closed.closed = true;
       });
       const server = createSocket("udp4");
-      client.on('error', err => {
+      client.on("error", err => {
         expect(err).toBeNull();
-      })
-      server.on('error', err => {
+      });
+      server.on("error", err => {
         expect(err).toBeNull();
-      })
+      });
       server.on("message", (data, rinfo) => {
         validateRecv(server, data, rinfo, bytes);
 
@@ -447,12 +459,12 @@ describe("createSocket()", () => {
         closed.closed = true;
       });
       const server = createSocket("udp4");
-      client.on('error', err => {
+      client.on("error", err => {
         expect(err).toBeNull();
-      })
-      server.on('error', err => {
+      });
+      server.on("error", err => {
         expect(err).toBeNull();
-      })
+      });
       server.on("message", (data, rinfo) => {
         validateRecv(server, data, rinfo, [bytes, bytes, bytes].flat());
 
@@ -472,6 +484,5 @@ describe("createSocket()", () => {
       });
       server.bind();
     });
-
   }
 });

@@ -53,7 +53,7 @@ jobs:
           restore-keys: |
             bun-${{ inputs.tag }}-deps-
       # TODO: Figure out how to cache homebrew dependencies
-      - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
+      - if: ${{ inputs.no-cache || steps.cache.outputs.cache-hit != 'true' }}
         name: Install Dependencies
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
@@ -78,12 +78,12 @@ jobs:
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
-      - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
+      - if: ${{ inputs.no-cache || steps.cache.outputs.cache-hit != 'true' }}
         name: Clone Submodules
         run: |
           ./scripts/update-submodules.sh
       - name: Build Submodules
-        if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
+        if: ${{ inputs.no-cache || steps.cache.outputs.cache-hit != 'true' }}
         env:
           CPU_TARGET: ${{ inputs.cpu }}
           BUN_DEPS_OUT_DIR: ${{ runner.temp }}/bun-deps
@@ -91,7 +91,7 @@ jobs:
           mkdir -p $BUN_DEPS_OUT_DIR
           ./scripts/all-dependencies.sh
       - name: Save Cache
-        if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
+        if: ${{ inputs.no-cache || steps.cache.outputs.cache-hit != 'true' }}
         uses: ./.github/actions/cache/save
         with:
           path: ${{ runner.temp }}/bun-deps

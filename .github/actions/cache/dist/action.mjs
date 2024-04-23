@@ -69724,9 +69724,9 @@ var copyFiles = function(src, dst) {
   });
 };
 var isGithubHosted = function() {
-  console.log("RUNNER_ENVIRONMENT:", process.env.RUNNER_ENVIRONMENT);
   return process.env.RUNNER_ENVIRONMENT === "github-hosted";
 };
+console.log("ENV:", process.env);
 var path = core.getInput("path", { required: true });
 var key = core.getInput("key", { required: true });
 var restoreKeys = core.getMultilineInput("restore-keys");

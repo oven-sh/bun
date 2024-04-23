@@ -4,6 +4,8 @@ import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+console.log("ENV:", process.env);
+
 const path = getInput("path", { required: true });
 const key = getInput("key", { required: true });
 const restoreKeys = getMultilineInput("restore-keys");
@@ -114,6 +116,5 @@ function copyFiles(src, dst) {
 }
 
 function isGithubHosted() {
-  console.log("RUNNER_ENVIRONMENT:", process.env.RUNNER_ENVIRONMENT);
   return process.env.RUNNER_ENVIRONMENT === "github-hosted";
 }

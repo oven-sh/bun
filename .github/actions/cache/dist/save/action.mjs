@@ -69724,6 +69724,7 @@ var copyFiles = function(src, dst) {
   });
 };
 var isGithubHosted = function() {
+  console.log("RUNNER_ENVIRONMENT:", process.env.RUNNER_ENVIRONMENT);
   return process.env.RUNNER_ENVIRONMENT === "github-hosted";
 };
 var path = core.getInput("path", { required: true });

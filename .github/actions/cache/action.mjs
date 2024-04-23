@@ -114,5 +114,6 @@ function copyFiles(src, dst) {
 }
 
 function isGithubHosted() {
+  console.log("RUNNER_ENVIRONMENT:", process.env.RUNNER_ENVIRONMENT);
   return process.env.RUNNER_ENVIRONMENT === "github-hosted";
 }

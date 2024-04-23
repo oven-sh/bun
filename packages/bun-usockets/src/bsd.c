@@ -831,7 +831,9 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
     struct sockaddr addr;
     memset(&addr, 0, sizeof(addr));
     addr.sa_family = AF_UNSPEC;
+    #ifdef __APPLE__
     addr.sa_len = sizeof(addr);
+    #endif
 
     int res = connect(fd, &addr, sizeof(addr));
     // EAFNOSUPPORT is harmless in this case - we just want to disconnect

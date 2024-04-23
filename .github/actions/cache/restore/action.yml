@@ -22,4 +22,4 @@ outputs:
 
 runs:
   using: node20
-  main: ../dist/restore/action.mjs
+  main: ../dist/restore/action.cjs

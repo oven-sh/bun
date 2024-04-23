@@ -7,6 +7,6 @@
   },
   "scripts": {
     "build:bun": "bun build --target=node --outdir dist action.mjs restore/action.mjs save/action.mjs && mv dist/action.js dist/action.mjs && mv dist/restore/action.js dist/restore/action.mjs && mv dist/save/action.js dist/save/action.mjs",
-    "build:esbuild": "bunx esbuild --bundle --platform=node --format=esm --target=node20 --outdir=dist action.mjs restore/action.mjs save/action.mjs && mv dist/action.js dist/action.mjs && mv dist/restore/action.js dist/restore/action.mjs && mv dist/save/action.js dist/save/action.mjs"
+    "build:esbuild": "bunx esbuild --bundle --platform=node --target=node20 --outdir=dist action.mjs restore/action.mjs save/action.mjs && mv dist/action.js dist/action.cjs && mv dist/restore/action.js dist/restore/action.cjs && mv dist/save/action.js dist/save/action.cjs"
   }
 }

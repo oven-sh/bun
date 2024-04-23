@@ -22,6 +22,6 @@ outputs:
 
 runs:
   using: node20
-  main: dist/restore/action.mjs
-  post: dist/save/action.mjs
+  main: dist/restore/action.cjs
+  post: dist/save/action.cjs
   post-if: success() || github.event.inputs.save-always

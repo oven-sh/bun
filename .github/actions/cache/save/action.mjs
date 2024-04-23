@@ -9,7 +9,7 @@ async function main() {
   }
 }
 
-await main().catch(error => {
+main().catch(error => {
   console.error("Failed to save cache:", error);
   process.exit(1);
 });

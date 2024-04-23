@@ -42,141 +42,6 @@ function lookup(domain, options, callback) {
   }, callback);
 }
 
-function resolveSrv(hostname, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.resolveSrv(hostname, callback).then(
-    results => {
-      callback(null, results);
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
-
-function resolveTxt(hostname, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.resolveTxt(hostname, callback).then(
-    results => {
-      callback(null, results);
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
-
-function resolveSoa(hostname, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.resolveSoa(hostname, callback).then(
-    results => {
-      callback(null, results);
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
-
-function resolveNaptr(hostname, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.resolveNaptr(hostname, callback).then(
-    results => {
-      callback(null, results);
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
-
-function resolveMx(hostname, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.resolveMx(hostname, callback).then(
-    results => {
-      callback(null, results);
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
-
-function resolveCaa(hostname, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.resolveCaa(hostname, callback).then(
-    results => {
-      callback(null, results);
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
-
-function resolveNs(hostname, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.resolveNs(hostname, callback).then(
-    results => {
-      callback(null, results);
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
-
-function resolvePtr(hostname, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.resolvePtr(hostname, callback).then(
-    results => {
-      callback(null, results);
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
-
-function resolveCname(hostname, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.resolveCname(hostname, callback).then(
-    results => {
-      callback(null, results);
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
-
 function lookupService(address, port, callback) {
   if (typeof callback != "function") {
     throw new TypeError("callback must be a function");
@@ -185,21 +50,6 @@ function lookupService(address, port, callback) {
   dns.lookupService(address, port, callback).then(
     results => {
       callback(null, ...results);
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
-
-function reverse(ip, callback) {
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.reverse(ip, callback).then(
-    results => {
-      callback(null, results);
     },
     error => {
       callback(error);
@@ -439,37 +289,6 @@ var InternalResolver = class Resolver {
 
   setServers(servers) {}
 };
-
-function resolve(hostname, rrtype, callback) {
-  if (typeof rrtype == "function") {
-    callback = rrtype;
-  }
-
-  if (typeof callback != "function") {
-    throw new TypeError("callback must be a function");
-  }
-
-  dns.resolve(hostname).then(
-    results => {
-      switch (rrtype?.toLowerCase()) {
-        case "a":
-        case "aaaa":
-          callback(
-            null,
-            hostname,
-            results.map(({ address }) => address),
-          );
-          break;
-        default:
-          callback(null, results);
-          break;
-      }
-    },
-    error => {
-      callback(error);
-    },
-  );
-}
 
 function Resolver(options) {
   return new InternalResolver(options);

@@ -49,4 +49,5 @@ pub fn main() void {
     }
 
     bun.CLI.Cli.start(bun.default_allocator);
+    bun.Global.exit(0);
 }

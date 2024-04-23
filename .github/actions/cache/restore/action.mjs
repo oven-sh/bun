@@ -15,7 +15,7 @@ async function main() {
   }
 }
 
-main().catch(error => {
+await main().catch(error => {
   console.error("Failed to restore cache:", error);
   process.exit(1);
 });

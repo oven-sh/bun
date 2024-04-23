@@ -69740,7 +69740,7 @@ async function main() {
     process.exit(1);
   }
 }
-main().catch((error) => {
+await main().catch((error) => {
   console.error("Failed to save cache:", error);
   process.exit(1);
 });

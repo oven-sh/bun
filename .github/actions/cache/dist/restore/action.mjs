@@ -69746,7 +69746,7 @@ async function main() {
     core2.setOutput("cache-primary-key", cacheKey);
   }
 }
-main().catch((error) => {
+await main().catch((error) => {
   console.error("Failed to restore cache:", error);
   process.exit(1);
 });

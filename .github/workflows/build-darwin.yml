@@ -33,7 +33,7 @@ env:
 jobs:
   build-submodules:
     name: Build Submodules
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: darwin-aarch64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -111,7 +111,7 @@ jobs:
           if-no-files-found: error
   build-cpp:
     name: Build C++
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: darwin-aarch64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -192,7 +192,7 @@ jobs:
       no-cache: ${{ inputs.no-cache }}
   link:
     name: Link
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: darwin-aarch64
     needs:
       - build-submodules
       - build-cpp

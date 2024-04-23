@@ -2998,3 +2998,11 @@ it("fs.close with one arg works", () => {
   const fd = fs.openSync(filepath, "w+");
   fs.close(fd);
 });
+
+it("existsSync should never throw ENAMETOOLONG", () => {
+  expect(existsSync(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
+});
+
+it("promises exists should never throw ENAMETOOLONG", async () => {
+  expect(await _promises.exists(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
+});

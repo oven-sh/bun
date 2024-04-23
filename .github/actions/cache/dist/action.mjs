@@ -69631,11 +69631,14 @@ import {cpSync, existsSync, mkdirSync, readdirSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 async function restoreCache() {
-  console.log("Restoring cache...");
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
     try {
-      return await cache.restoreCache([path], key, restoreKeys);
+      const cacheKey = await cache.restoreCache([path], key, restoreKeys);
+      return {
+        cacheHit: !!cacheKey,
+        cacheKey: cacheKey ?? key
+      };
     } catch (error) {
       console.error("Failed to restore cache:", error);
       return null;
@@ -69683,7 +69686,6 @@ async function restoreCache() {
   return null;
 }
 async function saveCache() {
-  console.log("Saving cache...");
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
     try {

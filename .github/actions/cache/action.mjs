@@ -10,12 +10,14 @@ const restoreKeys = getMultilineInput("restore-keys");
 const cacheDir = getInput("cache-dir") || join(tmpdir(), ".github", "cache");
 
 export async function restoreCache() {
-  console.log("Restoring cache...");
-
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
     try {
-      return await restoreGithubCache([path], key, restoreKeys);
+      const cacheKey = await restoreGithubCache([path], key, restoreKeys);
+      return {
+        cacheHit: !!cacheKey,
+        cacheKey: cacheKey ?? key,
+      };
     } catch (error) {
       console.error("Failed to restore cache:", error);
       return null;
@@ -69,8 +71,6 @@ export async function restoreCache() {
 }
 
 export async function saveCache() {
-  console.log("Saving cache...");
-
   if (isGithubHosted()) {
     console.log("Using GitHub cache...");
     try {

@@ -19,7 +19,7 @@ export function createTempDirectoryWithBrokenSymlinks() {
   return tempDir;
 }
 
-export function tempFixturesDir() {
+export function tempFixturesDir(baseDir: string = import.meta.dir) {
   const files: Record<string, string | Record<string, string>> = {
     ".directory": {
       "file.md": "",
@@ -61,7 +61,7 @@ export function tempFixturesDir() {
     return dir;
   }
 
-  const dir = path.join(import.meta.dir, "fixtures");
+  const dir = path.join(baseDir, "fixtures");
   fs.mkdirSync(dir, { recursive: true });
 
   impl(dir, files);

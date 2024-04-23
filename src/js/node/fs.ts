@@ -315,7 +315,13 @@ var access = function access(...args) {
   appendFileSync = fs.appendFileSync.bind(fs),
   closeSync = fs.closeSync.bind(fs),
   copyFileSync = fs.copyFileSync.bind(fs),
-  existsSync = fs.existsSync.bind(fs),
+  existsSync = function existsSync() {
+    try {
+      return fs.existsSync.$apply(fs, arguments);
+    } catch (e) {
+      return false;
+    }
+  },
   chownSync = fs.chownSync.bind(fs),
   chmodSync = fs.chmodSync.bind(fs),
   fchmodSync = fs.fchmodSync.bind(fs),

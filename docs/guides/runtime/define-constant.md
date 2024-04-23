@@ -55,8 +55,6 @@ And finally, Bun detects the `else` branch is not reachable, and eliminates it.
 console.log("Production mode");
 ```
 
----
-
 ## What types of values are supported?
 
 Values can be strings, identifiers, properties, or JSON.

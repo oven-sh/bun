@@ -1,4 +1,4 @@
-import { spawnSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { getInput, setOutput } from "@actions/core";
 

@@ -18045,7 +18045,7 @@ var require_core = __commonJS((exports) => {
 
 // action.mjs
 var core = __toESM(require_core(), 1);
-import {spawnSync} from "node:fs";
+import {spawnSync} from "node:child_process";
 import {createHash} from "node:crypto";
 var getCacheKey = function() {
   const { error, status, stdout, stderr } = spawnSync("git", ["ls-files", "-s", ...paths], {

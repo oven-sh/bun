@@ -154,15 +154,15 @@ String replacement tools tend to have escaping issues and replace unintended par
 export default `${MY_DEFINE_VALUE}`;
 ```
 
-Using `--define=MY_DEFINE_VALUE="}"`,
+Using `--define=MY_DEFINE_VALUE="}ABC"`,
 
 ```ts
-export default `}`;
+export default "}ABC";
 ```
 
 Using a string replacement tool:
 
 ```ts
-// SyntaxError: Unexpected token '}'
-export default `${}}`;
+// Note the missing "}" at the beginning:
+export default `${}ABC`;
 ```

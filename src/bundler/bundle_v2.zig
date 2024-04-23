@@ -73,7 +73,6 @@ const DebugOptions = @import("../cli.zig").Command.DebugOptions;
 const ThreadPoolLib = @import("../thread_pool.zig");
 const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
 const BabyList = @import("../baby_list.zig").BabyList;
-const panicky = @import("../panic_handler.zig");
 const Fs = @import("../fs.zig");
 const schema = @import("../api/schema.zig");
 const Api = schema.Api;
@@ -97,7 +96,6 @@ const NodeFallbackModules = @import("../node_fallbacks.zig");
 const CacheEntry = @import("../cache.zig").Fs.Entry;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const URL = @import("../url.zig").URL;
-const Report = @import("../report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("../toml/toml_parser.zig").TOML;
@@ -612,7 +610,10 @@ pub const BundleV2 = struct {
                     .index = source_index,
                 },
                 .loader = loader,
-                .side_effects = _resolver.SideEffects.has_side_effects,
+                .side_effects = switch (loader) {
+                    .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
+                    else => _resolver.SideEffects.has_side_effects,
+                },
             }) catch @panic("Ran out of memory");
             var task = this.graph.allocator.create(ParseTask) catch @panic("Ran out of memory");
             task.* = ParseTask.init(&resolve_result, source_index, this);
@@ -2589,9 +2590,8 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .text => {
-                const root = Expr.init(E.String, E.String{
+                const root = Expr.init(E.UTF8String, E.UTF8String{
                     .data = source.contents,
-                    .prefer_template = true,
                 }, Logger.Loc{ .start = 0 });
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
@@ -11106,7 +11106,7 @@ pub const Chunk = struct {
                             .chunk, .asset => {
                                 const index = piece.index.index;
                                 const file_path = switch (piece.index.kind) {
-                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].src_path.text,
+                                    .asset => graph.additional_output_files.items[additional_files[index].last().?.output_file].dest_path,
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
@@ -11157,7 +11157,7 @@ pub const Chunk = struct {
                                         .asset => {
                                             shift.before.advance(unique_key_for_additional_files[index]);
                                             const file = graph.additional_output_files.items[additional_files[index].last().?.output_file];
-                                            break :brk file.src_path.text;
+                                            break :brk file.dest_path;
                                         },
                                         .chunk => {
                                             const piece_chunk = chunks[index];
@@ -11588,10 +11588,10 @@ fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
     // There are a few cases here we want to handle:
     // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
     // ["/foo/", "/bar.js"] => "/foo/bar.js"
-    if (strings.endsWithChar(prefix, '/')) {
-        if (strings.startsWithChar(suffix, '/')) {
+    if (strings.endsWithChar(prefix, '/') or (Environment.isWindows and strings.endsWithChar(prefix, '\\'))) {
+        if (strings.startsWithChar(suffix, '/') or (Environment.isWindows and strings.startsWithChar(suffix, '\\'))) {
             return .{
-                prefix[0 .. prefix.len - 1],
+                prefix[0..prefix.len],
                 suffix[1..suffix.len],
             };
         }
@@ -11604,14 +11604,10 @@ fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
         // But it's not worth the complexity to handle these cases right now.
     }
 
-    if (suffix.len > "./".len and strings.hasPrefixComptime(suffix, "./")) {
-        return .{
-            prefix,
-            suffix[2..],
-        };
-    }
-
-    return .{ prefix, suffix };
+    return .{
+        prefix,
+        bun.strings.removeLeadingDotSlash(suffix),
+    };
 }
 
 const components_manifest_path = "./components-manifest.blob";

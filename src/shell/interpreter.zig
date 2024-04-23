@@ -58,7 +58,7 @@ const stderr_no = 2;
 
 pub fn OOM(e: anyerror) noreturn {
     if (comptime bun.Environment.allow_assert) {
-        if (e != error.OutOfMemory) @panic("Ruh roh");
+        if (e != error.OutOfMemory) bun.outOfMemory();
     }
     @panic("Out of memory");
 }
@@ -605,7 +605,7 @@ pub const EnvMap = struct {
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
-    command_ctx: *const bun.CLI.Command.Context,
+    command_ctx: bun.CLI.Command.Context,
     event_loop: JSC.EventLoopHandle,
     /// This is the arena used to allocate the input shell script's AST nodes,
     /// tokens, and a string pool used to store all strings.
@@ -1082,7 +1082,7 @@ pub const Interpreter = struct {
     /// If all initialization allocations succeed, the arena will be copied
     /// into the interpreter struct, so it is not a stale reference and safe to call `arena.deinit()` on error.
     pub fn init(
-        ctx: *const bun.CLI.Command.Context,
+        ctx: bun.CLI.Command.Context,
         event_loop: JSC.EventLoopHandle,
         allocator: Allocator,
         arena: *bun.ArenaAllocator,
@@ -1183,7 +1183,7 @@ pub const Interpreter = struct {
         return .{ .result = interpreter };
     }
 
-    pub fn initAndRunFromFile(ctx: *const bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
+    pub fn initAndRunFromFile(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
@@ -1257,7 +1257,7 @@ pub const Interpreter = struct {
         return code;
     }
 
-    pub fn initAndRunFromSource(ctx: *bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
+    pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
         bun.Analytics.Features.standalone_shell += 1;
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -1542,7 +1542,7 @@ pub const Interpreter = struct {
         var object_iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalThis, value1.asObjectRef());
+        }).init(globalThis, value1);
         defer object_iter.deinit();
 
         this.root_shell.export_env.clearRetainingCapacity();
@@ -2123,7 +2123,7 @@ pub const Interpreter = struct {
                 return;
             }
 
-            unreachable;
+            @panic("Invalid child to Expansion, this indicates a bug in Bun. Please file a report on Github.");
         }
 
         fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) void {
@@ -2401,7 +2401,7 @@ pub const Interpreter = struct {
 
                 var iter = GlobWalker.Iterator{ .walker = this.walker };
                 defer iter.deinit();
-                switch (try iter.init()) {
+                switch (iter.init() catch |e| OOM(e)) {
                     .err => |err| return .{ .err = err },
                     else => {},
                 }
@@ -2742,7 +2742,7 @@ pub const Interpreter = struct {
                 return;
             }
 
-            unreachable;
+            @panic("Invalid child to Assigns expression, this indicates a bug in Bun. Please file a report on Github.");
         }
     };
 
@@ -2910,10 +2910,7 @@ pub const Interpreter = struct {
             parent: ParentPtr,
             io: IO,
         ) *Binary {
-            var binary = interpreter.allocator.create(Binary) catch |err| {
-                std.debug.print("Ruh roh: {any}\n", .{err});
-                @panic("Ruh roh");
-            };
+            var binary = interpreter.allocator.create(Binary) catch bun.outOfMemory();
             binary.node = node;
             binary.base = .{ .kind = .binary, .interpreter = interpreter, .shell = shell_state };
             binary.parent = parent;
@@ -3237,7 +3234,7 @@ pub const Interpreter = struct {
                         if (ptr == @as(usize, @intCast(child.ptr.repr._ptr))) break :brk i;
                     }
                 }
-                unreachable;
+                @panic("Invalid pipeline state");
             };
 
             log("pipeline child done {x} ({d}) i={d}", .{ @intFromPtr(this), exit_code, idx });
@@ -4350,10 +4347,7 @@ pub const Interpreter = struct {
             parent: ParentPtr,
             io: IO,
         ) *Cmd {
-            var cmd = interpreter.allocator.create(Cmd) catch |err| {
-                std.debug.print("Ruh roh: {any}\n", .{err});
-                @panic("Ruh roh");
-            };
+            var cmd = interpreter.allocator.create(Cmd) catch bun.outOfMemory();
             cmd.* = .{
                 .base = .{ .kind = .cmd, .interpreter = interpreter, .shell = shell_state },
                 .node = node,
@@ -4528,7 +4522,8 @@ pub const Interpreter = struct {
                 this.next();
                 return;
             }
-            unreachable;
+
+            @panic("Expected Cmd child to be Assigns or Expansion. This indicates a bug in Bun. Please file a GitHub issue. ");
         }
 
         fn initSubproc(this: *Cmd) void {
@@ -7121,7 +7116,8 @@ pub const Interpreter = struct {
                 while (!(this.state == .err or this.state == .done)) {
                     switch (this.state) {
                         .waiting_io => return,
-                        .idle, .done, .err => unreachable,
+                        .idle => @panic("Unexpected \"idle\" state in Pwd. This indicates a bug in Bun. Please file a GitHub issue."),
+                        .done, .err => unreachable,
                     }
                 }
 
@@ -9686,7 +9682,7 @@ pub const Interpreter = struct {
 
             pub fn next(this: *Exit) void {
                 switch (this.state) {
-                    .idle => unreachable,
+                    .idle => @panic("Unexpected \"idle\" state in Exit. This indicates a bug in Bun. Please file a GitHub issue."),
                     .waiting_io => {
                         return;
                     },
@@ -10916,10 +10912,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         fn unknownTag(tag: Ptr.TagInt) void {
-            if (comptime bun.Environment.allow_assert) {
-                std.debug.print("Bad tag: {d}\n", .{tag});
-                @panic("Bad tag");
-            }
+            if (bun.Environment.allow_assert) std.debug.panic("Bad tag: {d}\n", .{tag});
         }
 
         fn tagInt(this: @This()) Ptr.TagInt {

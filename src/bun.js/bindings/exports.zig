@@ -25,7 +25,6 @@ const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
 const Microtask = JSC.Microtask;
 
-const Backtrace = @import("../../crash_reporter.zig");
 const JSPrinter = bun.js_printer;
 const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
@@ -49,7 +48,6 @@ pub const ZigGlobalObject = extern struct {
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
         const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
-        Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
 

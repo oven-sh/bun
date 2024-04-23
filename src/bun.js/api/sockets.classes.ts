@@ -29,6 +29,18 @@ function generate(ssl) {
         fn: "getCipher",
         length: 0,
       },
+      renegotiate: {
+        fn: "renegotiate",
+        length: 0,
+      },
+      disableRenegotiation: {
+        fn: "disableRenegotiation",
+        length: 0,
+      },
+      setVerifyMode: {
+        fn: "setVerifyMode",
+        length: 2,
+      },
       getSession: {
         fn: "getSession",
         length: 0,
@@ -147,6 +159,10 @@ function generate(ssl) {
         fn: "setServername",
         length: 1,
       },
+      getServername: {
+        fn: "getServername",
+        length: 0,
+      },
     },
     finalize: true,
     construct: true,
@@ -188,7 +204,6 @@ export default [
         fn: "reload",
         length: 1,
       },
-
       hostname: {
         getter: "getHostname",
         cache: true,

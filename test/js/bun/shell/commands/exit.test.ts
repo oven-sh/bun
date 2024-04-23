@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, test, expect } from "bun:test";
-import { TestBuilder } from "../test_builder";
+import { createTestBuilder } from "../test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
 import { sortedShellOutput } from "../util";
 import { join } from "path";
 

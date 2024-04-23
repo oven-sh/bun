@@ -261,7 +261,15 @@ pub const Process = struct {
                         if (err_.getErrno() == .SRCH) {
                             break :brk Status.from(pid, &PosixSpawn.wait4(
                                 pid,
-                                if (this.sync) 0 else std.os.W.NOHANG,
+                                // Normally we would use WNOHANG to avoid blocking the event loop.
+                                // However, there seems to be a race condition where the operating system
+                                // tells us that the process has already exited (ESRCH) but the waitpid
+                                // call with WNOHANG doesn't return the status yet.
+                                // As a workaround, we use 0 to block the event loop until the status is available.
+                                // This should be fine because the process has already exited, so the data
+                                // should become available basically immediately. Also, testing has shown that this
+                                // occurs extremely rarely and only under high load.
+                                0,
                                 &rusage_result,
                             ));
                         }
@@ -1065,7 +1073,7 @@ pub const PosixSpawnResult = struct {
     }
 
     fn pidfdFlagsForLinux() u32 {
-        const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+        const kernel = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
 
         // pidfd_nonblock only supported in 5.10+
         return if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))

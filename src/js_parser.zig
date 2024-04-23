@@ -328,6 +328,7 @@ const TransposeState = struct {
     is_then_catch_target: bool = false,
     is_require_immediately_assigned_to_decl: bool = false,
     loc: logger.Loc = logger.Loc.Empty,
+    type_attribute: E.Import.TypeAttribute = .none,
 };
 
 var true_args = &[_]Expr{
@@ -4960,11 +4961,16 @@ fn NewParser_(
                 }
 
                 const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.slice(p.allocator));
+
+                if (state.type_attribute.tag() != .none) {
+                    p.import_records.items[import_record_index].tag = state.type_attribute.tag();
+                }
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
                 return p.newExpr(E.Import{
                     .expr = arg,
                     .import_record_index = Ref.toInt(import_record_index),
+                    .type_attribute = state.type_attribute,
                     // .leading_interior_comments = arg.getString().
                 }, state.loc);
             }
@@ -4978,6 +4984,7 @@ fn NewParser_(
             return p.newExpr(E.Import{
                 .expr = arg,
                 .import_record_index = std.math.maxInt(u32),
+                .type_attribute = state.type_attribute,
             }, state.loc);
         }
 
@@ -8841,7 +8848,7 @@ fn NewParser_(
             }
 
             if (path.import_tag != .none) {
-                try p.validateSQLiteImportType(path.import_tag, &stmt);
+                try p.validateImportType(path.import_tag, &stmt);
             }
 
             // Track the items for this namespace
@@ -8849,20 +8856,33 @@ fn NewParser_(
             return p.s(stmt, loc);
         }
 
-        fn validateSQLiteImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
+        fn validateImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
             @setCold(true);
 
-            if (import_tag == .with_type_sqlite or import_tag == .with_type_sqlite_embedded) {
+            if (import_tag.loader() != null) {
                 p.import_records.items[stmt.import_record_index].tag = import_tag;
 
-                for (stmt.items) |*item| {
-                    if (!(strings.eqlComptime(item.alias, "default") or strings.eqlComptime(item.alias, "db"))) {
-                        try p.log.addError(
-                            p.source,
-                            item.name.loc,
-                            "sqlite imports only support the \"default\" or \"db\" imports",
-                        );
-                        break;
+                if (import_tag.isSQLite()) {
+                    for (stmt.items) |*item| {
+                        if (!(strings.eqlComptime(item.alias, "default") or strings.eqlComptime(item.alias, "db"))) {
+                            try p.log.addError(
+                                p.source,
+                                item.name.loc,
+                                "sqlite imports only support the \"default\" or \"db\" imports",
+                            );
+                            break;
+                        }
+                    }
+                } else if (import_tag.onlySupportsDefaultImports()) {
+                    for (stmt.items) |*item| {
+                        if (!(strings.eqlComptime(item.alias, "default"))) {
+                            try p.log.addError(
+                                p.source,
+                                item.name.loc,
+                                "This loader type only supports the \"default\" import",
+                            );
+                            break;
+                        }
                     }
                 }
             }
@@ -11696,7 +11716,6 @@ fn NewParser_(
                 try p.lexer.expect(.t_string_literal);
             }
 
-            // For now, we silently strip import assertions
             if (!p.lexer.has_newline_before and (
             // Import Assertions are deprecated.
             // Import Attributes are the new way to do this.
@@ -11751,13 +11770,22 @@ fn NewParser_(
                         if (supported_attribute) |attr| {
                             switch (attr) {
                                 .type => {
-                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "macro")) {
+                                    const type_attr = p.lexer.string_literal_slice;
+                                    if (strings.eqlComptime(type_attr, "macro")) {
                                         path.is_macro = true;
-                                    } else if (strings.eqlComptime(p.lexer.string_literal_slice, "sqlite")) {
+                                    } else if (strings.eqlComptime(type_attr, "sqlite")) {
                                         path.import_tag = .with_type_sqlite;
                                         if (has_seen_embed_true) {
                                             path.import_tag = .with_type_sqlite_embedded;
                                         }
+                                    } else if (strings.eqlComptime(type_attr, "json")) {
+                                        path.import_tag = .with_type_json;
+                                    } else if (strings.eqlComptime(type_attr, "toml")) {
+                                        path.import_tag = .with_type_toml;
+                                    } else if (strings.eqlComptime(type_attr, "text")) {
+                                        path.import_tag = .with_type_text;
+                                    } else if (strings.eqlComptime(type_attr, "file")) {
+                                        path.import_tag = .with_type_file;
                                     }
                                 },
                                 .embed => {
@@ -14970,6 +14998,8 @@ fn NewParser_(
 
             const value = try p.parseExpr(.comma);
 
+            var type_attribute = E.Import.TypeAttribute.none;
+
             if (p.lexer.token == .t_comma) {
                 // "import('./foo.json', )"
                 try p.lexer.next();
@@ -14977,7 +15007,28 @@ fn NewParser_(
                 if (p.lexer.token != .t_close_paren) {
                     // for now, we silently strip import assertions
                     // "import('./foo.json', { assert: { type: 'json' } })"
-                    _ = try p.parseExpr(.comma);
+                    const import_expr = try p.parseExpr(.comma);
+                    if (import_expr.data == .e_object) {
+                        if (import_expr.data.e_object.get("with") orelse import_expr.data.e_object.get("assert")) |with| {
+                            if (with.data == .e_object) {
+                                const with_object = with.data.e_object;
+                                if (with_object.get("type")) |field| {
+                                    if (field.data == .e_string) {
+                                        const str = field.data.e_string;
+                                        if (str.eqlComptime("json")) {
+                                            type_attribute = .json;
+                                        } else if (str.eqlComptime("toml")) {
+                                            type_attribute = .toml;
+                                        } else if (str.eqlComptime("text")) {
+                                            type_attribute = .text;
+                                        } else if (str.eqlComptime("file")) {
+                                            type_attribute = .file;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     if (p.lexer.token == .t_comma) {
                         // "import('./foo.json', { assert: { type: 'json' } }, , )"
@@ -14998,11 +15049,17 @@ fn NewParser_(
                         .expr = value,
                         .leading_interior_comments = comments,
                         .import_record_index = import_record_index,
+                        .type_attribute = type_attribute,
                     }, loc);
                 }
             }
 
-            return p.newExpr(E.Import{ .expr = value, .leading_interior_comments = comments, .import_record_index = std.math.maxInt(u32) }, loc);
+            return p.newExpr(E.Import{
+                .expr = value,
+                .type_attribute = type_attribute,
+                .leading_interior_comments = comments,
+                .import_record_index = std.math.maxInt(u32),
+            }, loc);
         }
 
         fn parseJSXPropValueIdentifier(p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {
@@ -16837,6 +16894,7 @@ fn NewParser_(
                         .is_await_target = if (p.await_target != null) p.await_target.? == .e_import and p.await_target.?.e_import == e_ else false,
                         .is_then_catch_target = p.then_catch_chain.has_catch and std.meta.activeTag(p.then_catch_chain.next_target) == .e_import and expr.data.e_import == p.then_catch_chain.next_target.e_import,
                         .loc = e_.expr.loc,
+                        .type_attribute = e_.type_attribute,
                     };
 
                     e_.expr = p.visitExpr(e_.expr);
@@ -22970,6 +23028,7 @@ fn NewParser_(
                 // Only enable during bundling
                 .commonjs_named_exports_deoptimized = !opts.bundle,
             };
+            this.lexer.track_comments = opts.features.minify_identifiers;
 
             this.unwrap_all_requires = brk: {
                 if (opts.bundle) {

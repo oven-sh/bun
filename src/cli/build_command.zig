@@ -35,17 +35,50 @@ const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 var estimated_input_lines_of_code_: usize = undefined;
 
 pub const BuildCommand = struct {
+    const compile_define_keys = &.{
+        "process.platform",
+        "process.arch",
+    };
+
+    const compile_define_values = &.{
+        "\"" ++ Environment.os.nameString() ++ "\"",
+
+        switch (@import("builtin").target.cpu.arch) {
+            .x86_64 => "\"x64\"",
+            .aarch64 => "\"arm64\"",
+            else => @compileError("TODO"),
+        },
+    };
+
     pub fn exec(
-        ctx_: Command.Context,
+        ctx: Command.Context,
     ) !void {
         Global.configureAllocator(.{ .long_running = true });
-        var ctx = ctx_;
         const allocator = ctx.allocator;
         var log = ctx.log;
         estimated_input_lines_of_code_ = 0;
         if (ctx.bundler_options.compile) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
+        }
+
+        if (ctx.bundler_options.compile) {
+            if (ctx.args.define == null) {
+                ctx.args.define = .{
+                    .keys = compile_define_keys,
+                    .values = compile_define_values,
+                };
+            } else if (ctx.args.define) |*define| {
+                var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
+                keys.appendSliceAssumeCapacity(compile_define_keys);
+                keys.appendSliceAssumeCapacity(define.keys);
+                var values = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_values.len + define.values.len);
+                values.appendSliceAssumeCapacity(compile_define_values);
+                values.appendSliceAssumeCapacity(define.values);
+
+                define.keys = keys.items;
+                define.values = values.items;
+            }
         }
 
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
@@ -63,8 +96,8 @@ pub const BuildCommand = struct {
         }
         var outfile = ctx.bundler_options.outfile;
 
-        this_bundler.options.public_path = ctx_.bundler_options.public_path;
-        this_bundler.resolver.opts.public_path = ctx_.bundler_options.public_path;
+        this_bundler.options.public_path = ctx.bundler_options.public_path;
+        this_bundler.resolver.opts.public_path = ctx.bundler_options.public_path;
 
         this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
         this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
@@ -290,7 +323,16 @@ pub const BuildCommand = struct {
                     defer Output.flush();
                     var writer = Output.writer();
                     var output_dir = this_bundler.options.output_dir;
-                    if (outfile.len > 0 and output_files.len == 1 and output_files[0].value == .buffer) {
+
+                    const will_be_one_file =
+                        // --outdir is not supported with --compile
+                        // but you can still use --outfile
+                        // in which case, we should set the output dir to the dirname of the outfile
+                        // https://github.com/oven-sh/bun/issues/8697
+                        ctx.bundler_options.compile or
+                        (output_files.len == 1 and output_files[0].value == .buffer);
+
+                    if (output_dir.len == 0 and outfile.len > 0 and will_be_one_file) {
                         output_dir = std.fs.path.dirname(outfile) orelse ".";
                         output_files[0].dest_path = std.fs.path.basename(outfile);
                     }

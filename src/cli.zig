@@ -20,6 +20,7 @@ const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
+const builtin = @import("builtin");
 
 const debug = Output.scoped(.CLI, true);
 
@@ -41,7 +42,6 @@ const Router = @import("./router.zig");
 
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
-const Reporter = @import("./report.zig");
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 
@@ -49,26 +49,24 @@ pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
     pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
-    pub fn start(allocator: std.mem.Allocator, comptime MainPanicHandler: type) void {
+    pub fn start(allocator: std.mem.Allocator) void {
+        is_main_thread = true;
         start_time = std.time.nanoTimestamp();
         log_ = logger.Log.init(allocator);
 
         var log = &log_;
 
-        var panicker = MainPanicHandler.init(log);
-        MainPanicHandler.Singleton = &panicker;
+        // var panicker = MainPanicHandler.init(log);
+        // MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
             log.printForLogLevel(Output.errorWriter()) catch {};
 
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
-
-            Reporter.globalError(err, null);
+            bun.crash_handler.handleRootError(err, @errorReturnTrace());
         };
     }
 
     pub var cmd: ?Command.Tag = null;
+    pub threadlocal var is_main_thread: bool = false;
 };
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
@@ -151,7 +149,10 @@ pub const Arguments = struct {
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
         clap.parseParam("<POS>...") catch unreachable,
-    };
+    } ++ if (builtin.have_error_return_tracing) [_]ParamType{
+        // This will print more error return traces, as a debug aid
+        clap.parseParam("--verbose-error-trace") catch unreachable,
+    } else [_]ParamType{};
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
@@ -261,7 +262,7 @@ pub const Arguments = struct {
         Global.exit(0);
     }
 
-    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
             .result => |fd| fd.asFile(),
             .err => |err| {
@@ -306,7 +307,7 @@ pub const Arguments = struct {
 
         return null;
     }
-    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (!ctx.has_loaded_global_config) {
@@ -368,12 +369,12 @@ pub const Arguments = struct {
         comptime cmd: Command.Tag,
         allocator: std.mem.Allocator,
         args: clap.Args(clap.Help, cmd.params()),
-        ctx: *Command.Context,
+        ctx: Command.Context,
     ) !void {
         return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 
-    pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
+    pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
         const params_to_parse = comptime cmd.params();
 
@@ -406,6 +407,12 @@ pub const Arguments = struct {
 
             if (args.flag("--revision")) {
                 printRevisionAndExit();
+            }
+        }
+
+        if (builtin.have_error_return_tracing) {
+            if (args.flag("--verbose-error-trace")) {
+                bun.crash_handler.verbose_error_trace = true;
             }
         }
 
@@ -552,7 +559,11 @@ pub const Arguments = struct {
                     ctx.runtime_options.eval.script = port_str;
                     ctx.runtime_options.eval.eval_and_print = true;
                 } else {
-                    opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+                    opts.port = std.fmt.parseInt(u16, port_str, 10) catch {
+                        Output.errGeneric("Invalid value for --port: \"{s}\". Must be a number\n", .{port_str});
+                        Output.note("To evaluate TypeScript here, use 'bun --print'", .{});
+                        Global.exit(1);
+                    };
                 }
             }
 
@@ -575,7 +586,7 @@ pub const Arguments = struct {
                 } else if (enum_value.len == 0) {
                     ctx.debug.global_cache = options.GlobalCache.force;
                 } else {
-                    Output.prettyErrorln("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
+                    Output.errGeneric("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
                     Global.exit(1);
                 }
             }
@@ -1048,7 +1059,7 @@ pub const HelpCommand = struct {
 pub const ReservedCommand = struct {
     pub fn exec(_: std.mem.Allocator) !void {
         @setCold(true);
-        const command_name = bun.argv()[1];
+        const command_name = bun.argv[1];
         Output.prettyError(
             \\<r><red>Uh-oh<r>. <b><yellow>bun {s}<r> is a subcommand reserved for future use by Bun.
             \\
@@ -1136,7 +1147,18 @@ pub const Command = struct {
         } = .{},
     };
 
-    pub const Context = struct {
+    var global_cli_ctx: Context = undefined;
+
+    var context_data: ContextData = ContextData{
+        .args = std.mem.zeroes(Api.TransformOptions),
+        .log = undefined,
+        .start_time = 0,
+        .allocator = undefined,
+    };
+
+    pub const init = ContextData.create;
+
+    pub const ContextData = struct {
         start_time: i128,
         args: Api.TransformOptions,
         log: *logger.Log,
@@ -1173,34 +1195,28 @@ pub const Command = struct {
             minify_identifiers: bool = false,
         };
 
-        const _ctx = Command.Context{
-            .args = std.mem.zeroes(Api.TransformOptions),
-            .log = undefined,
-            .start_time = 0,
-            .allocator = undefined,
-        };
-
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
-            var ctx = _ctx;
-            ctx.log = log;
-            ctx.start_time = start_time;
-            ctx.allocator = allocator;
+            global_cli_ctx = &context_data;
+            global_cli_ctx.log = log;
+            global_cli_ctx.start_time = start_time;
+            global_cli_ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
-                ctx.args = try Arguments.parse(allocator, &ctx, command);
+                global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);
             }
 
             if (comptime Environment.isWindows) {
-                if (ctx.debug.hot_reload == .watch and !bun.isWatcherChild()) {
+                if (global_cli_ctx.debug.hot_reload == .watch and !bun.isWatcherChild()) {
                     // this is noreturn
                     bun.becomeWatcherManager(allocator);
                 }
             }
 
-            return ctx;
+            return global_cli_ctx;
         }
     };
+    pub const Context = *ContextData;
 
     // std.process.args allocates!
     const ArgsIterator = struct {
@@ -1223,20 +1239,20 @@ pub const Command = struct {
 
     pub fn isBunX(argv0: []const u8) bool {
         if (Environment.isWindows) {
-            return strings.endsWithComptime(argv0, "bunx.exe");
+            return strings.endsWithComptime(argv0, "bunx.exe") or strings.endsWithComptime(argv0, "bunx");
         }
         return strings.endsWithComptime(argv0, "bunx");
     }
 
     pub fn isNode(argv0: []const u8) bool {
         if (Environment.isWindows) {
-            return strings.endsWithComptime(argv0, "node.exe");
+            return strings.endsWithComptime(argv0, "node.exe") or strings.endsWithComptime(argv0, "node");
         }
         return strings.endsWithComptime(argv0, "node");
     }
 
     pub fn which() Tag {
-        var args_iter = ArgsIterator{ .buf = bun.argv() };
+        var args_iter = ArgsIterator{ .buf = bun.argv };
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
@@ -1371,16 +1387,18 @@ pub const Command = struct {
 
         // bun build --compile entry point
         if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-            var ctx = Command.Context{
+            context_data = .{
                 .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,
                 .start_time = start_time,
                 .allocator = bun.default_allocator,
             };
+            global_cli_ctx = &context_data;
+            var ctx = global_cli_ctx;
 
             ctx.args.target = Api.Target.bun;
-            if (bun.argv().len > 1) {
-                ctx.passthrough = bun.argv()[1..];
+            if (bun.argv.len > 1) {
+                ctx.passthrough = bun.argv[1..];
             } else {
                 ctx.passthrough = &[_]string{};
             }
@@ -1393,7 +1411,7 @@ pub const Command = struct {
             return;
         }
 
-        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv(), ", ")});
+        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
 
         const tag = which();
 
@@ -1401,10 +1419,10 @@ pub const Command = struct {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
             .ReservedCommand => return try ReservedCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
+            .InitCommand => return try InitCommand.exec(allocator, bun.argv),
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .BuildCommand);
+                const ctx = try Command.init(allocator, log, .BuildCommand);
                 try BuildCommand.exec(ctx);
             },
             .InstallCompletionsCommand => {
@@ -1414,80 +1432,80 @@ pub const Command = struct {
             },
             .InstallCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .InstallCommand);
+                const ctx = try Command.init(allocator, log, .InstallCommand);
 
                 try InstallCommand.exec(ctx);
                 return;
             },
             .AddCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AddCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .AddCommand);
+                const ctx = try Command.init(allocator, log, .AddCommand);
 
                 try AddCommand.exec(ctx);
                 return;
             },
             .UpdateCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpdateCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UpdateCommand);
+                const ctx = try Command.init(allocator, log, .UpdateCommand);
 
                 try UpdateCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .BunxCommand);
+                const ctx = try Command.init(allocator, log, .BunxCommand);
 
-                try BunxCommand.exec(ctx, bun.argv()[if (is_bunx_exe) 0 else 1..]);
+                try BunxCommand.exec(ctx, bun.argv[if (is_bunx_exe) 0 else 1..]);
                 return;
             },
             .ReplCommand => {
                 // TODO: Put this in native code.
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
-                var ctx = try Command.Context.create(allocator, log, .BunxCommand);
+                var ctx = try Command.init(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
-                var args = bun.argv()[0..];
+                var args = bun.argv[0..];
                 args[1] = "bun-repl";
                 try BunxCommand.exec(ctx, args);
                 return;
             },
             .RemoveCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RemoveCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .RemoveCommand);
+                const ctx = try Command.init(allocator, log, .RemoveCommand);
 
                 try RemoveCommand.exec(ctx);
                 return;
             },
             .LinkCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .LinkCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .LinkCommand);
+                const ctx = try Command.init(allocator, log, .LinkCommand);
 
                 try LinkCommand.exec(ctx);
                 return;
             },
             .UnlinkCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UnlinkCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UnlinkCommand);
+                const ctx = try Command.init(allocator, log, .UnlinkCommand);
 
                 try UnlinkCommand.exec(ctx);
                 return;
             },
             .PackageManagerCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackageManagerCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
+                const ctx = try Command.init(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
                 return;
             },
             .TestCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .TestCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .TestCommand);
+                const ctx = try Command.init(allocator, log, .TestCommand);
 
                 try TestCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .GetCompletionsCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .GetCompletionsCommand);
+                const ctx = try Command.init(allocator, log, .GetCompletionsCommand);
                 var filter = ctx.positionals;
 
                 for (filter, 0..) |item, i| {
@@ -1583,7 +1601,7 @@ pub const Command = struct {
                 });
 
                 // Create command wraps bunx
-                const ctx = try Command.Context.create(allocator, log, .CreateCommand);
+                const ctx = try Command.init(allocator, log, .CreateCommand);
 
                 var args = try std.process.argsAlloc(allocator);
 
@@ -1699,7 +1717,7 @@ pub const Command = struct {
             },
             .RunCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .RunCommand);
+                const ctx = try Command.init(allocator, log, .RunCommand);
 
                 if (ctx.filters.len > 0) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
@@ -1718,20 +1736,20 @@ pub const Command = struct {
             },
             .RunAsNodeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunAsNodeCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .RunAsNodeCommand);
+                const ctx = try Command.init(allocator, log, .RunAsNodeCommand);
                 bun.assert(pretend_to_be_node);
                 try RunCommand.execAsIfNode(ctx);
             },
             .UpgradeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UpgradeCommand);
+                const ctx = try Command.init(allocator, log, .UpgradeCommand);
                 try UpgradeCommand.exec(ctx);
                 return;
             },
             .AutoCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
 
-                var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
+                const ctx = Command.init(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {
                             HelpCommand.execWithReason(allocator, .explicit);
@@ -1766,7 +1784,7 @@ pub const Command = struct {
                 // KEYWORDS: open file argv argv0
                 if (ctx.args.entry_points.len == 1) {
                     if (strings.eqlComptime(extension, ".lockb")) {
-                        for (bun.argv()) |arg| {
+                        for (bun.argv) |arg| {
                             if (strings.eqlComptime(arg, "--hash")) {
                                 try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
                                 return;
@@ -1805,7 +1823,7 @@ pub const Command = struct {
                         }
 
                         if (!ctx.debug.loaded_bunfig) {
-                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
                         }
 
                         if (ctx.preloads.len > 0)
@@ -1820,7 +1838,7 @@ pub const Command = struct {
                 if (default_loader) |loader| {
                     if (loader.canBeRunByBun()) {
                         was_js_like = true;
-                        if (maybeOpenWithBunJS(&ctx)) {
+                        if (maybeOpenWithBunJS(ctx)) {
                             return;
                         }
                         did_check = true;
@@ -1828,7 +1846,7 @@ pub const Command = struct {
                 }
 
                 if (force_using_bun and !did_check) {
-                    if (maybeOpenWithBunJS(&ctx)) {
+                    if (maybeOpenWithBunJS(ctx)) {
                         return;
                     }
                 }
@@ -1873,16 +1891,16 @@ pub const Command = struct {
                 try HelpCommand.exec(allocator);
             },
             .ExecCommand => {
-                var ctx = try Command.Context.create(allocator, log, .RunCommand);
+                const ctx = try Command.init(allocator, log, .RunCommand);
 
                 if (ctx.positionals.len > 1) {
-                    try ExecCommand.exec(&ctx);
+                    try ExecCommand.exec(ctx);
                 } else Tag.printHelp(.ExecCommand, true);
             },
         }
     }
 
-    fn maybeOpenWithBunJS(ctx: *Command.Context) bool {
+    fn maybeOpenWithBunJS(ctx: Command.Context) bool {
         if (ctx.args.entry_points.len == 0)
             return false;
 
@@ -1959,9 +1977,11 @@ pub const Command = struct {
         }
 
         BunJS.Run.boot(
-            ctx.*,
+            ctx,
             absolute_script_path.?,
         ) catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
@@ -1972,9 +1992,6 @@ pub const Command = struct {
                 std.fs.path.basename(file_path),
                 @errorName(err),
             });
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
             Global.exit(1);
         };
         return true;
@@ -2004,6 +2021,37 @@ pub const Command = struct {
         ReplCommand,
         ReservedCommand,
         ExecCommand,
+
+        /// Used by crash reports.
+        ///
+        /// This must be kept in sync with
+        pub fn char(this: Tag) u8 {
+            return switch (this) {
+                .AddCommand => 'I',
+                .AutoCommand => 'a',
+                .BuildCommand => 'b',
+                .BunxCommand => 'B',
+                .CreateCommand => 'c',
+                .DiscordCommand => 'D',
+                .GetCompletionsCommand => 'g',
+                .HelpCommand => 'h',
+                .InitCommand => 'j',
+                .InstallCommand => 'i',
+                .InstallCompletionsCommand => 'C',
+                .LinkCommand => 'l',
+                .PackageManagerCommand => 'P',
+                .RemoveCommand => 'R',
+                .RunCommand => 'r',
+                .RunAsNodeCommand => 'n',
+                .TestCommand => 't',
+                .UnlinkCommand => 'U',
+                .UpdateCommand => 'u',
+                .UpgradeCommand => 'p',
+                .ReplCommand => 'G',
+                .ReservedCommand => 'w',
+                .ExecCommand => 'e',
+            };
+        }
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return comptime &switch (cmd) {

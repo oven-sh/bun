@@ -9,6 +9,8 @@ bun --define:process.env.NODE_ENV="'production'" src/index.ts # Runtime
 bun build --define:process.env.NODE_ENV="'production'" src/index.ts # Build
 ```
 
+---
+
 These statically-known values are used by Bun for dead code elimination and other optimizations.
 
 ```ts
@@ -19,6 +21,8 @@ if (process.env.NODE_ENV === "production") {
 }
 ```
 
+---
+
 Before the code reaches the JavaScript engine, Bun replaces `process.env.NODE_ENV` with `"production"`.
 
 ```ts
@@ -28,6 +32,8 @@ if ("production" === "production") {
   console.log("Development mode");
 }
 ```
+
+---
 
 It doesn't stop there. Bun's optimizing transpiler is smart enough to do some basic constant folding.
 
@@ -41,11 +47,15 @@ if (true) {
 }
 ```
 
+---
+
 And finally, Bun detects the `else` branch is not reachable, and eliminates it.
 
 ```ts
 console.log("Production mode");
 ```
+
+---
 
 ## What types of values are supported?
 
@@ -69,6 +79,8 @@ if (typeof window !== "undefined") {
 }
 ```
 
+---
+
 You can also set the value to be another identifier.
 
 For example, to make all usages of `global` be `globalThis`, you can use the following command.
@@ -78,6 +90,8 @@ bun --define global="globalThis" src/index.ts
 ```
 
 `global` is a global object in Node.js, but not in web browsers. So, you can use this to fix some cases where the code assumes that `global` is available.
+
+---
 
 ### Replace values with JSON
 
@@ -90,19 +104,23 @@ To replace all usages of `AWS` with the JSON object `{"ACCESS_KEY":"abc","SECRET
 bun --define:AWS='{"ACCESS_KEY":"abc","SECRET_KEY":"def"}' src/index.ts
 ```
 
+---
+
 Those will be transformed into the equivalent JavaScript code.
 
 From:
 
-```ts#src/index.ts
+```ts
 console.log(AWS.ACCESS_KEY); // => "abc"
 ```
 
 To:
 
-```ts#src/index.js
+```ts
 console.log("abc");
 ```
+
+---
 
 ### Replace values with other properties
 
@@ -114,17 +132,23 @@ For example, to replace all usages of `console.write` with `console.log`, you ca
 bun --define:console.write=console.log src/index.ts
 ```
 
+---
+
 That transforms the following input:
 
 ```ts
 console.write("Hello, world!");
 ```
 
+---
+
 Into the following output:
 
 ```ts
 console.log("Hello, world!");
 ```
+
+---
 
 ## How is this different than setting a variable?
 
@@ -144,11 +168,15 @@ if (process.env.NODE_ENV === "production") {
 }
 ```
 
+---
+
 ## How is this different than find-and-replace or string replacement?
 
 The `--define` flag operates on the AST (Abstract Syntax Tree) level, not on the text level. It happens during the transpilation process, which means it can be used in optimizations like dead code elimination.
 
 String replacement tools tend to have escaping issues and replace unintended parts of the code.
+
+---
 
 ```ts
 export default `${MY_DEFINE_VALUE}`;
@@ -159,6 +187,8 @@ Using `--define=MY_DEFINE_VALUE="}ABC"`,
 ```ts
 export default "}ABC";
 ```
+
+---
 
 Using a string replacement tool:
 

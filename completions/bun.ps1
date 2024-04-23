@@ -144,6 +144,10 @@ $script:BunSubCommands = @(
   @{
     Name        = "upgrade"
     Description = "Upgrade to latest version of Bun."
+  },
+  @{
+    Name        = "discord"
+    Description = "Join the Bun Discord server"
   }
 )
 
@@ -158,15 +162,22 @@ function Get-BunSubCommandCompletions {
 
   $subCommand = $script:BunSubCommands | Where-Object { $_.Name -eq $SubCommandName -or $_.Alias -eq $SubCommandName }
 
-  if ($null -eq $subCommand -and $CommandAst.CommandElements.Count -le 2) {
+  if ($CommandAst.CommandElements.Count -eq 1) {
     # Get the subcommand name completions
+    $script:BunSubCommands | ForEach-Object {
+      $subCommandCompletions += [System.Management.Automation.CompletionResult]::new($_.Name, $_.Name, 'ParameterValue', $_.Description)
+    }
+  } elseif ($CommandAst.CommandElements.Count -eq 2 -and -not [string]::IsNullOrWhiteSpace($WordToComplete)) {
+    # Get the subcommand name completions with a partially complete subcommand name
     $script:BunSubCommands | Where-Object { $_.Name -like "$WordToComplete*" } | ForEach-Object {
       $subCommandCompletions += [System.Management.Automation.CompletionResult]::new($_.Name, $_.Name, 'ParameterValue', $_.Description)
     }
   } elseif ($subCommand -and ($CommandAst.CommandElements.Count -gt 2 -or [string]::IsNullOrWhiteSpace($WordToComplete))) {
     # Invoke all dynamic completers for the subcommand
-    $subCommandCompletions += $subCommand.Completers | ForEach-Object {
-      $_.Invoke($WordToComplete)
+    if ($subCommand.Completers) {
+      $subCommandCompletions += $subCommand.Completers | ForEach-Object {
+        $_.Invoke($WordToComplete)
+      }
     }
 
     # Get all arguments exposed in help with regex capture https://regex101.com/r/lTzfLB/1
@@ -176,7 +187,7 @@ function Get-BunSubCommandCompletions {
       $name = $_.Matches.Groups | Where-Object { $_.Name -eq 'LongName' } | Select-Object -ExpandProperty Value
       $description = $_.Matches.Groups | Where-Object { $_.Name -eq 'Description' } | Select-Object -ExpandProperty Value
 
-      if (($null -ne $name -and $name -like "$WordToComplete*") -or ($null -ne $alias -and $alias -like "$WordToComplete*")) {
+      if ($name -like "$WordToComplete*" -or $alias -like "$WordToComplete*") {
         $completionName = if (-not [string]::IsNullOrWhiteSpace($name)) { $name } else { $alias }
         $subCommandCompletions += [System.Management.Automation.CompletionResult]::new($completionName, $completionName, 'ParameterValue', $description)
       }
@@ -200,13 +211,19 @@ function Get-BunGlobalArgumentCompletions {
       $name = $_.Matches.Groups | Where-Object { $_.Name -eq 'LongName' } | Select-Object -ExpandProperty Value
       $description = $_.Matches.Groups | Where-Object { $_.Name -eq 'Description' } | Select-Object -ExpandProperty Value
 
-      $completionName = if (-not [string]::IsNullOrWhiteSpace($name)) { $name } else { $alias }
-      $script:BunGlobalArguments += [System.Management.Automation.CompletionResult]::new($completionName, $completionName, 'ParameterValue', $description)
+      if (-not [string]::IsNullOrWhitespace($alias) -or -not [string]::IsNullOrWhiteSpace($name)) {
+        $script:BunGlobalArguments += @{
+          Name        = $name
+          Alias       = $alias
+          Description = $description
+        }
+      }
     }
   }
 
-  return $script:BunGlobalArguments | Where-Object { $_.Name -like "$WordToComplete*" } | ForEach-Object {
-    [CompletionResult]::new($_.Name, $_.Name, 'ParameterValue', $_.Description)
+  return $script:BunGlobalArguments | Where-Object { $_.Name -like "$WordToComplete*" -or $_.Alias -like "$WordToComplete*" } | ForEach-Object {
+    $completionName = if (-not [string]::IsNullOrWhiteSpace($_.Name)) { $_.Name } else { $_.Alias }
+    [System.Management.Automation.CompletionResult]::new($completionName, $completionName, 'ParameterValue', $_.Description)
   }
 }
 

@@ -470,14 +470,11 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             continue;
         };
 
-        const matches = if (filter_instance.has_name_filters)
-            filter_instance.matchesPathName(path, pkgjson.name)
-        else
-            filter_instance.matchesPath(path);
-
-        if (!matches) continue;
-
         const pkgscripts = pkgjson.scripts orelse continue;
+
+        if (!filter_instance.matches(path, pkgjson.name))
+            continue;
+
         const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_bundler, null, dirpath, ctx.debug.run_in_bun);
 
         for (&[3][]const u8{ pre_script_name, script_name, post_script_name }) |name| {

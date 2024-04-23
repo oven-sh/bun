@@ -1360,11 +1360,11 @@ function nodeToBun(item, index) {
   if (typeof item === "number") {
     return item;
   }
-  if (item instanceof StreamModule.Readable) {
+  if (typeof item === "object" && item && typeof item.pipe === "function" && typeof item.on === "function") {
     if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
     throw new Error(`TODO: stream.Readable stdio @ ${index}`);
   }
-  if (item instanceof StreamModule.Writable) {
+  if (typeof item === "object" && item && typeof item.write === "function" && typeof item.on === "function") {
     if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
     throw new Error(`TODO: stream.Writable stdio @ ${index}`);
   }

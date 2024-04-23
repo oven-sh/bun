@@ -75456,11 +75456,11 @@ var import_node_fs = require("node:fs");
 var import_node_os = require("node:os");
 var import_node_path = require("node:path");
 process.on("unhandledRejection", (error) => {
-  console.error("Unhandled rejection:", error);
+  console.log("Unhandled rejection:", error);
   process.exit(1);
 });
 process.on("uncaughtException", (error) => {
-  console.error("Uncaught exception:", error);
+  console.log("Uncaught exception:", error);
   process.exit(1);
 });
 process.on("warning", (warning) => {
@@ -75486,7 +75486,7 @@ async function restoreCache() {
         cacheKey: cacheKey ?? key
       };
     } catch (error) {
-      console.error("Failed to restore cache:", error);
+      console.log("Failed to restore cache:", error);
       return null;
     }
   }
@@ -75496,7 +75496,7 @@ async function restoreCache() {
     try {
       (0, import_node_fs.mkdirSync)(cacheDir, { recursive: true });
     } catch (error) {
-      console.error("Failed to create cache directory:", error);
+      console.log("Failed to create cache directory:", error);
       return null;
     }
   }
@@ -75510,7 +75510,7 @@ async function restoreCache() {
         cacheKey: key
       };
     } catch (error) {
-      console.error("Failed to restore cache:", error);
+      console.log("Failed to restore cache:", error);
     }
   }
   for (const dirname of (0, import_node_fs.readdirSync)(cacheDir)) {
@@ -75526,7 +75526,7 @@ async function restoreCache() {
         cacheKey: dirname
       };
     } catch (error) {
-      console.error("Failed to restore cache:", error);
+      console.log("Failed to restore cache:", error);
     }
   }
   return null;

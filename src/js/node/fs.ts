@@ -4,6 +4,12 @@ var WriteStream;
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const Stream = require("node:stream");
+const types = require("node:util/types");
+
+const NumberIsFinite = Number.isFinite;
+const DateNow = Date.now;
+const DatePrototypeGetTime = Date.prototype.getTime;
+const isDate = types.isDate;
 
 // Private exports
 const { FileHandle, kRef, kUnref, kFd, fs } = promises.$data;
@@ -772,7 +778,7 @@ ReadStream = (function (InternalReadStream) {
 
     // #
 
-    // n should be the the highwatermark passed from Readable.read when calling internal _read (_read is set to this private fn in this class)
+    // n should be the highwatermark passed from Readable.read when calling internal _read (_read is set to this private fn in this class)
     #internalRead(n) {
       // pos is the current position in the file
       // by default, if a start value is provided, pos starts at this.start

@@ -317,9 +317,21 @@ Object.defineProperty(WriteStream, "prototype", {
 });
 
 var validateInteger = (value, name, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER) => {
-  if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-  if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-  if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
+  if (typeof value !== "number") throw ERR_INVALID_ARG_TYPE(name, "number", value);
+  if (!NumberIsInteger(value)) throw ERR_OUT_OF_RANGE(name, "an integer", value);
+  if (value < min || value > max) throw ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
 };
 
 export default { ReadStream, WriteStream, isatty };
+
+function ERR_INVALID_ARG_TYPE(name, type, value) {
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
+  err.code = "ERR_INVALID_ARG_TYPE";
+  return err;
+}
+
+function ERR_OUT_OF_RANGE(name, range, value) {
+  const err = new RangeError(`The "${name}" argument is out of range. It must be ${range}. Received ${value}`);
+  err.code = "ERR_OUT_OF_RANGE";
+  return err;
+}

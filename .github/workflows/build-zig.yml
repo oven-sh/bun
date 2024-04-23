@@ -1,11 +1,15 @@
 name: Build Zig
 
+permissions:
+  contents: read
+  actions: write
+
 on:
   workflow_call:
     inputs:
       runs-on:
         type: string
-        default: ${{ github.repository_owner != 'oven-sh' && 'ubuntu-latest' || inputs.arch == 'x64' && 'namespace-profile-bun-ci-linux-x64' || 'namespace-profile-bun-ci-linux-aarch64' }}
+        default: ${{ github.repository_owner != 'oven-sh' && 'ubuntu-latest' || inputs.only-zig && 'namespace-profile-bun-ci-linux-x64' || inputs.arch == 'x64' && 'namespace-profile-bun-ci-linux-x64' || 'namespace-profile-bun-ci-linux-aarch64' }}
       tag:
         type: string
         required: true
@@ -74,7 +78,7 @@ jobs:
           platforms: |
             linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           build-args: |
-            GIT_SHA=${{ github.event.workflow_run.head_sha }}
+            GIT_SHA=${{ github.event.workflow_run.head_sha || github.sha }}
             TRIPLET=${{ inputs.os == 'darwin' && format('{0}-macos-none', inputs.arch == 'x64' && 'x86_64' || 'aarch64') || inputs.os == 'windows' && format('{0}-windows-msvc', inputs.arch == 'x64' && 'x86_64' || 'aarch64') || format('{0}-linux-gnu', inputs.arch == 'x64' && 'x86_64' || 'aarch64') }}
             ARCH=${{ inputs.arch == 'x64' && 'x86_64' || 'aarch64' }}
             BUILDARCH=${{ inputs.arch == 'x64' && 'amd64' || 'arm64' }}

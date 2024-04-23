@@ -17,6 +17,18 @@ const cwd_root = tempDirWithFiles("testworkspace", {
         },
       }),
     },
+    scoped: {
+      "index.js": "console.log('pkga');",
+      "sleep.js":
+        "for (let i = 0; i < 3; i++) { await new Promise(resolve => setTimeout(resolve, 100)); console.log('x'); }",
+      "package.json": JSON.stringify({
+        name: "@scoped/scoped",
+        scripts: {
+          present: "echo scriptd",
+          long: `${bunExe()} run sleep.js`,
+        },
+      }),
+    },
     pkgb: {
       "index.js": "console.log('pkgb');",
       "sleep.js":
@@ -65,6 +77,7 @@ const cwd_packages = join(cwd_root, "packages");
 const cwd_a = join(cwd_packages, "pkga");
 const cwd_b = join(cwd_packages, "pkgb");
 const cwd_c = join(cwd_packages, "dirname");
+const cwd_d = join(cwd_packages, "scoped");
 
 function runInCwdSuccess({
   cwd,
@@ -126,7 +139,7 @@ function runInCwdFailure(cwd: string, pkgname: string, scriptname: string, resul
 }
 
 describe("bun", () => {
-  const dirs = [cwd_root, cwd_packages, cwd_a, cwd_b, cwd_c];
+  const dirs = [cwd_root, cwd_packages, cwd_a, cwd_b, cwd_c, cwd_d];
   const packages = [
     {
       name: "pkga",
@@ -139,6 +152,10 @@ describe("bun", () => {
     {
       name: "pkgc",
       output: /scriptc/,
+    },
+    {
+      name: "@scoped/scoped",
+      output: /scriptd/,
     },
   ];
 
@@ -156,14 +173,14 @@ describe("bun", () => {
       runInCwdSuccess({
         cwd: d,
         pattern: "*",
-        target_pattern: [/scripta/, /scriptb/, /scriptc/],
+        target_pattern: [/scripta/, /scriptb/, /scriptc/, /scriptd/],
       });
     });
     test(`resolve all from ${d}`, () => {
       runInCwdSuccess({
         cwd: d,
         pattern: names,
-        target_pattern: [/scripta/, /scriptb/, /scriptc/],
+        target_pattern: [/scripta/, /scriptb/, /scriptc/, /scriptd/],
       });
     });
   }
@@ -172,7 +189,7 @@ describe("bun", () => {
     runInCwdSuccess({
       cwd: cwd_root,
       pattern: "./packages/*",
-      target_pattern: [/scripta/, /scriptb/, /scriptc/, /malformed1/],
+      target_pattern: [/scripta/, /scriptb/, /scriptc/, /scriptd/, /malformed1/],
       auto: true,
     });
   });
@@ -181,14 +198,14 @@ describe("bun", () => {
     runInCwdSuccess({
       cwd: cwd_root,
       pattern: "./packages/*",
-      target_pattern: [/scripta/, /scriptb/, /scriptc/, /malformed1/],
+      target_pattern: [/scripta/, /scriptb/, /scriptc/, /scriptd/, /malformed1/],
     });
   });
   test("resolve all with recursive glob", () => {
     runInCwdSuccess({
       cwd: cwd_root,
       pattern: "./**",
-      target_pattern: [/scripta/, /scriptb/, /scriptc/, /malformed1/],
+      target_pattern: [/scripta/, /scriptb/, /scriptc/, /scriptd/, /malformed1/],
     });
   });
   test("resolve 'pkga' and 'pkgb' but not 'pkgc' with targeted glob", () => {
@@ -367,5 +384,36 @@ describe("bun", () => {
   });
   test("should warn about malformed package.json", () => {
     runInCwdFailure(cwd_root, "*", "x", /Failed to read package.json/);
+  });
+  test("nonzero exit code on failure", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      dep0: {
+        "package.json": JSON.stringify({
+          name: "dep0",
+          scripts: {
+            script: "exit 0",
+          },
+        }),
+      },
+      dep1: {
+        "package.json": JSON.stringify({
+          name: "dep1",
+          scripts: {
+            script: "exit 23",
+          },
+        }),
+      },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutval = stdout.toString();
+    expect(stdoutval).toMatch(/code 0/);
+    expect(stdoutval).toMatch(/code 23/);
+    expect(exitCode).toBe(23);
   });
 });

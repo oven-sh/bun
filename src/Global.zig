@@ -64,13 +64,16 @@ pub inline fn getStartTime() i128 {
     return bun.start_time;
 }
 
-pub fn setThreadName(name: StringTypes.stringZ) void {
+extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(std.os.windows.WINAPI) std.os.windows.HRESULT;
+
+pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {
-        _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
+        _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch {};
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
     } else if (Environment.isWindows) {
-        // _ = std.os.SetThreadDescription(std.os.GetCurrentThread(), name);
+        // TODO: use SetThreadDescription or NtSetInformationThread with 0x26 (ThreadNameInformation)
+        // without causing exit code 0xC0000409 (stack buffer overrun) in child process
     }
 }
 
@@ -96,7 +99,10 @@ pub fn exit(code: u8) noreturn {
 }
 
 pub fn exitWide(code: u32) noreturn {
-    std.c.exit(@bitCast(code));
+    if (comptime Environment.isMac) {
+        std.c.exit(@bitCast(code));
+    }
+    bun.C.quick_exit(@bitCast(code));
 }
 
 pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
@@ -105,7 +111,7 @@ pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
     }
 
     Output.flush();
-    @import("./crash_reporter.zig").on_error = null;
+
     if (!Environment.isWindows) {
         if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
             const act = std.os.Sigaction{
@@ -119,9 +125,7 @@ pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
 
     Output.Source.Stdio.restore();
 
-    // TODO(@paperdave): report a bug that this intcast shouldnt be needed. signals are i32 not u32
-    // after that is fixed we can make this function take i32
-    _ = std.c.raise(@intCast(sig));
+    _ = std.c.raise(sig);
     std.c.abort();
 }
 

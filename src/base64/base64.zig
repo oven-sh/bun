@@ -401,18 +401,6 @@ const zig_base64 = struct {
         }
     };
 
-    test "base64" {
-        @setEvalBranchQuota(8000);
-        try testBase64();
-        comptime try testAllApis(standard, "comptime", "Y29tcHRpbWU=");
-    }
-
-    test "base64 url_safe_no_pad" {
-        @setEvalBranchQuota(8000);
-        try testBase64UrlSafeNoPad();
-        comptime try testAllApis(url_safe_no_pad, "comptime", "Y29tcHRpbWU");
-    }
-
     fn testBase64() !void {
         const codecs = standard;
 

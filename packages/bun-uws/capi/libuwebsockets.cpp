@@ -389,17 +389,17 @@ extern "C"
                 std::string(domain, domain_length));
         }
     }
-    void uws_app_domain(int ssl, uws_app_t *app, const char *server_name, size_t server_name_length)
+    void uws_app_domain(int ssl, uws_app_t *app, const char *server_name)
     {
         if (ssl)
         {
             uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-            uwsApp->domain(std::string(server_name, server_name_length));
+            uwsApp->domain(server_name);
         }
         else
         {
             uWS::App *uwsApp = (uWS::App *)app;
-            uwsApp->domain(std::string(server_name, server_name_length));
+            uwsApp->domain(server_name);
         }
     }
     void uws_app_destroy(int ssl, uws_app_t *app)

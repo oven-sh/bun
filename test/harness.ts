@@ -1,9 +1,12 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { readlink, readFile, writeFile } from "fs/promises";
-import { isAbsolute, sep, join, dirname } from "path";
+import { isAbsolute, join, dirname } from "path";
 import fs, { openSync, closeSync } from "node:fs";
 import os from "node:os";
+import { heapStats } from "bun:jsc";
+
+type Awaitable<T> = T | Promise<T>;
 
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
@@ -20,6 +23,8 @@ export const bunEnv: NodeJS.ProcessEnv = {
   TZ: "Etc/UTC",
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
 };
 
 if (isWindows) {
@@ -112,13 +117,17 @@ export function hideFromStackTrace(block: CallableFunction) {
 }
 
 type DirectoryTree = {
-  [name: string]: string | ((path: string) => string) | Buffer | DirectoryTree;
+  [name: string]:
+    | string
+    | Buffer
+    | DirectoryTree
+    | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
 };
 
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
-  const tempdir = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
-  function makeTree(base: string, tree: DirectoryTree) {
-    for (const [name, contents] of Object.entries(tree)) {
+  async function makeTree(base: string, tree: DirectoryTree) {
+    for (const [name, raw_contents] of Object.entries(tree)) {
+      const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
       const joined = join(base, name);
       if (name.includes("/")) {
         const dir = dirname(name);
@@ -129,12 +138,11 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
         makeTree(joined, contents);
         continue;
       }
-      const actualContents = typeof contents === "function" ? contents(tempdir) : contents;
-      fs.writeFileSync(joined, actualContents);
+      fs.writeFileSync(joined, contents);
     }
   }
-  makeTree(tempdir, files);
-  return tempdir;
+  makeTree(basename, files);
+  return basename;
 }
 
 export function bunRun(file: string, env?: Record<string, string>) {
@@ -506,7 +514,6 @@ function failTestsOnBlockingWriteCall() {
 
 failTestsOnBlockingWriteCall();
 
-import { heapStats } from "bun:jsc";
 export function dumpStats() {
   const stats = heapStats();
   const { objectTypeCounts, protectedObjectTypeCounts } = stats;

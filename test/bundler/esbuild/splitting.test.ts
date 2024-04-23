@@ -541,14 +541,13 @@ describe("bundler", () => {
     },
   });
   itBundled("splitting/PublicPathEntryName", {
-    todo: true,
     files: {
       "/a.js": `import("./b")`,
       "/b.js": `console.log('b')`,
     },
     outdir: "/out",
     splitting: true,
-    publicPath: "/www",
+    publicPath: "/www/",
     onAfterBundle(api) {
       const t = new Bun.Transpiler();
       const imports = t.scanImports(api.readFile("/out/a.js"));

@@ -1,0 +1,2 @@
+# GitHub Actions need to specify the bundled script
+!dist

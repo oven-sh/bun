@@ -47,7 +47,9 @@ export async function restoreCache() {
   }
 
   console.log("Using local cache...");
+  process.stderr.write("HERE!\n");
   if (!existsSync(cacheDir)) {
+    process.stderr.write("HERE! 2\n");
     console.log("Cache directory does not exist, creating it...", cacheDir);
     try {
       mkdirSync(cacheDir, { recursive: true });

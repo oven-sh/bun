@@ -1958,7 +1958,7 @@ describe("workspaces", async () => {
           version: "1.0.0",
         }),
       );
-      // install first from the root, the the workspace package
+      // install first from the root, the workspace package
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,

@@ -55,7 +55,7 @@ it("should not run install script, issue#10376", async () => {
       },
     }),
   );
-  const { exited, kill } = spawn({
+  const { stderr, exited, kill } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: "pipe",
@@ -68,6 +68,9 @@ it("should not run install script, issue#10376", async () => {
       reject(false);
     }, 2000);
     expect(await exited).toBe(0);
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("post install script has been canceled to prevent an infinite loop");
     resolve(true);
   });
   if (!run) {

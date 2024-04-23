@@ -54,7 +54,7 @@ jobs:
       - if: ${{ !inputs.no-cache }}
         name: Restore Cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache/restore
         with:
           path: ${{ runner.temp }}/bun-deps
           key: bun-${{ inputs.tag }}-deps-${{ steps.hash.outputs.hash }}
@@ -98,7 +98,7 @@ jobs:
           ./scripts/all-dependencies.sh
       - name: Save Cache
         if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache/save
         with:
           path: ${{ runner.temp }}/bun-deps
           key: ${{ steps.cache.outputs.cache-primary-key }}
@@ -147,7 +147,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - if: ${{ !inputs.no-cache }}
         name: Restore Cache
-        uses: actions/cache@v4
+        uses: ./.github/actions/cache
         with:
           path: ${{ runner.temp }}/ccache
           key: bun-${{ inputs.tag }}-cpp-${{ hashFiles('Dockerfile', 'Makefile', 'CMakeLists.txt', 'build.zig', 'scripts/**', 'src/**', 'packages/bun-usockets/src/**', 'packages/bun-uws/src/**') }}
@@ -244,7 +244,7 @@ jobs:
           path: ${{ runner.temp }}/release
       - if: ${{ !inputs.no-cache }}
         name: Restore Cache
-        uses: actions/cache@v4
+        uses: ./.github/actions/cache
         with:
           path: ${{ runner.temp }}/ccache
           key: bun-${{ inputs.tag }}-cpp-${{ hashFiles('Dockerfile', 'Makefile', 'CMakeLists.txt', 'build.zig', 'scripts/**', 'src/**', 'packages/bun-usockets/src/**', 'packages/bun-uws/src/**') }}

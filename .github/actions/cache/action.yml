@@ -1,0 +1,27 @@
+name: Cache
+description: An internal version of the 'actions/cache' action.
+
+inputs:
+  path:
+    description: The path to save the cache
+    required: true
+  key:
+    description: The key to use for the cache
+    required: true
+  restore-keys:
+    description: The restoring keys to use for the cache
+    required: false
+
+outputs:
+  cache-hit:
+    description: If the cache was hit
+  cache-primary-key:
+    description: A resolved cache key for which cache match was attempted
+  cache-matched-key:
+    description: Key of the cache that was restored, it could either be the primary key on cache-hit or a partial/complete match of one of the restore keys
+
+runs:
+  using: node20
+  main: dist/restore/action.mjs
+  post: dist/save/action.mjs
+  post-if: success() || github.event.inputs.save-always

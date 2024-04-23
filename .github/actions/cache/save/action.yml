@@ -1,0 +1,14 @@
+name: Save Cache
+description: An internal version of the 'actions/cache' action.
+
+inputs:
+  path:
+    description: The path to save the cache
+    required: true
+  key:
+    description: The key to use for the cache
+    required: true
+
+runs:
+  using: node20
+  main: ../dist/save/action.mjs

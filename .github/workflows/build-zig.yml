@@ -51,7 +51,7 @@ jobs:
           echo "key=${{ hashFiles('Dockerfile', 'Makefile', 'CMakeLists.txt', 'build.zig', 'scripts/**', 'src/**', 'packages/bun-usockets/src/**', 'packages/bun-uws/src/**') }}" >> $GITHUB_OUTPUT
       - if: ${{ !inputs.no-cache }}
         name: Restore Cache
-        uses: actions/cache@v4
+        uses: ./.github/actions/cache
         with:
           key: bun-${{ inputs.tag }}-docker-${{ steps.cache.outputs.key }}
           restore-keys: |

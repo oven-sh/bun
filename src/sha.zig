@@ -36,10 +36,7 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
     };
 }
 
-fn NewEVP(
-    comptime digest_size: comptime_int,
-    comptime MDName: []const u8,
-) type {
+fn NewEVP(comptime digest_size: comptime_int, comptime MDName: []const u8) type {
     return struct {
         ctx: BoringSSL.EVP_MD_CTX = undefined,
 
@@ -78,6 +75,7 @@ fn NewEVP(
         }
     };
 }
+
 pub const EVP = struct {
     pub const SHA1 = NewEVP(std.crypto.hash.Sha1.digest_length, "EVP_sha1");
     pub const MD5 = NewEVP(16, "EVP_md5");
@@ -163,6 +161,7 @@ const boring = [_]type{
     Hashers.SHA512,
     Hashers.SHA384,
     Hashers.SHA256,
+    // Hashers.SHA512_224,
     Hashers.SHA512_256,
     void,
     void,

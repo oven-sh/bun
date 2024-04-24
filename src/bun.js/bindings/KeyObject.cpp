@@ -2538,6 +2538,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             returnValue = obj;
         };
         auto failureCallback = [&]() {
+            // TODO: include what error was thrown in the message
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
         };
         // this is actually sync
@@ -2624,6 +2625,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         // auto saltLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
 
         auto failureCallback = [&]() {
+            // TODO: include what error was thrown in the message
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
         };
         // this is actually sync

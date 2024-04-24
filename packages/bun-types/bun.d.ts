@@ -3065,6 +3065,7 @@ declare module "bun" {
 
   type SupportedCryptoAlgorithms =
     | "blake2b256"
+    | "blake2b512"
     | "md4"
     | "md5"
     | "ripemd160"
@@ -3073,7 +3074,13 @@ declare module "bun" {
     | "sha256"
     | "sha384"
     | "sha512"
-    | "sha512-256";
+    | "sha512-224"
+    | "sha512-256"
+    | "sha3-224"
+    | "sha3-256"
+    | "sha3-384"
+    | "sha3-512";
+
   /**
    * Hardware-accelerated cryptographic hash functions
    *

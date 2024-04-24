@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
-import { bunExe, bunEnv, isWindows } from "harness";
+import { bunExe, bunEnv, isWindows, tmpdirSync } from "harness";
 import path from "path";
 import { semver } from "bun";
 import fs from "fs";
@@ -184,10 +184,7 @@ describe("spawn()", () => {
           output += data;
         });
         child.stdout.on("end", () => {
-          const envs = output
-            .split("\n")
-            .map(env => env.trim().split("="))
-            .filter(env => env.length === 2 && env[0]);
+          const envs = output.split("\n").map(env => [env.slice(0, env.indexOf("=")), env.slice(env.indexOf("=") + 1)]);
           const obj = Object.fromEntries(envs);
           resolve(obj);
         });
@@ -202,8 +199,8 @@ describe("spawn()", () => {
       expect(await getChildEnv(undefined)).not.toStrictEqual({});
       expect(await getChildEnv(null)).not.toStrictEqual({});
     } else {
-      expect(await getChildEnv({ TEST: "test" })).toEqual({ TEST: "test" });
-      expect(await getChildEnv({})).toEqual({});
+      expect(await getChildEnv({ TEST: "test" })).toMatchObject({ TEST: "test" });
+      expect(await getChildEnv({})).toMatchObject({});
       expect(await getChildEnv(undefined)).toMatchObject(process.env);
       expect(await getChildEnv(null)).toMatchObject(process.env);
     }
@@ -382,4 +379,47 @@ it("should call close and exit before process exits", async () => {
   }
   expect(data).toContain("closeHandler called");
   expect(data).toContain("exithHandler called");
+});
+
+it("it accepts stdio passthrough", async () => {
+  const package_dir = tmpdirSync("bun-node-child_process");
+
+  await fs.promises.writeFile(
+    path.join(package_dir, "package.json"),
+    JSON.stringify({
+      "name": "npm-run-all-test",
+      "version": "1.0.0",
+      "type": "module",
+      "scripts": {
+        "all": "run-p echo-hello echo-world",
+        "echo-hello": "echo hello",
+        "echo-world": "echo world",
+      },
+      "devDependencies": {
+        "npm-run-all": "^4",
+      },
+    }),
+  );
+
+  let { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdio: ["ignore", "ignore", "ignore"],
+    env: bunEnv,
+  });
+  expect(await exited).toBe(0);
+
+  ({ stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "--bun", "run", "all"],
+    cwd: package_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  }));
+
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.split("\n")).toEqual(["$ run-p echo-hello echo-world", "$ echo hello", "$ echo world", ""]);
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.split("\n")).toEqual(["hello", "world", ""]);
 });

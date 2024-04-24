@@ -208,8 +208,10 @@ pub const ShellSubprocess = struct {
                 }
             }
             switch (stdio) {
-                // The shell never uses this
-                .dup2 => @panic("Unimplemented stdin dup2"),
+                .dup2 => {
+                    // The shell never uses this
+                    @panic("Unimplemented stdin dup2");
+                },
                 .pipe => {
                     // The shell never uses this
                     @panic("Unimplemented stdin pipe");

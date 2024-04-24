@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
-import { tmpdirSync } from "./dummy.registry";
 
 let package_dir: string;
 

@@ -4,17 +4,12 @@
  *  PACKAGE_DIR_TO_USE=(realpath .) bun test/cli/install/dummy.registry.ts
  */
 import { file, Server } from "bun";
-import { mkdtempSync, realpathSync } from "fs";
 
 let expect: (typeof import("bun:test"))["expect"];
+import { tmpdirSync } from "harness";
 
 import { readdir, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
 import { basename, join } from "path";
-
-export function tmpdirSync(pattern: string) {
-  return mkdtempSync(join(realpathSync(tmpdir()), pattern));
-}
 
 type Handler = (req: Request) => Response | Promise<Response>;
 type Pkg = {

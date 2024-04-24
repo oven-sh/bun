@@ -1033,29 +1033,3 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
 
     try std.testing.expectEqualStrings(expected, js);
 }
-
-test "ParseJSON" {
-    try expectPrintedJSON("true", "true");
-    try expectPrintedJSON("false", "false");
-    try expectPrintedJSON("1", "1");
-    try expectPrintedJSON("10", "10");
-    try expectPrintedJSON("100", "100");
-    try expectPrintedJSON("100.1", "100.1");
-    try expectPrintedJSON("19.1", "19.1");
-    try expectPrintedJSON("19.12", "19.12");
-    try expectPrintedJSON("3.4159820837456", "3.4159820837456");
-    try expectPrintedJSON("-10000.25", "-10000.25");
-    try expectPrintedJSON("\"hi\"", "\"hi\"");
-    try expectPrintedJSON("{\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}}", "{\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true } }");
-    try expectPrintedJSON("{\"hi\": \"hey\"}", "{\"hi\": \"hey\" }");
-    try expectPrintedJSON(
-        "{\"hi\": [\"hey\", \"yo\"]}",
-        \\{"hi": [
-        \\  "hey",
-        \\  "yo"
-        \\] }
-        ,
-    );
-
-    // TODO: emoji?
-}

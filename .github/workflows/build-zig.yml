@@ -9,7 +9,7 @@ on:
     inputs:
       runs-on:
         type: string
-        default: ${{ github.repository_owner != 'oven-sh' && 'ubuntu-latest' || inputs.arch == 'x64' && 'namespace-profile-bun-ci-linux-x64' || 'namespace-profile-bun-ci-linux-aarch64' }}
+        default: ${{ github.repository_owner != 'oven-sh' && 'ubuntu-latest' || inputs.only-zig && 'namespace-profile-bun-ci-linux-x64' || inputs.arch == 'x64' && 'namespace-profile-bun-ci-linux-x64' || 'namespace-profile-bun-ci-linux-aarch64' }}
       tag:
         type: string
         required: true

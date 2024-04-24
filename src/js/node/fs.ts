@@ -4,6 +4,12 @@ var WriteStream;
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const Stream = require("node:stream");
+const types = require("node:util/types");
+
+const NumberIsFinite = Number.isFinite;
+const DateNow = Date.now;
+const DatePrototypeGetTime = Date.prototype.getTime;
+const isDate = types.isDate;
 
 // Private exports
 const { FileHandle, kRef, kUnref, kFd, fs } = promises.$data;
@@ -309,7 +315,15 @@ var access = function access(...args) {
   appendFileSync = fs.appendFileSync.bind(fs),
   closeSync = fs.closeSync.bind(fs),
   copyFileSync = fs.copyFileSync.bind(fs),
-  existsSync = fs.existsSync.bind(fs),
+  // This behavior - never throwing -- matches Node.js behavior.
+  // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
+  existsSync = function existsSync() {
+    try {
+      return fs.existsSync.$apply(fs, arguments);
+    } catch (e) {
+      return false;
+    }
+  },
   chownSync = fs.chownSync.bind(fs),
   chmodSync = fs.chmodSync.bind(fs),
   fchmodSync = fs.fchmodSync.bind(fs),
@@ -772,7 +786,7 @@ ReadStream = (function (InternalReadStream) {
 
     // #
 
-    // n should be the the highwatermark passed from Readable.read when calling internal _read (_read is set to this private fn in this class)
+    // n should be the highwatermark passed from Readable.read when calling internal _read (_read is set to this private fn in this class)
     #internalRead(n) {
       // pos is the current position in the file
       // by default, if a start value is provided, pos starts at this.start

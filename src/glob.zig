@@ -309,6 +309,9 @@ pub fn GlobWalker_(
         /// If the pattern contains "./" or "../"
         has_relative_components: bool = false,
 
+        end_byte_of_basename_excluding_special_syntax: u32 = 0,
+        basename_excluding_special_syntax_component_idx: u32 = 0,
+
         patternComponents: ArrayList(Component) = .{},
         matchedPaths: ArrayList(BunString) = .{},
         i: u32 = 0,
@@ -332,6 +335,9 @@ pub fn GlobWalker_(
             get_next,
             /// Currently iterating over a directory
             directory: Directory,
+            /// A pattern with no special glob syntax was supplied, for example: `/Users/zackradisic/foo/bar`
+            /// In that case, we stat the file on initialization
+            root_matched: ?[:0]const u8,
 
             const Directory = struct {
                 fd: Accessor.Handle,
@@ -361,8 +367,54 @@ pub fn GlobWalker_(
 
             pub fn init(this: *Iterator) !Maybe(void) {
                 log("Iterator init pattern={s}", .{this.walker.pattern});
+                var was_absolute = false;
+                const root_work_item = brk: {
+                    var use_posix = bun.Environment.isPosix;
+                    const is_absolute = if (bun.Environment.isPosix) std.fs.path.isAbsolute(this.walker.pattern) else std.fs.path.isAbsolute(this.walker.pattern) or is_absolute: {
+                        use_posix = true;
+                        break :is_absolute std.fs.path.isAbsolutePosix(this.walker.pattern);
+                    };
+
+                    if (!is_absolute) break :brk WorkItem.new(this.walker.cwd, 0, .directory);
+
+                    was_absolute = true;
+
+                    const path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
+                    const component_idx = this.walker.basename_excluding_special_syntax_component_idx + 1;
+
+                    // This means we got a pattern without any special glob syntax, for example:
+                    // `/Users/zackradisic/foo/bar`
+                    // In that case we don't need to do any walking and can just open up the FS entry
+                    if (component_idx >= this.walker.patternComponents.items.len) {
+                        const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
+                        const fd = switch (try Accessor.open(path)) {
+                            .err => |e| {
+                                if (e.getErrno() == bun.C.E.NOTDIR) {
+                                    // TODO check symlink
+                                    this.iter_state = .{ .root_matched = path };
+                                    return Maybe(void).success;
+                                }
+                                const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
+                                return .{ .err = e.withPath(errpath) };
+                            },
+                            .result => |fd| fd,
+                        };
+                        _ = Accessor.close(fd);
+                        this.iter_state = .{ .root_matched = path };
+                        return Maybe(void).success;
+                    }
+
+                    bun.assert(this.walker.end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len);
+
+                    break :brk WorkItem.new(
+                        path_without_special_syntax,
+                        component_idx,
+                        .directory,
+                    );
+                };
+
                 var path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.walker.pathBuf;
-                const root_path = this.walker.cwd;
+                const root_path = root_work_item.path;
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
                 // const root_path_z = path_buf[0..root_path.len :0];
@@ -377,8 +429,13 @@ pub fn GlobWalker_(
 
                 this.cwd_fd = cwd_fd;
 
-                const root_work_item = WorkItem.new(this.walker.cwd, 0, .directory);
-                switch (try this.transitionToDirIterState(root_work_item, true)) {
+                switch (if (was_absolute) try this.transitionToDirIterState(
+                    root_work_item,
+                    false,
+                ) else try this.transitionToDirIterState(
+                    root_work_item,
+                    true,
+                )) {
                     .err => |err| return .{ .err = err },
                     else => {},
                 }
@@ -514,6 +571,11 @@ pub fn GlobWalker_(
             pub fn next(this: *Iterator) !Maybe(?MatchedPath) {
                 while (true) {
                     switch (this.iter_state) {
+                        .root_matched => {
+                            const maybe_matched = this.iter_state.root_matched;
+                            this.iter_state.root_matched = null;
+                            return .{ .result = maybe_matched };
+                        },
                         .get_next => {
                             // Done
                             if (this.walker.workbuf.items.len == 0) return .{ .result = null };
@@ -750,12 +812,21 @@ pub fn GlobWalker_(
             len: u32,
 
             syntax_hint: SyntaxHint = .None,
+            trailing_sep: bool = false,
             is_ascii: bool = false,
 
             /// Only used when component is not ascii
             unicode_set: bool = false,
             start_cp: u32 = 0,
             end_cp: u32 = 0,
+
+            pub fn patternSlice(this: *const Component, pattern: []const u8) []const u8 {
+                return pattern[this.start .. this.start + this.len - @as(u1, @bitCast(this.trailing_sep))];
+            }
+
+            pub fn patternSliceCp(this: *const Component, pattern: []u32) []u32 {
+                return pattern[this.start_cp .. this.end_cp - @as(u1, @bitCast(this.trailing_sep))];
+            }
 
             const SyntaxHint = enum {
                 None,
@@ -771,6 +842,13 @@ pub fn GlobWalker_(
                 Dot,
                 /// ../
                 DotBack,
+
+                fn isSpecialSyntax(this: SyntaxHint) bool {
+                    return switch (this) {
+                        .Literal => false,
+                        else => true,
+                    };
+                }
             };
         };
 
@@ -807,15 +885,12 @@ pub fn GlobWalker_(
             const ptr = @intFromPtr(this);
             log("GlobWalker(0x{x}) components:", .{ptr});
             for (components.items) |cmp| {
-                if (cmp.syntax_hint == .None) {
-                    continue;
-                }
                 switch (cmp.syntax_hint) {
                     .Single => log("  *", .{}),
                     .Double => log("  **", .{}),
                     .Dot => log("  .", .{}),
                     .DotBack => log("  ../", .{}),
-                    .Literal, .WildcardFilepath, .None => log("  hint={s} component_str={s}", .{ @tagName(cmp.syntax_hint), pattern[cmp.start .. cmp.start + cmp.len] }),
+                    .Literal, .WildcardFilepath, .None => log("  hint={s} component_str={s}", .{ @tagName(cmp.syntax_hint), cmp.patternSlice(pattern) }),
                 }
             }
         }
@@ -841,6 +916,8 @@ pub fn GlobWalker_(
                 .follow_symlinks = follow_symlinks,
                 .error_on_broken_symlinks = error_on_broken_symlinks,
                 .only_files = only_files,
+                .basename_excluding_special_syntax_component_idx = 0,
+                .end_byte_of_basename_excluding_special_syntax = @intCast(pattern.len),
             };
 
             try GlobWalker.buildPatternComponents(
@@ -850,6 +927,8 @@ pub fn GlobWalker_(
                 &this.cp_len,
                 &this.pattern_codepoints,
                 &this.has_relative_components,
+                &this.end_byte_of_basename_excluding_special_syntax,
+                &this.basename_excluding_special_syntax_component_idx,
             );
 
             // copy arena after all allocations are successful
@@ -1057,7 +1136,7 @@ pub fn GlobWalker_(
         }
 
         /// A file can only match if:
-        /// a) it matches against the the last pattern, or
+        /// a) it matches against the last pattern, or
         /// b) it matches the next pattern, provided the current
         ///    pattern is a double wildcard and the next pattern is
         ///    not a double wildcard
@@ -1073,6 +1152,8 @@ pub fn GlobWalker_(
             pattern: *Component,
             next_pattern: ?*Component,
         ) bool {
+            if (pattern.trailing_sep) return false;
+
             // Handle case b)
             if (!is_last) return pattern.syntax_hint == .Double and
                 component_idx + 1 == this.patternComponents.items.len -| 1 and
@@ -1095,11 +1176,11 @@ pub fn GlobWalker_(
             return switch (pattern_component.syntax_hint) {
                 .Double, .Single => true,
                 .WildcardFilepath => if (comptime !isWindows)
-                    matchWildcardFilepath(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath)
+                    matchWildcardFilepath(pattern_component.patternSlice(this.pattern), filepath)
                 else
                     this.matchPatternSlow(pattern_component, filepath),
                 .Literal => if (comptime !isWindows)
-                    matchWildcardLiteral(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath)
+                    matchWildcardLiteral(pattern_component.patternSlice(this.pattern), filepath)
                 else
                     this.matchPatternSlow(pattern_component, filepath),
                 else => this.matchPatternSlow(pattern_component, filepath),
@@ -1111,7 +1192,7 @@ pub fn GlobWalker_(
             if (comptime !isWindows) {
                 if (pattern_component.is_ascii and isAllAscii(filepath))
                     return GlobAscii.match(
-                        this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len],
+                        pattern_component.patternSlice(this.pattern),
                         filepath,
                     );
             }
@@ -1131,16 +1212,16 @@ pub fn GlobWalker_(
         }
 
         fn componentStringUnicodeWindows(this: *GlobWalker, pattern_component: *Component) []const u32 {
-            return this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
+            return pattern_component.patternSliceCp(this.pattern_codepoints);
         }
 
         fn componentStringUnicodePosix(this: *GlobWalker, pattern_component: *Component) []const u32 {
-            if (pattern_component.unicode_set) return this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
+            if (pattern_component.unicode_set) return pattern_component.patternSliceCp(this.pattern_codepoints);
 
-            const codepoints = this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
+            const codepoints = pattern_component.patternSliceCp(this.pattern_codepoints);
             GlobWalker.convertUtf8ToCodepoints(
                 codepoints,
-                this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len],
+                pattern_component.patternSlice(this.pattern),
             );
             pattern_component.unicode_set = true;
             return codepoints;
@@ -1159,19 +1240,6 @@ pub fn GlobWalker_(
             const name = try this.join(subdir_parts);
             // if (comptime sentinel) return name[0 .. name.len - 1 :0];
             return name;
-        }
-
-        fn appendMatchedPath(
-            this: *GlobWalker,
-            entry_name: []const u8,
-            dir_name: [:0]const u8,
-        ) !void {
-            const subdir_parts: []const []const u8 = &[_][]const u8{
-                dir_name[0..dir_name.len],
-                entry_name,
-            };
-            const name = try this.join(subdir_parts);
-            try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
         }
 
         fn appendMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !void {
@@ -1235,23 +1303,21 @@ pub fn GlobWalker_(
             return false;
         }
 
-        fn addComponent(
-            allocator: Allocator,
+        fn makeComponent(
             pattern: []const u8,
-            patternComponents: *ArrayList(Component),
             start_cp: u32,
             end_cp: u32,
             start_byte: u32,
             end_byte: u32,
             has_relative_patterns: *bool,
-        ) !void {
+        ) ?Component {
             var component: Component = .{
                 .start = start_byte,
                 .len = end_byte - start_byte,
                 .start_cp = start_cp,
                 .end_cp = end_cp,
             };
-            if (component.len == 0) return;
+            if (component.len == 0) return null;
 
             out: {
                 if (component.len == 1 and pattern[component.start] == '.') {
@@ -1325,7 +1391,13 @@ pub fn GlobWalker_(
                 component.is_ascii = true;
             }
 
-            try patternComponents.append(allocator, component);
+            if (pattern[component.start + component.len -| 1] == '/') {
+                component.trailing_sep = true;
+            } else if (comptime bun.Environment.isWindows) {
+                component.trailing_sep = pattern[component.start + component.len -| 1] == '\\';
+            }
+
+            return component;
         }
 
         fn buildPatternComponents(
@@ -1335,6 +1407,8 @@ pub fn GlobWalker_(
             out_cp_len: *u32,
             out_pattern_cp: *[]u32,
             has_relative_patterns: *bool,
+            end_byte_of_basename_excluding_special_syntax: *u32,
+            basename_excluding_special_syntax_component_idx: *u32,
         ) !void {
             var start_cp: u32 = 0;
             var start_byte: u32 = 0;
@@ -1344,23 +1418,35 @@ pub fn GlobWalker_(
 
             var cp_len: u32 = 0;
             var prevIsBackslash = false;
+            var saw_special = false;
             while (iter.next(&cursor)) : (cp_len += 1) {
                 const c = cursor.c;
 
                 switch (c) {
                     '\\' => {
                         if (comptime isWindows) {
-                            const end_cp = cp_len;
-                            try addComponent(
-                                arena.allocator(),
+                            var end_cp = cp_len;
+                            var end_byte = cursor.i;
+                            // is last char
+                            if (cursor.i + cursor.width == pattern.len) {
+                                end_cp += 1;
+                                end_byte += cursor.width;
+                            }
+                            if (makeComponent(
                                 pattern,
-                                patternComponents,
                                 start_cp,
                                 end_cp,
                                 start_byte,
-                                cursor.i,
+                                end_byte,
                                 has_relative_patterns,
-                            );
+                            )) |component| {
+                                saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                                if (!saw_special) {
+                                    basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                                }
+                                try patternComponents.append(arena.allocator(), component);
+                            }
                             start_cp = cp_len + 1;
                             start_byte = cursor.i + cursor.width;
                             continue;
@@ -1381,16 +1467,21 @@ pub fn GlobWalker_(
                             end_cp += 1;
                             end_byte += cursor.width;
                         }
-                        try addComponent(
-                            arena.allocator(),
+                        if (makeComponent(
                             pattern,
-                            patternComponents,
                             start_cp,
                             end_cp,
                             start_byte,
                             end_byte,
                             has_relative_patterns,
-                        );
+                        )) |component| {
+                            saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                            if (!saw_special) {
+                                basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                                end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                            }
+                            try patternComponents.append(arena.allocator(), component);
+                        }
                         start_cp = cp_len + 1;
                         start_byte = cursor.i + cursor.width;
                     },
@@ -1409,16 +1500,24 @@ pub fn GlobWalker_(
             out_pattern_cp.* = codepoints;
 
             const end_cp = cp_len;
-            try addComponent(
-                arena.allocator(),
+            if (makeComponent(
                 pattern,
-                patternComponents,
                 start_cp,
                 end_cp,
                 start_byte,
                 @intCast(pattern.len),
                 has_relative_patterns,
-            );
+            )) |component| {
+                saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                if (!saw_special) {
+                    basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                }
+                try patternComponents.append(arena.allocator(), component);
+            } else if (!saw_special) {
+                basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+            }
         }
     };
 }

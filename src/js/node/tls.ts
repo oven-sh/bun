@@ -10,6 +10,7 @@ const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSB
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
 const RegExpPrototypeExec = RegExp.prototype.exec;
+const JSONParse = JSON.parse;
 
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeSlice = String.prototype.slice;
@@ -132,7 +133,7 @@ function splitEscapedAltNames(altNames) {
       const match = RegExpPrototypeExec.$call(jsonStringPattern, StringPrototypeSubstring.$call(altNames, nextQuote));
       if (!match) {
         let error = new SyntaxError("ERR_TLS_CERT_ALTNAME_FORMAT: Invalid subject alternative name string");
-        error.name = ERR_TLS_CERT_ALTNAME_FORMAT;
+        error.code = "ERR_TLS_CERT_ALTNAME_FORMAT";
         throw error;
       }
       currentToken += JSON.parse(match[0]);

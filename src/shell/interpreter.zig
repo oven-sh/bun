@@ -1542,7 +1542,7 @@ pub const Interpreter = struct {
         var object_iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalThis, value1.asObjectRef());
+        }).init(globalThis, value1);
         defer object_iter.deinit();
 
         this.root_shell.export_env.clearRetainingCapacity();
@@ -2401,7 +2401,7 @@ pub const Interpreter = struct {
 
                 var iter = GlobWalker.Iterator{ .walker = this.walker };
                 defer iter.deinit();
-                switch (try iter.init()) {
+                switch (iter.init() catch |e| OOM(e)) {
                     .err => |err| return .{ .err = err },
                     else => {},
                 }

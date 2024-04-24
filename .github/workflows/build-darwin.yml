@@ -27,7 +27,7 @@ on:
         type: boolean
 
 env:
-  LLVM_VERSION: 16
+  LLVM_VERSION: 17
   BUN_VERSION: 1.1.2
 
 jobs:
@@ -78,6 +78,7 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
+            golang \
             gnu-sed --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
@@ -134,6 +135,7 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
+            golang \
             gnu-sed --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
@@ -215,6 +217,7 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
+            golang \
             gnu-sed --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
@@ -304,4 +307,4 @@ jobs:
 
             @${{ github.actor }}, the build for bun-${{ inputs.tag }} failed.
 
-            **[View logs](${{ github.event.workflow_run.html_url }})**
+            **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**

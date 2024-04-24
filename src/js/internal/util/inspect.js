@@ -93,7 +93,6 @@ const {
   ObjectPrototypeToString,
   ObjectSeal,
   ObjectSetPrototypeOf,
-  ReflectApply,
   ReflectOwnKeys,
   RegExp,
   RegExpPrototypeExec,
@@ -314,7 +313,7 @@ const codes = {}; // exported from errors.js
       msg.length <= args.length, // Default options do not count.
       `Code: ${sym}; The provided arguments length (${args.length}) does not match the required ones (${msg.length}).`,
     );
-    const message = ReflectApply(msg, error, args);
+    const message = msg.$apply(error, args);
 
     ObjectDefineProperty(error, "message", { value: message, enumerable: false, writable: true, configurable: true });
     ObjectDefineProperty(error, "toString", {
@@ -1427,7 +1426,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
     } else if (keys.length > 1) {
       const sorted = ArrayPrototypeSort(ArrayPrototypeSlice(output, output.length - keys.length), comparator);
       ArrayPrototypeUnshift(sorted, output, output.length - keys.length, keys.length);
-      ReflectApply(ArrayPrototypeSplice, null, sorted);
+      ArrayPrototypeSplice.$apply(null, sorted);
     }
   }
 

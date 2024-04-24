@@ -145,7 +145,6 @@ export default {
   ObjectPrototypeToString: uncurryThis(Object.prototype.toString),
   ObjectSeal: Object.seal,
   ObjectSetPrototypeOf: Object.setPrototypeOf,
-  ReflectApply: $getByIdDirect(Reflect, "apply"),
   ReflectOwnKeys: Reflect.ownKeys,
   RegExp,
   RegExpPrototypeExec: uncurryThis(RegExp.prototype.exec),

@@ -9,7 +9,6 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const SymbolHasInstance = Symbol.hasInstance;
-const ReflectApply = $getByIdDirect(Reflect, "apply");
 const PromiseResolve = Promise.resolve;
 const PromiseReject = Promise.reject;
 const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
@@ -146,7 +145,7 @@ class ActiveChannel {
   runStores(data, fn, thisArg, ...args) {
     let run = () => {
       this.publish(data);
-      return ReflectApply(fn, thisArg, args);
+      return fn.$apply(thisArg, args);
     };
 
     for (const entry of this._stores.entries()) {
@@ -198,7 +197,7 @@ class Channel {
   publish() {}
 
   runStores(data, fn, thisArg, ...args) {
-    return ReflectApply(fn, thisArg, args);
+    return fn.$apply(thisArg, args);
   }
 }
 
@@ -292,7 +291,7 @@ class TracingChannel {
 
     return start.runStores(context, () => {
       try {
-        const result = ReflectApply(fn, thisArg, args);
+        const result = fn.$apply(thisArg, args);
         context.result = result;
         return result;
       } catch (err) {
@@ -327,7 +326,7 @@ class TracingChannel {
 
     return start.runStores(context, () => {
       try {
-        let promise = ReflectApply(fn, thisArg, args);
+        let promise = fn.$apply(thisArg, args);
         // Convert thenables to native promises
         if (!(promise instanceof Promise)) {
           promise = PromiseResolve(promise);
@@ -358,7 +357,7 @@ class TracingChannel {
       asyncStart.runStores(context, () => {
         try {
           if (callback) {
-            return ReflectApply(callback, this, arguments);
+            return callback.$apply(this, arguments);
           }
         } finally {
           asyncEnd.publish(context);
@@ -374,7 +373,7 @@ class TracingChannel {
 
     return start.runStores(context, () => {
       try {
-        return ReflectApply(fn, thisArg, args);
+        return fn.$apply(thisArg, args);
       } catch (err) {
         context.error = err;
         error.publish(context);

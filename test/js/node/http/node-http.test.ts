@@ -1812,14 +1812,12 @@ it("should emit events in the right order", async () => {
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "fixtures/log-events.mjs")],
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "ignore",
     stderr: "pipe",
     env: bunEnv,
   });
-  expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).toBeEmpty();
-  expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split("\n")).toEqual([
     `[ "req", "socket" ]`,

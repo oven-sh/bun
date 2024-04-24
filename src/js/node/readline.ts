@@ -186,7 +186,7 @@ function promisify(original) {
           resolve(values[0]);
         }
       });
-      ReflectApply(original, this, args);
+      original.$apply(this, args);
     });
   }
 

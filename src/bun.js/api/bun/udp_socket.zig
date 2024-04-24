@@ -255,6 +255,7 @@ pub const UDPSocket = struct {
     connect_info: ?ConnectInfo = null,
     vm: *JSC.VirtualMachine,
     js_refcount: usize = 1,
+    ref_count: usize = 1,
 
     const ConnectInfo = struct {
         port: u16,
@@ -271,6 +272,8 @@ pub const UDPSocket = struct {
         return this.js_refcount > 0;
     }
 
+    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+
     pub fn udpSocket(globalThis: *JSGlobalObject, options: JSValue) JSValue {
         log("udpSocket", .{});
 
@@ -278,16 +281,15 @@ pub const UDPSocket = struct {
             return .zero;
         };
 
-        var vm = globalThis.bunVM();
-        var this: *This = vm.allocator.create(This) catch bun.outOfMemory();
-        this.* = This{
+        const vm = globalThis.bunVM();
+        var this = This.new(.{
             .socket = undefined,
             .config = config,
             .globalThis = globalThis,
             .send_buf = uws.udp.PacketBuffer.create(),
             .loop = uws.Loop.get(),
             .vm = vm,
-        };
+        });
 
         if (uws.udp.Socket.create(
             this.loop,
@@ -474,13 +476,14 @@ pub const UDPSocket = struct {
         const payload = init: {
             if (arg0.asArrayBuffer(globalThis)) |arrayBuffer| {
                 break :init arrayBuffer.slice();
-            } else if (bun.String.tryFromJS(arg0, globalThis)) |value| {
-                const slice = value.toUTF8(default_allocator);
-                break :init slice.slice();
-            } else {
-                globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
-                return .zero;
+            } else if (arg0.isString()) {
+                if (bun.String.tryFromJS(arg0, globalThis)) |value| {
+                    const slice = value.toUTF8(default_allocator);
+                    break :init slice.slice();
+                } else {}
             }
+            globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
+            return .zero;
         };
 
         var addr: std.os.sockaddr.storage = std.mem.zeroes(std.os.sockaddr.storage);
@@ -539,14 +542,19 @@ pub const UDPSocket = struct {
             return .zero;
         }
 
+        this.doClose();
+
+        return .undefined;
+    }
+
+    fn doClose(
+        this: *This,
+    ) void {
         this.closed = true;
         this.config.unprotect();
         this.poll_ref.unref(this.globalThis.bunVM());
         this.socket.close();
-
         this.js_refcount -= 1;
-
-        return .undefined;
     }
 
     pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
@@ -644,16 +652,12 @@ pub const UDPSocket = struct {
 
     pub fn deinit(this: *This) void {
         if (!this.closed) {
-            this.socket.close();
+            this.doClose();
         }
-
-        this.poll_ref.unref(this.vm);
 
         this.send_buf.destroy();
 
         this.config.deinit();
-
-        default_allocator.destroy(this);
     }
 
     pub fn jsConnect(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {

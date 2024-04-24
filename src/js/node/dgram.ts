@@ -19,23 +19,34 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+const BIND_STATE_UNBOUND = 0;
+const BIND_STATE_BINDING = 1;
+const BIND_STATE_BOUND = 2;
+
+const CONNECT_STATE_DISCONNECTED = 0;
+const CONNECT_STATE_CONNECTING = 1;
+const CONNECT_STATE_CONNECTED = 2;
+
+const RECV_BUFFER = true;
+const SEND_BUFFER = false;
+
+const kStateSymbol = Symbol("state symbol");
+const async_id_symbol = Symbol("async_id_symbol");
+
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 
 const {
   FunctionPrototypeBind,
   ObjectSetPrototypeOf,
-  ReflectApply,
   SymbolAsyncDispose,
   SymbolDispose,
   StringPrototypeTrim,
   NumberIsNaN,
 } = require("internal/primordials");
 
-const { promisify } = require("node:util");
 const EventEmitter = require("node:events");
 
-const dc = require("node:diagnostics_channel");
-const udpSocketChannel = dc.channel("udp.socket");
+
 
 class ERR_OUT_OF_RANGE extends Error {
   constructor(argumentName, range, received) {
@@ -166,20 +177,6 @@ function validateFunction(value, name) {
 }
 hideFromStack(validateFunction);
 
-const BIND_STATE_UNBOUND = 0;
-const BIND_STATE_BINDING = 1;
-const BIND_STATE_BOUND = 2;
-
-const CONNECT_STATE_DISCONNECTED = 0;
-const CONNECT_STATE_CONNECTING = 1;
-const CONNECT_STATE_CONNECTED = 2;
-
-const RECV_BUFFER = true;
-const SEND_BUFFER = false;
-
-const kStateSymbol = Symbol("state symbol");
-const async_id_symbol = Symbol("async_id_symbol");
-
 // placeholder
 function defaultTriggerAsyncIdScope(triggerAsyncId, block, ...args) {
   return block.$apply(null, args);
@@ -217,6 +214,8 @@ function newHandle(type, lookup) {
 
   return handle;
 }
+
+let udpSocketChannel;
 
 function Socket(type, listener) {
   EventEmitter.$call(this);
@@ -264,6 +263,9 @@ function Socket(type, listener) {
       const disposable = EventEmitter.addAbortListener(signal, onAborted);
       this.once("close", disposable[SymbolDispose]);
     }
+  }
+  if (!udpSocketChannel) {
+    udpSocketChannel = require("node:diagnostics_channel").channel("udp.socket");
   }
   if (udpSocketChannel.hasSubscribers) {
     udpSocketChannel.publish({
@@ -438,7 +440,7 @@ Socket.prototype.connect = function (port, address, callback) {
     return;
   }
 
-  ReflectApply(_connect, this, [port, address, callback]);
+  _connect.$apply(this, [port, address, callback]);
 };
 
 function _connect(port, address, callback) {
@@ -761,11 +763,18 @@ Socket.prototype.close = function (callback) {
 };
 
 Socket.prototype[SymbolAsyncDispose] = async function () {
-  if (!this[kStateSymbol].handle) {
+  if (!this[kStateSymbol].handle.socket) {
     return;
   }
-  console.log(this, this.close, promisify(this.close));
-  return promisify(this.close).$call(this);
+  return new Promise((resolve, reject) => {
+    this.close((err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    })
+  })
 };
 
 function socketCloseNT(self) {

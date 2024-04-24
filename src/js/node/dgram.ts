@@ -284,7 +284,7 @@ function bufferSize(self, size, buffer) {
 
   const ctx = {};
   // const ret = self[kStateSymbol].handle.bufferSize(size, buffer, ctx);
-  const ret = (64 * 1) << 20; // buffer size is 64MB (default value)
+  const ret = 1 << 19; // common buffer for all sockets is fixed at 512KiB
   if (ret === undefined) {
     throw new ERR_SOCKET_BUFFER_SIZE(ctx);
   }

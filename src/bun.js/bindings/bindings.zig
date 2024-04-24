@@ -441,7 +441,7 @@ pub const ZigString = extern struct {
             };
         }
 
-        pub const empty = Slice{ .ptr = undefined, .len = 0 };
+        pub const empty = Slice{ .ptr = "", .len = 0 };
 
         pub inline fn isAllocated(this: Slice) bool {
             return !this.allocator.isNull();

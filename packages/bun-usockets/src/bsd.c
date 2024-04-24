@@ -80,6 +80,10 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 
     return vlen; // number of messages sent
 #elif defined(__APPLE__)
+    // if (sendbuf->num == 1) {
+    //     struct msghdr *msg = &sendbuf->msgvec[0].msg_hdr;
+    //     return sendmsg(fd, msg, flags);
+    // }
     return sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
 #else
     return sendmmsg(fd, sendbuf->msgvec, sendbuf->num, flags | MSG_NOSIGNAL);

@@ -467,23 +467,20 @@ pub const UDPSocket = struct {
         };
 
         const payload_arg = arguments.ptr[0];
-        var payload: ?[]const u8 = if (payload_arg.asArrayBuffer(globalThis)) |arrayBuffer| arrayBuffer.slice() else null;
-
-        var string: ?bun.String = null;
-        defer if (string) |val| val.deref();
-        if (payload == null) {
-            if (payload_arg.isString()) {
-                if (bun.String.tryFromJS(payload_arg, globalThis)) |value| {
-                    string = value;
-                    payload = string.?.toUTF8(default_allocator).slice();
-                } else {
-                    return .zero;
-                }
+        var payload = brk: {
+            if (payload_arg.asArrayBuffer(globalThis)) |array_buffer| {
+                break :brk bun.JSC.ZigString.Slice{
+                    .ptr = array_buffer.ptr,
+                    .len = array_buffer.len,
+                };
+            } else if (payload_arg.isString()) {
+                break :brk payload_arg.asString().toSlice(globalThis, bun.default_allocator);
             } else {
                 globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
                 return .zero;
             }
-        }
+        };
+        defer payload.deinit();
 
         var addr: std.os.sockaddr.storage = std.mem.zeroes(std.os.sockaddr.storage);
         const addr_ptr = brk: {
@@ -498,7 +495,7 @@ pub const UDPSocket = struct {
             }
         };
 
-        const res = this.socket.send(&.{payload.?.ptr}, &.{payload.?.len}, &.{addr_ptr});
+        const res = this.socket.send(&.{payload.ptr}, &.{payload.len}, &.{addr_ptr});
         switch (std.c.getErrno(res)) {
             .SUCCESS => return JSValue.jsBoolean(res > 0),
             else => |errno| {

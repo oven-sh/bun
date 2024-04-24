@@ -141,8 +141,9 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
       fs.writeFileSync(joined, contents);
     }
   }
-  makeTree(basename, files);
-  return basename;
+  const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
+  makeTree(base, files);
+  return base;
 }
 
 export function bunRun(file: string, env?: Record<string, string>) {

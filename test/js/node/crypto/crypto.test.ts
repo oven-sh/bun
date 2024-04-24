@@ -1,7 +1,9 @@
 import { sha, MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc, CryptoHasher } from "bun";
 import { it, expect, describe } from "bun:test";
 import crypto from "crypto";
+import path from "path";
 import { hashesFixture } from "./fixtures/sign.fixture.ts";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
 
 describe("CryptoHasher", () => {
@@ -190,4 +192,78 @@ describe("crypto.createSign()/.verifySign()", () => {
       expect(verify).toBeTrue();
     },
   );
+});
+
+it("should send cipher events in the right order", async () => {
+  const package_dir = tmpdirSync("bun-test-node-stream");
+  const fixture_path = path.join(package_dir, "fixture.js");
+
+  await Bun.write(
+    fixture_path,
+    String.raw`
+    function patchEmitter(emitter, prefix) {
+      var oldEmit = emitter.emit;
+
+      emitter.emit = function () {
+        console.log([prefix, arguments[0]]);
+        oldEmit.apply(emitter, arguments);
+      };
+    }
+
+    const crypto = require("node:crypto");
+
+    const plaintext = "Out of the mountain of despair, a stone of hope.";
+
+    const key = Buffer.from("3fad401bb178066f201b55368712530229d6329a5e2c05f48ff36ca65792d21d", "hex");
+    const iv = Buffer.from("22371787d3e04a6589d8a1de50c81208", "hex");
+
+    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+    patchEmitter(cipher, "cipher");
+    cipher.end(plaintext);
+    let ciph = cipher.read();
+    console.log([1, ciph.toString("hex")]);
+
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    patchEmitter(decipher, "decipher");
+    decipher.end(ciph);
+    let dciph = decipher.read();
+    console.log([2, dciph.toString("hex")]);
+    let txt = dciph.toString("utf8");
+
+    console.log([3, plaintext]);
+    console.log([4, txt]);
+    `,
+  );
+
+  const { stdout, stderr } = Bun.spawn({
+    cmd: [bunExe(), "run", fixture_path],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
+  const out = await new Response(stdout).text();
+  expect(out.split("\n")).toEqual([
+    // `[ "cipher", "readable" ]`,
+    `[ "cipher", "prefinish" ]`,
+    `[ "cipher", "data" ]`,
+    `[ 1, "dfb6b7e029be3ad6b090349ed75931f28f991b52ca9a89f5bf6f82fa1c87aa2d624bd77701dcddfcceaf3add7d66ce06ced17aebca4cb35feffc4b8b9008b3c4"`,
+    `]`,
+    // `[ "decipher", "readable" ]`,
+    `[ "decipher", "prefinish" ]`,
+    `[ "decipher", "data" ]`,
+    `[ 2, "4f7574206f6620746865206d6f756e7461696e206f6620646573706169722c20612073746f6e65206f6620686f70652e"`,
+    `]`,
+    `[ 3, "Out of the mountain of despair, a stone of hope." ]`,
+    `[ 4, "Out of the mountain of despair, a stone of hope." ]`,
+    `[ "cipher", "finish" ]`,
+    `[ "cipher", "end" ]`,
+    `[ "decipher", "finish" ]`,
+    `[ "decipher", "end" ]`,
+    `[ "cipher", "close" ]`,
+    `[ "decipher", "close" ]`,
+    ``,
+  ]);
 });

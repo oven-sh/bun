@@ -801,14 +801,11 @@ describe("node:http", () => {
     it("should emit a socket event when connecting", async done => {
       runTest(done, async (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}`, {});
-        await new Promise((resolve, reject) => {
-          req.on("error", reject);
-          req.on("socket", function onRequestSocket(socket) {
-            req.destroy();
-            done();
-            resolve();
-          });
+        req.on("socket", function onRequestSocket(socket) {
+          req.destroy();
+          done();
         });
+        req.end();
       });
     });
   });

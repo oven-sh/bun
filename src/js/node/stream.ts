@@ -1804,6 +1804,8 @@ var require_destroy = __commonJS({
         }
         if (err2) {
           process.nextTick(emitErrorCloseNT, self, err2);
+        } else {
+          process.nextTick(emitCloseNT, self);
         }
       }
       try {
@@ -1814,6 +1816,20 @@ var require_destroy = __commonJS({
     }
     function emitErrorCloseNT(self, err) {
       emitErrorNT(self, err);
+      emitCloseNT(self);
+    }
+    function emitCloseNT(self) {
+      const r = self._readableState;
+      const w = self._writableState;
+      if (w) {
+        w.closeEmitted = true;
+      }
+      if (r) {
+        r.closeEmitted = true;
+      }
+      if ((w && w.emitClose) || (r && r.emitClose)) {
+        self.emit("close");
+      }
     }
     function emitErrorNT(self, err) {
       const r = self?._readableState;
@@ -2506,6 +2522,7 @@ var require_readable = __commonJS({
       state.needReadable = false;
       if (!state.emittedReadable) {
         state.emittedReadable = true;
+        // stream.emit("readable"); // TODO:
         process.nextTick(_emitReadable, stream, state);
       }
     }
@@ -2634,6 +2651,7 @@ var require_readable = __commonJS({
       } else {
         state.needReadable = false;
         state.emittedReadable = true;
+        // stream.emit("readable"); // TODO:
         _emitReadable(stream, state);
       }
     }
@@ -3869,7 +3887,7 @@ var require_writable = __commonJS({
           errorOrDestroy(stream, err, state.sync);
         } else if (needFinish(state)) {
           state.prefinished = true;
-          process.nextTick(() => stream.emit("prefinish"));
+          stream.emit("prefinish");
           state.pendingcb++;
           process.nextTick(finish, stream, state);
         }
@@ -3890,7 +3908,7 @@ var require_writable = __commonJS({
           callFinal(stream, state);
         } else {
           state.prefinished = true;
-          process.nextTick(() => stream.emit("prefinish"));
+          stream.emit("prefinish");
         }
       }
     }

@@ -46,8 +46,6 @@ const {
 
 const EventEmitter = require("node:events");
 
-
-
 class ERR_OUT_OF_RANGE extends Error {
   constructor(argumentName, range, received) {
     super(`The value of "${argumentName}" is out of range. It must be ${range}. Received ${received}`);
@@ -767,14 +765,14 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
     return;
   }
   return new Promise((resolve, reject) => {
-    this.close((err) => {
+    this.close(err => {
       if (err) {
         reject(err);
       } else {
         resolve();
       }
-    })
-  })
+    });
+  });
 };
 
 function socketCloseNT(self) {

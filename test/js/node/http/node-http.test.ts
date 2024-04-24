@@ -1831,7 +1831,7 @@ it("should emit events in the right order", async () => {
     // `[ "res", "readable" ]`,
     // `[ "res", "end" ]`,
     `[ "req", "close" ]`,
-    `[ "res", "#kConstruct" ]`, // TODO: this shouldnt'be necessary
+    `[ "res", Symbol(kConstruct) ]`,
     // `[ "res", "close" ]`,
     "",
   ]);

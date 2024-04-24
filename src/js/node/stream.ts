@@ -1744,8 +1744,8 @@ var require_destroy = __commonJS({
     } = require_errors();
     var { Symbol: Symbol2 } = require_primordials();
     var { kDestroyed, isDestroyed, isFinished, isServerRequest } = require_utils();
-    var kDestroy = "#kDestroy";
-    var kConstruct = "#kConstruct";
+    var kDestroy = Symbol.for("kDestroy");
+    var kConstruct = Symbol.for("kConstruct");
     function checkError(err, w, r) {
       if (err) {
         err.stack;

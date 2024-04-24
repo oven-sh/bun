@@ -95,7 +95,7 @@ pub const PathWatcherManager = struct {
             .err => |e| {
                 if (e.errno == @intFromEnum(bun.C.E.NOTDIR)) {
                     const file = switch (bun.sys.open(path, 0, 0)) {
-                        .err => return .{ .err = e.withPath(path) },
+                        .err => |file_err| return .{ .err = file_err.withPath(path) },
                         .result => |r| r,
                     };
                     const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
@@ -339,7 +339,7 @@ pub const PathWatcherManager = struct {
             // stop all watchers
             for (watchers) |w| {
                 if (w) |watcher| {
-                    // log("[watch] error: {s}", .{@errorName(err)});
+                    log("[watch] error: {}", .{err});
                     watcher.emit(.{ .@"error" = err }, 0, timestamp, false);
                     watcher.flush();
                 }
@@ -528,7 +528,7 @@ pub const PathWatcherManager = struct {
                 defer watcher.unrefPendingDirectory();
                 switch (this.processWatcher(watcher, &buf)) {
                     .err => |err| {
-                        // log("[watch] error registering directory: {s}", .{@errorName(err)});
+                        log("[watch] error registering directory: {s}", .{err});
                         watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
                         watcher.flush();
                     },

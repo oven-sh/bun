@@ -2706,8 +2706,9 @@ pub const udp = struct {
             return us_create_udp_socket(loop, null, data_cb, drain_cb, host, port, user_data);
         }
 
-        pub fn send(this: *This, buf: *PacketBuffer, num: c_int) c_int {
-            return us_udp_socket_send(this, buf, num);
+        pub fn send(this: *This, payloads: []const [*]const u8, lengths: []const usize, addresses: []const ?*const anyopaque) c_int {
+            bun.assert(payloads.len == lengths.len and payloads.len == addresses.len);
+            return us_udp_socket_send(this, payloads.ptr, lengths.ptr, addresses.ptr, @intCast(payloads.len));
         }
 
         pub fn user(this: *This) ?*anyopaque {
@@ -2746,8 +2747,7 @@ pub const udp = struct {
     extern fn us_create_udp_socket(loop: ?*Loop, buf: ?*PacketBuffer, data_cb: *const fn (*udp.Socket, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*udp.Socket) callconv(.C) void, host: [*c]const u8, port: c_ushort, user_data: ?*anyopaque) ?*udp.Socket;
     extern fn us_udp_socket_connect(socket: ?*udp.Socket, hostname: [*c]const u8, port: c_uint) c_int;
     extern fn us_udp_socket_disconnect(socket: ?*udp.Socket) c_int;
-    extern fn us_udp_socket_send(socket: ?*udp.Socket, buf: ?*PacketBuffer, num: c_int) c_int;
-    // extern fn us_udp_socket_receive(socket: ?*udp.Socket, buf: ?*PacketBuffer) c_int;
+    extern fn us_udp_socket_send(socket: ?*udp.Socket, [*c]const[*c]const u8, [*c]const usize, [*c]const ?*const anyopaque, c_int) c_int;
     extern fn us_udp_socket_user(socket: ?*udp.Socket) ?*anyopaque;
     extern fn us_udp_socket_bind(socket: ?*udp.Socket, hostname: [*c]const u8, port: c_uint) c_int;
     extern fn us_udp_socket_bound_port(socket: ?*udp.Socket) c_int;
@@ -2758,20 +2758,8 @@ pub const udp = struct {
     pub const PacketBuffer = opaque {
         const This = @This();
 
-        pub fn create() *This {
-            return us_create_udp_packet_buffer() orelse bun.outOfMemory();
-        }
-
-        pub fn destroy(this: *This) void {
-            us_destroy_udp_packet_buffer(this);
-        }
-
         pub fn getPeer(this: *This, index: c_int) *std.os.sockaddr.storage {
             return us_udp_packet_buffer_peer(this, index);
-        }
-
-        pub fn setPayload(this: *This, index: usize, offset: usize, payload: []const u8, peer_addr: ?*anyopaque) void {
-            us_udp_buffer_set_packet_payload(this, @intCast(index), @intCast(offset), payload.ptr, @intCast(payload.len), peer_addr);
         }
 
         pub fn getPayload(this: *This, index: c_int) []u8 {
@@ -2782,9 +2770,6 @@ pub const udp = struct {
     };
 
     extern fn us_udp_packet_buffer_peer(buf: ?*PacketBuffer, index: c_int) *std.os.sockaddr.storage;
-    extern fn us_udp_buffer_set_packet_payload(buf: ?*PacketBuffer, index: c_int, offset: c_int, payload: ?*const anyopaque, length: c_int, peer_addr: ?*anyopaque) void;
-    extern fn us_create_udp_packet_buffer() ?*PacketBuffer;
-    extern fn us_destroy_udp_packet_buffer(buf: ?*PacketBuffer) void;
     extern fn us_udp_packet_buffer_payload(buf: ?*PacketBuffer, index: c_int) [*]u8;
     extern fn us_udp_packet_buffer_payload_length(buf: ?*PacketBuffer, index: c_int) c_int;
 };

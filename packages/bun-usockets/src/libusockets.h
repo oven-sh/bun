@@ -109,7 +109,7 @@ int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer
 
 void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr);
 
-int us_udp_socket_send(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf, int num);
+int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num);
 
 /* Allocates a packet buffer that is reuable per thread. Mutated by us_udp_socket_receive. */
 struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
@@ -121,7 +121,7 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, struct us_udp_packet_buffer_t *buf, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user);
+struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, struct us_udp_packet_buffer_t *buf, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user);
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
 

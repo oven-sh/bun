@@ -38,23 +38,10 @@
 #include <errno.h>
 #endif
 
-/* Internal structure of packet buffer */
-struct us_internal_udp_packet_buffer {
-#if defined(_WIN32) || defined(__APPLE__)
-    char *buf[LIBUS_UDP_MAX_NUM];
-    size_t len[LIBUS_UDP_MAX_NUM];
-    struct sockaddr_storage addr[LIBUS_UDP_MAX_NUM];
-#else
-    struct mmsghdr msgvec[LIBUS_UDP_MAX_NUM];
-    struct iovec iov[LIBUS_UDP_MAX_NUM];
-    struct sockaddr_storage addr[LIBUS_UDP_MAX_NUM];
-    char control[LIBUS_UDP_MAX_NUM][256];
-#endif
-};
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
-int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, int flags) {
-#if defined(_WIN32) || defined(__APPLE__)
+int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
+#if defined(_WIN32)// || defined(__APPLE__)
     struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
 
     /* Let's just use sendto here */
@@ -64,18 +51,16 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, in
 
     // while we do not get error, send next
 
-    for (int i = 0; i < vlen; i++) {
-        // need to support ipv6 addresses also!
+    for (int i = 0; i < sendbuf->num; i++) {
         int ret = 0;
-        switch (packet_buffer->addr[i].ss_family) {
+        struct sockaddr *addr = (struct sockaddr *) &
+        switch (addr->sa_family) {
             case AF_INET: {
-                struct sockaddr *addr = (struct sockaddr *) &packet_buffer->addr[i];
                 socklen_t len = sizeof(struct sockaddr_in);
                 ret = sendto(fd, packet_buffer->buf[i], packet_buffer->len[i], flags, addr, len);
                 break;
             }
             case AF_INET6: {
-                struct sockaddr *addr = (struct sockaddr *) &packet_buffer->addr[i];
                 socklen_t len = sizeof(struct sockaddr_in6);
                 ret = sendto(fd, packet_buffer->buf[i], packet_buffer->len[i], flags, addr, len);
                 break;
@@ -93,36 +78,89 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, in
         }
     }
 
-    return vlen; // one message
+    return vlen; // number of messages sent
+#elif defined(__APPLE__)
+    return sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
 #else
-    return sendmmsg(fd, (struct mmsghdr *)msgvec, vlen, flags | MSG_NOSIGNAL);
+    return sendmmsg(fd, sendbuf->msgvec, sendbuf->num, flags | MSG_NOSIGNAL);
 #endif
 }
 
-int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, int flags, void *timeout) {
-#if defined(_WIN32) || defined(__APPLE__)
-    struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
+int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags) {
+#if defined(_WIN32)
+    socklen_t addr_len = sizeof(struct sockaddr_storage);
+    ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
 
-
-    for (int i = 0; i < LIBUS_UDP_MAX_NUM; i++) {
-        socklen_t addr_len = sizeof(struct sockaddr_storage);
-        int ret = recvfrom(fd, packet_buffer->buf[i], LIBUS_UDP_MAX_SIZE, flags, (struct sockaddr *)&packet_buffer->addr[i], &addr_len);
-
-        if (ret == -1) {
-            return i;
-        }
-
-        packet_buffer->len[i] = ret;
+    if (ret == -1) {
+        return ret;
     }
 
-    return LIBUS_UDP_MAX_NUM;
+    recvbuf->recvlen = ret;
+
+    return 1;
+#elif defined(__APPLE__)
+    return recvmsg_x(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
 #else
-    // we need to set controllen for ip packet
-    for (int i = 0; i < vlen; i++) {
-        ((struct mmsghdr *)msgvec)[i].msg_hdr.msg_controllen = 256;
-    }
+    return recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags, 0);
+#endif
+}
 
-    return recvmmsg(fd, (struct mmsghdr *)msgvec, vlen, flags, 0);
+void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen) {
+#if defined(_WIN32)
+    recvbuf->buf = databuf;
+    recvbuf->buflen = databuflen;
+#else
+    // assert(databuflen > LIBUS_UDP_MAX_SIZE * LIBUS_UDP_RECV_COUNT);
+
+    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
+        recvbuf->iov[i].iov_base = (char*)databuf + i * LIBUS_UDP_MAX_SIZE;
+        recvbuf->iov[i].iov_len = LIBUS_UDP_MAX_SIZE;
+
+        recvbuf->msgvec[i].msg_hdr.msg_name = &recvbuf->addr[i];
+        recvbuf->msgvec[i].msg_hdr.msg_namelen = sizeof(struct sockaddr_storage);
+
+        recvbuf->msgvec[i].msg_hdr.msg_iov = &recvbuf->iov[i];
+        recvbuf->msgvec[i].msg_hdr.msg_iovlen = 1;
+
+        recvbuf->msgvec[i].msg_hdr.msg_control = recvbuf->control[i];
+        recvbuf->msgvec[i].msg_hdr.msg_controllen = 256;
+    }
+#endif
+}
+
+int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloads, size_t* lengths, void** addresses, int num) {
+#if defined(_WIN32)
+    buf->payloads = payloads;
+    buf->lengths = lengths;
+    buf->addresses = addresses;
+    buf->num = num;
+    return num;
+#else
+    struct mmsghdr *msgvec = buf->msgvec;
+    // todo check this math
+    size_t count = (bufsize - sizeof(struct udp_sendbuf)) / (sizeof(struct mmsghdr) + sizeof(struct iovec));
+    if (count > num) {
+        count = num;
+    }
+    // TODO alignment
+    struct iovec *iov = (struct iovec *) (msgvec + count);
+    for (int i = 0; i < count; i++) {
+        struct sockaddr *addr = (struct sockaddr *)addresses[i];
+        socklen_t addrsize = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) 
+                           : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) 
+                           : 0;
+        msgvec[i].msg_hdr.msg_name = addresses[i];
+        msgvec[i].msg_hdr.msg_namelen = addrsize;
+        msgvec[i].msg_hdr.msg_control = NULL;
+        msgvec[i].msg_hdr.msg_controllen = 0;
+        iov[i].iov_base = payloads[i];
+        iov[i].iov_len = lengths[i];
+        msgvec[i].msg_hdr.msg_iov = iov + i;
+        msgvec[i].msg_hdr.msg_iovlen = 1;
+        msgvec[i].msg_len = 0;
+    }
+    buf->num = count;
+    return count;
 #endif
 }
 
@@ -155,7 +193,7 @@ int bsd_udp_packet_buffer_local_ip(void *msgvec, int index, char *ip) {
 }
 
 char *bsd_udp_packet_buffer_peer(void *msgvec, int index) {
-#if defined(_WIN32) || defined(__APPLE__)
+#if defined(_WIN32)
     struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
     return (char *)&packet_buffer->addr[index];
 #else
@@ -164,7 +202,7 @@ char *bsd_udp_packet_buffer_peer(void *msgvec, int index) {
 }
 
 char *bsd_udp_packet_buffer_payload(void *msgvec, int index) {
-#if defined(_WIN32) || defined(__APPLE__)
+#if defined(_WIN32)
     struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
     return packet_buffer->buf[index];
 #else
@@ -173,7 +211,7 @@ char *bsd_udp_packet_buffer_payload(void *msgvec, int index) {
 }
 
 int bsd_udp_packet_buffer_payload_length(void *msgvec, int index) {
-#if defined(_WIN32) || defined(__APPLE__)
+#if defined(_WIN32)
     struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
     return packet_buffer->len[index];
 #else
@@ -182,7 +220,7 @@ int bsd_udp_packet_buffer_payload_length(void *msgvec, int index) {
 }
 
 void bsd_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr) {
-#if defined(_WIN32) || defined(__APPLE__)
+#if defined(_WIN32)
     struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) send_buf;
 
     memcpy(packet_buffer->buf[index], payload, length);
@@ -199,11 +237,19 @@ void bsd_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, 
 
     // copy the peer address
     if (peer_addr) {
-        memcpy(ss[index].msg_hdr.msg_name, peer_addr, /*ss[index].msg_hdr.msg_namelen*/ sizeof(struct sockaddr_in));
+        struct sockaddr_storage* addr = (struct sockaddr_storage*)peer_addr;
+        memcpy(ss[index].msg_hdr.msg_name, peer_addr, /*ss[index].msg_hdr.msg_namelen*/ sizeof(struct sockaddr_storage));
+#ifdef __APPLE__
+        ss[index].msg_hdr.msg_namelen = addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+#endif
     } else {
         ss[index].msg_hdr.msg_name = NULL;
         ss[index].msg_hdr.msg_namelen = 0;
     }
+
+    #ifdef __APPLE__
+    ss[index].msg_hdr.msg_control = NULL;
+    #endif
 
     // set control length to 0
     ss[index].msg_hdr.msg_controllen = 0;
@@ -217,43 +263,39 @@ void bsd_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, 
 #endif
 }
 
-/* The maximum UDP payload size is 64kb, but in IPV6 you can have jumbopackets larger than so.
- * We do not support those jumbo packets currently, but will safely ignore them.
- * Any sane sender would assume we don't support them if we consistently drop them.
- * Therefore a udp_packet_buffer_t will be 64 MB in size (64kb * 1024). */
-void *bsd_create_udp_packet_buffer() {
-#if defined(_WIN32) || defined(__APPLE__)
-    struct us_internal_udp_packet_buffer *b = malloc(sizeof(struct us_internal_udp_packet_buffer) + LIBUS_UDP_MAX_SIZE * LIBUS_UDP_MAX_NUM);
+// void *bsd_create_udp_packet_buffer() {
+// #if defined(_WIN32)// || defined(__APPLE__)
+//     struct us_internal_udp_packet_buffer *b = malloc(sizeof(struct us_internal_udp_packet_buffer) + LIBUS_UDP_MAX_SIZE * LIBUS_UDP_MAX_NUM);
 
-    for (int i = 0; i < LIBUS_UDP_MAX_NUM; i++) {
-        b->buf[i] = ((char *) b) + sizeof(struct us_internal_udp_packet_buffer) + LIBUS_UDP_MAX_SIZE * i;
-    }
+//     for (int i = 0; i < LIBUS_UDP_MAX_NUM; i++) {
+//         b->buf[i] = ((char *) b) + sizeof(struct us_internal_udp_packet_buffer) + LIBUS_UDP_MAX_SIZE * i;
+//     }
 
-    return (struct us_udp_packet_buffer_t *) b;
-#else
-    /* Allocate 64kb times 1024 */
-    struct us_internal_udp_packet_buffer *b = malloc(sizeof(struct us_internal_udp_packet_buffer) + LIBUS_UDP_MAX_SIZE * LIBUS_UDP_MAX_NUM);
+//     return (struct us_udp_packet_buffer_t *) b;
+// #else
+//     /* Allocate 64kb times 1024 */
+//     struct us_internal_udp_packet_buffer *b = malloc(sizeof(struct us_internal_udp_packet_buffer) + LIBUS_UDP_MAX_SIZE * LIBUS_UDP_MAX_NUM);
 
-    for (int n = 0; n < LIBUS_UDP_MAX_NUM; ++n) {
+//     for (int n = 0; n < LIBUS_UDP_MAX_NUM; ++n) {
 
-        b->iov[n].iov_base = &((char *) (b + 1))[n * LIBUS_UDP_MAX_SIZE];
-        b->iov[n].iov_len = LIBUS_UDP_MAX_SIZE;
+//         b->iov[n].iov_base = &((char *) (b + 1))[n * LIBUS_UDP_MAX_SIZE];
+//         b->iov[n].iov_len = LIBUS_UDP_MAX_SIZE;
 
-        b->msgvec[n].msg_hdr = (struct msghdr) {
-            .msg_name       = &b->addr[n],
-            .msg_namelen    = sizeof (struct sockaddr_storage),
+//         b->msgvec[n].msg_hdr = (struct msghdr) {
+//             .msg_name       = &b->addr[n],
+//             .msg_namelen    = sizeof (struct sockaddr_storage),
 
-            .msg_iov        = &b->iov[n],
-            .msg_iovlen     = 1,
+//             .msg_iov        = &b->iov[n],
+//             .msg_iovlen     = 1,
 
-            .msg_control    = b->control[n],
-            .msg_controllen = 256,
-        };
-    }
+//             .msg_control    = b->control[n],
+//             .msg_controllen = 256,
+//         };
+//     }
 
-    return (struct us_udp_packet_buffer_t *) b;
-#endif
-}
+//     return (struct us_udp_packet_buffer_t *) b;
+// #endif
+// }
 
 void bsd_destroy_udp_packet_buffer(void *buf) {
     free(buf);

@@ -22,8 +22,6 @@
 #include <sys/ioctl.h>
 #endif
 
-#include <limits.h>
-
 /* The loop has 2 fallthrough polls */
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
@@ -417,12 +415,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
             if (events & LIBUS_SOCKET_READABLE) {
-                int npackets = bsd_recvmmsg(us_poll_fd(p), u->receive_buf, LIBUS_UDP_MAX_NUM, MSG_DONTWAIT, NULL);
-                if (npackets > 0) {
-                    // TODO handle socket close in callback
-                    u->on_data(u, u->receive_buf, npackets);
-                } else if (npackets == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
-                    // TODO handle recv error
+                // TODO move this to loop
+                struct udp_recvbuf recvbuf;
+                bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
+                while (1) {
+                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
+                    if (npackets > 0) {
+                        // TODO handle socket close in callback
+                        u->on_data(u, &recvbuf, 1);
+                    } else if (npackets == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
+                        // TODO handle recv error
+                    } else if (npackets == LIBUS_SOCKET_ERROR && bsd_would_block()) {
+                        // break receive loop when we receive EAGAIN or similar
+                        break;
+                    }
                 }
             }
             break;

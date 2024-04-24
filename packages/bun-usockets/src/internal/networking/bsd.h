@@ -45,7 +45,6 @@
 #endif
 
 #define LIBUS_UDP_MAX_SIZE (64 * 1024)
-#define LIBUS_UDP_MAX_NUM 1024
 
 struct bsd_addr_t {
     struct sockaddr_storage mem;
@@ -55,8 +54,55 @@ struct bsd_addr_t {
     int port;
 };
 
-int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, int flags);
-int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, int flags, void *timeout);
+#ifdef _WIN32
+// on windows we can only receive one packet at a time
+#define LIBUS_UDP_RECV_COUNT 1
+#else
+// on unix we can receive at most as many packets as fit into the receive buffer
+#define LIBUS_UDP_RECV_COUNT (LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE)
+#endif
+
+#ifdef __APPLE__
+// a.k.a msghdr_x
+struct mmsghdr { 
+    struct msghdr msg_hdr;
+    size_t msg_len;	/* byte length of buffer in msg_iov */
+};
+
+ssize_t sendmsg_x(int s, struct mmsghdr *msgp, u_int cnt, int flags);
+ssize_t recvmsg_x(int s, struct mmsghdr *msgp, u_int cnt, int flags);
+#endif
+
+struct udp_recvbuf {
+#if defined(_WIN32)
+    char *buf;
+    size_t buflen;
+    size_t recvlen;
+    struct sockaddr_storage addr;
+#else
+    struct mmsghdr msgvec[LIBUS_UDP_RECV_COUNT];
+    struct iovec iov[LIBUS_UDP_RECV_COUNT];
+    struct sockaddr_storage addr[LIBUS_UDP_RECV_COUNT];
+    char control[LIBUS_UDP_RECV_COUNT][256];
+#endif
+};
+
+struct udp_sendbuf {
+#ifdef _WIN32
+    void **payloads;
+    size_t *lengths;
+    void **addresses;
+    int num;
+#else
+    int num;
+    struct mmsghdr msgvec[];
+#endif
+};
+
+int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags);
+int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags);
+void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen);
+int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloads, size_t* lengths, void** addresses, int num);
 int bsd_udp_packet_buffer_payload_length(void *msgvec, int index);
 char *bsd_udp_packet_buffer_payload(void *msgvec, int index);
 char *bsd_udp_packet_buffer_peer(void *msgvec, int index);

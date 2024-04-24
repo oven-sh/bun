@@ -40,22 +40,31 @@ int us_udp_packet_buffer_payload_length(struct us_udp_packet_buffer_t *buf, int 
     return bsd_udp_packet_buffer_payload_length(buf, index);
 }
 
-// what should we return? number of sent datagrams?
-int us_udp_socket_send(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf, int num) {
+int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num) {
     if (num == 0) return 0;
     int fd = us_poll_fd((struct us_poll_t *) s);
 
-    int sent = bsd_sendmmsg(fd, buf, num, 0);
-    if (0 <= sent && sent < num) {
-        // if we couldn't send all packets, register a writable event so we can call the drain callback
-        us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-    }
-    return sent;
-}
+    struct udp_sendbuf *buf = (struct udp_sendbuf *)s->loop->data.recv_buf;
 
-int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf) {
-    int fd = us_poll_fd((struct us_poll_t *) s);
-    return bsd_recvmmsg(fd, buf, LIBUS_UDP_MAX_NUM, 0, 0);
+    int total_sent = 0;
+    while (total_sent < num) {
+        int count = bsd_udp_setup_sendbuf(buf, LIBUS_RECV_BUFFER_LENGTH, payloads, lengths, addresses, num);
+        payloads += count;
+        lengths += count;
+        addresses += count;
+        num -= count;
+        // TODO nohang flag?
+        int sent = bsd_sendmmsg(fd, buf, 0);
+        if (sent < 0) { 
+            return sent;
+        }
+        total_sent += sent;
+        if (0 <= sent && sent < num) {
+            // if we couldn't send all packets, register a writable event so we can call the drain callback
+            us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        }
+    }
+    return total_sent;
 }
 
 void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr) {
@@ -63,7 +72,8 @@ void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, i
 }
 
 struct us_udp_packet_buffer_t *us_create_udp_packet_buffer() {
-    return (struct us_udp_packet_buffer_t *) bsd_create_udp_packet_buffer();
+    return NULL;
+    // return (struct us_udp_packet_buffer_t *) bsd_create_udp_packet_buffer();
 }
 
 void us_destroy_udp_packet_buffer(struct us_udp_packet_buffer_t *buffer) {
@@ -120,7 +130,7 @@ int us_udp_socket_disconnect(struct us_udp_socket_t *s) {
 struct us_udp_socket_t *us_create_udp_socket(
     struct us_loop_t *loop, 
     struct us_udp_packet_buffer_t *buf, 
-    void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), 
+    void (*data_cb)(struct us_udp_socket_t *, void *, int), 
     void (*drain_cb)(struct us_udp_socket_t *), 
     const char *host, 
     unsigned short port, 

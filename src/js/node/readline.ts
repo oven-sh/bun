@@ -28,7 +28,7 @@
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
-const ReflectApply = Reflect.apply;
+const ReflectApply = Reflect.$apply;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectValues = Object.values;

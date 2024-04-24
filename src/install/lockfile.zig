@@ -3843,7 +3843,7 @@ pub const Package = extern struct {
     ) !WorkspaceEntry {
         const path_to_use = if (path.len == 0) "package.json" else brk: {
             const paths = [_]string{ path, "package.json" };
-            break :brk bun.path.joinStringBuf(path_buf, &paths, .posix);
+            break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
         };
 
         // TODO: windows

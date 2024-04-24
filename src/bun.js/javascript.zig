@@ -476,11 +476,19 @@ pub const ImportWatcher = union(enum) {
         dir_fd: StoredFileDescriptorType,
         package_json: ?*PackageJSON,
         comptime copy_file_path: bool,
-    ) !void {
-        switch (this) {
-            inline .hot, .watch => |wacher| try wacher.addFile(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path),
-            else => {},
-        }
+    ) bun.JSC.Maybe(void) {
+        return switch (this) {
+            inline .hot, .watch => |watcher| watcher.addFile(
+                fd,
+                file_path,
+                hash,
+                loader,
+                dir_fd,
+                package_json,
+                copy_file_path,
+            ),
+            .none => .{ .result = {} },
+        };
     }
 };
 
@@ -3552,7 +3560,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             // - Directories outside the root directory
             // - Directories inside node_modules
             if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
-                watch.addDirectory(dir_fd, file_path, GenericWatcher.getHash(file_path), false) catch {};
+                _ = watch.addDirectory(dir_fd, file_path, GenericWatcher.getHash(file_path), false);
             }
         }
 

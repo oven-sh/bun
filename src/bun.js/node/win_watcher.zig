@@ -12,6 +12,9 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Output = bun.Output;
 const Watcher = @import("../../watcher.zig");
 
+const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
+const Event = bun.JSC.Node.FSWatcher.Event;
+
 var default_manager: ?*PathWatcherManager = null;
 
 // TODO: make this a generic so we can reuse code with path_watcher
@@ -26,7 +29,7 @@ pub const PathWatcherManager = struct {
 
     pub usingnamespace bun.New(PathWatcherManager);
 
-    pub fn init(vm: *JSC.VirtualMachine) !*PathWatcherManager {
+    pub fn init(vm: *JSC.VirtualMachine) *PathWatcherManager {
         return PathWatcherManager.new(.{
             .watchers = .{},
             .vm = vm,
@@ -107,11 +110,10 @@ pub const PathWatcher = struct {
         }
     };
 
-    pub const EventType = JSC.Node.FSWatcher.EventType;
-    const Callback = *const fn (ctx: ?*anyopaque, path: string, is_file: bool, event_type: EventType) void;
+    const Callback = *const fn (ctx: ?*anyopaque, event: Event, is_file: bool) void;
     const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
-    fn uvEventCallback(event: *uv.uv_fs_event_t, filename: ?[*:0]const u8, events: c_int, status: c_int) callconv(.C) void {
+    fn uvEventCallback(event: *uv.uv_fs_event_t, filename: ?[*:0]const u8, events: c_int, status: uv.ReturnCode) callconv(.C) void {
         if (event.data == null) {
             Output.debugWarn("uvEventCallback called with null data", .{});
             return;
@@ -123,17 +125,14 @@ pub const PathWatcher = struct {
 
         const timestamp = event.loop.time;
 
-        if (status < 0) {
-            const err_name = uv.uv_err_name(status);
-            const err = err_name[0..bun.len(err_name)];
-            {
-                this.emit_in_progress = true;
-                const ctxs = this.handlers.keys();
-                for (ctxs) |ctx| {
-                    onPathUpdateFn(ctx, err, false, .@"error");
-                    onUpdateEndFn(ctx);
-                }
-                this.emit_in_progress = false;
+        if (status.toError(.watch)) |err| {
+            this.emit_in_progress = true;
+            defer this.emit_in_progress = false;
+
+            const ctxs = this.handlers.keys();
+            for (ctxs) |ctx| {
+                onPathUpdateFn(ctx, .{ .@"error" = err }, false);
+                onUpdateEndFn(ctx);
             }
             this.maybeDeinit();
 
@@ -142,46 +141,50 @@ pub const PathWatcher = struct {
 
         const path = if (filename) |file| file[0..bun.len(file) :0] else return;
 
-        this.emit(path, @truncate(event.hash(path, events, status)), timestamp, !event.isDir(), if (events & uv.UV_RENAME != 0) .rename else .change);
+        this.emit(
+            path,
+            @truncate(event.hash(path, events, status)),
+            timestamp,
+            !event.isDir(),
+            if (events & uv.UV_RENAME != 0) .rename else .change,
+        );
     }
 
     pub fn emit(this: *PathWatcher, path: string, hash: Watcher.HashType, timestamp: u64, is_file: bool, event_type: EventType) void {
         this.emit_in_progress = true;
-        var debug_count: if (bun.Environment.isDebug) usize else u0 = if (comptime bun.Environment.isDebug) 0 else 0;
+        var debug_count: if (bun.Environment.isDebug) usize else u0 = 0;
         for (this.handlers.values(), 0..) |*event, i| {
             if (event.emit(hash, timestamp, event_type)) {
                 const ctx = this.handlers.keys()[i];
-                onPathUpdateFn(ctx, path, is_file, event_type);
+                onPathUpdateFn(ctx, event_type.toEvent(path), is_file);
                 if (comptime bun.Environment.isDebug)
                     debug_count += 1;
                 onUpdateEndFn(ctx);
             }
         }
         if (comptime bun.Environment.isDebug)
-            log("emit({s}, {s}, {s}, at {d}) x {d}", .{ path, if (is_file) "file" else "dir", @tagName(event_type), timestamp, debug_count });
+            log("emit({s}, {s}, {s}, at {d}) x {d}", .{
+                path,
+                if (is_file) "file" else "dir",
+                @tagName(event_type),
+                timestamp,
+                debug_count,
+            });
 
         this.emit_in_progress = false;
         this.maybeDeinit();
     }
 
-    pub fn init(manager: *PathWatcherManager, path: [:0]const u8, recursive: bool) !*PathWatcher {
+    pub fn init(manager: *PathWatcherManager, path: [:0]const u8, recursive: bool) bun.JSC.Maybe(*PathWatcher) {
         var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const event_path = brk: {
-            const size = bun.sys.readlink(path, &outbuf).unwrap() catch |err| {
-                if (err == error.ENOENT) {
-                    return error.ENOENT;
-                }
-
-                break :brk path;
-            };
-            if (size >= bun.MAX_PATH_BYTES) break :brk path;
-            outbuf[size] = 0;
-            break :brk outbuf[0..size];
+        const event_path = switch (bun.sys.readlink(path, &outbuf)) {
+            .err => |err| return .{ .err = err },
+            .result => |event_path| event_path,
         };
 
-        const watchers_entry = try manager.watchers.getOrPut(bun.default_allocator, @as([]const u8, event_path));
+        const watchers_entry = manager.watchers.getOrPut(bun.default_allocator, @as([]const u8, event_path)) catch bun.outOfMemory();
         if (watchers_entry.found_existing) {
-            return watchers_entry.value_ptr.*;
+            return .{ .result = watchers_entry.value_ptr.* };
         }
 
         var this = PathWatcher.new(.{
@@ -195,22 +198,27 @@ pub const PathWatcher = struct {
             this.deinit();
         }
 
-        if (uv.uv_fs_event_init(manager.vm.uvLoop(), &this.handle) != 0) {
-            return error.FailedToInitializeFSEvent;
+        if (uv.uv_fs_event_init(manager.vm.uvLoop(), &this.handle).toError(.watch)) |err| {
+            return .{ .err = err };
         }
         this.handle.data = this;
 
         // UV_FS_EVENT_RECURSIVE only works for Windows and OSX
-        if (uv.uv_fs_event_start(&this.handle, PathWatcher.uvEventCallback, event_path.ptr, if (recursive) uv.UV_FS_EVENT_RECURSIVE else 0) != 0) {
-            return error.FailedToStartFSEvent;
+        if (uv.uv_fs_event_start(
+            &this.handle,
+            PathWatcher.uvEventCallback,
+            event_path.ptr,
+            if (recursive) uv.UV_FS_EVENT_RECURSIVE else 0,
+        ).toError(.watch)) |err| {
+            return .{ .err = err };
         }
         // we handle this in node_fs_watcher
         uv.uv_unref(@ptrCast(&this.handle));
 
         watchers_entry.value_ptr.* = this;
-        watchers_entry.key_ptr.* = try bun.default_allocator.dupeZ(u8, event_path);
+        watchers_entry.key_ptr.* = bun.default_allocator.dupeZ(u8, event_path) catch bun.outOfMemory();
 
-        return this;
+        return .{ .result = this };
     }
 
     fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
@@ -260,7 +268,7 @@ pub fn watch(
     comptime callback: PathWatcher.Callback,
     comptime updateEnd: PathWatcher.UpdateEndCallback,
     ctx: *anyopaque,
-) !*PathWatcher {
+) bun.JSC.Maybe(*PathWatcher) {
     comptime {
         if (callback != onPathUpdateFn) {
             @compileError("callback must be onPathUpdateFn");
@@ -272,14 +280,17 @@ pub fn watch(
     }
 
     if (!bun.Environment.isWindows) {
-        @panic("win_watcher should only be used on Windows");
+        @compileError("win_watcher should only be used on Windows");
     }
 
     const manager = default_manager orelse brk: {
-        default_manager = try PathWatcherManager.init(vm);
+        default_manager = PathWatcherManager.init(vm);
         break :brk default_manager.?;
     };
-    var watcher = try PathWatcher.init(manager, path, recursive);
-    try watcher.handlers.put(bun.default_allocator, ctx, .{});
-    return watcher;
+    var watcher = switch (PathWatcher.init(manager, path, recursive)) {
+        .err => |err| return .{ .err = err },
+        .result => |watcher| watcher,
+    };
+    watcher.handlers.put(bun.default_allocator, ctx, .{}) catch bun.outOfMemory();
+    return .{ .result = watcher };
 }

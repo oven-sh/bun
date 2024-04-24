@@ -129,7 +129,13 @@ pub const PathWatcherManager = struct {
         }
     }
 
-    pub fn init(vm: *JSC.VirtualMachine) !*PathWatcherManager {
+    const PathWatcherManagerError = std.mem.Allocator.Error ||
+        std.os.KQueueError ||
+        error{KQueueError} ||
+        std.os.INotifyInitError ||
+        std.Thread.SpawnError;
+
+    pub fn init(vm: *JSC.VirtualMachine) PathWatcherManagerError!*PathWatcherManager {
         const this = bun.default_allocator.create(PathWatcherManager) catch bun.outOfMemory();
         errdefer bun.default_allocator.destroy(this);
         var watchers = bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1) catch bun.outOfMemory();
@@ -433,7 +439,7 @@ pub const PathWatcherManager = struct {
             this: *DirectoryRegisterTask,
             watcher: *PathWatcher,
             buf: *[bun.MAX_PATH_BYTES + 1]u8,
-        ) !bun.JSC.Maybe(void) {
+        ) bun.JSC.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
             const manager = this.manager;
@@ -442,7 +448,18 @@ pub const PathWatcherManager = struct {
             var iter = fd.asDir().iterate();
 
             // now we iterate over all files and directories
-            while (try iter.next()) |entry| {
+            while (iter.next() catch |err| {
+                return .{
+                    .err = .{
+                        .errno = @truncate(@intFromEnum(switch (err) {
+                            error.AccessDenied => bun.C.E.ACCES,
+                            error.SystemResources => bun.C.E.NOMEM,
+                            error.Unexpected => bun.C.E.INVAL,
+                        })),
+                        .syscall = .watch,
+                    },
+                };
+            }) |entry| {
                 var parts = [2]string{ path.path, entry.name };
                 const entry_path = Path.joinAbsStringBuf(
                     Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
@@ -464,17 +481,36 @@ pub const PathWatcherManager = struct {
                     defer watcher.mutex.unlock();
                     watcher.file_paths.push(bun.default_allocator, child_path.path) catch |err| {
                         manager._decrementPathRef(entry_path_z);
-                        return err;
+                        return switch (err) {
+                            error.OutOfMemory => .{ .err = .{
+                                .errno = @truncate(@intFromEnum(bun.C.E.NOMEM)),
+                                .syscall = .watch,
+                            } },
+                        };
                     };
                 }
 
                 // we need to call this unlocked
                 if (child_path.is_file) {
-                    try manager.main_watcher.addFile(child_path.fd, child_path.path, child_path.hash, options.Loader.file, .zero, null, false);
+                    switch (manager.main_watcher.addFile(
+                        child_path.fd,
+                        child_path.path,
+                        child_path.hash,
+                        options.Loader.file,
+                        .zero,
+                        null,
+                        false,
+                    )) {
+                        .err => |err| return .{ .err = err },
+                        .result => {},
+                    }
                 } else {
                     if (watcher.recursive and !watcher.isClosed()) {
                         // this may trigger another thread with is desired when available to watch long trees
-                        try manager._addDirectory(watcher, child_path);
+                        switch (manager._addDirectory(watcher, child_path)) {
+                            .err => |err| return .{ .err = err },
+                            .result => {},
+                        }
                     }
                 }
             }
@@ -490,45 +526,7 @@ pub const PathWatcherManager = struct {
 
             while (this.getNext()) |watcher| {
                 defer watcher.unrefPendingDirectory();
-                const maybe = this.processWatcher(watcher, &buf) catch |err|brk: {
-                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                    break:brk JSC.Maybe(void){
-                        .err = .{
-                            .errno = @truncate(@intFromEnum(switch (err) {
-                                error.Unexpected,
-                                error.UnexpectedFailure,
-                                error.WatchAlreadyExists,
-                                error.NameTooLong,
-                                error.BadPathName,
-                                error.InvalidUtf8,
-                                => bun.C.E.INVAL,
-
-                                error.OutOfMemory,
-                                error.SystemResources,
-                                                                => bun.C.E.NOMEM,
-
-                                error.FileNotFound,
-                                error.NetworkNotFound,
-                                error.NoDevice,
-                                                                => bun.C.E.NOENT,
-
-                                error.DeviceBusy =>bun.C.E.BUSY,
-                                error.AccessDenied =>bun.C.E.PERM,
-                                error.InvalidHandle => bun.C.E.BADF,
-                                error.SymLinkLoop => bun.C.E.LOOP,
-                                error.NotDir => bun.C.E.NOTDIR,
-
-                                error.ProcessFdQuotaExceeded,
-                                error.SystemFdQuotaExceeded,
-                                error.UserResourceLimitReached,
-                                => bun.C.E.MFILE,
-                                
-                            })),
-                            .syscall = .watch,
-                        },
-                    };
-                };
-                switch (maybe) {
+                switch (this.processWatcher(watcher, &buf)) {
                     .err => |err| {
                         // log("[watch] error registering directory: {s}", .{@errorName(err)});
                         watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
@@ -547,11 +545,23 @@ pub const PathWatcherManager = struct {
     };
 
     // this should only be called if thread pool is not null
-    fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) !void {
+    fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.JSC.Maybe(void) {
         const fd = path.fd;
-        try this.main_watcher.addDirectory(fd, path.path, path.hash, false);
+        switch (this.main_watcher.addDirectory(fd, path.path, path.hash, false)) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
 
-        return try DirectoryRegisterTask.schedule(this, watcher, path);
+        return .{
+            .result = DirectoryRegisterTask.schedule(this, watcher, path) catch |err| return .{
+                .err = .{
+                    .errno = @truncate(@intFromEnum(switch (err) {
+                        error.OutOfMemory => bun.C.E.NOMEM,
+                        error.UnexpectedFailure => bun.C.E.INVAL,
+                    })),
+                },
+            },
+        };
     }
 
     // register is always called form main thread
@@ -580,14 +590,14 @@ pub const PathWatcherManager = struct {
 
         const path = watcher.path;
         if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, .zero, null, false);
+            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, .zero, null, false).unwrap();
         } else {
             if (comptime Environment.isMac) {
                 if (watcher.fsevents_watcher != null) {
                     return;
                 }
             }
-            try this._addDirectory(watcher, path);
+            try this._addDirectory(watcher, path).unwrap();
         }
     }
 
@@ -748,12 +758,15 @@ pub const PathWatcher = struct {
 
         pub fn toEvent(event_type: EventType, path: []const u8) Event {
             return switch (event_type) {
-                inline else => |t| @unionInit(Event, @tagName(t), path),
+                inline else => |t| @unionInit(Event, @tagName(t), switch (Environment.os) {
+                    else => path,
+                    .windows => .{ .bytes_to_free = path },
+                }),
             };
         }
     };
 
-    const Callback = *const fn (ctx: ?*anyopaque, detail: Event, is_file: bool) void;
+    pub const Callback = *const fn (ctx: ?*anyopaque, detail: Event, is_file: bool) void;
     const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(manager: *PathWatcherManager, path: PathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
@@ -777,8 +790,8 @@ pub const PathWatcher = struct {
                     .fsevents_watcher = FSEvents.watch(
                         resolved_path,
                         recursive,
-                        bun.cast(FSEvents.FSEventsWatcher.Callback, callback),
-                        bun.cast(FSEvents.FSEventsWatcher.UpdateEndCallback, updateEndCallback),
+                        callback,
+                        updateEndCallback,
                         bun.cast(*anyopaque, ctx),
                     ) catch |err| {
                         bun.default_allocator.destroy(this);
@@ -954,6 +967,8 @@ pub fn watch(
                         => bun.C.E.MFILE,
 
                         error.Unexpected => bun.C.E.NOMEM,
+
+                        error.KQueueError => bun.C.E.INVAL,
                     })),
                     .syscall = .watch,
                 } };
@@ -983,15 +998,15 @@ pub fn watch(
 
                 error.OutOfMemory,
                 error.SystemResources,
-                                                => bun.C.E.NOMEM,
+                => bun.C.E.NOMEM,
 
                 error.FileNotFound,
                 error.NetworkNotFound,
                 error.NoDevice,
-                                                => bun.C.E.NOENT,
+                => bun.C.E.NOENT,
 
-                error.DeviceBusy =>bun.C.E.BUSY,
-                error.AccessDenied =>bun.C.E.PERM,
+                error.DeviceBusy => bun.C.E.BUSY,
+                error.AccessDenied => bun.C.E.PERM,
                 error.InvalidHandle => bun.C.E.BADF,
                 error.SymLinkLoop => bun.C.E.LOOP,
                 error.NotDir => bun.C.E.NOTDIR,
@@ -1000,6 +1015,8 @@ pub fn watch(
                 error.SystemFdQuotaExceeded,
                 error.UserResourceLimitReached,
                 => bun.C.E.MFILE,
+
+                else => bun.C.E.INVAL,
             })),
             .syscall = .watch,
         } };

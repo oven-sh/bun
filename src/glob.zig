@@ -432,7 +432,7 @@ pub fn GlobWalker_(
                             .err => |e| {
                                 if (e.getErrno() == bun.C.E.NOTDIR) {
                                     // TODO check symlink
-                                    this.iter_state = .{ .root_matched = path };
+                                    this.iter_state = .{ .matched = path };
                                     return Maybe(void).success;
                                 }
                                 const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
@@ -441,7 +441,7 @@ pub fn GlobWalker_(
                             .result => |fd| fd,
                         };
                         _ = Accessor.close(fd);
-                        this.iter_state = .{ .root_matched = path };
+                        this.iter_state = .{ .matched = path };
                         return Maybe(void).success;
                     }
 

@@ -422,7 +422,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
                     if (npackets > 0) {
                         // TODO handle socket close in callback
-                        u->on_data(u, &recvbuf, 1);
+                        u->on_data(u, &recvbuf, npackets);
                     } else if (npackets == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
                         // TODO handle recv error
                     } else if (npackets == LIBUS_SOCKET_ERROR && bsd_would_block()) {

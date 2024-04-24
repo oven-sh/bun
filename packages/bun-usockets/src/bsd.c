@@ -146,11 +146,14 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
     struct iovec *iov = (struct iovec *) (msgvec + count);
     for (int i = 0; i < count; i++) {
         struct sockaddr *addr = (struct sockaddr *)addresses[i];
-        socklen_t addrsize = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) 
-                           : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) 
-                           : 0;
+        socklen_t addr_len = 0;
+        if (addr) {
+            addr_len = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) 
+                     : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) 
+                     : 0;
+        }
         msgvec[i].msg_hdr.msg_name = addresses[i];
-        msgvec[i].msg_hdr.msg_namelen = addrsize;
+        msgvec[i].msg_hdr.msg_namelen = addr_len;
         msgvec[i].msg_hdr.msg_control = NULL;
         msgvec[i].msg_hdr.msg_controllen = 0;
         iov[i].iov_base = payloads[i];

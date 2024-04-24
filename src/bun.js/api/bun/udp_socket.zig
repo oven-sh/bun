@@ -345,54 +345,93 @@ pub const UDPSocket = struct {
     }
 
     pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        _ = .{ this, globalThis, callframe };
-        return .undefined;
+        if (this.closed) {
+            globalThis.throw("Socket is closed", .{});
+            return .zero;
+        }
+        const arguments = callframe.arguments(1);
+        if (arguments.len != 1) {
+            globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+            return .zero;
+        }
+
+        const arg = arguments.ptr[0];
+        if (!arg.jsType().isArray()) {
+            globalThis.throwInvalidArgumentType("sendMany", "first argument", "array");
+            return .zero;
+        }
+
+        const array_len = arg.getLength(globalThis);
+        if (this.connect_info == null and array_len % 3 != 0) {
+            globalThis.throwInvalidArguments("Expected 3 arguments for each packet", .{});
+            return .zero;
+        }
+
+        const len = if (this.connect_info == null) array_len / 3 else array_len;
+
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        var payloads = alloc.alloc([*]const u8, len) catch bun.outOfMemory();
+        var lens = alloc.alloc(usize, len) catch bun.outOfMemory();
+        var addr_ptrs = alloc.alloc(?*const anyopaque, len) catch bun.outOfMemory();
+        var addrs = alloc.alloc(std.os.sockaddr.storage, len) catch bun.outOfMemory();
+
+        var iter = arg.arrayIterator(globalThis);
+
+        var i: u16 = 0;
+        var port: JSValue = .zero;
+        while (iter.next()) |val| : (i += 1) {
+            if (i >= array_len) {
+                globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
+                return .zero;
+            }
+            const slice_idx = if (this.connect_info == null) i / 3 else i;
+            if (this.connect_info != null or i % 3 == 0) {
+                const slice = brk: {
+                    if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
+                        break :brk arrayBuffer.slice();
+                    } else if (val.isString()) {
+                        break :brk val.toString(globalThis).toSlice(globalThis, alloc).slice();
+                    } else {
+                        globalThis.throwInvalidArguments("Expected ArrayBufferView or string as payload", .{});
+                        return .zero;
+                    }
+                };
+                payloads[slice_idx] = slice.ptr;
+                lens[slice_idx] = slice.len;
+            }
+            if (this.connect_info != null) {
+                addr_ptrs[slice_idx] = null;
+                continue;
+            }
+            if (i % 3 == 1) {
+                port = val;
+                continue;
+            }
+            if (i % 3 == 2) {
+                if (!this.parseAddr(globalThis, port, val, &addrs[slice_idx])) {
+                    globalThis.throwInvalidArguments("Invalid address", .{});
+                    return .zero;
+                }
+                addr_ptrs[slice_idx] = &addrs[slice_idx];
+            }
+        }
+        if (i != array_len) {
+            globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
+            return .zero;
+        }
+        const res = this.socket.send(payloads, lens, addr_ptrs);
+        switch (std.c.getErrno(res)) {
+            .SUCCESS => return JSValue.jsNumber(res),
+            else => |errno| {
+                const err = bun.sys.Error.fromCode(errno, .send);
+                globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
+                return .zero;
+            },
+        }
     }
-    //     if (this.closed) {
-    //         globalThis.throw("Socket is closed", .{});
-    //         return .zero;
-    //     }
-    //     const arguments = callframe.arguments(1);
-    //     if (arguments.len != 1) {
-    //         globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
-    //         return .zero;
-    //     }
-
-    //     const arg0 = arguments.ptr[0];
-
-    //     var iter = arg0.arrayIterator(globalThis);
-    //     var i: u16 = 0;
-    //     var vals: [3]JSValue = .{ .zero, .zero, .zero };
-    //     while (iter.next()) |val| : (i += 1) {
-    //         if (this.connect_info != null) {
-    //             if (this.setupPacket(globalThis, i, val, null)) |ex| {
-    //                 return ex;
-    //             }
-    //         } else {
-    //             vals[i % 3] = val;
-    //             if (i % 3 == 2) {
-    //                 if (this.setupPacket(globalThis, i / 3, vals[0], .{
-    //                     .port = vals[1],
-    //                     .address = vals[2],
-    //                 })) |ex| {
-    //                     return ex;
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     if (this.connect_info == null and i % 3 != 0) {
-    //         globalThis.throwInvalidArguments("Expected 3 arguments for each packet", .{});
-    //         return .zero;
-    //     }
-    //     const ret = this.doSend(globalThis, i / 3);
-    //     if (ret) |val| {
-    //         // number of packets sent
-    //         return JSValue.jsNumber(val);
-    //     } else {
-    //         // exception
-    //         return .zero;
-    //     }
-    // }
 
     pub fn send(
         this: *This,
@@ -428,18 +467,23 @@ pub const UDPSocket = struct {
         };
 
         const payload_arg = arguments.ptr[0];
-        const payload = init: {
-            if (payload_arg.asArrayBuffer(globalThis)) |arrayBuffer| {
-                break :init arrayBuffer.slice();
-            } else if (payload_arg.isString()) {
+        var payload: ?[]const u8 = if (payload_arg.asArrayBuffer(globalThis)) |arrayBuffer| arrayBuffer.slice() else null;
+
+        var string: ?bun.String = null;
+        defer if (string) |val| val.deref();
+        if (payload == null) {
+            if (payload_arg.isString()) {
                 if (bun.String.tryFromJS(payload_arg, globalThis)) |value| {
-                    const slice = value.toUTF8(default_allocator);
-                    break :init slice.slice();
-                } else {}
+                    string = value;
+                    payload = string.?.toUTF8(default_allocator).slice();
+                } else {
+                    return .zero;
+                }
+            } else {
+                globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
+                return .zero;
             }
-            globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
-            return .zero;
-        };
+        }
 
         var addr: std.os.sockaddr.storage = std.mem.zeroes(std.os.sockaddr.storage);
         const addr_ptr = brk: {
@@ -454,25 +498,13 @@ pub const UDPSocket = struct {
             }
         };
 
-        const res = this.socket.send(&.{payload.ptr}, &.{payload.len}, &.{addr_ptr});
+        const res = this.socket.send(&.{payload.?.ptr}, &.{payload.?.len}, &.{addr_ptr});
         switch (std.c.getErrno(res)) {
             .SUCCESS => return JSValue.jsBoolean(res > 0),
             else => |errno| {
-                const err = bun.sys.Error.fromCode(errno, .sendmmsg);
+                const err = bun.sys.Error.fromCode(errno, .send);
                 globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
                 return .zero;
-            },
-        }
-    }
-
-    fn doSend(this: *This, globalThis: *JSGlobalObject, count: u16) ?c_int {
-        const res = this.socket.send(this.send_buf, count);
-        switch (std.c.getErrno(res)) {
-            .SUCCESS => return res,
-            else => |errno| {
-                const err = bun.sys.Error.fromCode(errno, .sendmmsg);
-                globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
-                return null;
             },
         }
     }
@@ -514,61 +546,6 @@ pub const UDPSocket = struct {
         port: JSValue,
         address: JSValue,
     };
-
-    // fn setupPacket(
-    //     this: *This,
-    //     globalThis: *JSGlobalObject,
-    //     index: usize,
-    //     data_val: JSValue,
-    //     dest: ?Destination,
-    // ) ?JSValue {
-    //     if (index >= 1024) {
-    //         globalThis.throwInvalidArguments("Too many packets to send, maximum is 1024", .{});
-    //         return .zero;
-    //     }
-    //     const arg0 = data_val;
-    //     const payload = init: {
-    //         if (arg0.asArrayBuffer(globalThis)) |arrayBuffer| {
-    //             break :init arrayBuffer.slice();
-    //         } else if (arg0.isString()) {
-    //             if (bun.String.tryFromJS(arg0, globalThis)) |value| {
-    //                 const slice = value.toUTF8(default_allocator);
-    //                 break :init slice.slice();
-    //             } else {}
-    //         }
-    //         globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
-    //         return .zero;
-    //     };
-
-    //     var addr: std.os.sockaddr.storage = std.mem.zeroes(std.os.sockaddr.storage);
-    //     if (dest) |destval| {
-    //         const number = destval.port.coerceToInt32(globalThis);
-    //         const port: u16 = if (number < 1 or number > 0xffff) 0 else @intCast(number);
-
-    //         const str = destval.address.toBunString(globalThis);
-    //         defer str.deref();
-    //         const address_slice = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
-    //         defer default_allocator.free(address_slice);
-
-    //         var addr4: *std.os.sockaddr.in = @ptrCast(&addr);
-    //         if (inet_pton(std.os.AF.INET, address_slice.ptr, &addr4.addr) == 1) {
-    //             addr4.port = htons(@truncate(port));
-    //             addr4.family = std.os.AF.INET;
-    //         } else {
-    //             var addr6: *std.os.sockaddr.in6 = @ptrCast(&addr);
-    //             if (inet_pton(std.os.AF.INET6, address_slice.ptr, &addr6.addr) == 1) {
-    //                 addr6.port = htons(@truncate(port));
-    //                 addr6.family = std.os.AF.INET6;
-    //             } else {
-    //                 globalThis.throwInvalidArguments("Invalid address: {s}", .{address_slice});
-    //                 return .zero;
-    //             }
-    //         }
-    //     }
-
-    //     this.send_buf.setPayload(@truncate(index), 0, payload, if (dest != null) &addr else null);
-    //     return null;
-    // }
 
     pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         if (!this.closed) {

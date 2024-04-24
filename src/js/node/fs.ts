@@ -52,24 +52,8 @@ class FSWatcher extends EventEmitter {
     try {
       this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
     } catch (e: any) {
-      if (e.message?.startsWith("FileNotFound")) {
-        const notFound = new Error(`ENOENT: no such file or directory, watch '${path}'`);
-        notFound.code = "ENOENT";
-        notFound.errno = -2;
-        notFound.path = path;
-        notFound.syscall = "watch";
-        notFound.filename = path;
-        throw notFound;
-      }
-      if (e.message?.startsWith("AccessDenied")) {
-        const notFound = new Error(`EPERM: access denied, watch '${path}'`);
-        notFound.code = "EPERM";
-        notFound.errno = -1;
-        notFound.path = path;
-        notFound.syscall = "watch";
-        notFound.filename = path;
-        throw notFound;
-      }
+      e.path = path;
+      e.filename = path;
       throw e;
     }
   }

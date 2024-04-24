@@ -79,7 +79,7 @@ describe("bun build", () => {
     const { stdout, stderr } = Bun.spawnSync({
       cmd: [path.join(baseDir, "exe.exe")],
     });
-    expect(stdout.toString()).toContain(path.join(baseDir, "我"));
-    expect(stdout.toString()).toContain(path.join(baseDir, "我", "我.ts"));
+    expect(stdout.toString()).toContain(path.join(baseDir, "我") + "\n");
+    expect(stdout.toString()).toContain(path.join(baseDir, "我", "我.ts") + "\n");
   });
 });

@@ -63,4 +63,23 @@ describe("bun build", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  test("__dirname and __filename are printed correctly", () => {
+    const baseDir = `${tmpdir()}/bun-build-dirname-filename-${Date.now()}`;
+    fs.mkdirSync(baseDir, { recursive: true });
+    fs.mkdirSync(path.join(baseDir, "我")), { recursive: true };
+    fs.writeFileSync(path.join(baseDir, "我", "我.ts"), "console.log(__dirname); console.log(__filename);");
+    const { exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--compile", "--outfile", path.join(baseDir, "exe.exe")],
+      env: bunEnv,
+      cwd: baseDir,
+    });
+    expect(exitCode).toBe(0);
+
+    const { stdout, stderr } = Bun.spawnSync({
+      cmd: [path.join(baseDir, "exe.exe")],
+    });
+    expect(stdout.toString()).toContain(path.join(baseDir, "我") + "\n");
+    expect(stdout.toString()).toContain(path.join(baseDir, "我", "我.ts") + "\n");
+  });
 });

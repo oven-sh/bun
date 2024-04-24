@@ -493,12 +493,12 @@ pub const StandaloneModuleGraph = struct {
             bytes,
             if (target.isDefault())
                 bun.selfExePath() catch |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get self executable path: {s}", .{@errorName(err)});
+                    Output.err(err, "failed to get self executable path", .{});
                     Global.exit(1);
                 }
             else
                 download(allocator, target, env) catch |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to download cross-compiled bun executable: {s}", .{@errorName(err)});
+                    Output.err(err, "failed to download cross-compiled bun executable", .{});
                     Global.exit(1);
                 },
         );

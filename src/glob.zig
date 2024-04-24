@@ -409,7 +409,9 @@ pub fn GlobWalker_(
 
                 const root_work_item = WorkItem.new(this.walker.cwd, 0, .directory);
                 switch (try this.transitionToDirIterState(root_work_item, true)) {
-                    .err => |err| return .{ .err = err },
+                    .err => |err| {
+                        return .{ .err = err };
+                    },
                     else => {},
                 }
 

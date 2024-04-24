@@ -93,9 +93,15 @@ pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Ver
 const File = bun.sys.File;
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
+const IGNORED_PATHS: []const []const u8 = &.{
+    "node_modules",
+    ".git",
+    "CMakeFiles",
+};
 fn ignoredWorkspacePaths(path: []const u8) bool {
-    if (bun.strings.eqlComptime(path, "node_modules")) return true;
-    if (bun.strings.eqlComptime(path, ".git")) return true;
+    inline for (IGNORED_PATHS) |ignored| {
+        if (bun.strings.eqlComptime(path, ignored)) return true;
+    }
     return false;
 }
 
@@ -4037,17 +4043,17 @@ pub const Package = extern struct {
                 var iter: GlobWalker.Iterator = .{
                     .walker = &walker,
                 };
+                defer iter.deinit();
                 if ((try iter.init()).asErr()) |e| {
                     log.addErrorFmt(
                         source,
                         loc,
                         allocator,
-                        "<r><red>error<r>: Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                        "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
                         .{ user_pattern, @tagName(e.getErrno()) },
                     ) catch {};
                     return error.GlobError;
                 }
-                defer iter.deinit();
 
                 while (switch (try iter.next()) {
                     .result => |r| r,
@@ -4056,7 +4062,7 @@ pub const Package = extern struct {
                             source,
                             loc,
                             allocator,
-                            "<r><red>error<r>: Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                            "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
                             .{ user_pattern, @tagName(e.getErrno()) },
                         ) catch {};
                         return error.GlobError;

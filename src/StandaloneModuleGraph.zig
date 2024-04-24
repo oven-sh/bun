@@ -257,7 +257,7 @@ pub const StandaloneModuleGraph = struct {
     else
         std.mem.page_size;
 
-    pub fn inject(bytes: []const u8) bun.FileDescriptor {
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8) bun.FileDescriptor {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -272,11 +272,6 @@ pub const StandaloneModuleGraph = struct {
         }.toClean;
 
         const cloned_executable_fd: bun.FileDescriptor = brk: {
-            const self_exe = bun.selfExePath() catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get self executable path: {s}", .{@errorName(err)});
-                Global.exit(1);
-            };
-
             if (comptime Environment.isWindows) {
                 // copy self and then open it for writing
 
@@ -467,17 +462,46 @@ pub const StandaloneModuleGraph = struct {
         return cloned_executable_fd;
     }
 
+    pub const CompileTarget = @import("./compile_target.zig").CompileTarget;
+
+    pub fn download(allocator: std.mem.Allocator, target: *const CompileTarget, env: *bun.DotEnv.Loader) ![:0]const u8 {
+        var exe_path_buf: bun.PathBuffer = undefined;
+        var version_str_buf: [1024]u8 = undefined;
+        const version_str = try std.fmt.bufPrintZ(&version_str_buf, "{}", .{target});
+        var needs_download: bool = true;
+        const dest_z = target.exePath(&exe_path_buf, version_str, env, &needs_download);
+        if (needs_download) {
+            try target.downloadToPath(env, allocator, dest_z);
+        }
+
+        return try allocator.dupeZ(u8, dest_z);
+    }
+
     pub fn toExecutable(
+        target: *const CompileTarget,
         allocator: std.mem.Allocator,
         output_files: []const bun.options.OutputFile,
         root_dir: std.fs.Dir,
         module_prefix: []const u8,
         outfile: []const u8,
+        env: *bun.DotEnv.Loader,
     ) !void {
         const bytes = try toBytes(allocator, module_prefix, output_files);
         if (bytes.len == 0) return;
 
-        const fd = inject(bytes);
+        const fd = inject(
+            bytes,
+            if (target.isDefault())
+                bun.selfExePath() catch |err| {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get self executable path: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                }
+            else
+                download(allocator, target, env) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to download cross-compiled bun executable: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                },
+        );
         fd.assertKind(.system);
 
         if (Environment.isWindows) {
@@ -486,13 +510,6 @@ pub const StandaloneModuleGraph = struct {
                 const outfile_w = bun.strings.toWPathNormalized(&outfile_buf, std.fs.path.basenameWindows(outfile));
                 bun.assert(outfile_w.ptr == &outfile_buf);
                 const outfile_buf_u16 = bun.reinterpretSlice(u16, &outfile_buf);
-                if (!bun.strings.endsWithComptime(outfile, ".exe")) {
-                    // append .exe
-                    const suffix = comptime bun.strings.w(".exe");
-                    @memcpy(outfile_buf_u16[outfile_w.len..][0..suffix.len], suffix);
-                    outfile_buf_u16[outfile_w.len + suffix.len] = 0;
-                    break :brk outfile_buf_u16[0 .. outfile_w.len + suffix.len :0];
-                }
                 outfile_buf_u16[outfile_w.len] = 0;
                 break :brk outfile_buf_u16[0..outfile_w.len :0];
             };
@@ -518,7 +535,7 @@ pub const StandaloneModuleGraph = struct {
         };
 
         if (comptime Environment.isMac) {
-            {
+            if (target.os == .mac) {
                 var signer = std.ChildProcess.init(
                     &.{
                         "codesign",

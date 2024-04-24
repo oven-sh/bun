@@ -46,6 +46,7 @@ pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub const Cli = struct {
+    pub const CompileTarget = @import("./compile_target.zig").CompileTarget;
     var wait_group: sync.WaitGroup = undefined;
     pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
@@ -674,7 +675,21 @@ pub const Arguments = struct {
             }
 
             const TargetMatcher = strings.ExactSizeMatcher(8);
-            if (args.option("--target")) |_target| {
+            if (args.option("--target")) |_target| brk: {
+                if (comptime cmd == .BuildCommand) {
+                    if (args.flag("--compile")) {
+                        if (_target.len > 4 and strings.hasPrefixComptime(_target, "bun-")) {
+                            ctx.bundler_options.compile_target = Cli.CompileTarget.from(_target[3..]);
+                            if (!ctx.bundler_options.compile_target.isSupported()) {
+                                Output.errGeneric("Unsupported compile target: {}\n", .{ctx.bundler_options.compile_target});
+                                Global.exit(1);
+                            }
+                            opts.target = .bun;
+                            break :brk;
+                        }
+                    }
+                }
+
                 opts.target = opts.target orelse switch (TargetMatcher.match(_target)) {
                     TargetMatcher.case("browser") => Api.Target.browser,
                     TargetMatcher.case("node") => Api.Target.node,
@@ -1179,6 +1194,7 @@ pub const Command = struct {
 
         pub const BundlerOptions = struct {
             compile: bool = false,
+            compile_target: Cli.CompileTarget = .{},
 
             outdir: []const u8 = "",
             outfile: []const u8 = "",

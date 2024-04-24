@@ -4033,7 +4033,7 @@ pub const Package = extern struct {
                         source,
                         loc,
                         allocator,
-                        "<r><red>error<r>: Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                        "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
                         .{ user_pattern, @tagName(e.getErrno()) },
                     ) catch {};
                     return error.GlobError;

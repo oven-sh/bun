@@ -303,6 +303,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     this.dest,
                     @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                     null,
+                    this.cp_task.args,
                 );
 
                 brk: {
@@ -529,6 +530,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                         else
                             @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                         attributes,
+                        this.args,
                     );
                     if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist) {
                         this.finishConcurrently(Maybe(Return.Cp).success);
@@ -555,6 +557,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                         dest,
                         @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                         stat_,
+                        this.args,
                     );
                     if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist) {
                         this.onCopy(src, dest);
@@ -3738,11 +3741,14 @@ pub const Arguments = struct {
             recursive: bool,
             errorOnExist: bool,
             force: bool,
+            deinit_paths: bool = true,
         };
 
         fn deinit(this: Cp) void {
-            this.src.deinit();
-            this.dest.deinit();
+            if (this.flags.deinit_paths) {
+                this.src.deinit();
+                this.dest.deinit();
+            }
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Cp {
@@ -4425,7 +4431,7 @@ pub const NodeFS = struct {
             const dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.sliceZ(&this.sync_error_buf));
             if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {
                 if (ret.errnoSysP(0, .copyfile, args.src.slice())) |rest| {
-                    return rest;
+                    return shouldIgnoreEbusy(args.src, args.dest, rest);
                 }
             }
 
@@ -6263,7 +6269,7 @@ pub const NodeFS = struct {
             @intCast(src.len),
             @as(*bun.OSPathBuffer, @alignCast(@ptrCast(&dest_buf))),
             @intCast(dest.len),
-            args.flags,
+            args,
         );
     }
 
@@ -6290,8 +6296,9 @@ pub const NodeFS = struct {
         src_dir_len: PathString.PathInt,
         dest_buf: *bun.OSPathBuffer,
         dest_dir_len: PathString.PathInt,
-        args: Arguments.Cp.Flags,
+        args: Arguments.Cp,
     ) Maybe(Return.Cp) {
+        const cp_flags = args.flags;
         const src = src_buf[0..src_dir_len :0];
         const dest = dest_buf[0..dest_dir_len :0];
 
@@ -6309,10 +6316,11 @@ pub const NodeFS = struct {
                 const r = this._copySingleFileSync(
                     src,
                     dest,
-                    @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                    @enumFromInt((if (cp_flags.errorOnExist or !cp_flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                     attributes,
+                    args,
                 );
-                if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.errorOnExist) {
+                if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !cp_flags.errorOnExist) {
                     return Maybe(Return.Cp).success;
                 }
                 return r;
@@ -6330,17 +6338,18 @@ pub const NodeFS = struct {
                 const r = this._copySingleFileSync(
                     src,
                     dest,
-                    @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                    @enumFromInt((if (cp_flags.errorOnExist or !cp_flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                     stat_,
+                    args,
                 );
-                if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.errorOnExist) {
+                if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !cp_flags.errorOnExist) {
                     return Maybe(Return.Cp).success;
                 }
                 return r;
             }
         }
 
-        if (!args.recursive) {
+        if (!cp_flags.recursive) {
             return .{
                 .err = .{
                     .errno = @intFromEnum(E.ISDIR),
@@ -6371,11 +6380,10 @@ pub const NodeFS = struct {
             }
         }
 
-        const flags = os.O.DIRECTORY | os.O.RDONLY;
         const fd = switch (Syscall.openatOSPath(
             bun.toFD((std.fs.cwd().fd)),
             src,
-            flags,
+            os.O.DIRECTORY | os.O.RDONLY,
             0,
         )) {
             .err => |err| {
@@ -6429,12 +6437,13 @@ pub const NodeFS = struct {
                     const r = this._copySingleFileSync(
                         src_buf[0 .. src_dir_len + 1 + name_slice.len :0],
                         dest_buf[0 .. dest_dir_len + 1 + name_slice.len :0],
-                        @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                        @enumFromInt((if (cp_flags.errorOnExist or !cp_flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                         null,
+                        args,
                     );
                     switch (r) {
                         .err => {
-                            if (r.err.errno == @intFromEnum(E.EXIST) and !args.errorOnExist) {
+                            if (r.err.errno == @intFromEnum(E.EXIST) and !cp_flags.errorOnExist) {
                                 continue;
                             }
                             return r;
@@ -6447,6 +6456,40 @@ pub const NodeFS = struct {
         return Maybe(Return.Cp).success;
     }
 
+    /// On Windows, copying a file onto itself will return EBUSY, which is an
+    /// unintuitive and cryptic error to return to the user for an operation
+    /// that should seemingly be a no-op.
+    ///
+    /// So we check if the source and destination are the same file, and if they
+    /// are, we return success.
+    ///
+    /// This is copied directly from libuv's implementation of `uv_fs_copyfile`
+    /// for Windows:
+    ///
+    /// https://github.com/libuv/libuv/blob/497f3168d13ea9a92ad18c28e8282777ec2acf73/src/win/fs.c#L2069
+    ///
+    /// **This function does nothing on non-Windows platforms**.
+    fn shouldIgnoreEbusy(src: PathLike, dest: PathLike, result: Maybe(Return.CopyFile)) Maybe(Return.CopyFile) {
+        if (comptime !Environment.isWindows) return result;
+        if (result != .err or result.err.getErrno() != .BUSY) return result;
+
+        var buf: bun.PathBuffer = undefined;
+        const statbuf = switch (Syscall.stat(src.sliceZ(&buf))) {
+            .result => |b| b,
+            .err => return result,
+        };
+        const new_statbuf = switch (Syscall.stat(dest.sliceZ(&buf))) {
+            .result => |b| b,
+            .err => return result,
+        };
+
+        if (statbuf.dev == new_statbuf.dev and statbuf.ino == new_statbuf.ino) {
+            return Maybe(Return.CopyFile).success;
+        }
+
+        return result;
+    }
+
     /// This is `copyFile`, but it copies symlinks as-is
     pub fn _copySingleFileSync(
         this: *NodeFS,
@@ -6455,6 +6498,7 @@ pub const NodeFS = struct {
         mode: Constants.Copyfile,
         /// Stat on posix, file attributes on windows
         reuse_stat: ?if (Environment.isWindows) windows.DWORD else std.os.Stat,
+        args: Arguments.Cp,
     ) Maybe(Return.CopyFile) {
         const ret = Maybe(Return.CopyFile);
 
@@ -6728,11 +6772,15 @@ pub const NodeFS = struct {
                         .FILE_EXISTS, .ALREADY_EXISTS => dest,
                         else => src,
                     };
-                    return Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(errpath)) orelse .{ .err = .{
-                        .errno = @intFromEnum(C.SystemErrno.ENOENT),
-                        .syscall = .copyfile,
-                        .path = this.osPathIntoSyncErrorBuf(src),
-                    } };
+                    return shouldIgnoreEbusy(
+                        args.src,
+                        args.dest,
+                        Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(errpath)) orelse .{ .err = .{
+                            .errno = @intFromEnum(C.SystemErrno.ENOENT),
+                            .syscall = .copyfile,
+                            .path = this.osPathIntoSyncErrorBuf(src),
+                        } },
+                    );
                 }
                 return ret.success;
             } else {

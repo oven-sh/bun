@@ -4,12 +4,13 @@ import { beforeAll, describe, test, expect, beforeEach } from "bun:test";
 import { sortedShellOutput } from "../util";
 import { tempDirWithFiles } from "harness";
 import fs from "fs";
-import { shellInternals } from "bun:internal-for-testing";
-const { builtinDisabled } = shellInternals;
+// import { shellInternals } from "bun:internal-for-testing";
+// const { builtinDisabled } = shellInternals;
 
 const TestBuilder = createTestBuilder(import.meta.path);
 
 const p = process.platform === "win32" ? (s: string) => s.replaceAll("/", "\\") : (s: string) => s;
+const builtinDisabled = (s: string) => false
 
 $.nothrow();
 
@@ -60,6 +61,14 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     .exitCode(1)
     .testMini()
     .runAsTest("dir -> ? fails without -R");
+
+  describe('EBUSY windows', () => {
+    TestBuilder.command/* sh */`
+    echo hi! > hello.txt
+    mkdir somedir 
+    cp ${{ raw: Array(50).fill("hello.txt").join(" ") }} somedir 
+    `.ensureTempDir().exitCode(0).fileEquals('somedir/hello.txt', 'hi!\n').runAsTest("doesn't fail on EBUSY when copying multiple files that are the same")
+  })
 
   describe("uutils ported", () => {
     const TEST_EXISTING_FILE: string = "existing_file.txt";
@@ -119,7 +128,7 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .ensureTempDir(tmpdir)
       .file(TEST_EXISTING_FILE, "Hello, World!\n")
       .testMini({ cwd: mini_tmpdir })
-      .runAsTest("cp_duplicate_files");
+      .runAsTest('cp_duplicate_files');
 
     TestBuilder.command`touch a; cp a a`
       .ensureTempDir(tmpdir)

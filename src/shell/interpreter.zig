@@ -10128,10 +10128,53 @@ pub const Interpreter = struct {
                     output_waiting: u32 = 0,
                     output_done: u32 = 0,
                     err: ?bun.shell.ShellErr = null,
+
+                    ebusy: if (bun.Environment.isWindows) EbusyState else struct {} = .{},
+                },
+                ebusy: struct {
+                    state: EbusyState,
+                    idx: usize = 0,
+                    main_exit_code: ExitCode = 0,
                 },
                 waiting_write_err,
                 done,
             } = .idle,
+
+            /// On Windows it is possible to get an EBUSY error very simply
+            /// by running the following command:
+            ///
+            /// `cp myfile.txt myfile.txt mydir/`
+            ///
+            /// Bearing in mind that the shell cp implementation creates a
+            /// ShellCpTask for each source file, it's possible for one of the
+            /// tasks to get EBUSY while trying to access the source file or the
+            /// destination file.
+            ///
+            /// But it's fine to ignore the EBUSY error since at
+            /// least one of them will succeed anyway.
+            ///
+            /// We handle this _after_ all the tasks have been
+            /// executed, to avoid complicated synchronization on multiple
+            /// threads, because the precise src or dest for each argument is
+            /// not known until its corresponding ShellCpTask is executed by the
+            /// threadpool.
+            const EbusyState = struct {
+                tasks: std.ArrayListUnmanaged(*ShellCpTask) = .{},
+                absolute_targets: std.StringArrayHashMapUnmanaged(void) = .{},
+                absolute_srcs: std.StringArrayHashMapUnmanaged(void) = .{},
+
+                pub fn deinit(this: *EbusyState) void {
+                    this.tasks.deinit(bun.default_allocator);
+                    for (this.absolute_targets.keys()) |tgt| {
+                        bun.default_allocator.free(tgt);
+                    }
+                    this.absolute_targets.deinit(bun.default_allocator);
+                    for (this.absolute_srcs.keys()) |tgt| {
+                        bun.default_allocator.free(tgt);
+                    }
+                    this.absolute_srcs.deinit(bun.default_allocator);
+                }
+            };
 
             pub fn start(this: *Cp) Maybe(void) {
                 const maybe_filepath_args = switch (this.opts.parse(this.bltn.argsSlice())) {
@@ -10167,6 +10210,33 @@ pub const Interpreter = struct {
                 return Maybe(void).success;
             }
 
+            pub fn ignoreEbusyErrorIfPossible(this: *Cp) void {
+                if (!bun.Environment.isWindows) @compileError("dont call this plz");
+
+                if (this.state.ebusy.idx < this.state.ebusy.state.tasks.items.len) {
+                    outer_loop: for (this.state.ebusy.state.tasks.items[this.state.ebusy.idx..], 0..) |task_, i| {
+                        const task: *ShellCpTask = task_;
+                        assert(task.tgt_absolute != null);
+                        const failure_src = task.src_absolute.?;
+                        const failure_tgt = task.tgt_absolute.?;
+                        if (this.state.ebusy.state.absolute_targets.get(failure_tgt)) |_| {
+                            continue :outer_loop;
+                        }
+                        if (this.state.ebusy.state.absolute_srcs.get(failure_src)) |_| {
+                            continue :outer_loop;
+                        }
+                        this.state.ebusy.idx += i + 1;
+                        this.printShellCpTask(task);
+                        return;
+                    }
+                }
+
+                this.state.ebusy.state.deinit();
+                const exit_code = this.state.ebusy.main_exit_code;
+                this.state = .done;
+                this.bltn.done(exit_code);
+            }
+
             pub fn next(this: *Cp) void {
                 while (this.state != .done) {
                     switch (this.state) {
@@ -10179,6 +10249,13 @@ pub const Interpreter = struct {
                                     if (this.state.exec.err != null) {
                                         this.state.exec.err.?.deinit(bun.default_allocator);
                                     }
+                                    if (comptime bun.Environment.isWindows) {
+                                        if (exec.ebusy.tasks.items.len > 0) {
+                                            this.state = .{ .ebusy = .{ .state = this.state.exec.ebusy, .main_exit_code = exit_code } };
+                                            continue;
+                                        }
+                                        exec.ebusy.deinit();
+                                    }
                                     this.state = .done;
                                     this.bltn.done(exit_code);
                                     return;
@@ -10190,12 +10267,20 @@ pub const Interpreter = struct {
                             exec.tasks_count = @intCast(exec.paths_to_copy.len);
 
                             const cwd_path = this.bltn.parentCmd().base.shell.cwdZ();
+
+                            // Launch a task for each argument
                             for (exec.paths_to_copy) |path_raw| {
                                 const path = std.mem.span(path_raw);
                                 const cp_task = ShellCpTask.create(this, this.bltn.eventLoop(), this.opts, 1 + exec.paths_to_copy.len, path, exec.target_path, cwd_path);
                                 cp_task.schedule();
                             }
                             return;
+                        },
+                        .ebusy => {
+                            if (comptime bun.Environment.isWindows) {
+                                this.ignoreEbusyErrorIfPossible();
+                                return;
+                            } else @panic("Should only be called on Windows");
                         },
                         .waiting_write_err => return,
                         .done => unreachable,
@@ -10234,11 +10319,39 @@ pub const Interpreter = struct {
             pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
                 assert(this.state == .exec);
                 this.state.exec.tasks_count -= 1;
-                // ShellCpTask deinitializes itself inside
-                // the node_fs code: AsyncCpTask.finishConcurrently()
-                // defer task.deinit();
-                var output = task.takeOutput();
+
                 const err_ = task.err;
+
+                if (comptime bun.Environment.isWindows) {
+                    if (err_) |err| {
+                        if (err == .sys and
+                            err.sys.getErrno() == .BUSY and
+                            (task.tgt_absolute != null and
+                            err.sys.path.eqlUTF8(task.tgt_absolute.?)) or
+                            (task.src_absolute != null and
+                            err.sys.path.eqlUTF8(task.src_absolute.?)))
+                        {
+                            this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
+                            return;
+                        }
+                    } else {
+                        const tgt_absolute = task.tgt_absolute;
+                        task.tgt_absolute = null;
+                        if (tgt_absolute) |tgt| this.state.exec.ebusy.absolute_targets.put(bun.default_allocator, tgt, {}) catch bun.outOfMemory();
+                        const src_absolute = task.src_absolute;
+                        task.src_absolute = null;
+                        if (src_absolute) |tgt| this.state.exec.ebusy.absolute_srcs.put(bun.default_allocator, tgt, {}) catch bun.outOfMemory();
+                    }
+                }
+
+                this.printShellCpTask(task);
+            }
+
+            pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) void {
+                defer task.deinit();
+
+                const err_ = task.err;
+                var output = task.takeOutput();
 
                 const output_task: *ShellCpOutputTask = bun.new(ShellCpOutputTask, .{
                     .parent = this,
@@ -10303,8 +10416,8 @@ pub const Interpreter = struct {
                 operands: usize = 0,
                 src: [:0]const u8,
                 tgt: [:0]const u8,
-                src_copy: ?[:0]const u8 = null,
-                tgt_copy: ?[:0]const u8 = null,
+                src_absolute: ?[:0]const u8 = null,
+                tgt_absolute: ?[:0]const u8 = null,
                 cwd_path: [:0]const u8,
                 verbose_output_lock: std.Thread.Mutex = .{},
                 verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
@@ -10322,10 +10435,10 @@ pub const Interpreter = struct {
                     if (this.err) |e| {
                         e.deinit(bun.default_allocator);
                     }
-                    if (this.src_copy) |sc| {
+                    if (this.src_absolute) |sc| {
                         bun.default_allocator.free(sc);
                     }
-                    if (this.tgt_copy) |tc| {
+                    if (this.tgt_absolute) |tc| {
                         bun.default_allocator.free(tc);
                     }
                     bun.destroy(this);
@@ -10415,7 +10528,6 @@ pub const Interpreter = struct {
                 pub fn runFromMainThread(this: *ShellCpTask) void {
                     print("runFromMainThread", .{});
                     this.cp.onShellCpTaskDone(this);
-                    this.deinit();
                 }
 
                 pub fn runFromMainThreadMini(this: *ShellCpTask, _: *void) void {
@@ -10491,6 +10603,8 @@ pub const Interpreter = struct {
                         },
                     };
 
+                    var copying_many = false;
+
                     // Note:
                     // The following logic is based on the POSIX spec:
                     //   https://man7.org/linux/man-pages/man1/cp.1p.html
@@ -10514,6 +10628,7 @@ pub const Interpreter = struct {
                             const errmsg = std.fmt.allocPrint(bun.default_allocator, "directory {s} does not exist", .{this.tgt}) catch bun.outOfMemory();
                             return .{ .custom = errmsg };
                         }
+                        copying_many = true;
                     }
                     // Handle the "3rd synopsis": source_files... -> target
                     else {
@@ -10525,22 +10640,25 @@ pub const Interpreter = struct {
                             basename,
                         };
                         tgt = ResolvePath.joinZBuf(buf3[0..bun.MAX_PATH_BYTES], parts, .auto);
+                        copying_many = true;
                     }
 
-                    this.src_copy = bun.default_allocator.dupeZ(u8, src[0..src.len]) catch bun.outOfMemory();
-                    this.tgt_copy = bun.default_allocator.dupeZ(u8, tgt[0..tgt.len]) catch bun.outOfMemory();
+                    this.src_absolute = bun.default_allocator.dupeZ(u8, src[0..src.len]) catch bun.outOfMemory();
+                    this.tgt_absolute = bun.default_allocator.dupeZ(u8, tgt[0..tgt.len]) catch bun.outOfMemory();
+
                     const args = JSC.Node.Arguments.Cp{
-                        .src = JSC.Node.PathLike{ .string = bun.PathString.init(this.src_copy.?) },
-                        .dest = JSC.Node.PathLike{ .string = bun.PathString.init(this.tgt_copy.?) },
+                        .src = JSC.Node.PathLike{ .string = bun.PathString.init(this.src_absolute.?) },
+                        .dest = JSC.Node.PathLike{ .string = bun.PathString.init(this.tgt_absolute.?) },
                         .flags = .{
                             .mode = @enumFromInt(0),
                             .recursive = this.opts.recursive,
                             .force = true,
                             .errorOnExist = false,
+                            .deinit_paths = false,
                         },
                     };
 
-                    print("Scheduling {s} -> {s}", .{ this.src_copy.?, this.tgt_copy.? });
+                    print("Scheduling {s} -> {s}", .{ this.src_absolute.?, this.tgt_absolute.? });
                     if (this.event_loop == .js) {
                         const vm: *JSC.VirtualMachine = this.event_loop.js.getVmImpl();
                         print("Yoops", .{});

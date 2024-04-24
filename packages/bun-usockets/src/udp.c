@@ -67,19 +67,6 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
     return total_sent;
 }
 
-void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr) {
-    bsd_udp_buffer_set_packet_payload(send_buf, index, offset, payload, length, peer_addr);
-}
-
-struct us_udp_packet_buffer_t *us_create_udp_packet_buffer() {
-    return NULL;
-    // return (struct us_udp_packet_buffer_t *) bsd_create_udp_packet_buffer();
-}
-
-void us_destroy_udp_packet_buffer(struct us_udp_packet_buffer_t *buffer) {
-    bsd_destroy_udp_packet_buffer(buffer);
-}
-
 int us_udp_socket_bound_port(struct us_udp_socket_t *s) {
     return ((struct us_udp_socket_t *) s)->port;
 }
@@ -129,7 +116,6 @@ int us_udp_socket_disconnect(struct us_udp_socket_t *s) {
 
 struct us_udp_socket_t *us_create_udp_socket(
     struct us_loop_t *loop, 
-    struct us_udp_packet_buffer_t *buf, 
     void (*data_cb)(struct us_udp_socket_t *, void *, int), 
     void (*drain_cb)(struct us_udp_socket_t *), 
     const char *host, 
@@ -140,11 +126,6 @@ struct us_udp_socket_t *us_create_udp_socket(
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port);
     if (fd == LIBUS_SOCKET_ERROR) {
         return 0;
-    }
-
-    /* If buf is 0 then create one here */
-    if (!buf) {
-        buf = us_create_udp_packet_buffer();
     }
 
     int ext_size = 0;
@@ -168,7 +149,6 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->closed = 0;
     udp->connected = 0;
     udp->on_data = data_cb;
-    udp->receive_buf = buf;
     udp->on_drain = drain_cb;
 
     us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);

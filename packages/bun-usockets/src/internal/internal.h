@@ -126,7 +126,6 @@ struct us_wrapped_socket_context_t {
 
 struct us_udp_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
-    struct us_udp_packet_buffer_t *receive_buf;
     void (*on_data)(struct us_udp_socket_t *, void *, int);
     void (*on_drain)(struct us_udp_socket_t *);
     void *user;

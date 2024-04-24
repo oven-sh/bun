@@ -2703,7 +2703,7 @@ pub const udp = struct {
         const This = @This();
 
         pub fn create(loop: *Loop, data_cb: *const fn (*This, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*This) callconv(.C) void, host: [*c]const u8, port: c_ushort, user_data: ?*anyopaque) ?*This {
-            return us_create_udp_socket(loop, null, data_cb, drain_cb, host, port, user_data);
+            return us_create_udp_socket(loop, data_cb, drain_cb, host, port, user_data);
         }
 
         pub fn send(this: *This, payloads: []const [*]const u8, lengths: []const usize, addresses: []const ?*const anyopaque) c_int {
@@ -2744,7 +2744,7 @@ pub const udp = struct {
         }
     };
 
-    extern fn us_create_udp_socket(loop: ?*Loop, buf: ?*PacketBuffer, data_cb: *const fn (*udp.Socket, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*udp.Socket) callconv(.C) void, host: [*c]const u8, port: c_ushort, user_data: ?*anyopaque) ?*udp.Socket;
+    extern fn us_create_udp_socket(loop: ?*Loop, data_cb: *const fn (*udp.Socket, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*udp.Socket) callconv(.C) void, host: [*c]const u8, port: c_ushort, user_data: ?*anyopaque) ?*udp.Socket;
     extern fn us_udp_socket_connect(socket: ?*udp.Socket, hostname: [*c]const u8, port: c_uint) c_int;
     extern fn us_udp_socket_disconnect(socket: ?*udp.Socket) c_int;
     extern fn us_udp_socket_send(socket: ?*udp.Socket, [*c]const [*c]const u8, [*c]const usize, [*c]const ?*const anyopaque, c_int) c_int;

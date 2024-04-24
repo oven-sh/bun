@@ -401,7 +401,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             if (u->closed) {
                 bsd_close_socket(us_poll_fd(p));
                 us_poll_stop(p, u->loop);
-                free(u->receive_buf);
                 us_poll_free(p, u->loop);
                 break;
             }

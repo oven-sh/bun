@@ -39,7 +39,7 @@ I recommend using VSCode through SSH instead of Tunnels or the Tailscale extensi
 By default, running unverified scripts are blocked.
 
 ```ps1
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
+> Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
 ```
 
 ### System Dependencies
@@ -47,7 +47,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
 - Bun 1.1 or later. We use Bun to run it's own code generators.
 
 ```ps1
-irm bun.sh/install.ps1 | iex
+> irm bun.sh/install.ps1 | iex
 ```
 
 - [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload.
@@ -55,7 +55,7 @@ irm bun.sh/install.ps1 | iex
 
 After Visual Studio, you need the following:
 
-- LLVM 16
+- LLVM 17
 - Go
 - Rust
 - NASM
@@ -70,28 +70,28 @@ The Zig compiler is automatically downloaded, installed, and updated by the buil
 [Scoop](https://scoop.sh) can be used to install these remaining tools easily:
 
 ```ps1
-irm https://get.scoop.sh | iex
-
-scoop install nodejs-lts go rust nasm ruby perl
-scoop llvm@16.0.4 # scoop bug if you install llvm and the rest at the same time
+> irm https://get.scoop.sh | iex
+> scoop install nodejs-lts go rust nasm ruby perl
+# scoop seems to be buggy if you install llvm and the rest at the same time
+> scoop llvm@17.0.6
 ```
 
 If you intend on building WebKit locally (optional), you should install these packages:
 
 ```ps1
-scoop install make cygwin python
+> scoop install make cygwin python
 ```
 
 From here on out, it is **expected you use a PowerShell Terminal with `.\scripts\env.ps1` sourced**. This script is available in the Bun repository and can be loaded by executing it:
 
 ```ps1
-.\scripts\env.ps1
+> .\scripts\env.ps1
 ```
 
 To verify, you can check for an MSVC-only command line such as `mt.exe`
 
 ```ps1
-Get-Command mt
+> Get-Command mt
 ```
 
 {% callout %}
@@ -101,24 +101,24 @@ It is not recommended to install `ninja` / `cmake` into your global path, becaus
 ## Building
 
 ```ps1
-bun install
+> bun install
 
-.\scripts\env.ps1
-.\scripts\update-submodules.ps1 # this syncs git submodule state
-.\scripts\all-dependencies.ps1 # this builds all dependencies
-.\scripts\make-old-js.ps1 # runs some old code generators
+> .\scripts\env.ps1
+> .\scripts\update-submodules.ps1 # this syncs git submodule state
+> .\scripts\all-dependencies.ps1 # this builds all dependencies
+> .\scripts\make-old-js.ps1 # runs some old code generators
 
 # Configure build environment
-cmake -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Debug
+> cmake -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Debug
 
 # Build bun
-ninja -Cbuild
+> ninja -Cbuild
 ```
 
 If this was successful, you should have a `bun-debug.exe` in the `build` folder.
 
 ```ps1
-.\build\bun-debug.exe --revision
+> .\build\bun-debug.exe --revision
 ```
 
 You should add this to `$Env:PATH`. The simplest way to do so is to open the start menu, type "Path", and then navigate the environment variables menu to add `C:\.....\bun\build` to the user environment variable `PATH`. You should then restart your editor (if it does not update still, log out and log back in).
@@ -134,15 +134,15 @@ You can run the test suite either using `bun test`, or by using the wrapper scri
 
 ```ps1
 # Setup
-bun i --cwd packages\bun-internal-test
+> bun i --cwd packages\bun-internal-test
 
 # Run the entire test suite with reporter
 # the package.json script "test" uses "build/bun-debug.exe" by default
-bun run test
+> bun run test
 
 # Run an individual test file:
-bun-debug test node\fs
-bun-debug test "C:\bun\test\js\bun\resolve\import-meta.test.js"
+> bun-debug test node\fs
+> bun-debug test "C:\bun\test\js\bun\resolve\import-meta.test.js"
 ```
 
 ## Troubleshooting

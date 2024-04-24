@@ -86,7 +86,6 @@ const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in No
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
-const ArrayIsArray = Array.isArray;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
 
@@ -137,7 +136,7 @@ function validateFunction(callable: any, field: string) {
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]!: [import("bun").Server, OutgoingMessage, Request];
+  [kInternalSocketData]!: [import("bun").Server, typeof OutgoingMessage, typeof Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -1388,6 +1387,7 @@ class ClientRequest extends OutgoingMessage {
   #timeoutTimer?: Timer = undefined;
   #options;
   #finished;
+  #tls;
 
   get path() {
     return this.#path;
@@ -1462,6 +1462,7 @@ class ClientRequest extends OutgoingMessage {
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
+        tls: this.#tls,
       };
 
       if (!!$debug) {
@@ -1681,13 +1682,14 @@ class ClientRequest extends OutgoingMessage {
     this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
+    this.#tls = options.tls;
 
     const timeout = options.timeout;
     if (timeout !== undefined && timeout !== 0) {
       this.setTimeout(timeout, undefined);
     }
 
-    const headersArray = ArrayIsArray(headers);
+    const headersArray = $isJSArray(headers);
     if (!headersArray) {
       var headers = options.headers;
       if (headers) {

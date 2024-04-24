@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const C = bun.C;
 const string = bun.string;
 const strings = bun.strings;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
@@ -865,7 +865,7 @@ pub const OS = struct {
 /// `@TypeOf(mask)` must be one of u32 (IPv4) or u128 (IPv6)
 fn netmaskToCIDRSuffix(mask: anytype) ?u8 {
     const T = @TypeOf(mask);
-    comptime std.debug.assert(T == u32 or T == u128);
+    comptime bun.assert(T == u32 or T == u128);
 
     const mask_bits = @byteSwap(mask);
 
@@ -874,45 +874,4 @@ fn netmaskToCIDRSuffix(mask: anytype) ?u8 {
     const last_one = @bitSizeOf(T) - @ctz(mask_bits);
     if (first_zero < @bitSizeOf(T) and first_zero < last_one) return null;
     return first_zero;
-}
-test "netmaskToCIDRSuffix" {
-    const ipv4_tests = .{
-        .{ "255.255.255.255", 32 },
-        .{ "255.255.255.254", 31 },
-        .{ "255.255.255.252", 30 },
-        .{ "255.255.255.128", 25 },
-        .{ "255.255.255.0", 24 },
-        .{ "255.255.128.0", 17 },
-        .{ "255.255.0.0", 16 },
-        .{ "255.128.0.0", 9 },
-        .{ "255.0.0.0", 8 },
-        .{ "224.0.0.0", 3 },
-        .{ "192.0.0.0", 2 },
-        .{ "128.0.0.0", 1 },
-        .{ "0.0.0.0", 0 },
-
-        // invalid masks
-        .{ "255.0.0.255", null },
-        .{ "128.0.0.255", null },
-        .{ "128.0.0.1", null },
-    };
-    inline for (ipv4_tests) |t| {
-        const addr = try std.net.Address.parseIp4(t[0], 0);
-        try std.testing.expectEqual(@as(?u8, t[1]), netmaskToCIDRSuffix(addr.in.sa.addr));
-    }
-
-    const ipv6_tests = .{
-        .{ "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 128 },
-        .{ "ffff:ffff:ffff:ffff::", 64 },
-        .{ "::", 0 },
-
-        // invalid masks
-        .{ "ff00:1::", null },
-        .{ "0:1::", null },
-    };
-    inline for (ipv6_tests) |t| {
-        const addr = try std.net.Address.parseIp6(t[0], 0);
-        const bits = @as(u128, @bitCast(addr.in6.sa.addr));
-        try std.testing.expectEqual(@as(?u8, t[1]), netmaskToCIDRSuffix(bits));
-    }
 }

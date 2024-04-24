@@ -30,6 +30,9 @@ using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
 SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 {
+
+    ASSERT_WITH_MESSAGE(!sourceURL.startsWith("file://"_s), "specifier should not already be a file URL");
+
     if (isBuiltin) {
         if (sourceURL.startsWith("node:"_s)) {
             return SourceOrigin(WTF::URL(makeString("builtin://node/", sourceURL.substring(5))));
@@ -40,23 +43,9 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
         }
     }
 
-    ASSERT_WITH_MESSAGE(!sourceURL.startsWith("file://"_s), "sourceURL should not already be a file URL");
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-void forEachSourceProvider(const WTF::Function<void(JSC::SourceID)>& func)
-{
-    // if (sourceProviderMap == nullptr) {
-    //     return;
-    // }
-
-    // for (auto& pair : *sourceProviderMap) {
-    //     auto sourceProvider = pair.value;
-    //     if (sourceProvider) {
-    //         func(sourceProvider);
-    //     }
-    // }
-}
 extern "C" int ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL);
 extern "C" void* ByteRangeMapping__find(BunString sourceURL);
 void* sourceMappingForSourceURL(const WTF::String& sourceURL)

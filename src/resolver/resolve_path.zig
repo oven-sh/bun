@@ -59,10 +59,6 @@ inline fn @"is .. with type"(comptime T: type, slice: []const T) bool {
     return slice.len >= 2 and slice[0] == '.' and slice[1] == '.';
 }
 
-inline fn isDotSlash(slice: []const u8) bool {
-    return @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, "./", .little);
-}
-
 inline fn @"is ../"(slice: []const u8) bool {
     return strings.hasPrefixComptime(slice, "../");
 }
@@ -479,6 +475,8 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
         },
         .posix => {
             const separator = lastIndexOfSeparatorPosix(str) orelse return "";
+            if (separator == 0) return "/";
+            if (separator == str.len - 1) return dirname(str[0 .. str.len - 1], platform);
             return str[0..separator];
         },
         .windows => {
@@ -567,11 +565,10 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                 }
             }
         } else {
-            // TODO(dylan-conway): use strings.indexOfAny instead of std
-            if (std.mem.indexOfAny(T, path[3..], comptime strings.literal(T, "/\\"))) |idx| {
+            if (bun.strings.indexAnyComptimeT(T, path[3..], comptime strings.literal(T, "/\\"))) |idx| {
                 // TODO: handle input "//abc//def" should be picked up as a unc path
                 if (path.len > idx + 4 and !Platform.windows.isSeparatorT(T, path[idx + 4])) {
-                    if (std.mem.indexOfAny(T, path[idx + 4 ..], comptime strings.literal(T, "/\\"))) |idx2| {
+                    if (bun.strings.indexAnyComptimeT(T, path[idx + 4 ..], comptime strings.literal(T, "/\\"))) |idx2| {
                         return .{ idx + idx2 + 4, idx + 3 };
                     } else {
                         return .{ path.len, idx + 3 };
@@ -621,15 +618,9 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
         !Platform.windows.isSeparatorT(T, path[2]) and
         path[2] != '.')
     {
-        if (comptime T == u8) {
-            if (strings.indexOfAny(path[3..], "/\\")) |idx| {
-                // TODO: handle input "//abc//def" should be picked up as a unc path
-                return path[0 .. idx + 4];
-            }
-        } else {
-            if (std.mem.indexOfAny(T, path[3..], "/\\")) |idx| {
-                return path[0 .. idx + 4];
-            }
+        if (bun.strings.indexAnyComptimeT(T, path[3..], "/\\")) |idx| {
+            // TODO: handle input "//abc//def" should be picked up as a unc path
+            return path[0 .. idx + 4];
         }
     }
     if (isSepAnyT(T, path[0])) return path[0..1];
@@ -707,7 +698,7 @@ pub fn normalizeStringGenericTZ(
         //
         // since it is theoretically possible to get here in release
         // we will not do this check in release.
-        std.debug.assert(!strings.hasPrefixComptimeType(T, path_, comptime strings.literal(T, ":\\")));
+        assert(!strings.hasPrefixComptimeType(T, path_, comptime strings.literal(T, ":\\")));
     }
 
     var buf_i: usize = 0;
@@ -873,7 +864,7 @@ pub fn normalizeStringGenericTZ(
     const result = if (options.zero_terminate) buf[0..buf_i :0] else buf[0..buf_i];
 
     if (bun.Environment.allow_assert and isWindows) {
-        std.debug.assert(!strings.hasPrefixComptimeType(T, result, comptime strings.literal(T, "\\:\\")));
+        assert(!strings.hasPrefixComptimeType(T, result, comptime strings.literal(T, "\\:\\")));
     }
 
     return result;
@@ -884,6 +875,7 @@ pub const Platform = enum {
     loose,
     windows,
     posix,
+    nt,
 
     pub fn isAbsolute(comptime platform: Platform, path: []const u8) bool {
         return isAbsoluteT(platform, u8, path);
@@ -894,6 +886,7 @@ pub const Platform = enum {
         return switch (comptime platform) {
             .auto => (comptime platform.resolve()).isAbsoluteT(T, path),
             .posix => path.len > 0 and path[0] == '/',
+            .nt,
             .windows,
             .loose,
             => if (T == u8)
@@ -907,7 +900,7 @@ pub const Platform = enum {
         return comptime switch (platform) {
             .auto => platform.resolve().separator(),
             .loose, .posix => std.fs.path.sep_posix,
-            .windows => std.fs.path.sep_windows,
+            .nt, .windows => std.fs.path.sep_windows,
         };
     }
 
@@ -915,7 +908,7 @@ pub const Platform = enum {
         return comptime switch (platform) {
             .auto => platform.resolve().separatorString(),
             .loose, .posix => std.fs.path.sep_str_posix,
-            .windows => std.fs.path.sep_str_windows,
+            .nt, .windows => std.fs.path.sep_str_windows,
         };
     }
 
@@ -930,7 +923,7 @@ pub const Platform = enum {
             .loose => {
                 return isSepAny;
             },
-            .windows => {
+            .nt, .windows => {
                 return isSepAny;
             },
             .posix => {
@@ -945,7 +938,7 @@ pub const Platform = enum {
             .loose => {
                 return isSepAnyT;
             },
-            .windows => {
+            .nt, .windows => {
                 return isSepAnyT;
             },
             .posix => {
@@ -960,7 +953,7 @@ pub const Platform = enum {
             .loose => {
                 return lastIndexOfSeparatorLoose;
             },
-            .windows => {
+            .nt, .windows => {
                 return lastIndexOfSeparatorWindows;
             },
             .posix => {
@@ -975,7 +968,7 @@ pub const Platform = enum {
             .loose => {
                 return lastIndexOfSeparatorLooseT;
             },
-            .windows => {
+            .nt, .windows => {
                 return lastIndexOfSeparatorWindowsT;
             },
             .posix => {
@@ -994,7 +987,7 @@ pub const Platform = enum {
             .loose => {
                 return isSepAnyT(T, char);
             },
-            .windows => {
+            .nt, .windows => {
                 return isSepAnyT(T, char);
             },
             .posix => {
@@ -1006,14 +999,14 @@ pub const Platform = enum {
     pub fn trailingSeparator(comptime _platform: Platform) [2]u8 {
         return comptime switch (_platform) {
             .auto => _platform.resolve().trailingSeparator(),
-            .windows => ".\\".*,
+            .nt, .windows => ".\\".*,
             .posix, .loose => "./".*,
         };
     }
 
     pub fn leadingSeparatorIndex(comptime _platform: Platform, path: anytype) ?usize {
         switch (comptime _platform.resolve()) {
-            .windows => {
+            .nt, .windows => {
                 if (path.len < 1)
                     return null;
 
@@ -1116,7 +1109,7 @@ pub fn normalizeStringBufT(
     comptime preserve_trailing_slash: bool,
 ) []T {
     switch (comptime platform.resolve()) {
-        .auto => @compileError("unreachable"),
+        .nt, .auto => @compileError("unreachable"),
 
         .windows => {
             return normalizeStringWindowsT(
@@ -1198,7 +1191,7 @@ pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
 
 pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
     const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
-    std.debug.assert(bun.isSliceInBuffer(joined, buf));
+    assert(bun.isSliceInBuffer(joined, buf));
     const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
     buf[joined.len + start_offset] = 0;
     return buf[start_offset..][0..joined.len :0];
@@ -1257,6 +1250,14 @@ pub fn joinAbsStringBufZ(cwd: []const u8, buf: []u8, _parts: anytype, comptime _
     return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
 }
 
+pub fn joinAbsStringBufZNT(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    if ((_platform == .auto or _platform == .loose or _platform == .windows) and bun.Environment.isWindows) {
+        return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, .nt);
+    }
+
+    return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
+}
+
 pub fn joinAbsStringBufZTrailingSlash(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
     const out = _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
     if (out.len + 2 < buf.len and out.len > 0 and out[out.len - 1] != _platform.separator()) {
@@ -1273,6 +1274,16 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         (bun.Environment.os == .windows and platform == .loose))
     {
         return _joinAbsStringBufWindows(is_sentinel, ReturnType, _cwd, buf, _parts);
+    }
+
+    if (comptime platform.resolve() == .nt) {
+        const end_path = _joinAbsStringBufWindows(is_sentinel, ReturnType, _cwd, buf[4..], _parts);
+        buf[0..4].* = "\\\\?\\".*;
+        if (comptime is_sentinel) {
+            buf[end_path.len + 4] = 0;
+            return buf[0 .. end_path.len + 4 :0];
+        }
+        return buf[0 .. end_path.len + 4];
     }
 
     var parts: []const []const u8 = _parts;
@@ -1372,7 +1383,7 @@ fn _joinAbsStringBufWindows(
     buf: []u8,
     parts: []const []const u8,
 ) ReturnType {
-    std.debug.assert(std.fs.path.isAbsoluteWindows(cwd));
+    assert(std.fs.path.isAbsoluteWindows(cwd));
 
     if (parts.len == 0) {
         if (comptime is_sentinel) {
@@ -1429,7 +1440,7 @@ fn _joinAbsStringBufWindows(
     };
 
     if (set_cwd.len > 0)
-        std.debug.assert(isSepAny(set_cwd[0]));
+        assert(isSepAny(set_cwd[0]));
 
     var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
@@ -1667,337 +1678,6 @@ pub fn normalizeStringNode(
     return out;
 }
 
-test "joinAbsStringPosix" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-    const string = []const u8;
-    const cwd = "/Users/jarredsumner/Code/app/";
-
-    _ = t.expect(
-        "/project/.pnpm/lodash@4.17.21/node_modules/lodash/eq",
-        try default_allocator.dupe(u8, joinAbsString(cwd, &[_]string{
-            "/project/.pnpm/lodash@4.17.21/node_modules/lodash/",
-            "./eq",
-        }, .posix)),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/foo/lodash/eq.js",
-        joinAbsString(cwd, &[_]string{ "/foo/lodash/", "./eq.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/foo/lodash/eq.js",
-        joinAbsString(cwd, &[_]string{ "/foo/lodash", "./eq.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .posix),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .posix),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/file.js",
-        joinAbsString(cwd, &[_]string{ "", "../../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "././././foo", "././././bar././././", "../file.js" }, .posix),
-        @src(),
-    );
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .posix),
-        @src(),
-    );
-}
-
-test "joinAbsStringLoose" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-    const string = []const u8;
-    const cwd = "/Users/jarredsumner/Code/app";
-
-    _ = t.expect(
-        "/bar/foo",
-        joinAbsString(cwd, &[_]string{
-            "/bar/foo",
-            "/bar/foo",
-        }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ ".\\.\\.\\.\\foo", "././././bar././././", "..\\file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-}
-
-test "joinStringBuf" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const fixtures = .{
-        .{ &[_][]const u8{ ".", "x/b", "..", "/b/c.js" }, "x/b/c.js" },
-        .{ &[_][]const u8{}, "." },
-        .{ &[_][]const u8{ "/.", "x/b", "..", "/b/c.js" }, "/x/b/c.js" },
-        .{ &[_][]const u8{ "/foo", "../../../bar" }, "/bar" },
-        .{ &[_][]const u8{ "foo", "../../../bar" }, "../../bar" },
-        .{ &[_][]const u8{ "foo/", "../../../bar" }, "../../bar" },
-        .{ &[_][]const u8{ "foo/x", "../../../bar" }, "../bar" },
-        .{ &[_][]const u8{ "foo/x", "./bar" }, "foo/x/bar" },
-        .{ &[_][]const u8{ "foo/x/", "./bar" }, "foo/x/bar" },
-        .{ &[_][]const u8{ "foo/x/", ".", "bar" }, "foo/x/bar" },
-        .{ &[_][]const u8{"./"}, "./" },
-        .{ &[_][]const u8{ ".", "./" }, "./" },
-        .{ &[_][]const u8{ ".", ".", "." }, "." },
-        .{ &[_][]const u8{ ".", "./", "." }, "." },
-        .{ &[_][]const u8{ ".", "/./", "." }, "." },
-        .{ &[_][]const u8{ ".", "/////./", "." }, "." },
-        .{ &[_][]const u8{"."}, "." },
-        .{ &[_][]const u8{ "", "." }, "." },
-        .{ &[_][]const u8{ "", "foo" }, "foo" },
-        .{ &[_][]const u8{ "foo", "/bar" }, "foo/bar" },
-        .{ &[_][]const u8{ "", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "", "foo" }, "foo" },
-        .{ &[_][]const u8{ "foo", "" }, "foo" },
-        .{ &[_][]const u8{ "foo/", "" }, "foo/" },
-        .{ &[_][]const u8{ "foo", "", "/bar" }, "foo/bar" },
-        .{ &[_][]const u8{ "./", "..", "/foo" }, "../foo" },
-        .{ &[_][]const u8{ "./", "..", "..", "/foo" }, "../../foo" },
-        .{ &[_][]const u8{ ".", "..", "..", "/foo" }, "../../foo" },
-        .{ &[_][]const u8{ "", "..", "..", "/foo" }, "../../foo" },
-
-        .{ &[_][]const u8{"/"}, "/" },
-        .{ &[_][]const u8{ "/", "." }, "/" },
-        .{ &[_][]const u8{ "/", ".." }, "/" },
-        .{ &[_][]const u8{ "/", "..", ".." }, "/" },
-        .{ &[_][]const u8{""}, "." },
-        .{ &[_][]const u8{ "", "" }, "." },
-        .{ &[_][]const u8{" /foo"}, " /foo" },
-        .{ &[_][]const u8{ " ", "foo" }, " /foo" },
-        .{ &[_][]const u8{ " ", "." }, " " },
-        .{ &[_][]const u8{ " ", "/" }, " /" },
-        .{ &[_][]const u8{ " ", "" }, " " },
-        .{ &[_][]const u8{ "/", "foo" }, "/foo" },
-        .{ &[_][]const u8{ "/", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "/", "//foo" }, "/foo" },
-        .{ &[_][]const u8{ "/", "", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "/", "foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "/", "/foo" }, "/foo" },
-
-        .{ &[_][]const u8{ "", "..", "..", "..", "/foo" }, "../../../foo" },
-        .{ &[_][]const u8{ "", "..", "..", "bar", "/foo" }, "../../bar/foo" },
-        .{ &[_][]const u8{ "", "..", "..", "bar", "/foo", "../" }, "../../bar/" },
-    };
-    inline for (fixtures) |fixture| {
-        const expected = fixture[1];
-        const buf = try default_allocator.alloc(u8, 2048);
-        _ = t.expect(expected, joinStringBuf(buf, fixture[0], .posix), @src());
-    }
-}
-
-test "normalizeStringPosix" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-    var buf: [2048]u8 = undefined;
-    var buf2: [2048]u8 = undefined;
-    // Don't mess up strings that
-    _ = t.expect("../../bar", normalizeStringNode("../foo../../../bar", &buf, .posix), @src());
-    _ = t.expect("foo/bar.txt", try normalizeStringAlloc(default_allocator, "/foo/bar.txt", true, .posix), @src());
-    _ = t.expect("foo/bar.txt", try normalizeStringAlloc(default_allocator, "/foo/bar.txt", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", true, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", false, .posix), @src());
-    _ = t.expect("/foo/bar", normalizeStringNode("/././foo/././././././bar/../bar/../bar", &buf2, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar//////", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/////foo/bar//////", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/////foo/bar", false, .posix), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, "/////", false, .posix), @src());
-    _ = t.expect("..", try normalizeStringAlloc(default_allocator, "../boom/../", true, .posix), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, "./", true, .posix), @src());
-}
-
-test "normalizeStringWindows" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    // Don't mess up strings that
-    _ = t.expect("foo\\bar.txt", try normalizeStringAlloc(default_allocator, "\\foo\\bar.txt", true, .windows), @src());
-    _ = t.expect("foo\\bar.txt", try normalizeStringAlloc(default_allocator, "\\foo\\bar.txt", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", true, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\.\\.\\foo\\.\\.\\.\\.\\.\\.\\bar\\..\\bar\\..\\bar", true, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar\\\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\foo\\bar\\\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\foo\\bar", false, .windows), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("..", try normalizeStringAlloc(default_allocator, "..\\boom\\..\\", true, .windows), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, ".\\", true, .windows), @src());
-}
-
-test "relative" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const fixtures = .{
-        .{ "/var/lib", "/var", ".." },
-        .{ "/var/lib", "/bin", "../../bin" },
-        .{ "/var/lib", "/var/lib", "" },
-        .{ "/var/lib", "/var/apache", "../apache" },
-        .{ "/var/", "/var/lib", "lib" },
-        .{ "/", "/var/lib", "var/lib" },
-        .{ "/foo/test", "/foo/test/bar/package.json", "bar/package.json" },
-        .{ "/Users/a/web/b/test/mails", "/Users/a/web/b", "../.." },
-        .{ "/foo/bar/baz-quux", "/foo/bar/baz", "../baz" },
-        .{ "/foo/bar/baz", "/foo/bar/baz-quux", "../baz-quux" },
-        .{ "/baz-quux", "/baz", "../baz" },
-        .{ "/baz", "/baz-quux", "../baz-quux" },
-        .{ "/page1/page2/foo", "/", "../../.." },
-    };
-
-    inline for (fixtures) |fixture| {
-        const from = fixture[0];
-        const to = fixture[1];
-        const expected = fixture[2];
-        _ = t.expect(expected, try relativeAlloc(default_allocator, from, to), @src());
-    }
-
-    _ = t.expect("index.js", try relativeAlloc(default_allocator, "/app/public/", "/app/public/index.js"), @src());
-    _ = t.expect("..", try relativeAlloc(default_allocator, "/app/public/index.js", "/app/public/"), @src());
-    _ = t.expect("../../src/bacon.ts", try relativeAlloc(default_allocator, "/app/public/index.html", "/app/src/bacon.ts"), @src());
-    _ = t.expect("../../../../bacon/foo/baz", try relativeAlloc(default_allocator, "/app/foo/bar/baz.js", "/bacon/foo/baz"), @src());
-}
-
-test "longestCommonPath" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const strs = [_][]const u8{
-        "/var/boo/foo/",
-        "/var/boo/foo/baz/",
-        "/var/boo/foo/beep/",
-        "/var/boo/foo/beep/bleep",
-        "/bar/baz",
-        "/bar/not-related",
-        "/bar/file.txt",
-    };
-    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..2]), @src());
-    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..4]), @src());
-    _ = t.expect("/var/boo/foo/beep/", longestCommonPath(strs[2..3]), @src());
-    _ = t.expect("/bar/", longestCommonPath(strs[5..strs.len]), @src());
-    _ = t.expect("/", longestCommonPath(&strs), @src());
-
-    const more = [_][]const u8{ "/app/public/index.html", "/app/public/index.js", "/app/public", "/app/src/bacon.ts" };
-    _ = t.expect("/app/", longestCommonPath(&more), @src());
-    _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
-}
-
 pub fn basename(path: []const u8) []const u8 {
     if (path.len == 0)
         return &[_]u8{};
@@ -2005,7 +1685,7 @@ pub fn basename(path: []const u8) []const u8 {
     var end_index: usize = path.len - 1;
     while (isSepAny(path[end_index])) {
         if (end_index == 0)
-            return &[_]u8{};
+            return "/";
         end_index -= 1;
     }
     var start_index: usize = end_index;
@@ -2124,17 +1804,17 @@ pub const PosixToWinNormalizer = struct {
         source_dir: []const u8,
         maybe_posix_path: []const u8,
     ) []const u8 {
-        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
         if (bun.Environment.isWindows) {
             const root = windowsFilesystemRoot(maybe_posix_path);
             if (root.len == 1) {
-                std.debug.assert(isSepAny(root[0]));
+                assert(isSepAny(root[0]));
                 if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
                     const source_root = windowsFilesystemRoot(source_dir);
                     @memcpy(buf[0..source_root.len], source_root);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
-                    std.debug.assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
                     return res;
                 }
             }
@@ -2146,20 +1826,20 @@ pub const PosixToWinNormalizer = struct {
         buf: *Buf,
         maybe_posix_path: []const u8,
     ) ![]const u8 {
-        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
 
         if (bun.Environment.isWindows) {
             const root = windowsFilesystemRoot(maybe_posix_path);
             if (root.len == 1) {
-                std.debug.assert(isSepAny(root[0]));
+                assert(isSepAny(root[0]));
                 if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
                     const cwd = try std.os.getcwd(buf);
-                    std.debug.assert(cwd.ptr == buf.ptr);
+                    assert(cwd.ptr == buf.ptr);
                     const source_root = windowsFilesystemRoot(cwd);
-                    std.debug.assert(source_root.ptr == source_root.ptr);
+                    assert(source_root.ptr == source_root.ptr);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
-                    std.debug.assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
                     return res;
                 }
             }
@@ -2172,21 +1852,21 @@ pub const PosixToWinNormalizer = struct {
         buf: *bun.PathBuffer,
         maybe_posix_path: []const u8,
     ) ![:0]u8 {
-        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
 
         if (bun.Environment.isWindows) {
             const root = windowsFilesystemRoot(maybe_posix_path);
             if (root.len == 1) {
-                std.debug.assert(isSepAny(root[0]));
+                assert(isSepAny(root[0]));
                 if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
                     const cwd = try std.os.getcwd(buf);
-                    std.debug.assert(cwd.ptr == buf.ptr);
+                    assert(cwd.ptr == buf.ptr);
                     const source_root = windowsFilesystemRoot(cwd);
-                    std.debug.assert(source_root.ptr == source_root.ptr);
+                    assert(source_root.ptr == source_root.ptr);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     buf[source_root.len + maybe_posix_path.len - 1] = 0;
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
-                    std.debug.assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
                     return res;
                 }
             }
@@ -2225,7 +1905,7 @@ pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
     }
 }
 
-pub fn pathToPosixInPlace(comptime T: type, path: []T) void {
+pub fn dangerouslyConvertPathToPosixInPlace(comptime T: type, path: []T) void {
     var idx: usize = 0;
     while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_windows)) |index| : (idx = index + 1) {
         path[index] = '/';
@@ -2260,3 +1940,5 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
         path_buffer[index] = std.fs.path.sep;
     }
 }
+
+const assert = bun.assert;

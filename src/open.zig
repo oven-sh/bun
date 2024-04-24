@@ -106,12 +106,12 @@ pub const Editor = enum(u8) {
     }
 
     const which = @import("./which.zig").which;
-    pub fn byPATH(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, out: *[]const u8) ?Editor {
+    pub fn byPATH(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
         const PATH = env.get("PATH") orelse return null;
 
         inline for (default_preference_list) |editor| {
             if (bin_name.get(editor)) |path| {
-                if (which(buf, PATH, path)) |bin| {
+                if (which(buf, PATH, cwd, path)) |bin| {
                     out.* = bun.asByteSlice(bin);
                     return editor;
                 }
@@ -121,12 +121,12 @@ pub const Editor = enum(u8) {
         return null;
     }
 
-    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *[bun.MAX_PATH_BYTES]u8, out: *[]const u8) bool {
+    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) bool {
         const PATH = env.get("PATH") orelse return false;
 
         if (bin_name.get(editor)) |path| {
             if (path.len > 0) {
-                if (which(buf, PATH, path)) |bin| {
+                if (which(buf, PATH, cwd, path)) |bin| {
                     out.* = bun.asByteSlice(bin);
                     return true;
                 }
@@ -152,9 +152,9 @@ pub const Editor = enum(u8) {
         return false;
     }
 
-    pub fn byFallback(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, out: *[]const u8) ?Editor {
+    pub fn byFallback(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
         inline for (default_preference_list) |editor| {
-            if (byPATHForEditor(env, editor, buf, out)) {
+            if (byPATHForEditor(env, editor, buf, cwd, out)) {
                 return editor;
             }
 
@@ -405,7 +405,7 @@ pub const EditorContext = struct {
 
             // "vscode"
             if (Editor.byName(std.fs.path.basename(this.name))) |editor_| {
-                if (Editor.byPATHForEditor(env, editor_, &buf, &out)) {
+                if (Editor.byPATHForEditor(env, editor_, &buf, Fs.FileSystem.instance.top_level_dir, &out)) {
                     this.editor = editor_;
                     this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
                     return;
@@ -422,7 +422,7 @@ pub const EditorContext = struct {
 
         // EDITOR=code
         if (Editor.detect(env)) |editor_| {
-            if (Editor.byPATHForEditor(env, editor_, &buf, &out)) {
+            if (Editor.byPATHForEditor(env, editor_, &buf, Fs.FileSystem.instance.top_level_dir, &out)) {
                 this.editor = editor_;
                 this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
                 return;
@@ -437,7 +437,7 @@ pub const EditorContext = struct {
         }
 
         // Don't know, so we will just guess based on what exists
-        if (Editor.byFallback(env, &buf, &out)) |editor_| {
+        if (Editor.byFallback(env, &buf, Fs.FileSystem.instance.top_level_dir, &out)) |editor_| {
             this.editor = editor_;
             this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
             return;

@@ -64,13 +64,13 @@ pub const RunCommand = struct {
         "zsh",
     };
 
-    fn findShellImpl(PATH: string) ?stringZ {
+    fn findShellImpl(PATH: string, cwd: string) ?stringZ {
         if (comptime Environment.isWindows) {
             return "C:\\Windows\\System32\\cmd.exe";
         }
 
         inline for (shells_to_search) |shell| {
-            if (which(&path_buf, PATH, shell)) |shell_| {
+            if (which(&path_buf, PATH, cwd, shell)) |shell_| {
                 return shell_;
             }
         }
@@ -101,7 +101,7 @@ pub const RunCommand = struct {
 
     /// Find the "best" shell to use
     /// Cached to only run once
-    pub fn findShell(PATH: string) ?stringZ {
+    pub fn findShell(PATH: string, cwd: string) ?stringZ {
         const bufs = struct {
             pub var shell_buf_once: [bun.MAX_PATH_BYTES]u8 = undefined;
             pub var found_shell: [:0]const u8 = "";
@@ -110,7 +110,7 @@ pub const RunCommand = struct {
             return bufs.found_shell;
         }
 
-        if (findShellImpl(PATH)) |found| {
+        if (findShellImpl(PATH, cwd)) |found| {
             if (found.len < bufs.shell_buf_once.len) {
                 @memcpy(bufs.shell_buf_once[0..found.len], found);
                 bufs.shell_buf_once[found.len] = 0;
@@ -266,6 +266,7 @@ pub const RunCommand = struct {
     const log = Output.scoped(.RUN, false);
 
     fn runPackageScriptForeground(
+        ctx: Command.Context,
         allocator: std.mem.Allocator,
         original_script: string,
         name: string,
@@ -275,7 +276,7 @@ pub const RunCommand = struct {
         silent: bool,
         use_system_shell: bool,
     ) !bool {
-        const shell_bin = findShell(env.get("PATH") orelse "") orelse return error.MissingShell;
+        const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         const script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
@@ -316,7 +317,7 @@ pub const RunCommand = struct {
             }
 
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            const code = bun.shell.Interpreter.initAndRunFromSource(mini, name, combined_script) catch |err| {
+            const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, combined_script) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
@@ -457,15 +458,15 @@ pub const RunCommand = struct {
         // a relative lookup, because in the case we do find it, we have to
         // generate this full path anyways.
         if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path and bun.strings.hasSuffixComptime(executable, ".exe")) {
-            std.debug.assert(std.fs.path.isAbsolute(executable));
+            bun.assert(std.fs.path.isAbsolute(executable));
 
             // Using @constCast is safe because we know that
             // `direct_launch_buffer` is the data destination that assumption is
             // backed by the immediate assertion.
             var wpath = @constCast(bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable));
-            std.debug.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
+            bun.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
 
-            std.debug.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
+            bun.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
             wpath.len += ".bunx".len - ".exe".len;
             @memcpy(wpath[wpath.len - "bunx".len ..], comptime bun.strings.w("bunx"));
 
@@ -486,9 +487,6 @@ pub const RunCommand = struct {
     fn runBinaryGenericError(executable: []const u8, silent: bool, err: bun.sys.Error) noreturn {
         if (!silent) {
             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{}", .{ basenameOrBun(executable), err.withPath(executable) });
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
         }
 
         Global.exit(1);
@@ -532,6 +530,8 @@ pub const RunCommand = struct {
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
             } else {},
         }) catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
             // an error occurred before the process was spawned
             print_error: {
                 if (!silent) {
@@ -556,9 +556,6 @@ pub const RunCommand = struct {
                     }
 
                     Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to <r><red>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
-                    if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpStackTrace(trace.*);
-                    }
                 }
             }
             Global.exit(1);
@@ -582,9 +579,6 @@ pub const RunCommand = struct {
                                 basenameOrBun(executable),
                                 signal.name() orelse "unknown",
                             });
-                            if (@errorReturnTrace()) |trace| {
-                                std.debug.dumpStackTrace(trace.*);
-                            }
                         }
 
                         Output.flush();
@@ -599,9 +593,6 @@ pub const RunCommand = struct {
                                     basenameOrBun(executable),
                                     exit_code.signal.name() orelse "unknown",
                                 });
-                                if (@errorReturnTrace()) |trace| {
-                                    std.debug.dumpStackTrace(trace.*);
-                                }
                             }
 
                             Output.flush();
@@ -639,10 +630,6 @@ pub const RunCommand = struct {
                                         code,
                                     });
                                 }
-
-                                if (@errorReturnTrace()) |trace| {
-                                    std.debug.dumpStackTrace(trace.*);
-                                }
                             }
                         }
 
@@ -678,7 +665,7 @@ pub const RunCommand = struct {
     } ++ if (!Environment.isDebug)
         "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
-        "/bun-debug-node";
+        "/bun-node-debug";
 
     pub fn bunNodeFileUtf8(allocator: std.mem.Allocator) ![:0]const u8 {
         if (!Environment.isWindows) return bun_node_dir;
@@ -715,9 +702,9 @@ pub const RunCommand = struct {
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
-            if (bun.argv()[0][0] == '/') {
-                optional_bun_path.* = bun.argv()[0];
-                argv0 = bun.argv()[0];
+            if (bun.argv[0][0] == '/') {
+                optional_bun_path.* = bun.argv[0];
+                argv0 = bun.argv[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
                 const self = try bun.selfExePath();
@@ -728,16 +715,13 @@ pub const RunCommand = struct {
             }
 
             if (optional_bun_path.len == 0) {
-                argv0 = bun.argv()[0];
+                argv0 = bun.argv[0];
             }
 
             if (Environment.isDebug) {
                 std.fs.deleteTreeAbsolute(bun_node_dir) catch {};
             }
-            const paths = if (Environment.isDebug)
-                .{ bun_node_dir ++ "/node", bun_node_dir ++ "/bun" }
-            else
-                .{bun_node_dir ++ "/node"};
+            const paths = .{ bun_node_dir ++ "/node", bun_node_dir ++ "/bun" };
             inline for (paths) |path| {
                 var retried = false;
                 while (true) {
@@ -756,7 +740,6 @@ pub const RunCommand = struct {
                     break;
                 }
             }
-
             if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
                 try PATH.append(std.fs.path.delimiter);
             }
@@ -787,7 +770,15 @@ pub const RunCommand = struct {
                 "-" ++ Environment.git_sha_short
             else
                 "";
+            @memcpy(target_path_buffer[prefix.len..][len..].ptr, comptime bun.strings.w(dir_name));
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
+
+            if (Environment.isDebug) {
+                const dir_slice_u8 = std.unicode.utf16leToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
+                defer bun.default_allocator.free(dir_slice_u8);
+                std.fs.deleteTreeAbsolute(dir_slice_u8) catch {};
+                std.fs.makeDirAbsolute(dir_slice_u8) catch @panic("huh?");
+            }
 
             const image_path = bun.windows.exePathW();
             inline for (.{ "node.exe", "bun.exe" }) |name| {
@@ -801,7 +792,7 @@ pub const RunCommand = struct {
                         .ALREADY_EXISTS => {},
                         else => {
                             {
-                                std.debug.assert(target_path_buffer[dir_slice.len] == '\\');
+                                bun.assert(target_path_buffer[dir_slice.len] == '\\');
                                 target_path_buffer[dir_slice.len] = 0;
                                 std.os.mkdirW(target_path_buffer[0..dir_slice.len :0], 0) catch {};
                                 target_path_buffer[dir_slice.len] = '\\';
@@ -813,6 +804,9 @@ pub const RunCommand = struct {
                         },
                     }
                 }
+            }
+            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+                try PATH.append(std.fs.path.delimiter);
             }
 
             // The reason for the extra delim is because we are going to append the system PATH
@@ -921,23 +915,14 @@ pub const RunCommand = struct {
         return root_dir_info;
     }
 
-    pub fn configurePathForRun(
+    pub fn configurePathForRunWithPackageJsonDir(
         ctx: Command.Context,
-        root_dir_info: *DirInfo,
+        package_json_dir: string,
         this_bundler: *bundler.Bundler,
         ORIGINAL_PATH: ?*string,
         cwd: string,
         force_using_bun: bool,
-    ) !void {
-        var package_json_dir: string = "";
-
-        if (root_dir_info.enclosing_package_json) |package_json| {
-            if (root_dir_info.package_json == null) {
-                // no trailing slash
-                package_json_dir = std.mem.trimRight(u8, package_json.source.path.name.dir, "/");
-            }
-        }
-
+    ) ![]u8 {
         const PATH = this_bundler.env.get("PATH") orelse "";
         if (ORIGINAL_PATH) |original_path| {
             original_path.* = PATH;
@@ -1007,7 +992,29 @@ pub const RunCommand = struct {
             try new_path.appendSlice(PATH);
         }
 
-        this_bundler.env.map.put("PATH", new_path.items) catch bun.outOfMemory();
+        return new_path.items;
+    }
+
+    pub fn configurePathForRun(
+        ctx: Command.Context,
+        root_dir_info: *DirInfo,
+        this_bundler: *bundler.Bundler,
+        ORIGINAL_PATH: ?*string,
+        cwd: string,
+        force_using_bun: bool,
+    ) !void {
+        var package_json_dir: string = "";
+
+        if (root_dir_info.enclosing_package_json) |package_json| {
+            if (root_dir_info.package_json == null) {
+                // no trailing slash
+
+                package_json_dir = strings.withoutTrailingSlash(package_json.source.path.name.dir);
+            }
+        }
+
+        const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_bundler, ORIGINAL_PATH, cwd, force_using_bun);
+        this_bundler.env.map.put("PATH", new_path) catch bun.outOfMemory();
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
@@ -1273,12 +1280,11 @@ pub const RunCommand = struct {
     }
 
     pub fn exec(
-        ctx_: Command.Context,
+        ctx: Command.Context,
         comptime bin_dirs_only: bool,
         comptime log_errors: bool,
         comptime did_try_open_with_bun_js: bool,
     ) !bool {
-        var ctx = ctx_;
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
         if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {
@@ -1299,15 +1305,14 @@ pub const RunCommand = struct {
             (script_name_to_search.len == 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
         {
             Run.boot(ctx, ".") catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                 ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     script_name_to_search,
                     @errorName(err),
                 });
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
                 Global.exit(1);
             };
             return true;
@@ -1363,7 +1368,7 @@ pub const RunCommand = struct {
                         // once we know it's a file, check if they have any preloads
                         if (ext.len > 0 and !has_loader) {
                             if (!ctx.debug.loaded_bunfig) {
-                                try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                                try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
                             }
 
                             if (ctx.preloads.len == 0)
@@ -1383,7 +1388,7 @@ pub const RunCommand = struct {
 
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (strings.hasPrefixComptime(shebang, "#!")) {
-                            const first_arg: string = if (bun.argv().len > 0) bun.argv()[0] else "";
+                            const first_arg: string = if (bun.argv.len > 0) bun.argv[0] else "";
                             const filename = std.fs.path.basename(first_arg);
                             // are we attempting to run the script with bun?
                             if (!strings.contains(shebang, filename)) {
@@ -1395,15 +1400,14 @@ pub const RunCommand = struct {
                     Global.configureAllocator(.{ .long_running = true });
                     const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
                     Run.boot(ctx, out_path) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                         ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                         Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                             std.fs.path.basename(file_path),
                             @errorName(err),
                         });
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpStackTrace(trace.*);
-                        }
                         Global.exit(1);
                     };
 
@@ -1443,6 +1447,7 @@ pub const RunCommand = struct {
 
                     if (scripts.get(temp_script_buffer[1..])) |prescript| {
                         if (!try runPackageScriptForeground(
+                            ctx,
                             ctx.allocator,
                             prescript,
                             temp_script_buffer[1..],
@@ -1457,6 +1462,7 @@ pub const RunCommand = struct {
                     }
 
                     if (!try runPackageScriptForeground(
+                        ctx,
                         ctx.allocator,
                         script_content,
                         script_name_to_search,
@@ -1471,6 +1477,7 @@ pub const RunCommand = struct {
 
                     if (scripts.get(temp_script_buffer)) |postscript| {
                         if (!try runPackageScriptForeground(
+                            ctx,
                             ctx.allocator,
                             postscript,
                             temp_script_buffer,
@@ -1494,15 +1501,14 @@ pub const RunCommand = struct {
             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
         {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                 ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     std.fs.path.basename(script_name_to_search),
                     @errorName(err),
                 });
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
                 Global.exit(1);
             };
         }
@@ -1529,9 +1535,7 @@ pub const RunCommand = struct {
                     std.fs.path.basename(script_name_to_search),
                     @errorName(err),
                 });
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 Global.exit(1);
             };
             return true;
@@ -1577,7 +1581,7 @@ pub const RunCommand = struct {
         }
 
         if (path_for_which.len > 0) {
-            if (which(&path_buf, path_for_which, script_name_to_search)) |destination| {
+            if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
                 const out = bun.asByteSlice(destination);
                 return try runBinaryWithoutBunxPath(
                     ctx,
@@ -1604,7 +1608,7 @@ pub const RunCommand = struct {
     }
 
     pub fn execAsIfNode(ctx: Command.Context) !void {
-        std.debug.assert(CLI.pretend_to_be_node);
+        bun.assert(CLI.pretend_to_be_node);
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const trigger = bun.pathLiteral("/[eval]");
@@ -1658,16 +1662,15 @@ pub const BunXFastPath = struct {
     var environment_buffer: bun.WPathBuffer = undefined;
 
     /// If this returns, it implies the fast path cannot be taken
-    fn tryLaunch(ctx_const: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+    fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
         if (!bun.FeatureFlags.windows_bunx_fast_path) return;
 
-        var ctx = ctx_const;
-        std.debug.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
+        bun.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
         debug("Attempting to find and load bunx file: '{}'", .{bun.fmt.utf16(path_to_use)});
         if (Environment.allow_assert) {
-            std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
+            bun.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
         }
         const handle = (bun.sys.openFileAtWindows(
             bun.invalid_fd, // absolute path is given
@@ -1694,7 +1697,7 @@ pub const BunXFastPath = struct {
             .arguments = command_line[0..i],
             .force_use_bun = ctx.debug.run_in_bun,
             .direct_launch_with_bun_js = &directLaunchCallback,
-            .cli_context = &ctx,
+            .cli_context = ctx,
             .environment = env.map.writeWindowsEnvBlock(&environment_buffer) catch return,
         };
 
@@ -1710,121 +1713,15 @@ pub const BunXFastPath = struct {
         debug("did not start via shim", .{});
     }
 
-    fn directLaunchCallback(wpath: []u16, ctx: *const Command.Context) void {
+    fn directLaunchCallback(wpath: []u16, ctx: Command.Context) void {
         const utf8 = bun.strings.convertUTF16toUTF8InBuffer(
             bun.reinterpretSlice(u8, &direct_launch_buffer),
             wpath,
         ) catch return;
-        Run.boot(ctx.*, utf8) catch |err| {
+        Run.boot(ctx, utf8) catch |err| {
             ctx.log.printForLogLevel(Output.errorWriter()) catch {};
             Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
             Global.exit(1);
         };
     }
 };
-
-test "replacePackageManagerRun" {
-    var copy_script = std.ArrayList(u8).init(default_allocator);
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "bun run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn install foo");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn install foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn --prod");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn --prod");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn -prod");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn -prod");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn ");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn ");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "npm ");
-        try std.testing.expectEqualStrings(copy_script.items, "npm ");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "npm bacon run");
-        try std.testing.expectEqualStrings(copy_script.items, "npm bacon run");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn bacon foo");
-        try std.testing.expectEqualStrings(copy_script.items, "bun run bacon foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "yarn npm run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "yarn npm run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "npm run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "bun run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "bpm run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "bpm run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "pnpm run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "bun run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "foopnpm run foo");
-        try std.testing.expectEqualStrings(copy_script.items, "foopnpm run foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "foopnpm rune foo");
-        try std.testing.expectEqualStrings(copy_script.items, "foopnpm rune foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "foopnpm ru foo");
-        try std.testing.expectEqualStrings(copy_script.items, "foopnpm ru foo");
-    }
-
-    {
-        copy_script.clearRetainingCapacity();
-        try RunCommand.replacePackageManagerRun(&copy_script, "'npm run foo'");
-        try std.testing.expectEqualStrings(copy_script.items, "'bun run foo'");
-    }
-}

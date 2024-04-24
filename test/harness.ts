@@ -1,8 +1,12 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile } from "fs/promises";
-import { isAbsolute } from "path";
-import { openSync, closeSync } from "node:fs";
+import { readlink, readFile, writeFile } from "fs/promises";
+import { isAbsolute, join, dirname } from "path";
+import fs, { openSync, closeSync } from "node:fs";
+import os from "node:os";
+import { heapStats } from "bun:jsc";
+
+type Awaitable<T> = T | Promise<T>;
 
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
@@ -19,6 +23,8 @@ export const bunEnv: NodeJS.ProcessEnv = {
   TZ: "Etc/UTC",
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
 };
 
 if (isWindows) {
@@ -36,6 +42,7 @@ for (let key in bunEnv) {
 }
 
 export function bunExe() {
+  if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
 }
 
@@ -109,29 +116,34 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>): string {
-  var fs = require("fs");
-  var path = require("path");
-  var { tmpdir } = require("os");
+type DirectoryTree = {
+  [name: string]:
+    | string
+    | Buffer
+    | DirectoryTree
+    | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
+};
 
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
-  for (const [name, contents] of Object.entries(files)) {
-    if (typeof contents === "object") {
-      const entries = Object.entries(contents);
-      if (entries.length == 0) {
-        fs.mkdirSync(path.join(dir, name), { recursive: true });
-      } else {
-        for (const [_name, _contents] of entries) {
-          fs.mkdirSync(path.dirname(path.join(dir, name, _name)), { recursive: true });
-          fs.writeFileSync(path.join(dir, name, _name), _contents);
-        }
+export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
+  async function makeTree(base: string, tree: DirectoryTree) {
+    for (const [name, raw_contents] of Object.entries(tree)) {
+      const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
+      const joined = join(base, name);
+      if (name.includes("/")) {
+        const dir = dirname(name);
+        fs.mkdirSync(join(base, dir), { recursive: true });
       }
-      continue;
+      if (typeof contents === "object" && contents && !Buffer.isBuffer(contents)) {
+        fs.mkdirSync(joined);
+        makeTree(joined, contents);
+        continue;
+      }
+      fs.writeFileSync(joined, contents);
     }
-    fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
-    fs.writeFileSync(path.join(dir, name), contents);
   }
-  return dir;
+  const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
+  makeTree(base, files);
+  return base;
 }
 
 export function bunRun(file: string, env?: Record<string, string>) {
@@ -503,7 +515,6 @@ function failTestsOnBlockingWriteCall() {
 
 failTestsOnBlockingWriteCall();
 
-import { heapStats } from "bun:jsc";
 export function dumpStats() {
   const stats = heapStats();
   const { objectTypeCounts, protectedObjectTypeCounts } = stats;
@@ -560,6 +571,24 @@ export function toTOMLString(opts: object) {
   return ret;
 }
 
+const shebang_posix = (program: string) => `#!/usr/bin/env ${program}
+ `;
+
+const shebang_windows = (program: string) => `0</* :{
+   @echo off
+   ${program} %~f0 %*
+   exit /b %errorlevel%
+ :} */0;
+ `;
+
+export function writeShebangScript(path: string, program: string, data: string) {
+  if (!isWindows) {
+    return writeFile(path, shebang_posix(program) + "\n" + data, { mode: 0o777 });
+  } else {
+    return writeFile(path + ".cmd", shebang_windows(program) + "\n" + data);
+  }
+}
+
 export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
   var decoder = new (require("string_decoder").StringDecoder)("utf8");
   var str = "";
@@ -586,6 +615,10 @@ export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | Array
   if (str.length > 0) {
     yield str;
   }
+}
+
+export function joinP(...paths: string[]) {
+  return join(...paths).replaceAll("\\", "/");
 }
 
 /**
@@ -620,4 +653,8 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
     }
   }
   return flat;
+}
+
+export function tmpdirSync(pattern: string) {
+  return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
 }

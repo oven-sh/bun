@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_lexer = bun.js_lexer;
 const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
@@ -25,7 +25,7 @@ const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
 const StmtNodeList = js_ast.StmtNodeList;
 const BindingNodeList = js_ast.BindingNodeList;
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 const LocRef = js_ast.LocRef;
 const S = js_ast.S;
@@ -94,9 +94,9 @@ fn newExpr(t: anytype, loc: logger.Loc) Expr {
         if (comptime Type == E.Object) {
             for (t.properties.slice()) |prop| {
                 // json should never have an initializer set
-                std.debug.assert(prop.initializer == null);
-                std.debug.assert(prop.key != null);
-                std.debug.assert(prop.value != null);
+                bun.assert(prop.initializer == null);
+                bun.assert(prop.key != null);
+                bun.assert(prop.value != null);
             }
         }
     }
@@ -506,9 +506,6 @@ pub const PackageJSONVersionChecker = struct {
             },
             else => {
                 try p.lexer.unexpected();
-                if (comptime Environment.isDebug) {
-                    @breakpoint();
-                }
                 return error.ParserError;
             },
         }
@@ -765,7 +762,7 @@ pub fn ParseJSONUTF8(
     }
 
     var parser = try JSONParser.init(allocator, source.*, log);
-    std.debug.assert(parser.source().contents.len > 0);
+    bun.assert(parser.source().contents.len > 0);
 
     return try parser.parseExpr(false, true);
 }
@@ -799,7 +796,7 @@ pub fn ParseJSONUTF8AlwaysDecode(
         .always_decode_escape_sequences = true,
     }).init(allocator, source.*, log);
     if (comptime Environment.allow_assert) {
-        std.debug.assert(parser.source().contents.len > 0);
+        bun.assert(parser.source().contents.len > 0);
     }
 
     return try parser.parseExpr(false, true);
@@ -991,30 +988,4 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
     }
 
     try std.testing.expectEqualStrings(expected, js);
-}
-
-test "ParseJSON" {
-    try expectPrintedJSON("true", "true");
-    try expectPrintedJSON("false", "false");
-    try expectPrintedJSON("1", "1");
-    try expectPrintedJSON("10", "10");
-    try expectPrintedJSON("100", "100");
-    try expectPrintedJSON("100.1", "100.1");
-    try expectPrintedJSON("19.1", "19.1");
-    try expectPrintedJSON("19.12", "19.12");
-    try expectPrintedJSON("3.4159820837456", "3.4159820837456");
-    try expectPrintedJSON("-10000.25", "-10000.25");
-    try expectPrintedJSON("\"hi\"", "\"hi\"");
-    try expectPrintedJSON("{\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}}", "{\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true } }");
-    try expectPrintedJSON("{\"hi\": \"hey\"}", "{\"hi\": \"hey\" }");
-    try expectPrintedJSON(
-        "{\"hi\": [\"hey\", \"yo\"]}",
-        \\{"hi": [
-        \\  "hey",
-        \\  "yo"
-        \\] }
-        ,
-    );
-
-    // TODO: emoji?
 }

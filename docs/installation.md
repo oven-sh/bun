@@ -42,21 +42,20 @@ $ proto install bun
 Bun requires a minimum of Windows 10 version 1809
 {% /callout %}
 
-Bun provides a _limited, experimental_ native build for Windows. It is recommended to use Bun within [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the above instructions. To help catch bugs, the experimental build enables many debugging assertions, which will make the binary slower than what the stable version will be.
-
 To install, paste this into a terminal:
 
 {% codetabs %}
 
 ```powershell#PowerShell/cmd.exe
-# WARNING: No stability is guaranteed on the experimental Windows builds
-powershell -c "irm bun.sh/install.ps1|iex"
+> powershell -c "irm bun.sh/install.ps1|iex"
+```
+
+```powershell#npm
+> npm install -g bun # the last `npm` command you'll ever need
 ```
 
 ```powershell#Scoop
-# WARNING: No stability is guaranteed on the experimental Windows builds
-scoop bucket add versions
-scoop install bun-canary
+> scoop install bun
 ```
 
 {% /codetabs %}
@@ -144,6 +143,8 @@ $ bun upgrade
 
 {% callout %}
 **Homebrew users** — To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
+
+**Scoop users** — To avoid conflicts with Scoop, use `scoop upgrade bun` instead.
 
 **proto users** - Use `proto install bun --pin` instead.
 {% /callout %}
@@ -233,10 +234,14 @@ $ rm -rf ~/.bun # for macOS, Linux, and WSL
 ```
 
 ```powershell#Windows
-powershell -c ~\.bun\uninstall.ps1
+> powershell -c ~\.bun\uninstall.ps1
 ```
 
-```bash#NPM
+```powershell#Scoop
+> scoop uninstall bun
+```
+
+```bash#npm
 $ npm uninstall -g bun
 ```
 

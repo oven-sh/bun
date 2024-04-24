@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
 const bun = @import("root").bun;
@@ -18,7 +18,7 @@ const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
@@ -65,7 +65,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             }
 
             pub fn append(block: *Block, comptime ValueType: type, value: ValueType) *UnionValueType {
-                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
+                if (comptime Environment.allow_assert) bun.assert(block.used < count);
                 const index = block.used;
                 block.items[index][0..value.len].* = value.*;
                 block.used +|= 1;
@@ -567,21 +567,30 @@ pub const SlotCounts = struct {
     }
 };
 
+const char_freq_count = 64;
 pub const CharAndCount = struct {
     char: u8 = 0,
     count: i32 = 0,
     index: usize = 0,
 
-    pub const Array = [64]CharAndCount;
+    pub const Array = [char_freq_count]CharAndCount;
 
     pub fn lessThan(_: void, a: CharAndCount, b: CharAndCount) bool {
-        return a.count > b.count or (a.count == b.count and a.index < b.index);
+        if (a.count != b.count) {
+            return a.count > b.count;
+        }
+
+        if (a.index != b.index) {
+            return a.index < b.index;
+        }
+
+        return a.char < b.char;
     }
 };
 
 pub const CharFreq = struct {
-    const Vector = @Vector(64, i32);
-    const Buffer = [64]i32;
+    const Vector = @Vector(char_freq_count, i32);
+    const Buffer = [char_freq_count]i32;
 
     freqs: Buffer align(1) = undefined,
 
@@ -601,10 +610,10 @@ pub const CharFreq = struct {
         // https://zig.godbolt.org/z/P5dPojWGK
         var freqs = out.*;
         defer out.* = freqs;
-        var deltas: [255]i32 = [_]i32{0} ** 255;
+        var deltas: [256]i32 = [_]i32{0} ** 256;
         var remain = text;
 
-        std.debug.assert(remain.len >= scan_big_chunk_size);
+        bun.assert(remain.len >= scan_big_chunk_size);
 
         const unrolled = remain.len - (remain.len % scan_big_chunk_size);
         const remain_end = remain.ptr + unrolled;
@@ -613,8 +622,7 @@ pub const CharFreq = struct {
 
         while (unrolled_ptr != remain_end) : (unrolled_ptr += scan_big_chunk_size) {
             const chunk = unrolled_ptr[0..scan_big_chunk_size].*;
-            comptime var i: usize = 0;
-            inline while (i < scan_big_chunk_size) : (i += scan_big_chunk_size) {
+            inline for (0..scan_big_chunk_size) |i| {
                 deltas[@as(usize, chunk[i])] += delta;
             }
         }
@@ -631,7 +639,7 @@ pub const CharFreq = struct {
     }
 
     fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {
-        var freqs: [64]i32 = out.*;
+        var freqs: [char_freq_count]i32 = out.*;
         defer out.* = freqs;
 
         for (text) |c| {
@@ -649,29 +657,28 @@ pub const CharFreq = struct {
 
     pub fn include(this: *CharFreq, other: CharFreq) void {
         // https://zig.godbolt.org/z/Mq8eK6K9s
-        var left: @Vector(64, i32) = this.freqs;
-        defer this.freqs = left;
-        const right: @Vector(64, i32) = other.freqs;
+        const left: @Vector(char_freq_count, i32) = this.freqs;
+        const right: @Vector(char_freq_count, i32) = other.freqs;
 
-        left += right;
+        this.freqs = left + right;
     }
 
     pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier {
-        var array: CharAndCount.Array = brk: {
+        const array: CharAndCount.Array = brk: {
             var _array: CharAndCount.Array = undefined;
-            const freqs = this.freqs;
 
-            for (&_array, NameMinifier.default_tail, &freqs, 0..) |*dest, char, freq, i| {
+            for (&_array, NameMinifier.default_tail, this.freqs, 0..) |*dest, char, freq, i| {
                 dest.* = CharAndCount{
                     .char = char,
                     .index = i,
                     .count = freq,
                 };
             }
+
+            std.sort.pdq(CharAndCount, &_array, {}, CharAndCount.lessThan);
+
             break :brk _array;
         };
-
-        std.sort.pdq(CharAndCount, &array, {}, CharAndCount.lessThan);
 
         var minifier = NameMinifier.init(allocator);
         minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
@@ -711,9 +718,9 @@ pub const NameMinifier = struct {
 
         while (i > 0) {
             i -= 1;
-            j = @as(usize, @intCast(@mod(i, 64)));
+            j = @as(usize, @intCast(@mod(i, char_freq_count)));
             try name.appendSlice(this.tail.items[j .. j + 1]);
-            i = @divFloor(i, 64);
+            i = @divFloor(i, char_freq_count);
         }
     }
 
@@ -726,9 +733,9 @@ pub const NameMinifier = struct {
 
         while (i > 0) {
             i -= 1;
-            j = @as(usize, @intCast(@mod(i, 64)));
+            j = @as(usize, @intCast(@mod(i, char_freq_count)));
             try name.appendSlice(default_tail[j .. j + 1]);
-            i = @divFloor(i, 64);
+            i = @divFloor(i, char_freq_count);
         }
 
         return name.items;
@@ -1463,7 +1470,7 @@ pub const E = struct {
         pub fn alphabetizeStrings(this: *Array) void {
             if (comptime Environment.allow_assert) {
                 for (this.items.slice()) |item| {
-                    std.debug.assert(item.data == .e_string);
+                    bun.assert(item.data == .e_string);
                 }
             }
             std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
@@ -1474,6 +1481,11 @@ pub const E = struct {
                 return strings.cmpStringsAsc(ctx, lhs.data.e_string.data, rhs.data.e_string.data);
             }
         };
+    };
+
+    /// A string which will be printed as JSON by the JSPrinter.
+    pub const UTF8String = struct {
+        data: []const u8,
     };
 
     pub const Unary = struct {
@@ -1844,7 +1856,7 @@ pub const E = struct {
         //             while (iter.next(&query_string_values_buf)) |entry| {
         //                 str = ZigString.init(entry.name);
 
-        //                 std.debug.assert(entry.values.len > 0);
+        //                 bun.assert(entry.values.len > 0);
         //                 if (entry.values.len > 1) {
         //                     var values = query_string_value_refs_buf[0..entry.values.len];
         //                     for (entry.values) |value, i| {
@@ -2090,7 +2102,7 @@ pub const E = struct {
         pub fn alphabetizeProperties(this: *Object) void {
             if (comptime Environment.allow_assert) {
                 for (this.properties.slice()) |prop| {
-                    std.debug.assert(prop.key.?.data == .e_string);
+                    bun.assert(prop.key.?.data == .e_string);
                 }
             }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
@@ -2186,8 +2198,8 @@ pub const E = struct {
 
         pub var class = E.String{ .data = "class" };
         pub fn push(this: *String, other: *String) void {
-            std.debug.assert(this.isUTF8());
-            std.debug.assert(other.isUTF8());
+            bun.assert(this.isUTF8());
+            bun.assert(other.isUTF8());
 
             if (other.rope_len == 0) {
                 other.rope_len = @as(u32, @truncate(other.data.len));
@@ -2229,7 +2241,7 @@ pub const E = struct {
         }
 
         pub fn slice16(this: *const String) []const u16 {
-            std.debug.assert(this.is_utf16);
+            bun.assert(this.is_utf16);
             return @as([*]const u16, @ptrCast(@alignCast(this.data.ptr)))[0..this.data.len];
         }
 
@@ -2489,7 +2501,7 @@ pub const E = struct {
                 };
             }
 
-            std.debug.assert(this.head == .cooked);
+            bun.assert(this.head == .cooked);
 
             if (this.parts.len == 0) {
                 return Expr.init(E.String, this.head.cooked, loc);
@@ -2499,7 +2511,7 @@ pub const E = struct {
             var head = Expr.init(E.String, this.head.cooked, loc);
             for (this.parts) |part_| {
                 var part = part_;
-                std.debug.assert(part.tail == .cooked);
+                bun.assert(part.tail == .cooked);
 
                 switch (part.value.data) {
                     .e_number => {
@@ -2535,7 +2547,7 @@ pub const E = struct {
                         continue;
                     } else {
                         var prev_part = &parts.items[parts.items.len - 1];
-                        std.debug.assert(prev_part.tail == .cooked);
+                        bun.assert(prev_part.tail == .cooked);
 
                         if (prev_part.tail.cooked.isUTF8()) {
                             if (part.value.data.e_string.len() > 0) {
@@ -2653,6 +2665,8 @@ pub const E = struct {
     pub const Import = struct {
         expr: ExprNodeIndex,
         import_record_index: u32,
+        // This will be dynamic at some point.
+        type_attribute: TypeAttribute = .none,
 
         /// Comments inside "import()" expressions have special meaning for Webpack.
         /// Preserving comments inside these expressions makes it possible to use
@@ -2667,6 +2681,24 @@ pub const E = struct {
         pub fn isImportRecordNull(this: *const Import) bool {
             return this.import_record_index == std.math.maxInt(u32);
         }
+
+        pub const TypeAttribute = enum {
+            none,
+            json,
+            toml,
+            text,
+            file,
+
+            pub fn tag(this: TypeAttribute) ImportRecord.Tag {
+                return switch (this) {
+                    .none => .none,
+                    .json => .with_type_json,
+                    .toml => .with_type_toml,
+                    .text => .with_type_text,
+                    .file => .with_type_file,
+                };
+            }
+        };
     };
 };
 
@@ -3264,9 +3296,17 @@ pub const Expr = struct {
         return ArrayIterator{ .array = array, .index = 0 };
     }
 
-    pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+    pub inline fn asStringLiteral(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
         return expr.data.e_string.string(allocator) catch null;
+    }
+
+    pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+        switch (expr.data) {
+            .e_string => |str| return str.string(allocator) catch null,
+            .e_utf8_string => |str| return str.data,
+            else => return null,
+        }
     }
 
     pub fn asBool(
@@ -3346,7 +3386,7 @@ pub const Expr = struct {
     }
 
     pub fn joinAllWithComma(all: []Expr, allocator: std.mem.Allocator) Expr {
-        std.debug.assert(all.len > 0);
+        bun.assert(all.len > 0);
         switch (all.len) {
             1 => {
                 return all[0];
@@ -3434,6 +3474,18 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_array = brk: {
+                            const item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
+                    },
+                };
+            },
+            E.UTF8String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_utf8_string = brk: {
                             const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
@@ -3711,7 +3763,7 @@ pub const Expr = struct {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
-                        std.debug.assert(@intFromPtr(st.data.ptr) > 0);
+                        bun.assert(@intFromPtr(st.data.ptr) > 0);
                     }
                 }
                 return Expr{
@@ -3851,6 +3903,14 @@ pub const Expr = struct {
         Data.Store.assert();
 
         switch (Type) {
+            E.UTF8String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_utf8_string = Data.Store.append(Type, st),
+                    },
+                };
+            },
             E.Array => {
                 return Expr{
                     .loc = loc,
@@ -4076,7 +4136,7 @@ pub const Expr = struct {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
-                        std.debug.assert(@intFromPtr(st.data.ptr) > 0);
+                        bun.assert(@intFromPtr(st.data.ptr) > 0);
                     }
                 }
                 return Expr{
@@ -4225,6 +4285,9 @@ pub const Expr = struct {
         e_undefined,
         e_new_target,
         e_import_meta,
+
+        /// A string that is UTF-8 encoded without escaping for use in JavaScript.
+        e_utf8_string,
 
         // This should never make it to the printer
         inline_identifier,
@@ -4888,6 +4951,8 @@ pub const Expr = struct {
         e_new_target: E.NewTarget,
         e_import_meta: E.ImportMeta,
 
+        e_utf8_string: *E.UTF8String,
+
         // This type should not exist outside of MacroContext
         // If it ends up in JSParser or JSPrinter, it is a bug.
         inline_identifier: i32,
@@ -5328,6 +5393,7 @@ pub const Expr = struct {
                 .e_array => |e| e.toJS(allocator, globalObject),
                 .e_object => |e| e.toJS(allocator, globalObject),
                 .e_string => |e| e.toJS(allocator, globalObject),
+                .e_utf8_string => |e| JSC.ZigString.fromUTF8(e.data).toValueGC(globalObject),
                 .e_null => JSC.JSValue.null,
                 .e_undefined => JSC.JSValue.undefined,
                 .e_boolean => |boolean| if (boolean.value)
@@ -5442,10 +5508,6 @@ pub const Expr = struct {
         }
     };
 };
-
-test "Byte size of Expr" {
-    try std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("\n\nByte Size {d}\n\n", .{@sizeOf(Expr.Data)}));
-}
 
 pub const EnumValue = struct {
     loc: logger.Loc,
@@ -6766,7 +6828,7 @@ pub fn printmem(comptime format: string, args: anytype) void {
 }
 
 pub const Macro = struct {
-    const JavaScript = @import("root").bun.JSC;
+    const JavaScript = bun.JSC;
     const JSCBase = @import("./bun.js/base.zig");
     const Resolver = @import("./resolver/resolver.zig").Resolver;
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
@@ -6829,7 +6891,7 @@ pub const Macro = struct {
             else
                 import_record_path;
 
-            std.debug.assert(!isMacroPath(import_record_path_without_macro_prefix));
+            bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
             const input_specifier = brk: {
                 if (JSC.HardcodedModule.Aliases.get(import_record_path, .bun)) |replacement| {
@@ -7210,11 +7272,10 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        const object = value.asObjectRef();
                         var object_iter = JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
-                        }).init(this.global, object);
+                        }).init(this.global, value);
                         defer object_iter.deinit();
                         var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
                         errdefer this.allocator.free(properties);
@@ -7431,7 +7492,7 @@ pub const ASTMemoryAllocator = struct {
 
     pub fn pop(this: *ASTMemoryAllocator) void {
         const prev = this.previous;
-        std.debug.assert(prev != this);
+        bun.assert(prev != this);
         Stmt.Data.Store.memory_allocator = prev;
         Expr.Data.Store.memory_allocator = prev;
         this.previous = null;

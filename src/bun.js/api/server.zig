@@ -1,13 +1,13 @@
 const Bun = @This();
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
@@ -17,7 +17,7 @@ const ast = @import("../../import_record.zig");
 const Sys = @import("../../sys.zig");
 
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
 const Bundler = bun.Bundler;
@@ -28,55 +28,55 @@ const js_ast = bun.JSAst;
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
-const ZigString = @import("root").bun.JSC.ZigString;
+const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../../runtime.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
 const ParseResult = bun.bundler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
-const WebCore = @import("root").bun.JSC.WebCore;
+const WebCore = bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
-const HTTP = @import("root").bun.http;
+const HTTP = bun.http;
 const FetchEvent = WebCore.FetchEvent;
-const js = @import("root").bun.JSC.C;
-const JSC = @import("root").bun.JSC;
+const js = bun.JSC.C;
+const JSC = bun.JSC;
 const JSError = @import("../base.zig").JSError;
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
-const JSValue = @import("root").bun.JSC.JSValue;
+const JSValue = bun.JSC.JSValue;
 
-const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
-const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
-const Node = @import("root").bun.JSC.Node;
-const ZigException = @import("root").bun.JSC.ZigException;
-const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = @import("root").bun.JSC.ErrorableResolvedSource;
-const ResolvedSource = @import("root").bun.JSC.ResolvedSource;
-const JSPromise = @import("root").bun.JSC.JSPromise;
-const JSInternalPromise = @import("root").bun.JSC.JSInternalPromise;
-const JSModuleLoader = @import("root").bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = @import("root").bun.JSC.JSPromiseRejectionOperation;
-const Exception = @import("root").bun.JSC.Exception;
-const ErrorableZigString = @import("root").bun.JSC.ErrorableZigString;
-const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
-const VM = @import("root").bun.JSC.VM;
-const JSFunction = @import("root").bun.JSC.JSFunction;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const ExceptionValueRef = bun.JSC.ExceptionValueRef;
+const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
+const ConsoleObject = bun.JSC.ConsoleObject;
+const Node = bun.JSC.Node;
+const ZigException = bun.JSC.ZigException;
+const ZigStackTrace = bun.JSC.ZigStackTrace;
+const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
+const ResolvedSource = bun.JSC.ResolvedSource;
+const JSPromise = bun.JSC.JSPromise;
+const JSInternalPromise = bun.JSC.JSInternalPromise;
+const JSModuleLoader = bun.JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
+const Exception = bun.JSC.Exception;
+const ErrorableZigString = bun.JSC.ErrorableZigString;
+const ZigGlobalObject = bun.JSC.ZigGlobalObject;
+const VM = bun.JSC.VM;
+const JSFunction = bun.JSC.JSFunction;
 const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const is_bindgen = JSC.is_bindgen;
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
 const Blob = JSC.WebCore.Blob;
-const BoringSSL = @import("root").bun.BoringSSL;
+const BoringSSL = bun.BoringSSL;
 const Arena = @import("../../mimalloc_arena.zig").Arena;
 const SendfileContext = struct {
     fd: bun.FileDescriptor,
@@ -137,6 +137,7 @@ pub const ServerConfig = struct {
                     allocator.free(addr);
                 },
             }
+            this.* = .{ .tcp = .{} };
         }
     } = .{
         .tcp = .{},
@@ -147,6 +148,7 @@ pub const ServerConfig = struct {
     base_uri: string = "",
 
     ssl_config: ?SSLConfig = null,
+    sni: ?bun.BabyList(SSLConfig) = null,
     max_request_body_size: usize = 1024 * 1024 * 128,
     development: bool = false,
 
@@ -159,6 +161,26 @@ pub const ServerConfig = struct {
     reuse_port: bool = false,
     id: []const u8 = "",
     allow_hot: bool = true,
+
+    pub fn deinit(this: *ServerConfig) void {
+        this.address.deinit(bun.default_allocator);
+
+        if (this.base_url.href.len > 0) {
+            bun.default_allocator.free(this.base_url.href);
+            this.base_url = URL{};
+        }
+        if (this.ssl_config) |*ssl_config| {
+            ssl_config.deinit();
+            this.ssl_config = null;
+        }
+        if (this.sni) |sni| {
+            for (sni.slice()) |*ssl_config| {
+                ssl_config.deinit();
+            }
+            this.sni.?.deinitWithAllocator(bun.default_allocator);
+            this.sni = null;
+        }
+    }
 
     pub fn computeID(this: *const ServerConfig, allocator: std.mem.Allocator) []const u8 {
         var arraylist = std.ArrayList(u8).init(allocator);
@@ -215,6 +237,8 @@ pub const ServerConfig = struct {
         ssl_ciphers: [*c]const u8 = null,
         protos: [*c]const u8 = null,
         protos_len: usize = 0,
+        client_renegotiation_limit: u32 = 0,
+        client_renegotiation_window: u32 = 0,
 
         const log = Output.scoped(.SSLConfig, false);
 
@@ -275,6 +299,7 @@ pub const ServerConfig = struct {
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
                     }
+                    @field(this, field) = "";
                 }
             }
 
@@ -319,7 +344,7 @@ pub const ServerConfig = struct {
 
         pub fn inJS(global: *JSC.JSGlobalObject, obj: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SSLConfig {
             var result = zero;
-            var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
+            var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
 
             if (!obj.isObject()) {
@@ -552,7 +577,8 @@ pub const ServerConfig = struct {
                     any = true;
                 }
             }
-            if (obj.getTruthy(global, "serverName")) |server_name| {
+
+            if (obj.getTruthy(global, "serverName") orelse obj.getTruthy(global, "servername")) |server_name| {
                 var sliced = server_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
@@ -660,6 +686,18 @@ pub const ServerConfig = struct {
                     }
                 }
 
+                if (obj.getTruthy(global, "clientRenegotiationLimit")) |client_renegotiation_limit| {
+                    if (client_renegotiation_limit.isNumber()) {
+                        result.client_renegotiation_limit = client_renegotiation_limit.toU32();
+                    }
+                }
+
+                if (obj.getTruthy(global, "clientRenegotiationWindow")) |client_renegotiation_window| {
+                    if (client_renegotiation_window.isNumber()) {
+                        result.client_renegotiation_window = client_renegotiation_window.toU32();
+                    }
+                }
+
                 if (obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
                     var sliced = dh_params_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
@@ -690,14 +728,6 @@ pub const ServerConfig = struct {
             if (!any)
                 return null;
             return result;
-        }
-
-        pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) ?SSLConfig {
-            if (arguments.next()) |arg| {
-                return SSLConfig.inJS(global, arg, exception);
-            }
-
-            return null;
         }
     };
 
@@ -896,16 +926,51 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "tls")) |tls| {
-                if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
-                    args.ssl_config = ssl_config;
-                }
+                if (tls.jsType().isArray()) {
+                    var value_iter = tls.arrayIterator(global);
+                    if (value_iter.len == 1) {
+                        JSC.throwInvalidArguments("tls option expects at least 1 tls object", .{}, global, exception);
+                        return args;
+                    }
+                    while (value_iter.next()) |item| {
+                        if (SSLConfig.inJS(global, item, exception)) |ssl_config| {
+                            if (args.ssl_config == null) {
+                                args.ssl_config = ssl_config;
+                            } else {
+                                if (ssl_config.server_name == null or std.mem.span(ssl_config.server_name).len == 0) {
+                                    var config = ssl_config;
+                                    defer config.deinit();
+                                    JSC.throwInvalidArguments("SNI tls object must have a serverName", .{}, global, exception);
+                                    return args;
+                                }
+                                if (args.sni == null) {
+                                    args.sni = bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1) catch bun.outOfMemory();
+                                }
 
-                if (exception.* != null) {
-                    return args;
-                }
+                                args.sni.?.push(bun.default_allocator, ssl_config) catch bun.outOfMemory();
+                            }
+                        }
 
-                if (global.hasException()) {
-                    return args;
+                        if (exception.* != null) {
+                            return args;
+                        }
+
+                        if (global.hasException()) {
+                            return args;
+                        }
+                    }
+                } else {
+                    if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
+                        args.ssl_config = ssl_config;
+                    }
+
+                    if (exception.* != null) {
+                        return args;
+                    }
+
+                    if (global.hasException()) {
+                        return args;
+                    }
                 }
             }
 
@@ -1333,7 +1398,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             };
             ctx.response_jsvalue = value;
-            std.debug.assert(!ctx.flags.response_protected);
+            assert(!ctx.flags.response_protected);
             ctx.flags.response_protected = true;
             JSC.C.JSValueProtect(ctx.server.globalThis, value.asObjectRef());
 
@@ -1571,8 +1636,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn onWritableResponseBuffer(this: *RequestContext, _: c_ulong, resp: *App.Response) callconv(.C) bool {
-            std.debug.assert(this.resp == resp);
+        pub fn onWritableResponseBuffer(this: *RequestContext, _: u64, resp: *App.Response) callconv(.C) bool {
+            ctxLog("onWritableResponseBuffer", .{});
+
+            assert(this.resp == resp);
             if (this.flags.aborted) {
                 this.finalizeForAbort();
                 return false;
@@ -1583,8 +1650,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         // TODO: should we cork?
-        pub fn onWritableCompleteResponseBufferAndMetadata(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
-            std.debug.assert(this.resp == resp);
+        pub fn onWritableCompleteResponseBufferAndMetadata(this: *RequestContext, write_offset: u64, resp: *App.Response) callconv(.C) bool {
+            ctxLog("onWritableCompleteResponseBufferAndMetadata", .{});
+            assert(this.resp == resp);
 
             if (this.flags.aborted) {
                 this.finalizeForAbort();
@@ -1604,8 +1672,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return this.sendWritableBytesForCompleteResponseBuffer(this.response_buf_owned.items, write_offset, resp);
         }
 
-        pub fn onWritableCompleteResponseBuffer(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
-            std.debug.assert(this.resp == resp);
+        pub fn onWritableCompleteResponseBuffer(this: *RequestContext, write_offset: u64, resp: *App.Response) callconv(.C) bool {
+            ctxLog("onWritableCompleteResponseBuffer", .{});
+            assert(this.resp == resp);
             if (this.flags.aborted) {
                 this.finalizeForAbort();
                 return false;
@@ -1642,8 +1711,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
-            std.debug.assert(this.resp == resp);
-            std.debug.assert(!this.flags.aborted);
+            assert(this.resp == resp);
+            assert(!this.flags.aborted);
             // mark request as aborted
             this.flags.aborted = true;
             var any_js_calls = false;
@@ -1819,10 +1888,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             ctxLog("deinit<d> ({*})<r>", .{this});
             if (comptime Environment.allow_assert)
-                std.debug.assert(this.flags.has_finalized);
+                assert(this.flags.has_finalized);
 
             if (comptime Environment.allow_assert)
-                std.debug.assert(this.flags.has_marked_complete);
+                assert(this.flags.has_marked_complete);
 
             var server = this.server;
             this.request_body_buf.clearAndFree(this.allocator);
@@ -1851,7 +1920,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn writeStatus(this: *RequestContext, status: u16) void {
             var status_text_buf: [48]u8 = undefined;
-            std.debug.assert(!this.flags.has_written_status);
+            assert(!this.flags.has_written_status);
             this.flags.has_written_status = true;
 
             if (this.resp) |resp| {
@@ -1945,8 +2014,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return true;
         }
 
-        pub fn onWritableBytes(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
-            std.debug.assert(this.resp == resp);
+        pub fn onWritableBytes(this: *RequestContext, write_offset: u64, resp: *App.Response) callconv(.C) bool {
+            ctxLog("onWritableBytes", .{});
+            assert(this.resp == resp);
             if (this.flags.aborted) {
                 this.finalizeForAbort();
                 return false;
@@ -1960,8 +2030,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return true;
         }
 
-        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset_: c_ulong, resp: *App.Response) bool {
-            std.debug.assert(this.resp == resp);
+        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset_: u64, resp: *App.Response) bool {
+            assert(this.resp == resp);
             const write_offset: usize = write_offset_;
 
             const bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
@@ -1975,9 +2045,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset_: c_ulong, resp: *App.Response) bool {
+        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset_: u64, resp: *App.Response) bool {
             const write_offset: usize = write_offset_;
-            std.debug.assert(this.resp == resp);
+            assert(this.resp == resp);
 
             const bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
@@ -1991,7 +2061,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return true;
         }
 
-        pub fn onWritableSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
+        pub fn onWritableSendfile(this: *RequestContext, _: u64, _: *App.Response) callconv(.C) bool {
+            ctxLog("onWritableSendfile", .{});
             return this.onSendfile();
         }
 
@@ -2145,7 +2216,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const is_temporary = result.result.is_temporary;
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.blob == .Blob);
+                assert(this.blob == .Blob);
             }
 
             if (!is_temporary) {
@@ -2242,7 +2313,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // explicitly set it to a dead pointer
             // we use this memory address to disable signals being sent
             signal.clear();
-            std.debug.assert(signal.isDead());
+            assert(signal.isDead());
 
             // We are already corked!
             const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
@@ -2255,7 +2326,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assignment_result.ensureStillAlive();
 
             // assert that it was updated
-            std.debug.assert(!signal.isDead());
+            assert(!signal.isDead());
 
             if (comptime Environment.allow_assert) {
                 if (resp.hasResponded()) {
@@ -2741,8 +2812,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             },
 
                             .Bytes => |byte_stream| {
-                                std.debug.assert(byte_stream.pipe.ctx == null);
-                                std.debug.assert(this.byte_stream == null);
+                                assert(byte_stream.pipe.ctx == null);
+                                assert(this.byte_stream == null);
                                 if (this.resp == null) {
                                     // we don't have a response, so we can discard the stream
                                     stream.done(this.server.globalThis);
@@ -3207,7 +3278,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onBufferedBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
             ctxLog("onBufferedBodyChunk {} {}", .{ chunk.len, last });
 
-            std.debug.assert(this.resp == resp);
+            assert(this.resp == resp);
 
             this.flags.is_waiting_for_request_body = last == false;
             if (this.flags.aborted or this.flags.has_marked_complete) return;
@@ -3224,7 +3295,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (body.value == .Locked) {
                     if (body.value.Locked.readable.get()) |readable| {
                         if (readable.ptr == .Bytes) {
-                            std.debug.assert(this.request_body_buf.items.len == 0);
+                            assert(this.request_body_buf.items.len == 0);
                             var vm = this.server.vm;
                             vm.eventLoop().enter();
                             defer vm.eventLoop().exit();
@@ -5266,7 +5337,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const exception: JSC.C.ExceptionRef = &exception_ref;
             var new_config = ServerConfig.fromJS(globalThis, &args_slice, exception);
             if (exception.* != null) {
+                new_config.deinit();
                 globalThis.throwValue(exception_ref[0].?.value());
+                return .zero;
+            }
+            if (globalThis.hasException()) {
+                new_config.deinit();
                 return .zero;
             }
 
@@ -5643,12 +5719,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.cached_hostname.deref();
             this.cached_protocol.deref();
 
-            this.config.address.deinit(bun.default_allocator);
-
-            if (this.config.base_url.href.len > 0) {
-                bun.default_allocator.free(this.config.base_url.href);
-            }
-
+            this.config.deinit();
             this.app.destroy();
             const allocator = this.allocator;
             allocator.destroy(this);
@@ -6081,20 +6152,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.toAsync(req, request_object);
         }
 
-        pub fn listen(this: *ThisServer) void {
-            httplog("listen", .{});
-            if (ssl_enabled) {
-                BoringSSL.load();
-                const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
-                this.app = App.create(ssl_config.asUSockets());
-
-                if (ssl_config.server_name != null and std.mem.span(ssl_config.server_name).len > 0) {
-                    this.app.addServerName(ssl_config.server_name);
-                }
-            } else {
-                this.app = App.create(.{});
-            }
-
+        fn setRoutes(this: *ThisServer) void {
             if (this.config.websocket) |*websocket| {
                 websocket.globalObject = this.globalThis;
                 websocket.handler.app = this.app;
@@ -6117,6 +6175,42 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 }
 
                 this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
+            }
+        }
+
+        pub fn listen(this: *ThisServer) void {
+            httplog("listen", .{});
+            if (ssl_enabled) {
+                BoringSSL.load();
+                const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
+                const ssl_options = ssl_config.asUSockets();
+                this.app = App.create(ssl_options);
+
+                this.setRoutes();
+                // add serverName to the SSL context using default ssl options
+                if (ssl_config.server_name != null) {
+                    const servername_len = std.mem.span(ssl_config.server_name).len;
+                    if (servername_len > 0) {
+                        this.app.addServerNameWithOptions(ssl_config.server_name, ssl_options);
+                        this.app.domain(ssl_config.server_name[0..servername_len :0]);
+                        this.setRoutes();
+                    }
+                }
+
+                // apply SNI routes if any
+                if (this.config.sni) |sni| {
+                    for (sni.slice()) |sni_ssl_config| {
+                        const sni_servername_len = std.mem.span(sni_ssl_config.server_name).len;
+                        if (sni_servername_len > 0) {
+                            this.app.addServerNameWithOptions(sni_ssl_config.server_name, sni_ssl_config.asUSockets());
+                            this.app.domain(sni_ssl_config.server_name[0..sni_servername_len :0]);
+                            this.setRoutes();
+                        }
+                    }
+                }
+            } else {
+                this.app = App.create(.{});
+                this.setRoutes();
             }
 
             this.ref();
@@ -6173,3 +6267,5 @@ pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, tru
 const welcome_page_html_gz = @embedFile("welcome-page.html.gz");
 
 extern fn Bun__addInspector(bool, *anyopaque, *JSC.JSGlobalObject) void;
+
+const assert = bun.assert;

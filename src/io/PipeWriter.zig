@@ -5,7 +5,7 @@ const JSC = bun.JSC;
 const uv = bun.windows.libuv;
 const Source = @import("./source.zig").Source;
 
-const log = bun.Output.scoped(.PipeWriter, false);
+const log = bun.Output.scoped(.PipeWriter, true);
 const FileType = @import("./pipes.zig").FileType;
 
 pub const WriteResult = union(enum) {
@@ -225,7 +225,7 @@ pub fn PosixBufferedWriter(
             this: *PosixWriter,
             err: bun.sys.Error,
         ) void {
-            std.debug.assert(!err.isRetry());
+            bun.assert(!err.isRetry());
 
             onError(this.parent, err);
 
@@ -306,7 +306,7 @@ pub fn PosixBufferedWriter(
 
         fn closeWithoutReporting(this: *PosixWriter) void {
             if (this.getFd() != bun.invalid_fd) {
-                std.debug.assert(!this.closed_without_reporting);
+                bun.assert(!this.closed_without_reporting);
                 this.closed_without_reporting = true;
                 if (this.close_fd) this.handle.close(null, {});
             }
@@ -350,7 +350,7 @@ pub fn PosixBufferedWriter(
         pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, pollable: bool) JSC.Maybe(void) {
             this.pollable = pollable;
             if (!pollable) {
-                std.debug.assert(this.handle != .poll);
+                bun.assert(this.handle != .poll);
                 this.handle = .{ .fd = fd };
                 return JSC.Maybe(void){ .result = {} };
             }
@@ -417,7 +417,7 @@ pub fn PosixStreamingWriter(
             this: *PosixWriter,
             err: bun.sys.Error,
         ) void {
-            std.debug.assert(!err.isRetry());
+            bun.assert(!err.isRetry());
 
             this.closeWithoutReporting();
             this.is_done = true;
@@ -471,7 +471,7 @@ pub fn PosixStreamingWriter(
 
         fn closeWithoutReporting(this: *PosixWriter) void {
             if (this.getFd() != bun.invalid_fd) {
-                std.debug.assert(!this.closed_without_reporting);
+                bun.assert(!this.closed_without_reporting);
                 this.closed_without_reporting = true;
                 this.handle.close(null, {});
             }
@@ -553,7 +553,7 @@ pub fn PosixStreamingWriter(
         }
 
         fn _tryWriteNewlyBufferedData(this: *PosixWriter) WriteResult {
-            std.debug.assert(!this.is_done);
+            bun.assert(!this.is_done);
 
             switch (@This()._tryWrite(this, this.buffer.items)) {
                 .wrote => |amt| {
@@ -697,7 +697,7 @@ pub fn PosixStreamingWriter(
         pub fn close(this: *PosixWriter) void {
             if (this.closed_without_reporting) {
                 this.closed_without_reporting = false;
-                std.debug.assert(this.getFd() == bun.invalid_fd);
+                bun.assert(this.getFd() == bun.invalid_fd);
                 onClose(@ptrCast(this.parent));
                 return;
             }
@@ -785,13 +785,12 @@ fn BaseWindowsPipeWriter(
             this.is_done = true;
             if (this.source) |source| {
                 switch (source) {
-                    .file => |file| {
+                    .sync_file, .file => |file| {
+                        // always cancel the current one
+                        file.fs.cancel();
                         // always use close_fs here because we can have a operation in progress
                         file.close_fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, @ptrCast(&onFileClose));
-                    },
-                    .sync_file => {
-                        // no-op
+                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
                     },
                     .pipe => |pipe| {
                         pipe.data = pipe;
@@ -831,14 +830,14 @@ fn BaseWindowsPipeWriter(
         }
 
         pub fn startWithPipe(this: *WindowsPipeWriter, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
-            std.debug.assert(this.source == null);
+            bun.assert(this.source == null);
             this.source = .{ .pipe = pipe };
             this.setParent(this.parent);
             return this.startWithCurrentPipe();
         }
 
         pub fn startSync(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
-            std.debug.assert(this.source == null);
+            bun.assert(this.source == null);
             const source = Source{
                 .sync_file = Source.openFile(fd),
             };
@@ -849,7 +848,7 @@ fn BaseWindowsPipeWriter(
         }
 
         pub fn startWithFile(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.JSC.Maybe(void) {
-            std.debug.assert(this.source == null);
+            bun.assert(this.source == null);
             const source: bun.io.Source = .{ .file = Source.openFile(fd) };
             source.setData(this);
             this.source = source;
@@ -858,7 +857,7 @@ fn BaseWindowsPipeWriter(
         }
 
         pub fn start(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
-            std.debug.assert(this.source == null);
+            bun.assert(this.source == null);
             const source = switch (Source.open(uv.Loop.get(), fd)) {
                 .result => |source| source,
                 .err => |err| return .{ .err = err },
@@ -910,7 +909,7 @@ pub fn WindowsBufferedWriter(
         }
 
         pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {
-            std.debug.assert(this.source != null);
+            bun.assert(this.source != null);
             this.is_done = false;
             this.write();
             return .{ .result = {} };
@@ -940,12 +939,20 @@ pub fn WindowsBufferedWriter(
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            const result = fs.result;
+            if (result.int() == uv.UV_ECANCELED) {
+                fs.deinit();
+                return;
+            }
             const this = bun.cast(*WindowsWriter, fs.data);
-            if (fs.result.toError(.write)) |err| {
+
+            fs.deinit();
+            if (result.toError(.write)) |err| {
                 this.close();
                 onError(this.parent, err);
                 return;
             }
+
             this.onWriteComplete(.zero);
         }
 
@@ -1149,7 +1156,7 @@ pub fn WindowsStreamingWriter(
         }
 
         pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {
-            std.debug.assert(this.source != null);
+            bun.assert(this.source != null);
             this.is_done = false;
             return .{ .result = {} };
         }
@@ -1284,7 +1291,7 @@ pub fn WindowsStreamingWriter(
 
         fn closeWithoutReporting(this: *WindowsWriter) void {
             if (this.getFd() != bun.invalid_fd) {
-                std.debug.assert(!this.closed_without_reporting);
+                bun.assert(!this.closed_without_reporting);
                 this.closed_without_reporting = true;
                 this.close();
             }

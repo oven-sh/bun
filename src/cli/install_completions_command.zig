@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -35,9 +35,9 @@ const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
-const clap = @import("root").bun.clap;
+const clap = bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("root").bun.http.Headers;
+const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 const ShellCompletions = @import("./shell_completions.zig");
 
@@ -50,7 +50,7 @@ pub const InstallCompletionsCommand = struct {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         // don't install it if it's already there
-        if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, bunx_name) != null)
+        if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, cwd, bunx_name) != null)
             return;
 
         // first try installing the symlink into the same directory as the bun executable
@@ -221,10 +221,10 @@ pub const InstallCompletionsCommand = struct {
 
         var completions_dir: string = "";
         var output_dir: std.fs.Dir = found: {
-            for (bun.argv(), 0..) |arg, i| {
+            for (bun.argv, 0..) |arg, i| {
                 if (strings.eqlComptime(arg, "completions")) {
-                    if (bun.argv().len > i + 1) {
-                        const input = bun.argv()[i + 1];
+                    if (bun.argv.len > i + 1) {
+                        const input = bun.argv[i + 1];
 
                         if (!std.fs.path.isAbsolute(input)) {
                             completions_dir = resolve_path.joinAbs(
@@ -442,7 +442,7 @@ pub const InstallCompletionsCommand = struct {
             else => unreachable,
         };
 
-        std.debug.assert(completions_dir.len > 0);
+        bun.assert(completions_dir.len > 0);
 
         var output_file = output_dir.createFileZ(filename, .{
             .truncate = true,

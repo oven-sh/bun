@@ -1,4 +1,4 @@
-const Async = @import("root").bun.Async;
+const Async = bun.Async;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 

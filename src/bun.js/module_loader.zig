@@ -21,7 +21,7 @@ const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const ParseResult = bun.bundler.ParseResult;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Bundler = bun.Bundler;
@@ -33,46 +33,46 @@ const js_ast = bun.JSAst;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
-const ZigString = @import("root").bun.JSC.ZigString;
+const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../runtime.zig");
 const Router = @import("./api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const WebCore = @import("root").bun.JSC.WebCore;
+const WebCore = bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
-const js = @import("root").bun.JSC.C;
-const JSC = @import("root").bun.JSC;
+const js = bun.JSC.C;
+const JSC = bun.JSC;
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
-const JSValue = @import("root").bun.JSC.JSValue;
+const JSValue = bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
 
-const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
-const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
-const Node = @import("root").bun.JSC.Node;
-const ZigException = @import("root").bun.JSC.ZigException;
-const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = @import("root").bun.JSC.ErrorableResolvedSource;
-const ResolvedSource = @import("root").bun.JSC.ResolvedSource;
-const JSPromise = @import("root").bun.JSC.JSPromise;
-const JSInternalPromise = @import("root").bun.JSC.JSInternalPromise;
-const JSModuleLoader = @import("root").bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = @import("root").bun.JSC.JSPromiseRejectionOperation;
-const Exception = @import("root").bun.JSC.Exception;
-const ErrorableZigString = @import("root").bun.JSC.ErrorableZigString;
-const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
-const VM = @import("root").bun.JSC.VM;
-const JSFunction = @import("root").bun.JSC.JSFunction;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const ExceptionValueRef = bun.JSC.ExceptionValueRef;
+const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
+const ConsoleObject = bun.JSC.ConsoleObject;
+const Node = bun.JSC.Node;
+const ZigException = bun.JSC.ZigException;
+const ZigStackTrace = bun.JSC.ZigStackTrace;
+const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
+const ResolvedSource = bun.JSC.ResolvedSource;
+const JSPromise = bun.JSC.JSPromise;
+const JSInternalPromise = bun.JSC.JSInternalPromise;
+const JSModuleLoader = bun.JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
+const Exception = bun.JSC.Exception;
+const ErrorableZigString = bun.JSC.ErrorableZigString;
+const ZigGlobalObject = bun.JSC.ZigGlobalObject;
+const VM = bun.JSC.VM;
+const JSFunction = bun.JSC.JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
@@ -711,7 +711,7 @@ pub const ModuleLoader = struct {
 
     /// This must be called after calling transpileSourceCode
     pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
-        std.debug.assert(&jsc_vm.module_loader == this);
+        bun.assert(&jsc_vm.module_loader == this);
         if (this.transpile_source_code_arena) |arena| {
             if (jsc_vm.smol) {
                 _ = arena.reset(.free_all);
@@ -719,6 +719,49 @@ pub const ModuleLoader = struct {
                 _ = arena.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
             }
         }
+    }
+
+    pub fn resolveEmbeddedFile(vm: *JSC.VirtualMachine, input_path: []const u8, extname: []const u8) ?[]const u8 {
+        if (input_path.len == 0) return null;
+        var graph = vm.standalone_module_graph orelse return null;
+        const file = graph.find(input_path) orelse return null;
+
+        if (comptime Environment.isLinux) {
+            // TODO: use /proc/fd/12346 instead! Avoid the copy!
+        }
+
+        // atomically write to a tmpfile and then move it to the final destination
+        var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null, 0);
+
+        const tmpdir = bun.fs.FileSystem.instance.tmpdir() catch return null;
+
+        // First we open the tmpfile, to avoid any other work in the event of failure.
+        const tmpfile = bun.Tmpfile.create(bun.toFD(tmpdir.fd), tmpfilename).unwrap() catch return null;
+        defer {
+            _ = bun.sys.close(tmpfile.fd);
+        }
+
+        switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+            &tmpname_buf, // not used
+
+            .{
+                .data = .{
+                    .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(file.contents),
+                },
+                .dirfd = bun.toFD(tmpdir.fd),
+                .file = .{
+                    .fd = tmpfile.fd,
+                },
+                .encoding = .buffer,
+            },
+        )) {
+            .err => {
+                return null;
+            },
+            else => {},
+        }
+        return bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename);
     }
 
     pub const AsyncModule = struct {
@@ -912,7 +955,7 @@ pub const ModuleLoader = struct {
                 this: *Queue,
                 package_id: Install.PackageID,
                 name: []const u8,
-                resolution: Install.Resolution,
+                resolution: *const Install.Resolution,
                 err: anyerror,
                 url: []const u8,
             ) void {
@@ -932,7 +975,7 @@ pub const ModuleLoader = struct {
                             record_ids[import_id],
                             .{
                                 .name = name,
-                                .resolution = resolution,
+                                .resolution = resolution.*,
                                 .err = err,
                                 .url = url,
                             },
@@ -948,7 +991,7 @@ pub const ModuleLoader = struct {
 
             pub fn pollModules(this: *Queue) void {
                 var pm = this.vm().packageManager();
-                if (pm.pending_tasks > 0) return;
+                if (pm.pending_tasks.load(.Monotonic) > 0) return;
 
                 var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
@@ -991,7 +1034,7 @@ pub const ModuleLoader = struct {
                         }
 
                         const package = pm.lockfile.packages.get(package_id);
-                        std.debug.assert(package.resolution.tag != .root);
+                        bun.assert(package.resolution.tag != .root);
 
                         switch (pm.determinePreinstallState(package, pm.lockfile)) {
                             .done => {
@@ -2211,6 +2254,14 @@ pub const ModuleLoader = struct {
         if (type_attribute) |attribute| {
             if (attribute.eqlComptime("sqlite")) {
                 loader = .sqlite;
+            } else if (attribute.eqlComptime("text")) {
+                loader = .text;
+            } else if (attribute.eqlComptime("json")) {
+                loader = .json;
+            } else if (attribute.eqlComptime("toml")) {
+                loader = .toml;
+            } else if (attribute.eqlComptime("file")) {
+                loader = .file;
             }
         }
 
@@ -2277,7 +2328,7 @@ pub const ModuleLoader = struct {
                 FetchFlags.transpile,
             ) catch |err| {
                 if (err == error.AsyncModule) {
-                    std.debug.assert(promise != null);
+                    bun.assert(promise != null);
                     return promise;
                 }
 
@@ -2354,13 +2405,6 @@ pub const ModuleLoader = struct {
                     if (!Environment.isDebug) {
                         if (!is_allowed_to_use_internal_testing_apis)
                             return null;
-                        const is_outside_our_ci = brk: {
-                            const repo = jsc_vm.bundler.env.get("GITHUB_REPOSITORY") orelse break :brk true;
-                            break :brk !strings.endsWithComptime(repo, "/bun");
-                        };
-                        if (is_outside_our_ci) {
-                            return null;
-                        }
                     }
 
                     return jsSyntheticModule(.InternalForTesting, specifier);
@@ -2483,7 +2527,7 @@ pub const ModuleLoader = struct {
     ) bool {
         JSC.markBinding(@src());
         const jsc_vm = globalObject.bunVM();
-        std.debug.assert(jsc_vm.plugin_runner != null);
+        bun.assert(jsc_vm.plugin_runner != null);
 
         var specifier_slice = specifier_ptr.toUTF8(jsc_vm.allocator);
         const specifier = specifier_slice.slice();
@@ -2918,47 +2962,11 @@ pub const HardcodedModule = enum {
 
 /// Support embedded .node files
 export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun.String) bool {
-    var graph = vm.standalone_module_graph orelse return false;
-    const utf8 = in_out_str.toUTF8(bun.default_allocator);
-    defer utf8.deinit();
-    const file = graph.find(utf8.slice()) orelse return false;
+    if (vm.standalone_module_graph == null) return false;
 
-    if (comptime Environment.isLinux) {
-        // TODO: use /proc/fd/12346 instead! Avoid the copy!
-    }
-
-    // atomically write to a tmpfile and then move it to the final destination
-    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname("node", &tmpname_buf, bun.hash(file.name)) catch return false, 0);
-
-    const tmpdir = bun.fs.FileSystem.instance.tmpdir();
-
-    // First we open the tmpfile, to avoid any other work in the event of failure.
-    const tmpfile = bun.Tmpfile.create(bun.toFD(tmpdir.fd), tmpfilename).unwrap() catch return false;
-    defer {
-        _ = bun.sys.close(tmpfile.fd);
-    }
-
-    switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
-        &tmpname_buf, // not used
-
-        .{
-            .data = .{
-                .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(file.contents),
-            },
-            .dirfd = bun.toFD(tmpdir.fd),
-            .file = .{
-                .fd = tmpfile.fd,
-            },
-            .encoding = .buffer,
-        },
-    )) {
-        .err => {
-            return false;
-        },
-        else => {},
-    }
-
-    in_out_str.* = bun.String.createUTF8(bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename));
+    const input_path = in_out_str.toUTF8(bun.default_allocator);
+    defer input_path.deinit();
+    const result = ModuleLoader.resolveEmbeddedFile(vm, input_path.slice(), "node") orelse return false;
+    in_out_str.* = bun.String.createUTF8(result);
     return true;
 }

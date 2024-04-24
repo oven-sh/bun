@@ -105,7 +105,7 @@ declare module "bun" {
   var TOML: {
     parse(contents: string): any;
   };
-  function jest(): typeof import("bun:test");
+  function jest(path: string): typeof import("bun:test");
   var main: string;
   var tty: Array<{ hasColors: boolean }>;
   var FFI: any;

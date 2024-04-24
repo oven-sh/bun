@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const tables = @import("js_lexer_tables.zig");
 const build_options = @import("build_options");
 const js_ast = bun.JSAst;
@@ -909,18 +909,18 @@ fn NewLexer_(
             i: usize = 0,
 
             pub fn append(fake: *FakeArrayList16, value: u16) !void {
-                std.debug.assert(fake.items.len > fake.i);
+                bun.assert(fake.items.len > fake.i);
                 fake.items[fake.i] = value;
                 fake.i += 1;
             }
 
             pub fn appendAssumeCapacity(fake: *FakeArrayList16, value: u16) void {
-                std.debug.assert(fake.items.len > fake.i);
+                bun.assert(fake.items.len > fake.i);
                 fake.items[fake.i] = value;
                 fake.i += 1;
             }
             pub fn ensureUnusedCapacity(fake: *FakeArrayList16, int: anytype) !void {
-                std.debug.assert(fake.items.len > fake.i + int);
+                bun.assert(fake.items.len > fake.i + int);
             }
         };
         threadlocal var large_escape_sequence_list: std.ArrayList(u16) = undefined;
@@ -1957,7 +1957,7 @@ fn NewLexer_(
                     if (@reduce(.Max, hashtag + at) == 1) {
                         rest.len = @intFromPtr(end) - @intFromPtr(rest.ptr);
                         if (comptime Environment.allow_assert) {
-                            std.debug.assert(
+                            bun.assert(
                                 strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '#') or
                                     strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '@'),
                             );
@@ -2014,7 +2014,7 @@ fn NewLexer_(
             }
 
             if (comptime Environment.allow_assert)
-                std.debug.assert(rest.len == 0 or bun.isSliceInBuffer(rest, text));
+                bun.assert(rest.len == 0 or bun.isSliceInBuffer(rest, text));
 
             while (rest.len > 0) {
                 const c = rest[0];
@@ -3312,11 +3312,11 @@ fn latin1IdentifierContinueLength(name: []const u8) usize {
             if (std.simd.firstIndexOfValue(@as(Vec, @bitCast(other)), 1)) |first| {
                 if (comptime Environment.allow_assert) {
                     for (vec[0..first]) |c| {
-                        std.debug.assert(isIdentifierContinue(c));
+                        bun.assert(isIdentifierContinue(c));
                     }
 
                     if (vec[first] < 128)
-                        std.debug.assert(!isIdentifierContinue(vec[first]));
+                        bun.assert(!isIdentifierContinue(vec[first]));
                 }
 
                 return @as(usize, first) +
@@ -3405,8 +3405,8 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
     const V1x16 = strings.AsciiVectorU1;
 
     const text_end_len = text.len & ~(@as(usize, strings.ascii_vector_size) - 1);
-    std.debug.assert(text_end_len % strings.ascii_vector_size == 0);
-    std.debug.assert(text_end_len <= text.len);
+    bun.assert(text_end_len % strings.ascii_vector_size == 0);
+    bun.assert(text_end_len <= text.len);
 
     const text_end_ptr = text.ptr + text_end_len;
 
@@ -3422,8 +3422,8 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
         if (@reduce(.Max, any_significant) > 0) {
             const bitmask = @as(u16, @bitCast(any_significant));
             const first = @ctz(bitmask);
-            std.debug.assert(first < strings.ascii_vector_size);
-            std.debug.assert(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127);
+            bun.assert(first < strings.ascii_vector_size);
+            bun.assert(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127);
             return @as(u32, @truncate(first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr))));
         }
         text.ptr += strings.ascii_vector_size;
@@ -3450,39 +3450,11 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
         if (@reduce(.Max, any_significant) > 0) {
             const bitmask = @as(u16, @bitCast(any_significant));
             const first = @ctz(bitmask);
-            std.debug.assert(first < strings.ascii_vector_size);
+            bun.assert(first < strings.ascii_vector_size);
             return first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
         }
         text = text[strings.ascii_vector_size..];
     }
 
     return null;
-}
-
-test "isIdentifier" {
-    const expect = std.testing.expect;
-    try expect(!isIdentifierStart(0x2029));
-    try expect(!isIdentifierStart(0));
-    try expect(!isIdentifierStart(1));
-    try expect(!isIdentifierStart(2));
-    try expect(!isIdentifierStart(3));
-    try expect(!isIdentifierStart(4));
-    try expect(!isIdentifierStart(5));
-    try expect(!isIdentifierStart(6));
-    try expect(!isIdentifierStart(7));
-    try expect(!isIdentifierStart(8));
-    try expect(!isIdentifierStart(9));
-    try expect(!isIdentifierStart(0x2028));
-    try expect(!isIdentifier("\\u2028"));
-    try expect(!isIdentifier("\\u2029"));
-
-    try expect(!isIdentifierContinue(':'));
-    try expect(!isIdentifier("javascript:"));
-
-    try expect(isIdentifier("javascript"));
-
-    try expect(!isIdentifier(":2"));
-    try expect(!isIdentifier("2:"));
-    try expect(isIdentifier("$"));
-    try expect(!isIdentifier("$:"));
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,19 +25,22 @@
 
 #pragma once
 
+#include "config.h"
+
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
-// #include "JSDOMPromiseDeferred.h"
 #include "JSValueInWrappedObject.h"
 #include <wtf/Function.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
+#include <wtf/WeakListHashSet.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
 class AbortAlgorithm;
 class ScriptExecutionContext;
+class WebCoreOpaqueRoot;
 
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_ISO_ALLOCATED_EXPORT(AbortSignal, WEBCORE_EXPORT);
@@ -49,14 +52,19 @@ public:
 
     static Ref<AbortSignal> abort(JSDOMGlobalObject&, ScriptExecutionContext&, JSC::JSValue reason);
     static Ref<AbortSignal> timeout(ScriptExecutionContext&, uint64_t milliseconds);
+    static Ref<AbortSignal> any(ScriptExecutionContext&, const Vector<RefPtr<AbortSignal>>&);
 
-    static bool whenSignalAborted(AbortSignal&, Ref<AbortAlgorithm>&&);
+    static uint32_t addAbortAlgorithmToSignal(AbortSignal&, Ref<AbortAlgorithm>&&);
+    static void removeAbortAlgorithmFromSignal(AbortSignal&, uint32_t algorithmIdentifier);
 
     void signalAbort(JSC::JSValue reason);
     void signalFollow(AbortSignal&);
 
     bool aborted() const { return m_aborted; }
-    JSValue reason() const { return m_reason.get(); }
+    const JSValueInWrappedObject& reason() const { return m_reason; }
+
+    void cleanNativeBindings(void* ref);
+    void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }
 
     bool hasActiveTimeoutTimer() const { return m_hasActiveTimeoutTimer; }
     bool hasAbortEventListener() const { return m_hasAbortEventListener; }
@@ -64,14 +72,17 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
 
-    using Algorithm = Function<void(JSValue)>;
-    void addAlgorithm(Algorithm&& algorithm) { m_algorithms.append(WTFMove(algorithm)); }
-    void cleanNativeBindings(void* ref);
-    void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }
+    using Algorithm = Function<void(JSC::JSValue reason)>;
+    uint32_t addAlgorithm(Algorithm&&);
+    void removeAlgorithm(uint32_t);
 
     bool isFollowingSignal() const { return !!m_followingSignal; }
 
     void throwIfAborted(JSC::JSGlobalObject&);
+
+    using AbortSignalSet = WeakListHashSet<AbortSignal, WeakPtrImplWithEventTargetData>;
+    const AbortSignalSet& sourceSignals() const { return m_sourceSignals; }
+    AbortSignalSet& sourceSignals() { return m_sourceSignals; }
 
 private:
     enum class Aborted : bool { No,
@@ -80,6 +91,11 @@ private:
 
     void setHasActiveTimeoutTimer(bool hasActiveTimeoutTimer) { m_hasActiveTimeoutTimer = hasActiveTimeoutTimer; }
 
+    bool isDependent() const { return m_isDependent; }
+    void markAsDependent() { m_isDependent = true; }
+    void addSourceSignal(AbortSignal&);
+    void addDependentSignal(AbortSignal&);
+
     // EventTarget.
     EventTargetInterface eventTargetInterface() const final { return AbortSignalEventTargetInterfaceType; }
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
@@ -87,13 +103,19 @@ private:
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final;
 
-    bool m_aborted { false };
-    Vector<Algorithm, 2> m_algorithms;
+    Vector<std::pair<uint32_t, Algorithm>> m_algorithms;
+    WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_followingSignal;
+    AbortSignalSet m_sourceSignals;
+    AbortSignalSet m_dependentSignals;
+    JSValueInWrappedObject m_reason;
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
-    WeakPtr<AbortSignal> m_followingSignal;
-    JSC::Strong<JSC::Unknown> m_reason;
+    uint32_t m_algorithmIdentifier { 0 };
+    bool m_aborted { false };
     bool m_hasActiveTimeoutTimer { false };
     bool m_hasAbortEventListener { false };
+    bool m_isDependent { false };
 };
 
-}
+WebCoreOpaqueRoot root(AbortSignal*);
+
+} // namespace WebCore

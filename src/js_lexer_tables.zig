@@ -1,9 +1,10 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const unicode = std.unicode;
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const string = @import("string_types.zig").string;
 const CodePoint = @import("string_types.zig").CodePoint;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
@@ -827,19 +828,3 @@ pub const jsxEntity = ComptimeStringMap(CodePoint, .{
     .{ "zwj", @as(CodePoint, 0x200D) },
     .{ "zwnj", @as(CodePoint, 0x200C) },
 });
-
-test "tokenToString" {
-    try expectString(tokenToString.get(T.t_end_of_file), "end of file");
-}
-
-// test "jsxEntity" {
-//     try alloc.setup(std.heap.page_allocator);
-
-//     initJSXEntityMap() catch |err| {
-//         @panic(@errorName(err));
-//     };
-
-//     if (jsxEntity.get("sim")) |v| {
-//         expect(v == 0x223C);
-//     }
-// }

@@ -6,6 +6,15 @@
   "quoteProps": "preserve",
   "overrides": [
     {
+      "files": [".vscode/*.json"],
+      "options": {
+        "parser": "jsonc",
+        "quoteProps": "preserve",
+        "singleQuote": false,
+        "trailingComma": "all"
+      }
+    },
+    {
       "files": ["*.md"],
       "options": {
         "printWidth": 80

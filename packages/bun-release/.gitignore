@@ -3,4 +3,6 @@
 node_modules
 /npm/**/bin
 /npm/**/*.js
+/npm/**/package.json
 /npm/**/.npmrc
+*.tgz

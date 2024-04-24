@@ -171,15 +171,27 @@ fn ws(comptime str: []const u8) Whitespacer {
 
 pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize {
     var remaining = input;
-    var len: u32 = 2; // for quotes
+    var len: usize = 2; // for quotes
 
     while (strings.indexOfNeedsEscape(remaining)) |i| {
         len += i;
         remaining = remaining[i..];
         const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
-        const c = strings.decodeWTF8RuneT(remaining.ptr[0..4], char_len, i32, 0);
+        const c = strings.decodeWTF8RuneT(
+            &switch (char_len) {
+                // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
+                1 => .{ remaining[0], 0, 0, 0 },
+                2 => remaining[0..2].* ++ .{ 0, 0 },
+                3 => remaining[0..3].* ++ .{0},
+                4 => remaining[0..4].*,
+                else => unreachable,
+            },
+            char_len,
+            i32,
+            0,
+        );
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            len += @as(u32, char_len);
+            len += @as(usize, char_len);
         } else if (c <= 0xFFFF) {
             len += 6;
         } else {
@@ -187,7 +199,7 @@ pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize
         }
         remaining = remaining[char_len..];
     } else {
-        return @as(u32, @truncate(remaining.len)) + 2;
+        return remaining.len + 2;
     }
 
     return len;
@@ -206,12 +218,28 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
     const n: usize = text.len;
     while (i < n) {
         const width = strings.wtf8ByteSequenceLengthWithInvalid(text[i]);
-        const c = strings.decodeWTF8RuneT(text.ptr[i .. i + 4][0..4], width, i32, 0);
+        const clamped_width = @min(@as(usize, width), n -| i);
+        const c = strings.decodeWTF8RuneT(
+            &switch (clamped_width) {
+                // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
+                1 => .{ text[i], 0, 0, 0 },
+                2 => text[i..][0..2].* ++ .{ 0, 0 },
+                3 => text[i..][0..3].* ++ .{0},
+                4 => text[i..][0..4].*,
+                else => unreachable,
+            },
+            width,
+            i32,
+            0,
+        );
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            const remain = text[i + @as(usize, width) ..];
+            const remain = text[i + clamped_width ..];
             if (strings.indexOfNeedsEscape(remain)) |j| {
-                try bytes.appendSlice(text[i .. i + j + @as(usize, width)]);
-                i += j + @as(usize, width);
+                const text_chunk = text[i .. i + clamped_width];
+                try bytes.appendSlice(text_chunk);
+                i += clamped_width;
+                try bytes.appendSlice(remain[0..j]);
+                i += j;
                 continue;
             } else {
                 try bytes.appendSlice(text[i..]);
@@ -2049,6 +2077,37 @@ fn NewPrinter(
             // Allow it to fail at runtime, if it should
             p.print("import(");
             p.printImportRecordPath(record);
+
+            switch (record.tag) {
+                .with_type_sqlite, .with_type_sqlite_embedded => {
+                    // we do not preserve "embed": "true" since it is not necessary
+                    p.printWhitespacer(ws(", { with: { type: \"sqlite\" } }"));
+                },
+                .with_type_text => {
+                    if (comptime is_bun_platform) {
+                        p.printWhitespacer(ws(", { with: { type: \"text\" } }"));
+                    }
+                },
+                .with_type_json => {
+                    // backwards compatibility: previously, we always stripped type json
+                    if (comptime is_bun_platform) {
+                        p.printWhitespacer(ws(", { with: { type: \"json\" } }"));
+                    }
+                },
+                .with_type_toml => {
+                    // backwards compatibility: previously, we always stripped type
+                    if (comptime is_bun_platform) {
+                        p.printWhitespacer(ws(", { with: { type: \"toml\" } }"));
+                    }
+                },
+                .with_type_file => {
+                    // backwards compatibility: previously, we always stripped type
+                    if (comptime is_bun_platform) {
+                        p.printWhitespacer(ws(", { with: { type: \"file\" } }"));
+                    }
+                },
+                else => {},
+            }
             p.print(")");
 
             if (leading_interior_comments.len > 0) {
@@ -2447,6 +2506,26 @@ fn NewPrinter(
                             p.printIndent();
                         }
                         p.printExpr(e.expr, .comma, ExprFlag.None());
+
+                        if (comptime is_bun_platform) {
+                            // since we previously stripped type, it is a breaking change to
+                            // enable this for non-bun platforms
+                            switch (e.type_attribute) {
+                                .none => {},
+                                .text => {
+                                    p.printWhitespacer(ws(", { with: { type: \"text\" } }"));
+                                },
+                                .json => {
+                                    p.printWhitespacer(ws(", { with: { type: \"json\" } }"));
+                                },
+                                .toml => {
+                                    p.printWhitespacer(ws(", { with: { type: \"toml\" } }"));
+                                },
+                                .file => {
+                                    p.printWhitespacer(ws(", { with: { type: \"file\" } }"));
+                                },
+                            }
+                        }
 
                         if (e.leading_interior_comments.len > 0) {
                             p.printNewline();
@@ -4711,9 +4790,35 @@ fn NewPrinter(
 
                     p.printImportRecordPath(record);
 
-                    if ((record.tag.loader() orelse options.Loader.file).isSQLite()) {
-                        // we do not preserve "embed": "true" since it is not necessary
-                        p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
+                    switch (record.tag) {
+                        .with_type_sqlite, .with_type_sqlite_embedded => {
+                            // we do not preserve "embed": "true" since it is not necessary
+                            p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
+                        },
+                        .with_type_text => {
+                            if (comptime is_bun_platform) {
+                                p.printWhitespacer(ws(" with { type: \"text\" }"));
+                            }
+                        },
+                        .with_type_json => {
+                            // backwards compatibility: previously, we always stripped type json
+                            if (comptime is_bun_platform) {
+                                p.printWhitespacer(ws(" with { type: \"json\" }"));
+                            }
+                        },
+                        .with_type_toml => {
+                            // backwards compatibility: previously, we always stripped type
+                            if (comptime is_bun_platform) {
+                                p.printWhitespacer(ws(" with { type: \"toml\" }"));
+                            }
+                        },
+                        .with_type_file => {
+                            // backwards compatibility: previously, we always stripped type
+                            if (comptime is_bun_platform) {
+                                p.printWhitespacer(ws(" with { type: \"file\" }"));
+                            }
+                        },
+                        else => {},
                     }
                     p.printSemicolonAfterStatement();
                 },

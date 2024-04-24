@@ -57,7 +57,7 @@ pub const CompileTarget = struct {
                 return url;
         }
 
-        return this.toNPMRegistryURLWithURL(buf, "https://registry.npmjs.org") catch unreachable;
+        return try this.toNPMRegistryURLWithURL(buf, "https://registry.npmjs.org");
     }
 
     pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_url: []const u8) ![]const u8 {
@@ -99,10 +99,6 @@ pub const CompileTarget = struct {
                 this.version.patch,
             },
         );
-    }
-
-    pub fn displayName(this: *const CompileTarget, version_buf: []u8) [:0]const u8 {
-        return std.fmt.bufPrintZ(version_buf, "{}", .{this.*}) catch unreachable;
     }
 
     pub fn exePath(this: *const CompileTarget, buf: *bun.PathBuffer, version_str: [:0]const u8, env: *bun.DotEnv.Loader, needs_download: *bool) [:0]const u8 {
@@ -180,17 +176,28 @@ pub const CompileTarget = struct {
 
                 switch (response.status_code) {
                     404 => {
-                        Output.prettyErrorln(
-                            \\<r><red>error:<r> 404 downloading {s} from {s}
+                        Output.errGeneric(
+                            \\Does this target and version of Bun exist?
+                            \\
+                            \\404 downloading {} from {s}
                         , .{
-                            this.displayName(&url_buffer),
+                            this.*,
                             url_str,
                         });
                         Global.exit(1);
                     },
-                    403 => return error.HTTPForbidden,
-                    429 => return error.HTTPTooManyRequests,
-                    499...599 => return error.NpmIsDown,
+                    403, 429, 499...599 => |status| {
+                        Output.errGeneric(
+                            \\Failed to download cross-compilation target.
+                            \\
+                            \\HTTP {d} downloading {} from {s}
+                        , .{
+                            status,
+                            this.*,
+                            url_str,
+                        });
+                        Global.exit(1);
+                    },
                     200 => {},
                     else => return error.HTTPError,
                 }
@@ -202,10 +209,12 @@ pub const CompileTarget = struct {
                 defer compressed_archive_bytes.list.deinit(allocator);
 
                 if (compressed_archive_bytes.list.items.len == 0) {
-                    Output.prettyErrorln(
-                        \\<r><red>error:<r> Received empty content downloading {s} from {s}
+                    Output.errGeneric(
+                        \\Failed to verify the integrity of the downloaded tarball.
+                        \\
+                        \\Received empty content downloading {} from {s}
                     , .{
-                        this.displayName(&url_buffer),
+                        this.*,
                         url_str,
                     });
                     Global.exit(1);
@@ -214,8 +223,31 @@ pub const CompileTarget = struct {
                 {
                     var node = refresher.start("Decompressing", 0);
                     defer node.end();
-                    var gunzip = try bun.zlib.ZlibReaderArrayList.init(compressed_archive_bytes.list.items, &tarball_bytes, allocator);
-                    try gunzip.readAll();
+                    var gunzip = bun.zlib.ZlibReaderArrayList.init(compressed_archive_bytes.list.items, &tarball_bytes, allocator) catch |err| {
+                        node.end();
+                        Output.err(err,
+                            \\Failed to decompress the downloaded tarball
+                            \\
+                            \\After downloading {} from {s}
+                        , .{
+                            this.*,
+                            url_str,
+                        });
+                        Global.exit(1);
+                    };
+                    gunzip.readAll() catch |err| {
+                        node.end();
+                        // One word difference so if someone reports the bug we can tell if it happened in init or readAll.
+                        Output.err(err,
+                            \\Failed to deflate the downloaded tarball
+                            \\
+                            \\After downloading {} from {s}
+                        , .{
+                            this.*,
+                            url_str,
+                        });
+                        Global.exit(1);
+                    };
                     gunzip.deinit();
                 }
                 refresher.refresh();
@@ -230,7 +262,7 @@ pub const CompileTarget = struct {
                     var tmpdir = try std.fs.cwd().makeOpenPath(tempdir_name, .{});
                     defer tmpdir.close();
                     defer std.fs.cwd().deleteTree(tempdir_name) catch {};
-                    _ = try libarchive.Archive.extractToDir(
+                    _ = libarchive.Archive.extractToDir(
                         compressed_archive_bytes.list.items,
                         tmpdir,
                         null,
@@ -240,7 +272,18 @@ pub const CompileTarget = struct {
                         2,
                         true,
                         false,
-                    );
+                    ) catch |err| {
+                        node.end();
+                        Output.err(err,
+                            \\Failed to extract the downloaded tarball
+                            \\
+                            \\After downloading {} from {s}
+                        , .{
+                            this.*,
+                            url_str,
+                        });
+                        Global.exit(1);
+                    };
 
                     var did_retry = false;
                     while (true) {
@@ -253,7 +296,9 @@ pub const CompileTarget = struct {
                                 }
                                 continue;
                             }
-                            return err;
+                            node.end();
+                            Output.err(err, "Failed to move cross-compiled bun binary into cache directory {}", .{bun.fmt.fmtPath(u8, dest_z, .{})});
+                            Global.exit(1);
                         };
                         break;
                     }

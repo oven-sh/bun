@@ -2118,8 +2118,37 @@ pub fn exists(path: []const u8) bool {
     @compileError("TODO: existsOSPath");
 }
 
-pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
+pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
+    const dir_fd = bun.toFD(dir_);
+
+    if (comptime !has_sentinel) {
+        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
+        return faccessat(dir_fd, path);
+    }
+
+    if (comptime Environment.isLinux) {
+        // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
+        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
+        syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(linux.getErrno(rc)) });
+        if (rc == 0) {
+            return JSC.Maybe(bool){ .result = true };
+        }
+
+        return JSC.Maybe(bool){ .result = false };
+    }
+
+    // on other platforms use faccessat from libc
+    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.F_OK, 0);
+    syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(std.c.getErrno(rc)) });
+    if (rc == 0) {
+        return JSC.Maybe(bool){ .result = true };
+    }
+
+    return JSC.Maybe(bool){ .result = false };
+}
+
+pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     const dir_fd = bun.toFD(dir_);
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
@@ -2159,35 +2188,12 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
         };
     }
 
-    if (comptime !has_sentinel) {
-        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
-        return directoryExistsAt(dir_fd, path);
-    }
-
-    if (comptime Environment.isLinux) {
-        // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
-        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
-        syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(linux.getErrno(rc)) });
-        if (rc == 0) {
-            return JSC.Maybe(bool){ .result = true };
-        }
-
-        return JSC.Maybe(bool){ .result = false };
-    }
-
-    // on other platforms use faccessat from libc
-    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.F_OK, 0);
-    syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(std.c.getErrno(rc)) });
-    if (rc == 0) {
-        return JSC.Maybe(bool){ .result = true };
-    }
-
-    return JSC.Maybe(bool){ .result = false };
+    return faccessat(dir_fd, subpath);
 }
 
 pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
     if (comptime Environment.isPosix) {
-        return directoryExistsAt(fd, subpath).result;
+        return faccessat(fd, subpath).result;
     }
 
     if (comptime Environment.isWindows) {
@@ -2215,16 +2221,16 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
         if (JSC.Maybe(bool).errnoSysP(rc, .access, subpath)) |err| {
-            syslog("NtQueryAttributesFile({}, O_DIRECTORY | O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
-            return err;
+            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
+            return false;
         }
 
-        const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
+        const is_regular_file = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_NORMAL != 0;
-        syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_dir) });
+        syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_regular_file) });
 
         return .{
-            .result = is_dir,
+            .result = is_regular_file,
         };
     }
 

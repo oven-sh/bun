@@ -105,8 +105,7 @@ pub fn PosixPipeReader(
             return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .pipe, bun.sys.readNonblocking);
         }
 
-        fn readWithFn(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup_: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8) JSC.Maybe(usize)) void {
-            _ = size_hint; // autofix
+        fn readWithFn(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, _: isize, received_hup_: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8) JSC.Maybe(usize)) void {
             const streaming = parent.vtable.isStreamingEnabled();
 
             var received_hup = received_hup_;
@@ -756,10 +755,7 @@ const PosixBufferedReader = struct {
     }
 
     // No-op on posix.
-    pub fn pause(this: *PosixBufferedReader) void {
-        _ = this; // autofix
-
-    }
+    pub fn pause(_: *PosixBufferedReader) void {}
 
     pub fn takeBuffer(this: *PosixBufferedReader) std.ArrayList(u8) {
         const out = this._buffer;
@@ -783,13 +779,11 @@ const PosixBufferedReader = struct {
         return this.buffer();
     }
 
-    pub fn disableKeepingProcessAlive(this: *@This(), event_loop_ctx: anytype) void {
-        _ = event_loop_ctx; // autofix
+    pub fn disableKeepingProcessAlive(this: *@This(), _: anytype) void {
         this.updateRef(false);
     }
 
-    pub fn enableKeepingProcessAlive(this: *@This(), event_loop_ctx: anytype) void {
-        _ = event_loop_ctx; // autofix
+    pub fn enableKeepingProcessAlive(this: *@This(), _: anytype) void {
         this.updateRef(true);
     }
 

@@ -798,8 +798,7 @@ pub const Interpreter = struct {
             return .{ .result = duped };
         }
 
-        pub fn assignVar(this: *ShellState, interp: *ThisInterpreter, label: EnvStr, value: EnvStr, assign_ctx: AssignCtx) void {
-            _ = interp; // autofix
+        pub fn assignVar(this: *ShellState, _: *ThisInterpreter, label: EnvStr, value: EnvStr, assign_ctx: AssignCtx) void {
             switch (assign_ctx) {
                 .cmd => this.cmd_local_env.insert(label, value),
                 .shell => this.shell_env.insert(label, value),
@@ -811,8 +810,7 @@ pub const Interpreter = struct {
             return self.changeCwd(interp, self.prevCwdZ());
         }
 
-        pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: anytype) Maybe(void) {
-            _ = interp; // autofix
+        pub fn changeCwd(this: *ShellState, _: *ThisInterpreter, new_cwd_: anytype) Maybe(void) {
             if (comptime @TypeOf(new_cwd_) != [:0]const u8 and @TypeOf(new_cwd_) != []const u8) {
                 @compileError("Bad type for new_cwd " ++ @typeName(@TypeOf(new_cwd_)));
             }
@@ -1379,9 +1377,7 @@ pub const Interpreter = struct {
         return Maybe(void).success;
     }
 
-    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-        _ = callframe; // autofix
-
+    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         if (this.setupIOBeforeRun().asErr()) |e| {
             defer this.deinitEverything();
             const shellerr = bun.shell.ShellErr.newSys(e);
@@ -1443,8 +1439,8 @@ pub const Interpreter = struct {
         }
     }
 
-    fn errored(this: *ThisInterpreter, the_error: ShellError) void {
-        _ = the_error; // autofix
+    fn errored(this: *ThisInterpreter, _: ShellError) void {
+        // TODO @@zackoverflow: should we be ignoring the error here?
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
@@ -1571,46 +1567,34 @@ pub const Interpreter = struct {
 
     pub fn isRunning(
         this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
+        _: *JSGlobalObject,
+        _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
         return JSC.JSValue.jsBoolean(this.hasPendingActivity());
     }
 
     pub fn getStarted(
         this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
+        _: *JSGlobalObject,
+        _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
         return JSC.JSValue.jsBoolean(this.started.load(.SeqCst));
     }
 
     pub fn getBufferedStdout(
         this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
+        _: *JSGlobalObject,
+        _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
         const stdout = this.ioToJSValue(this.root_shell.buffered_stdout());
         return stdout;
     }
 
     pub fn getBufferedStderr(
         this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
+        _: *JSGlobalObject,
+        _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
         const stdout = this.ioToJSValue(this.root_shell.buffered_stderr());
         return stdout;
     }
@@ -2310,8 +2294,7 @@ pub const Interpreter = struct {
                 .VarArgv => |int| this.expandVarArgv(int).len,
                 .brace_begin, .brace_end, .comma, .asterisk => 1,
                 .double_asterisk => 2,
-                .cmd_subst => |subst| {
-                    _ = subst; // autofix
+                .cmd_subst => {
 
                     // TODO check if the command substitution is comprised entirely of assignments or zero-sized things
                     // if (@as(ast.CmdOrAssigns.Tag, subst.*) == .assigns) {
@@ -4174,9 +4157,7 @@ pub const Interpreter = struct {
             cmd: *Cmd,
             concurrent_task: JSC.EventLoopTask,
 
-            pub fn format(this: *const ShellAsyncSubprocessDone, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-                _ = fmt; // autofix
-                _ = opts; // autofix
+            pub fn format(this: *const ShellAsyncSubprocessDone, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
                 try writer.print("ShellAsyncSubprocessDone(0x{x}, cmd=0{x})", .{ @intFromPtr(this), @intFromPtr(this.cmd) });
             }
 
@@ -5796,8 +5777,8 @@ pub const Interpreter = struct {
                 }
             }
 
-            pub fn deinit(this: *Cat) void {
-                _ = this; // autofix
+            pub fn deinit(_: *Cat) void {
+                // TODO: @zackoverflow is this leaking memory? is there anything to free here?
             }
 
             const Opts = struct {
@@ -5842,14 +5823,12 @@ pub const Interpreter = struct {
                     return Parse.parseFlags(opts, args);
                 }
 
-                pub fn parseLong(this: *Opts, flag: []const u8) ?ParseFlagResult {
-                    _ = this; // autofix
-                    _ = flag;
+                pub fn parseLong(_: *Opts, _: []const u8) ?ParseFlagResult {
+                    // cat does not accept long parameters
                     return null;
                 }
 
-                fn parseShort(this: *Opts, char: u8, smallflags: []const u8, i: usize) ?ParseFlagResult {
-                    _ = this; // autofix
+                fn parseShort(_: *Opts, char: u8, smallflags: []const u8, i: usize) ?ParseFlagResult {
                     switch (char) {
                         'b' => {
                             return .{ .unsupported = unsupportedFlag("-b") };
@@ -5901,9 +5880,7 @@ pub const Interpreter = struct {
                 done,
             } = .idle,
 
-            pub fn format(this: *const Touch, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-                _ = fmt; // autofix
-                _ = opts; // autofix
+            pub fn format(this: *const Touch, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
                 try writer.print("Touch(0x{x}, state={s})", .{ @intFromPtr(this), @tagName(this.state) });
             }
 
@@ -6070,9 +6047,7 @@ pub const Interpreter = struct {
                 event_loop: JSC.EventLoopHandle,
                 concurrent_task: JSC.EventLoopTask,
 
-                pub fn format(this: *const ShellTouchTask, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-                    _ = fmt; // autofix
-                    _ = opts; // autofix
+                pub fn format(this: *const ShellTouchTask, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
                     try writer.print("ShellTouchTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
                 }
 
@@ -6468,9 +6443,7 @@ pub const Interpreter = struct {
                     return out;
                 }
 
-                pub fn format(this: *const ShellMkdirTask, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
-                    _ = fmt_; // autofix
-                    _ = options_; // autofix
+                pub fn format(this: *const ShellMkdirTask, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
                     try writer.print("ShellMkdirTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
                 }
 
@@ -7258,8 +7231,8 @@ pub const Interpreter = struct {
                 return;
             }
 
-            pub fn deinit(this: *Ls) void {
-                _ = this; // autofix
+            pub fn deinit(_: *Ls) void {
+                // todo @zackoverflow: dos this leak any memory? do we need to free anything here?
             }
 
             pub fn onIOWriterChunk(this: *Ls, _: usize, e: ?JSC.SystemError) void {
@@ -7394,8 +7367,7 @@ pub const Interpreter = struct {
                     subtask.schedule();
                 }
 
-                inline fn join(this: *@This(), alloc: Allocator, subdir_parts: []const []const u8, is_absolute: bool) [:0]const u8 {
-                    _ = this; // autofix
+                inline fn join(_: *@This(), alloc: Allocator, subdir_parts: []const []const u8, is_absolute: bool) [:0]const u8 {
                     if (!is_absolute) {
                         // If relative paths enabled, stdlib join is preferred over
                         // ResolvePath.joinBuf because it doesn't try to normalize the path
@@ -9233,9 +9205,7 @@ pub const Interpreter = struct {
                     }
                 }
 
-                pub fn bufJoin(this: *ShellRmTask, buf: *[bun.MAX_PATH_BYTES]u8, parts: []const []const u8, syscall_tag: Syscall.Tag) Maybe([:0]const u8) {
-                    _ = syscall_tag; // autofix
-
+                pub fn bufJoin(this: *ShellRmTask, buf: *[bun.MAX_PATH_BYTES]u8, parts: []const []const u8, _: Syscall.Tag) Maybe([:0]const u8) {
                     if (this.join_style == .posix) {
                         return .{ .result = ResolvePath.joinZBuf(buf, parts, .posix) };
                     } else return .{ .result = ResolvePath.joinZBuf(buf, parts, .windows) };
@@ -9415,21 +9385,23 @@ pub const Interpreter = struct {
                     var dummy: @This() = std.mem.zeroes(@This());
 
                     pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
-                        _ = this; // autofix
-                        _ = parent_dir_task; // autofix
-                        _ = path; // autofix
-                        _ = is_absolute; // autofix
-                        _ = buf; // autofix
+                        // We leave the unused variables here to explain what the arguments are
+                        _ = this;
+                        _ = parent_dir_task;
+                        _ = path;
+                        _ = is_absolute;
+                        _ = buf;
 
                         return Maybe(void).success;
                     }
 
                     pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
-                        _ = this; // autofix
-                        _ = parent_dir_task; // autofix
-                        _ = path; // autofix
-                        _ = is_absolute; // autofix
-                        _ = buf; // autofix
+                        // We leave the unused variables here to explain what the arguments are
+                        _ = this;
+                        _ = parent_dir_task;
+                        _ = path;
+                        _ = is_absolute;
+                        _ = buf;
 
                         return Maybe(void).success;
                     }
@@ -9460,19 +9432,17 @@ pub const Interpreter = struct {
                     enqueued: bool = false,
 
                     pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
-                        _ = parent_dir_task; // autofix
-                        _ = path; // autofix
-                        _ = is_absolute; // autofix
-                        _ = buf; // autofix
+                        // We leave the unused variables here to explain what the arguments are
+                        _ = parent_dir_task;
+                        _ = path;
+                        _ = is_absolute;
+                        _ = buf;
 
                         this.treat_as_dir = true;
                         return Maybe(void).success;
                     }
 
-                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
-                        _ = is_absolute; // autofix
-                        _ = buf; // autofix
-
+                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, _: bool, _: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
                         this.treat_as_dir = true;
                         if (this.allow_enqueue) {
                             this.task.enqueueNoJoin(parent_dir_task, path, .dir);

@@ -334,10 +334,9 @@ pub const ReadableStream = struct {
 
     pub fn fromPipe(
         globalThis: *JSGlobalObject,
-        parent: anytype,
+        _: anytype,
         buffered_reader: anytype,
     ) JSC.JSValue {
-        _ = parent; // autofix
         JSC.markBinding(@src());
         var source = FileReader.Source.new(.{
             .globalThis = globalThis,
@@ -1468,9 +1467,8 @@ pub const SinkDestructor = struct {
 
     pub export fn Bun__onSinkDestroyed(
         ptr_value: ?*anyopaque,
-        sink_ptr: ?*anyopaque,
+        _: ?*anyopaque,
     ) callconv(.C) void {
-        _ = sink_ptr; // autofix
         const ptr = Ptr.from(ptr_value);
 
         if (ptr.isNull()) {
@@ -1625,10 +1623,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return JSC.JSValue.jsUndefined();
         }
 
-        pub fn unprotect(this: *@This()) void {
-            _ = this; // autofix
-
-        }
+        pub fn unprotect(_: *@This()) void {}
 
         pub fn write(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
             JSC.markBinding(@src());
@@ -2695,8 +2690,7 @@ pub fn ReadableStreamSource(
         pub const construct = JSReadableStreamSource.construct;
         pub const getIsClosedFromJS = JSReadableStreamSource.isClosed;
         pub const JSReadableStreamSource = struct {
-            pub fn construct(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) ?*ReadableStreamSourceType {
-                _ = callFrame; // autofix
+            pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*ReadableStreamSourceType {
                 globalThis.throw("Cannot construct ReadableStreamSource", .{});
                 return null;
             }
@@ -2735,8 +2729,7 @@ pub fn ReadableStreamSource(
                 }
             }
 
-            pub fn isClosed(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-                _ = globalObject; // autofix
+            pub fn isClosed(this: *ReadableStreamSourceType, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                 return JSC.JSValue.jsBoolean(this.is_closed);
             }
 
@@ -2766,8 +2759,7 @@ pub fn ReadableStreamSource(
                 }
             }
 
-            pub fn cancel(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-                _ = globalObject; // autofix
+            pub fn cancel(this: *ReadableStreamSourceType, _: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
                 this.cancel();
@@ -2811,17 +2803,13 @@ pub fn ReadableStreamSource(
                 return true;
             }
 
-            pub fn getOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-                _ = globalObject; // autofix
-
+            pub fn getOnCloseFromJS(this: *ReadableStreamSourceType, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                 JSC.markBinding(@src());
 
                 return this.close_jsvalue.get() orelse .undefined;
             }
 
-            pub fn getOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-                _ = globalObject; // autofix
-
+            pub fn getOnDrainFromJS(this: *ReadableStreamSourceType, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                 JSC.markBinding(@src());
 
                 if (ReadableStreamSourceType.onDrainCallbackGetCached(this.this_jsvalue)) |val| {
@@ -3184,8 +3172,7 @@ pub const FileSink = struct {
         return .{ .result = {} };
     }
 
-    pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
-        _ = wait; // autofix
+    pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, _: bool) JSC.Maybe(JSValue) {
         if (this.pending.state == .pending) {
             return .{ .result = this.pending.future.promise.value() };
         }
@@ -3233,9 +3220,8 @@ pub const FileSink = struct {
 
     pub fn construct(
         this: *FileSink,
-        allocator: std.mem.Allocator,
+        _: std.mem.Allocator,
     ) void {
-        _ = allocator; // autofix
         this.* = FileSink{
             .event_loop_handle = JSC.EventLoopHandle.init(JSC.VirtualMachine.get().eventLoop()),
         };
@@ -3264,12 +3250,10 @@ pub const FileSink = struct {
         return this.toResult(this.writer.writeUTF16(data.slice16()));
     }
 
-    pub fn end(this: *FileSink, err: ?Syscall.Error) JSC.Maybe(void) {
+    pub fn end(this: *FileSink, _: ?Syscall.Error) JSC.Maybe(void) {
         if (this.done) {
             return .{ .result = {} };
         }
-
-        _ = err; // autofix
 
         switch (this.writer.flush()) {
             .done => |written| {

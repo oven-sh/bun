@@ -357,7 +357,7 @@ pub fn shell(
 
     script_heap.* = script_ast;
 
-    const interpreter = Interpreter.init(
+    _ = Interpreter.init(
         globalThis,
         allocator,
         &arena,
@@ -367,7 +367,6 @@ pub fn shell(
         arena.deinit();
         return .false;
     };
-    _ = interpreter; // autofix
 
     // return interpreter;
     return .undefined;

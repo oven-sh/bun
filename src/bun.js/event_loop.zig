@@ -1650,9 +1650,7 @@ pub const MiniVM = struct {
         return this.mini.loop;
     }
 
-    pub inline fn incrementPendingUnrefCounter(this: @This()) void {
-        _ = this; // autofix
-
+    pub inline fn incrementPendingUnrefCounter(_: @This()) void {
         @panic("FIXME TODO");
     }
 

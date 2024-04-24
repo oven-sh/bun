@@ -2229,9 +2229,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_NORMAL != 0;
         syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_regular_file) });
 
-        return .{
-            .result = is_regular_file,
-        };
+        return is_regular_file;
     }
 
     @compileError("TODO: existsAtOSPath");

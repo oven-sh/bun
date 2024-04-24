@@ -54,7 +54,7 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
         addresses += count;
         num -= count;
         // TODO nohang flag?
-        int sent = bsd_sendmmsg(fd, buf, 0);
+        int sent = bsd_sendmmsg(fd, buf, MSG_DONTWAIT);
         if (sent < 0) { 
             return sent;
         }

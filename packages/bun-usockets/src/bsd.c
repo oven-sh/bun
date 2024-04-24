@@ -80,10 +80,23 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 
     return vlen; // number of messages sent
 #elif defined(__APPLE__)
-    // if (sendbuf->num == 1) {
-    //     struct msghdr *msg = &sendbuf->msgvec[0].msg_hdr;
-    //     return sendmsg(fd, msg, flags);
-    // }
+    // TODO figure out why sendmsg_x fails when one of the messages is empty
+    // so that we can get rid of this code.
+    // One of the weird things is that once a non-empty message has been sent on the socket,
+    // empty messages start working as well. Bizzare.
+    if (sendbuf->has_empty) {
+        for (int i = 0; i < sendbuf->num; i++) {
+            ssize_t ret = sendmsg(fd, &sendbuf->msgvec[i].msg_hdr, flags);
+            if (ret < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    return i;
+                } else {
+                    return ret;
+                }
+            }
+        }
+        return sendbuf->num;
+    }
     return sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
 #else
     return sendmmsg(fd, sendbuf->msgvec, sendbuf->num, flags | MSG_NOSIGNAL);
@@ -140,13 +153,13 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
     buf->num = num;
     return num;
 #else
+    buf->has_empty = 0;
     struct mmsghdr *msgvec = buf->msgvec;
     // todo check this math
     size_t count = (bufsize - sizeof(struct udp_sendbuf)) / (sizeof(struct mmsghdr) + sizeof(struct iovec));
     if (count > num) {
         count = num;
     }
-    // TODO alignment
     struct iovec *iov = (struct iovec *) (msgvec + count);
     for (int i = 0; i < count; i++) {
         struct sockaddr *addr = (struct sockaddr *)addresses[i];
@@ -156,15 +169,20 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
                      : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) 
                      : 0;
         }
+        iov[i].iov_base = payloads[i];
+        iov[i].iov_len = lengths[i];
         msgvec[i].msg_hdr.msg_name = addresses[i];
         msgvec[i].msg_hdr.msg_namelen = addr_len;
         msgvec[i].msg_hdr.msg_control = NULL;
         msgvec[i].msg_hdr.msg_controllen = 0;
-        iov[i].iov_base = payloads[i];
-        iov[i].iov_len = lengths[i];
         msgvec[i].msg_hdr.msg_iov = iov + i;
         msgvec[i].msg_hdr.msg_iovlen = 1;
+        msgvec[i].msg_hdr.msg_flags = 0;
         msgvec[i].msg_len = 0;
+
+        if (lengths[i] == 0) {
+            buf->has_empty = 1;
+        }
     }
     buf->num = count;
     return count;

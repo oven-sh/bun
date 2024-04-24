@@ -95,6 +95,7 @@ struct udp_sendbuf {
     int num;
 #else
     int num;
+    char has_empty;
     struct mmsghdr msgvec[];
 #endif
 };

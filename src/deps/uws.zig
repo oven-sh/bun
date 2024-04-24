@@ -2747,7 +2747,7 @@ pub const udp = struct {
     extern fn us_create_udp_socket(loop: ?*Loop, buf: ?*PacketBuffer, data_cb: *const fn (*udp.Socket, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*udp.Socket) callconv(.C) void, host: [*c]const u8, port: c_ushort, user_data: ?*anyopaque) ?*udp.Socket;
     extern fn us_udp_socket_connect(socket: ?*udp.Socket, hostname: [*c]const u8, port: c_uint) c_int;
     extern fn us_udp_socket_disconnect(socket: ?*udp.Socket) c_int;
-    extern fn us_udp_socket_send(socket: ?*udp.Socket, [*c]const[*c]const u8, [*c]const usize, [*c]const ?*const anyopaque, c_int) c_int;
+    extern fn us_udp_socket_send(socket: ?*udp.Socket, [*c]const [*c]const u8, [*c]const usize, [*c]const ?*const anyopaque, c_int) c_int;
     extern fn us_udp_socket_user(socket: ?*udp.Socket) ?*anyopaque;
     extern fn us_udp_socket_bind(socket: ?*udp.Socket, hostname: [*c]const u8, port: c_uint) c_int;
     extern fn us_udp_socket_bound_port(socket: ?*udp.Socket) c_int;

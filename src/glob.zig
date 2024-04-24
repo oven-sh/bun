@@ -608,7 +608,9 @@ pub fn GlobWalker_(
                     defer {
                         this.closeDisallowingCwd(fd);
                     }
-                    const pathz = try this.walker.arena.allocator().dupeZ(u8, this.walker.patternComponents.items[component_idx].patternSlice(this.walker.pattern));
+                    const stackbuf_size = 256;
+                    var stfb = std.heap.stackFallback(stackbuf_size, this.walker.arena.allocator());
+                    const pathz = try stfb.get().dupeZ(u8, this.walker.patternComponents.items[component_idx].patternSlice(this.walker.pattern));
                     const stat_result: bun.Stat = switch (Accessor.statat(fd, pathz)) {
                         .err => |e_| {
                             var e: bun.sys.Error = e_;
@@ -616,7 +618,7 @@ pub fn GlobWalker_(
                                 this.iter_state = .get_next;
                                 return Maybe(void).success;
                             }
-                            return .{ .err = e_ };
+                            return .{ .err = e.withPath(this.walker.patternComponents.items[component_idx].patternSlice(this.walker.pattern)) };
                         },
                         .result => |stat| stat,
                     };

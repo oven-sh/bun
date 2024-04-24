@@ -20,24 +20,24 @@
 
 #include <string.h>
 
-int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
-    return bsd_udp_packet_buffer_ecn(buf, index);
-}
+// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
+//     return bsd_udp_packet_buffer_ecn((struct udp_recvbuf *)buf, index);
+// }
 
 int us_udp_packet_buffer_local_ip(struct us_udp_packet_buffer_t *buf, int index, char *ip) {
-    return bsd_udp_packet_buffer_local_ip(buf, index, ip);
+    return bsd_udp_packet_buffer_local_ip((struct udp_recvbuf *)buf, index, ip);
 }
 
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index) {
-    return bsd_udp_packet_buffer_peer(buf, index);
+    return bsd_udp_packet_buffer_peer((struct udp_recvbuf *)buf, index);
 }
 
 char *us_udp_packet_buffer_payload(struct us_udp_packet_buffer_t *buf, int index) {
-    return bsd_udp_packet_buffer_payload(buf, index);
+    return bsd_udp_packet_buffer_payload((struct udp_recvbuf *)buf, index);
 }
 
 int us_udp_packet_buffer_payload_length(struct us_udp_packet_buffer_t *buf, int index) {
-    return bsd_udp_packet_buffer_payload_length(buf, index);
+    return bsd_udp_packet_buffer_payload_length((struct udp_recvbuf *)buf, index);
 }
 
 int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num) {

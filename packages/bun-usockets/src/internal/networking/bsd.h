@@ -104,11 +104,11 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags);
 void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen);
 int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloads, size_t* lengths, void** addresses, int num);
-int bsd_udp_packet_buffer_payload_length(void *msgvec, int index);
-char *bsd_udp_packet_buffer_payload(void *msgvec, int index);
-char *bsd_udp_packet_buffer_peer(void *msgvec, int index);
-int bsd_udp_packet_buffer_local_ip(void *msgvec, int index, char *ip);
-int bsd_udp_packet_buffer_ecn(void *msgvec, int index);
+int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index);
+char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index);
+char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index);
+int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *ip);
+// int bsd_udp_packet_buffer_ecn(struct udp_recvbuf *msgvec, int index);
 
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);

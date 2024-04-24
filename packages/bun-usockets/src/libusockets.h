@@ -102,7 +102,7 @@ int us_udp_socket_bound_port(struct us_udp_socket_t *s);
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index);
 
 /* Peeks ECN of received packet */
-int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
+// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
 
 /* Receives a set of packets into specified packet buffer */
 int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf);

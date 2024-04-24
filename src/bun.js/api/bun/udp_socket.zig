@@ -423,14 +423,11 @@ pub const UDPSocket = struct {
             return .zero;
         }
         const res = this.socket.send(payloads, lens, addr_ptrs);
-        switch (std.c.getErrno(res)) {
-            .SUCCESS => return JSValue.jsNumber(res),
-            else => |errno| {
-                const err = bun.sys.Error.fromCode(errno, .send);
-                globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
-                return .zero;
-            },
+        if (bun.JSC.Maybe(void).errnoSys(res, .send)) |err| {
+            globalThis.throwValue(err.toJS(globalThis));
+            return .zero;
         }
+        return JSValue.jsNumber(res);
     }
 
     pub fn send(
@@ -496,14 +493,11 @@ pub const UDPSocket = struct {
         };
 
         const res = this.socket.send(&.{payload.ptr}, &.{payload.len}, &.{addr_ptr});
-        switch (std.c.getErrno(res)) {
-            .SUCCESS => return JSValue.jsBoolean(res > 0),
-            else => |errno| {
-                const err = bun.sys.Error.fromCode(errno, .send);
-                globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
-                return .zero;
-            },
+        if (bun.JSC.Maybe(void).errnoSys(res, .send)) |err| {
+            globalThis.throwValue(err.toJS(globalThis));
+            return .zero;
         }
+        return JSValue.jsBoolean(res > 0);
     }
 
     fn parseAddr(

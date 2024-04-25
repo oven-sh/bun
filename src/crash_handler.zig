@@ -310,6 +310,12 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
         error.@"Invalid Bunfig",
         => if (!show_trace) Global.exit(1),
 
+        error.CouldntReadCurrentDirectory => {
+            if (!show_trace) {
+                Global.exit(1);
+            }
+        },
+
         error.SyntaxError => {
             Output.err("SyntaxError", "An error occurred while parsing code", .{});
         },

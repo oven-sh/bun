@@ -414,7 +414,6 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             task.ref.ref(mini);
             task.args.src.toThreadSafe();
             task.args.dest.toThreadSafe();
-            // task.tracker.didSchedule(globalObject);
 
             JSC.WorkPool.schedule(&task.task);
 
@@ -3744,7 +3743,7 @@ pub const Arguments = struct {
             deinit_paths: bool = true,
         };
 
-        fn deinit(this: Cp) void {
+        fn deinit(this: *Cp) void {
             if (this.flags.deinit_paths) {
                 this.src.deinit();
                 this.dest.deinit();

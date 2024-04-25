@@ -10124,7 +10124,9 @@ pub const Interpreter = struct {
                     target_path: [:0]const u8,
                     paths_to_copy: []const [*:0]const u8,
                     started: bool = false,
-                    tasks_count: i32 = 0,
+                    /// this is thread safe as it is only incremented
+                    /// and decremented on the main thread by this struct
+                    tasks_count: u32 = 0,
                     output_waiting: u32 = 0,
                     output_done: u32 = 0,
                     err: ?bun.shell.ShellErr = null,
@@ -10290,8 +10292,8 @@ pub const Interpreter = struct {
                 this.bltn.done(0);
             }
 
-            pub fn deinit(this: *Cp) void {
-                _ = this; // autofix
+            pub fn deinit(cp: *Cp) void {
+                assert(cp.state == .done or cp.state == .waiting_write_err);
             }
 
             pub fn writeFailingError(this: *Cp, buf: []const u8, exit_code: ExitCode) Maybe(void) {
@@ -10493,8 +10495,7 @@ pub const Interpreter = struct {
                     dir,
                 };
 
-                pub fn isDir(this: *ShellCpTask, path: [:0]const u8) Maybe(bool) {
-                    _ = this;
+                pub fn isDir(_: *ShellCpTask, path: [:0]const u8) Maybe(bool) {
                     if (bun.Environment.isWindows) {
                         var wpath: bun.OSPathBuffer = undefined;
                         const attributes = windows.GetFileAttributesW(bun.strings.toWPath(wpath[0..], path[0..path.len]));
@@ -10722,7 +10723,7 @@ pub const Interpreter = struct {
                 }
             };
 
-            const Opts = struct {
+            const Opts = packed struct {
                 /// -f
                 ///
                 /// If the destination file cannot be opened, remove it and create a

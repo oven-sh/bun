@@ -230,6 +230,7 @@ pub const UDPSocketConfig = struct {
     }
 
     pub fn deinit(this: This) void {
+        // this.unprotect();
         default_allocator.free(this.hostname);
         if (this.connect) |val| {
             default_allocator.free(val.address);

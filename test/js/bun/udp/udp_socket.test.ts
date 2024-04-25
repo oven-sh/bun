@@ -1,87 +1,7 @@
 import { udpSocket } from "bun";
 import { describe, test, expect, it } from "bun:test";
 import { randomPort } from "harness";
-import { createSocket } from "dgram";
-
-const nodeDataTypes = [
-  {
-    binaryType: "buffer",
-    type: Buffer,
-  },
-  {
-    binaryType: "uint8array",
-    type: Uint8Array,
-  },
-];
-
-const dataTypes = [
-  ...nodeDataTypes,
-  {
-    binaryType: undefined,
-    type: Buffer,
-  },
-  {
-    binaryType: "arraybuffer",
-    type: ArrayBuffer,
-  },
-];
-
-const nodeDataCases = [
-  {
-    label: "string (ascii)",
-    data: "ascii",
-    bytes: [0x61, 0x73, 0x63, 0x69, 0x69],
-  },
-  {
-    label: "string (latin1)",
-    data: "latin1-©",
-    bytes: [0x6c, 0x61, 0x74, 0x69, 0x6e, 0x31, 0x2d, 0xc2, 0xa9],
-  },
-  {
-    label: "string (utf-8)",
-    data: "utf8-😶",
-    bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x98, 0xb6],
-  },
-  {
-    label: "string (empty)",
-    data: "",
-    bytes: [],
-  },
-  {
-    label: "Uint8Array (utf-8)",
-    data: new TextEncoder().encode("utf8-🙂"),
-    bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x99, 0x82],
-  },
-  {
-    label: "Uint8Array (empty)",
-    data: new Uint8Array(),
-    bytes: [],
-  },
-  {
-    label: "Buffer (utf-8)",
-    data: Buffer.from("utf8-🤩"),
-    bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0xa4, 0xa9],
-  },
-  {
-    label: "Buffer (empty)",
-    data: Buffer.from([]),
-    bytes: [],
-  },
-];
-
-const dataCases = [
-  ...nodeDataCases,
-  {
-    label: "ArrayBuffer (utf-8)",
-    data: new TextEncoder().encode("utf8-🙃").buffer,
-    bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x99, 0x83],
-  },
-  {
-    label: "ArrayBuffer (empty)",
-    data: new ArrayBuffer(0),
-    bytes: [],
-  },
-];
+import { dataTypes, dataCases } from "./testdata";
 
 describe("udpSocket()", () => {
   test("can create a socket", async () => {
@@ -191,7 +111,6 @@ describe("udpSocket()", () => {
           }
           sendRec();
         },
-        { timeout: 100000000 },
       );
 
       test(
@@ -226,7 +145,6 @@ describe("udpSocket()", () => {
           }
           sendRec();
         },
-        { timeout: 1000000 },
       );
 
       test(
@@ -261,7 +179,6 @@ describe("udpSocket()", () => {
           }
           sendRec();
         },
-        { timeout: 1000000 },
       );
 
       test(`sendMany connected ${label} (${binaryType || "undefined"})`, async done => {
@@ -306,183 +223,3 @@ describe("udpSocket()", () => {
   }
 });
 
-describe("createSocket()", () => {
-  test("connect", done => {
-    const PORT = 12345;
-    const client = createSocket("udp4");
-    client.on("close", done);
-
-    client.connect(PORT, () => {
-      const remoteAddr = client.remoteAddress();
-      expect(remoteAddr.port).toBe(PORT);
-      expect(() => client.connect(PORT)).toThrow();
-
-      client.disconnect();
-      expect(() => client.disconnect()).toThrow();
-
-      expect(() => client.remoteAddress()).toThrow();
-
-      client.once("connect", () => client.close());
-      client.connect(PORT);
-    });
-  });
-
-  test("IPv4 address", done => {
-    const socket = createSocket("udp4");
-
-    socket.on("listening", () => {
-      const address = socket.address();
-
-      expect(address.address).toBe("127.0.0.1");
-      expect(address.port).toBeNumber();
-      expect(address.port).toBeFinite();
-      expect(address.port).toBeGreaterThan(0);
-      expect(address.family).toBe("IPv4");
-      socket.close(done);
-    });
-
-    socket.on("error", err => {
-      socket.close(done);
-      expect(err).toBeNull();
-    });
-
-    socket.bind(0, "127.0.0.1");
-  });
-
-  test("IPv6 address", done => {
-    const socket = createSocket("udp6");
-    const localhost = "::1";
-
-    socket.on("listening", () => {
-      const address = socket.address();
-
-      expect(address.address).toBe(localhost);
-      expect(address.port).toBeNumber();
-      expect(address.port).toBeFinite();
-      expect(address.port).toBeGreaterThan(0);
-      expect(address.family).toBe("IPv6");
-      socket.close(done);
-    });
-
-    socket.on("error", err => {
-      socket.close(done);
-      expect(err).toBeNull();
-    });
-
-    socket.bind(0, localhost);
-  });
-
-  const validateRecv = (server, data, rinfo, bytes) => {
-    expect(data).toHaveLength(bytes.length);
-    expect(data).toStrictEqual(Buffer.from(bytes));
-    expect(rinfo.port).toBeInteger();
-    expect(rinfo.port).toBeWithin(1, 65535 + 1);
-    expect(rinfo.address).toBeString();
-    expect(rinfo.address).not.toBeEmpty();
-    expect(rinfo.port).not.toBe(server.address().port);
-  };
-
-  for (const { label, data, bytes } of nodeDataCases) {
-    test(`send ${label}`, done => {
-      const client = createSocket("udp4");
-      const closed = { closed: false };
-      client.on("close", () => {
-        closed.closed = true;
-      });
-      const server = createSocket("udp4");
-      client.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("message", (data, rinfo) => {
-        validateRecv(server, data, rinfo, bytes);
-
-        server.close();
-        client.close();
-        done();
-      });
-      function sendRec() {
-        if (!closed.closed) {
-          client.send(data, server.address().port, "127.0.0.1", () => {
-            setTimeout(sendRec, 100);
-          });
-        }
-      }
-      server.on("listening", () => {
-        sendRec();
-      });
-      server.bind();
-    });
-
-    test(`send connected ${label}`, done => {
-      const client = createSocket("udp4");
-      const closed = { closed: false };
-      client.on("close", () => {
-        closed.closed = true;
-      });
-      const server = createSocket("udp4");
-      client.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("message", (data, rinfo) => {
-        validateRecv(server, data, rinfo, bytes);
-
-        server.close();
-        client.close();
-        done();
-      });
-      function sendRec() {
-        if (!closed.closed) {
-          client.send(data, () => {
-            setTimeout(sendRec, 100);
-          });
-        }
-      }
-      server.on("listening", () => {
-        const addr = server.address();
-        client.connect(addr.port, "127.0.0.1", () => {
-          sendRec();
-        });
-      });
-      server.bind();
-    });
-
-    test(`send array ${label}`, done => {
-      const client = createSocket("udp4");
-      const closed = { closed: false };
-      client.on("close", () => {
-        closed.closed = true;
-      });
-      const server = createSocket("udp4");
-      client.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("message", (data, rinfo) => {
-        validateRecv(server, data, rinfo, [bytes, bytes, bytes].flat());
-
-        server.close();
-        client.close();
-        done();
-      });
-      function sendRec() {
-        if (!closed.closed) {
-          client.send([data, data, data], server.address().port, "127.0.0.1", () => {
-            setTimeout(sendRec, 100);
-          });
-        }
-      }
-      server.on("listening", () => {
-        sendRec();
-      });
-      server.bind();
-    });
-  }
-});

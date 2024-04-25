@@ -34,3 +34,8 @@ export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bind
   openTempDirWithoutSharingDelete: () => void;
   closeTempDirHandle: () => void;
 };
+
+export const CompileTarget = $zig("compile_target.zig", "createCompileTargetBindings") as {
+  getDefaultTarget: () => `bun-${string}`;
+  from: (input: string) => `bun-${string}`;
+};

@@ -186,8 +186,10 @@ To trim down the size of the executable a little, pass `--minify` to `bun build 
 ## Unsupported CLI arguments
 
 Currently, the `--compile` flag can only accept a single entrypoint at a time and does not support the following flags:
-To target a different operating system, architecture, or version of Bun, use the `--target` flag.
 
 - `--outdir` — use `outfile` instead.
 - `--splitting`
 - `--public-path`
+- `--target=node` or `--target=browser`
+- `--format` - always outputs a binary executable. Internally, it's almost esm.
+- `--no-bundle` - we always bundle everything into the executable.

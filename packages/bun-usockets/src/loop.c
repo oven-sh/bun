@@ -410,11 +410,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 if (u->closed) {
                     break;
                 }
-                // TODO handle socket close in callback
+                // We only poll for writable after a read has failed, and only send one drain notification.
+                // Otherwise we would receive a writable event on every tick of the event loop.
                 us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
             if (events & LIBUS_SOCKET_READABLE) {
-                // TODO move this to loop
                 struct udp_recvbuf recvbuf;
                 bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
                 while (1) {

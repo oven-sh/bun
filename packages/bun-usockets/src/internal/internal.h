@@ -133,7 +133,7 @@ struct us_udp_socket_t {
     /* An UDP socket can only ever be bound to one single port regardless of how
      * many interfaces it may listen to. Therefore we cache the port after creation
      * and use it to build a proper and full sockaddr_in or sockaddr_in6 for every received packet */
-    int port;
+    uint16_t port;
     uint16_t closed : 1;
     uint16_t connected : 1;
 };

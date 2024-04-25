@@ -43,26 +43,27 @@
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
 #if defined(_WIN32)// || defined(__APPLE__)
     for (int i = 0; i < sendbuf->num; i++) {
-        int ret = 0;
-        struct sockaddr *addr = (struct sockaddr *)sendbuf->addresses[i];
-        if (!addr || addr->sa_family == AF_UNSPEC) {
-            ret = send(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags);
-        } else if (addr->sa_family == AF_INET) {
-            socklen_t len = sizeof(struct sockaddr_in);
-            ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
-        } else if (addr->sa_family == AF_INET6) {
-            socklen_t len = sizeof(struct sockaddr_in6);
-            ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
-        } else {
-            errno = EAFNOSUPPORT;
-            return -1;
-        }
-        if (ret < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                return i;
+        while (1) {
+            int ret = 0;
+            struct sockaddr *addr = (struct sockaddr *)sendbuf->addresses[i];
+            if (!addr || addr->sa_family == AF_UNSPEC) {
+                ret = send(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags);
+            } else if (addr->sa_family == AF_INET) {
+                socklen_t len = sizeof(struct sockaddr_in);
+                ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
+            } else if (addr->sa_family == AF_INET6) {
+                socklen_t len = sizeof(struct sockaddr_in6);
+                ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
             } else {
+                errno = EAFNOSUPPORT;
+                return -1;
+            }
+            if (ret < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
                 return ret;
             }
+            break;
         }
     }
     return sendbuf->num;
@@ -73,39 +74,52 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
     // empty messages start working as well. Bizzare.
     if (sendbuf->has_empty) {
         for (int i = 0; i < sendbuf->num; i++) {
-            ssize_t ret = sendmsg(fd, &sendbuf->msgvec[i].msg_hdr, flags);
-            if (ret < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    return i;
-                } else {
+            while (1) {
+                ssize_t ret = sendmsg(fd, &sendbuf->msgvec[i].msg_hdr, flags);
+                if (ret < 0) {
+                    if (errno == EINTR) continue;
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
                     return ret;
                 }
+                break;
             }
         }
         return sendbuf->num;
     }
-    return sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
+    while (1) {
+        int ret = sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
+        if (ret >= 0 || errno != EINTR) return ret;
+    }
 #else
-    return sendmmsg(fd, sendbuf->msgvec, sendbuf->num, flags | MSG_NOSIGNAL);
+    while (1) {
+        int ret = sendmmsg(fd, sendbuf->msgvec, sendbuf->num, flags | MSG_NOSIGNAL);
+        if (ret >= 0 || errno != EINTR) return ret;
+    }
 #endif
 }
 
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags) {
 #if defined(_WIN32)
     socklen_t addr_len = sizeof(struct sockaddr_storage);
-    ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
-
-    if (ret < 0) {
-        return ret;
+    while (1) {
+        ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            return ret;
+        }
+        recvbuf->recvlen = ret;
+        return 1;
     }
-
-    recvbuf->recvlen = ret;
-
-    return 1;
 #elif defined(__APPLE__)
-    return recvmsg_x(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
+    while (1) {
+        int ret = recvmsg_x(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
+        if (ret >= 0 || errno != EINTR) return ret;
+    }
 #else
-    return recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags, 0);
+    while (1) {
+        int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags, 0);
+        if (ret >= 0 || errno != EINTR) return ret;
+    }
 #endif
 }
 

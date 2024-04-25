@@ -124,9 +124,10 @@ function fakeParentPort() {
     },
   });
 
+  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
-      return self.postMessage(...args);
+      return postMessage(...args);
     },
   });
 

@@ -142,4 +142,6 @@ private:
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
 
+JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
+
 } // namespace WebCore

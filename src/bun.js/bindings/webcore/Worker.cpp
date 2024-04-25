@@ -488,4 +488,74 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     return array;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
+    (JSC::JSGlobalObject * leixcalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = leixcalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(leixcalGlobalObject);
+    if (UNLIKELY(!globalObject))
+        return JSValue::encode(jsUndefined());
+
+    Worker* worker = WebWorker__getParentWorker(globalObject->bunVM());
+    if (worker == nullptr)
+        return JSValue::encode(jsUndefined());
+
+    ScriptExecutionContext* context = worker->scriptExecutionContext();
+
+    if (!context)
+        return JSValue::encode(jsUndefined());
+
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = callFrame->argument(0);
+    JSC::JSValue options = callFrame->argument(1);
+
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
+
+    if (options.isObject()) {
+        JSC::JSObject* optionsObject = options.getObject();
+        JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+        if (transferListValue.isObject()) {
+            JSC::JSObject* transferListObject = transferListValue.getObject();
+            if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
+                for (unsigned i = 0; i < transferListArray->length(); i++) {
+                    JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
+                    if (transferListValue.isObject()) {
+                        JSC::JSObject* transferListObject = transferListValue.getObject();
+                        transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
+                    }
+                }
+            }
+        }
+    }
+
+    Vector<RefPtr<MessagePort>> ports;
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    if (serialized.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        return JSValue::encode(jsUndefined());
+    }
+
+    ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTFMove(ports));
+    if (disentangledPorts.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        return JSValue::encode(jsUndefined());
+    }
+
+    MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
+
+    ScriptExecutionContext::postTaskTo(context->identifier(), [message = messageWithMessagePorts, protectedThis = Ref { *worker }, ports](ScriptExecutionContext& context) mutable {
+        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
+
+        auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
+        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), std::nullopt, WTFMove(ports));
+
+        protectedThis->dispatchEvent(event.event);
+    });
+
+    return JSValue::encode(jsUndefined());
+}
+
 } // namespace WebCore

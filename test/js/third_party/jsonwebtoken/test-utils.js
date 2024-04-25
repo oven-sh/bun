@@ -116,11 +116,14 @@ function verifyJWTHelper(jwtString, secretOrPrivateKey, options, callback) {
  * @param {function(err, token):void} callback
  */
 function signJWTHelper(payload, secretOrPrivateKey, options, callback) {
-  jwt.sign(payload, secretOrPrivateKey, options, (err, asyncSigned) => {
+  // make sure they are created with the same timestamp
+  // https://github.com/auth0/node-jsonwebtoken/blob/bc28861f1fa981ed9c009e29c044a19760a0b128/sign.js#L185
+  const timestamp = Math.floor(Date.now() / 1000);
+  jwt.sign({ ...payload, iat: timestamp }, secretOrPrivateKey, options, (err, asyncSigned) => {
     let error;
     let syncSigned;
     try {
-      syncSigned = jwt.sign(payload, secretOrPrivateKey, options);
+      syncSigned = jwt.sign({ ...payload, iat: timestamp }, secretOrPrivateKey, options);
     } catch (err) {
       error = err;
     }

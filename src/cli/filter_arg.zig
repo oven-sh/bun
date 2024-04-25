@@ -66,7 +66,7 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
         };
         defer allocator.free(json_source.contents);
 
-        const json = try json_parser.ParseJSONUTF8(&json_source, log, allocator);
+        const json = try json_parser.ParsePackageJSONUTF8(&json_source, log, allocator);
 
         const prop = json.asProperty("workspaces") orelse continue;
 

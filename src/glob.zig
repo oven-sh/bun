@@ -342,7 +342,7 @@ pub fn GlobWalker_(
         basename_excluding_special_syntax_component_idx: u32 = 0,
 
         patternComponents: ArrayList(Component) = .{},
-        matchedPaths: ArrayList(BunString) = .{},
+        matchedPaths: MatchedMap = .{},
         i: u32 = 0,
 
         dot: bool = false,
@@ -356,6 +356,39 @@ pub fn GlobWalker_(
         pathBuf: bun.PathBuffer = undefined,
         // iteration state
         workbuf: ArrayList(WorkItem) = ArrayList(WorkItem){},
+
+        /// Array hashmap used as a set (values are the keys)
+        /// to store matched paths and prevent duplicates
+        ///
+        /// BunString is used so that we can call BunString.toJSArray()
+        /// on the result of `.keys()` to give the result back to JS
+        ///
+        /// The only type of string impl we use is ZigString since
+        /// all matched paths are UTF-8 (DirIterator converts them on
+        /// windows) and allocated on the arnea
+        ///
+        /// Multiple patterns are not supported so right now this is
+        /// only possible when running a pattern like:
+        ///
+        /// `foo/**/*`
+        ///
+        /// Use `.keys()` to get the matched paths
+        const MatchedMap = std.ArrayHashMapUnmanaged(BunString, void, struct {
+            pub fn hash(_: @This(), this: BunString) u32 {
+                bun.assert(this.tag == .ZigString);
+                const slice = this.byteSlice();
+                if (comptime sentinel) {
+                    const slicez = slice[0 .. slice.len - 1 :0];
+                    return std.array_hash_map.hashString(slicez);
+                }
+
+                return std.array_hash_map.hashString(slice);
+            }
+
+            pub fn eql(_: @This(), this: BunString, other: BunString, _: usize) bool {
+                return this.eql(other);
+            }
+        }, true);
 
         /// The glob walker references the .directory.path so its not safe to
         /// copy/move this
@@ -624,8 +657,11 @@ pub fn GlobWalker_(
                     };
                     const matches = (bun.S.ISDIR(@intCast(stat_result.mode)) and !this.walker.only_files) or bun.S.ISREG(@intCast(stat_result.mode)) or !this.walker.only_files;
                     if (matches) {
-                        const path = try this.walker.prepareMatchedPath(pathz, dir_path);
-                        this.iter_state = .{ .matched = path };
+                        if (try this.walker.prepareMatchedPath(pathz, dir_path)) |path| {
+                            this.iter_state = .{ .matched = path };
+                        } else {
+                            this.iter_state = .get_next;
+                        }
                     } else {
                         this.iter_state = .get_next;
                     }
@@ -702,7 +738,7 @@ pub fn GlobWalker_(
                                                     next_pattern.?.syntax_hint != .Double and
                                                     this.walker.matchPatternImpl(next_pattern.?, entry_name)))
                                                 {
-                                                    return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                                    return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                                 }
                                             }
                                             continue;
@@ -716,14 +752,14 @@ pub fn GlobWalker_(
                                     const dir_fd = maybe_dir_fd orelse {
                                         // No directory file descriptor, it's a file
                                         if (is_last)
-                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
 
                                         if (pattern.syntax_hint == .Double and
                                             component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
                                             next_pattern.?.syntax_hint != .Double and
                                             this.walker.matchPatternImpl(next_pattern.?, entry_name))
                                         {
-                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                         }
 
                                         continue;
@@ -754,7 +790,7 @@ pub fn GlobWalker_(
                                     }
 
                                     if (add_dir and !this.walker.only_files) {
-                                        return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                        return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                     }
 
                                     continue;
@@ -784,7 +820,7 @@ pub fn GlobWalker_(
                                 .file => {
                                     const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
                                     if (matches) {
-                                        const prepared = try this.walker.prepareMatchedPath(entry_name, dir.dir_path);
+                                        const prepared = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared };
                                     }
                                     continue;
@@ -819,7 +855,7 @@ pub fn GlobWalker_(
                                     }
 
                                     if (add_dir and !this.walker.only_files) {
-                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path);
+                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared_path };
                                     }
 
@@ -854,7 +890,7 @@ pub fn GlobWalker_(
 
                                     const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir_iter_state.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
                                     if (matches) {
-                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path);
+                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared_path };
                                     }
 
@@ -1077,7 +1113,8 @@ pub fn GlobWalker_(
                 .result => |matched_path| matched_path,
             }) |path| {
                 log("walker: matched path: {s}", .{path});
-                try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(path));
+                // The paths are already put into this.matchedPaths, which we use for the output,
+                // so we don't need to do anything here
             }
 
             return Maybe(void).success;
@@ -1332,25 +1369,71 @@ pub fn GlobWalker_(
             return codepoints;
         }
 
-        fn prepareMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !MatchedPath {
-            if (comptime !sentinel) return try this.arena.allocator().dupe(u8, symlink_full_path);
-            return try this.arena.allocator().dupeZ(u8, symlink_full_path);
+        inline fn matchedPathToBunString(matched_path: MatchedPath) BunString {
+            if (comptime sentinel) {
+                return BunString.fromBytes(matched_path[0 .. matched_path.len + 1]);
+            }
+            return BunString.fromBytes(matched_path);
         }
 
-        fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: []const u8) !MatchedPath {
+        fn prepareMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !?MatchedPath {
+            const result = try this.matchedPaths.getOrPut(this.arena.allocator(), BunString.fromBytes(symlink_full_path));
+            if (result.found_existing) {
+                log("(dupe) prepared match: {s}", .{symlink_full_path});
+                return null;
+            }
+            if (comptime !sentinel) {
+                const slice = try this.arena.allocator().dupe(u8, symlink_full_path);
+                result.key_ptr.* = matchedPathToBunString(slice);
+                return slice;
+            }
+            const slicez = try this.arena.allocator().dupeZ(u8, symlink_full_path);
+            result.key_ptr.* = matchedPathToBunString(slicez);
+            return slicez;
+        }
+
+        fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: []const u8) !?MatchedPath {
             const subdir_parts: []const []const u8 = &[_][]const u8{
                 dir_name[0..dir_name.len],
                 entry_name,
             };
-            const name = try this.join(subdir_parts);
+            const name_matched_path = try this.join(subdir_parts);
+            const name = matchedPathToBunString(name_matched_path);
+            const result = try this.matchedPaths.getOrPutValue(this.arena.allocator(), name, {});
+            if (result.found_existing) {
+                log("(dupe) prepared match: {s}", .{name_matched_path});
+                this.arena.allocator().free(name_matched_path);
+                return null;
+            }
+            result.key_ptr.* = name;
             // if (comptime sentinel) return name[0 .. name.len - 1 :0];
-            log("prepared match: {s}", .{name});
-            return name;
+            log("prepared match: {s}", .{name_matched_path});
+            return name_matched_path;
+        }
+
+        fn appendMatchedPath(
+            this: *GlobWalker,
+            entry_name: []const u8,
+            dir_name: [:0]const u8,
+        ) !void {
+            const subdir_parts: []const []const u8 = &[_][]const u8{
+                dir_name[0..dir_name.len],
+                entry_name,
+            };
+            const name_matched_path = try this.join(subdir_parts);
+            const name = matchedPathToBunString(name_matched_path);
+            const result = try this.matchedPaths.getOrPut(this.arena.allocator(), name);
+            if (result.found_existing) {
+                this.arena.allocator().free(name_matched_path);
+                log("(dupe) prepared match: {s}", .{name_matched_path});
+                return;
+            }
+            result.key_ptr.* = name;
         }
 
         fn appendMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !void {
             const name = try this.arena.allocator().dupe(u8, symlink_full_path);
-            try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
+            try this.matchedPaths.put(this.arena.allocator(), BunString.fromBytes(name), {});
         }
 
         inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) !MatchedPath {

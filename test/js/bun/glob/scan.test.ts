@@ -563,20 +563,20 @@ describe("literal fast path", async () => {
     const glob = new Glob("packages/*/package.json");
     const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
     expect(entries.sort()).toEqual(
-      ["packages/a/package.json", "packages/b/package.json", "packages/c/package.json"].sort(),
+      [`packages${path.sep}a${path.sep}package.json`, `packages${path.sep}b${path.sep}package.json`, `packages${path.sep}c${path.sep}package.json`].sort(),
     );
   });
 
   test("works 2", async () => {
     const glob = new Glob("packages/*/foo");
     const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
-    expect(entries.sort()).toEqual(["packages/a/foo", "packages/b/foo", "packages/c/foo"].sort());
+    expect(entries.sort()).toEqual([`packages${path.sep}a${path.sep}foo`, `packages${path.sep}b${path.sep}foo`, `packages${path.sep}c${path.sep}foo`].sort());
   });
 
-  test("ZACK", async () => {
+  test("works3", async () => {
     const glob = new Glob("packages/foo");
     const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
-    expect(entries.sort()).toEqual(["packages/foo"].sort());
+    expect(entries.sort()).toEqual([`packages${path.sep}foo`].sort());
   });
 });
 

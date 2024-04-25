@@ -1611,6 +1611,7 @@ pub const CreateCommand = struct {
                         const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
                         std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
@@ -1622,6 +1623,7 @@ pub const CreateCommand = struct {
                     const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                     home_dir_buf[outdir_path.len] = 0;
                     const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                    if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
                     std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                     example_tag = Example.Tag.local_folder;
                     break :brk outdir_path;
@@ -1633,6 +1635,7 @@ pub const CreateCommand = struct {
                         const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
                         std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;

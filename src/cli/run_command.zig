@@ -312,14 +312,14 @@ pub const RunCommand = struct {
                 if (Environment.isDebug) {
                     Output.prettyError("[bun shell] ", .{});
                 }
-                Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
+                Output.errGeneric("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
                 Output.flush();
             }
 
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
             const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, combined_script) catch |err| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+                    Output.errGeneric("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
 
                 Global.exit(1);
@@ -327,7 +327,7 @@ pub const RunCommand = struct {
 
             if (code > 0) {
                 if (code != 2 and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
+                    Output.errGeneric("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
                     Output.flush();
                 }
 
@@ -344,7 +344,7 @@ pub const RunCommand = struct {
         };
 
         if (!silent) {
-            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
+            Output.errGeneric("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
             Output.flush();
         }
 
@@ -366,7 +366,7 @@ pub const RunCommand = struct {
             } else {},
         }) catch |err| {
             if (!silent) {
-                Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+                Output.errGeneric("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
             }
 
             Output.flush();
@@ -374,7 +374,7 @@ pub const RunCommand = struct {
         })) {
             .err => |err| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{}", .{ name, err });
+                    Output.errGeneric("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{}", .{ name, err });
                 }
 
                 Output.flush();
@@ -386,7 +386,7 @@ pub const RunCommand = struct {
         switch (spawn_result.status) {
             .exited => |exit_code| {
                 if (exit_code.signal.valid() and exit_code.signal != .SIGINT and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
+                    Output.errGeneric("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
 
                     Global.raiseIgnoringPanicHandler(exit_code.signal);
@@ -394,7 +394,7 @@ pub const RunCommand = struct {
 
                 if (exit_code.code != 0) {
                     if (exit_code.code != 2 and !silent) {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, exit_code.code });
+                        Output.errGeneric("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, exit_code.code });
                         Output.flush();
                     }
 
@@ -404,7 +404,7 @@ pub const RunCommand = struct {
 
             .signaled => |signal| {
                 if (signal.valid() and signal != .SIGINT and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
+                    Output.errGeneric("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
 
                     Global.raiseIgnoringPanicHandler(signal);
@@ -413,7 +413,7 @@ pub const RunCommand = struct {
 
             .err => |err| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{}", .{ name, err });
+                    Output.errGeneric("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{}", .{ name, err });
                 }
 
                 Output.flush();
@@ -486,7 +486,7 @@ pub const RunCommand = struct {
 
     fn runBinaryGenericError(executable: []const u8, silent: bool, err: bun.sys.Error) noreturn {
         if (!silent) {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{}", .{ basenameOrBun(executable), err.withPath(executable) });
+            Output.errGeneric("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{}", .{ basenameOrBun(executable), err.withPath(executable) });
         }
 
         Global.exit(1);
@@ -539,14 +539,14 @@ pub const RunCommand = struct {
                         switch (bun.sys.stat(executable[0.. :0])) {
                             .result => |stat| {
                                 if (bun.S.ISDIR(stat.mode)) {
-                                    Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{basenameOrBun(executable)});
+                                    Output.errGeneric("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{basenameOrBun(executable)});
                                     break :print_error;
                                 }
                             },
                             .err => |err2| {
                                 switch (err2.getErrno()) {
                                     .NOENT, .PERM, .NOTDIR => {
-                                        Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error:\n{}", .{ basenameOrBun(executable), err2 });
+                                        Output.errGeneric("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error:\n{}", .{ basenameOrBun(executable), err2 });
                                         break :print_error;
                                     },
                                     else => {},
@@ -555,7 +555,7 @@ pub const RunCommand = struct {
                         }
                     }
 
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to <r><red>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
+                    Output.errGeneric("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to <r><red>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
                 }
             }
             Global.exit(1);
@@ -575,7 +575,7 @@ pub const RunCommand = struct {
 
                     .signaled => |signal| {
                         if (!silent) {
-                            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to signal <b>{s}<r>", .{
+                            Output.errGeneric("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to signal <b>{s}<r>", .{
                                 basenameOrBun(executable),
                                 signal.name() orelse "unknown",
                             });
@@ -589,7 +589,7 @@ pub const RunCommand = struct {
                         // A process can be both signaled and exited
                         if (exit_code.signal.valid()) {
                             if (!silent) {
-                                Output.prettyErrorln("<r><red>error<r>: \"<b>{s}<r>\" exited with signal <b>{s}<r>", .{
+                                Output.errGeneric("<r><red>error<r>: \"<b>{s}<r>\" exited with signal <b>{s}<r>", .{
                                     basenameOrBun(executable),
                                     exit_code.signal.name() orelse "unknown",
                                 });
@@ -625,7 +625,7 @@ pub const RunCommand = struct {
                                 else if (code > 0 and code != 130) {
                                     Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ basenameOrBun(executable), code });
                                 } else {
-                                    Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to exit code <b>{d}<r>", .{
+                                    Output.errGeneric("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to exit code <b>{d}<r>", .{
                                         basenameOrBun(executable),
                                         code,
                                     });
@@ -848,7 +848,23 @@ pub const RunCommand = struct {
             } else {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_bundler.fs.top_level_dir } });
+            var detailedMessage = "";
+            switch (@errorName(err)) {
+                case "PermissionDenied":
+                    detailedMessage = "Permission denied: You do not have the required permissions to access directory '{s}'. Please check the directory permissions.";
+                    break;
+                case "NotFound":
+                    detailedMessage = "Directory not found: The specified directory '{s}' does not exist. Please verify the directory path.";
+                    break;
+                case "FileSystemError":
+                    detailedMessage = "File system error: An error occurred while accessing the directory. Check file system integrity.";
+                    break;
+                default:
+                    detailedMessage = "Unexpected error: " + @errorName(err) + ". Please consult system logs for more details.";
+                    break;
+            }
+
+            Output.errGeneric("<r><red>error<r><d>:<r> <b>{s}<r> " + detailedMessage, .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_bundler.fs.top_level_dir } });
             Output.flush();
             return err;
         } orelse {
@@ -857,7 +873,7 @@ pub const RunCommand = struct {
             } else {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
-            Output.prettyErrorln(("Could not read the current directory. Please check if the directory exists and your application has the necessary permissions.", .{}));
+            Output.errGeneric("Error accessing directory", detailedMessage, .{bun.fmt.QuotedFormatter{ .text = this_bundler.fs.top_level_dir }});;
             Output.flush();
             return error.CouldntReadCurrentDirectory;
         };
@@ -1309,7 +1325,7 @@ pub const RunCommand = struct {
 
                 ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                Output.errGeneric("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     script_name_to_search,
                     @errorName(err),
                 });
@@ -1380,7 +1396,7 @@ pub const RunCommand = struct {
                         var shebang_buf: [64]u8 = undefined;
                         const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
                             if (!ctx.debug.silent)
-                                Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
+                                Output.errGeneric("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
                             Global.exit(1);
                         };
 
@@ -1404,7 +1420,7 @@ pub const RunCommand = struct {
 
                         ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
-                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                        Output.errGeneric("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                             std.fs.path.basename(file_path),
                             @errorName(err),
                         });
@@ -1505,7 +1521,7 @@ pub const RunCommand = struct {
 
                 ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                Output.errGeneric("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     std.fs.path.basename(script_name_to_search),
                     @errorName(err),
                 });
@@ -1531,7 +1547,7 @@ pub const RunCommand = struct {
             Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
                 ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                Output.errGeneric("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     std.fs.path.basename(script_name_to_search),
                     @errorName(err),
                 });

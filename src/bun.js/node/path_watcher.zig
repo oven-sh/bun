@@ -21,8 +21,9 @@ const Semaphore = sync.Semaphore;
 var default_manager_mutex: Mutex = Mutex.init();
 var default_manager: ?*PathWatcherManager = null;
 
-const Event = bun.JSC.Node.FSWatcher.Event;
-const StringOrBytesToDecode = bun.JSC.Node.FSWatcher.FSWatchTaskWindows.StringOrBytesToDecode;
+const FSWatcher = bun.JSC.Node.FSWatcher;
+const Event = FSWatcher.Event;
+const StringOrBytesToDecode = FSWatcher.FSWatchTaskWindows.StringOrBytesToDecode;
 
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
@@ -757,7 +758,7 @@ pub const PathWatcher = struct {
         rename,
         change,
 
-        pub fn toEvent(event_type: EventType, path: StringOrBytesToDecode) Event {
+        pub fn toEvent(event_type: EventType, path: FSWatcher.EventPathString) Event {
             return switch (event_type) {
                 inline else => |t| @unionInit(Event, @tagName(t), path),
             };

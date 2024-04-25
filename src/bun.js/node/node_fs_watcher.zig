@@ -148,7 +148,7 @@ pub const FSWatcher = struct {
         }
     };
 
-    const EventPathString = switch (Environment.os) {
+    pub const EventPathString = switch (Environment.os) {
         .windows => FSWatchTaskWindows.StringOrBytesToDecode,
         else => []const u8,
     };

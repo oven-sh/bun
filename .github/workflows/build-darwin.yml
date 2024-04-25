@@ -79,7 +79,7 @@ jobs:
             openssl@1.1 \
             ninja \
             golang \
-            gnu-sed --force
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -136,7 +136,7 @@ jobs:
             openssl@1.1 \
             ninja \
             golang \
-            gnu-sed --force
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -218,7 +218,7 @@ jobs:
             openssl@1.1 \
             ninja \
             golang \
-            gnu-sed --force
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH

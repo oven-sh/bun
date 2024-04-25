@@ -3,7 +3,6 @@ import { describe, test, expect, it } from "bun:test";
 
 import { nodeDataCases } from "./testdata";
 
-
 describe("createSocket()", () => {
   test("connect", done => {
     const PORT = 12345;

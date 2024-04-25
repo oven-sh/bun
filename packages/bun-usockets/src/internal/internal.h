@@ -54,16 +54,15 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 
 /* Poll type and what it polls for */
 enum {
-  /* Three first bits */
+  /* Two first bits */
   POLL_TYPE_SOCKET = 0,
-  POLL_TYPE_SOCKET_SHUT_DOWN = 1,
+  POLL_TYPE_UDP = 1,
   POLL_TYPE_SEMI_SOCKET = 2,
   POLL_TYPE_CALLBACK = 3,
-  POLL_TYPE_UDP = 4,
 
   /* Two last bits */
-  POLL_TYPE_POLLING_OUT = 8,
-  POLL_TYPE_POLLING_IN = 16
+  POLL_TYPE_POLLING_OUT = 4,
+  POLL_TYPE_POLLING_IN = 8
 };
 
 /* Loop related */
@@ -112,6 +111,7 @@ struct us_socket_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p; // 4 bytes
   unsigned char timeout;                           // 1 byte
   unsigned char long_timeout;                      // 1 byte
+  unsigned char is_shut_down; 
   unsigned short
       low_prio_state; /* 0 = not in low-prio queue, 1 = is in low-prio queue, 2
                          = was in low-prio queue in this iteration */

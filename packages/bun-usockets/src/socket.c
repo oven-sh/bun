@@ -197,6 +197,7 @@ struct us_socket_t *us_socket_attach(int ssl, LIBUS_SOCKET_DESCRIPTOR client_fd,
     s->context = ctx;
     s->timeout = 0;
     s->low_prio_state = 0;
+    s->is_shut_down = 0;
 
     /* We always use nodelay */
     bsd_socket_nodelay(client_fd, 1);
@@ -247,6 +248,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->timeout = 0;
     s->long_timeout = 0;
     s->low_prio_state = 0;
+    s->is_shut_down = 0;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);
@@ -313,7 +315,7 @@ int us_socket_is_shut_down(int ssl, struct us_socket_t *s) {
     }
 #endif
 
-    return us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN;
+    return s->is_shut_down;
 }
 
 void us_socket_shutdown(int ssl, struct us_socket_t *s) {
@@ -328,7 +330,7 @@ void us_socket_shutdown(int ssl, struct us_socket_t *s) {
      * We need more states in that case, we need to track RECEIVED_FIN
      * so far, the app has to track this and call close as needed */
     if (!us_socket_is_closed(ssl, s) && !us_socket_is_shut_down(ssl, s)) {
-        us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
+        s->is_shut_down = 1;
         us_poll_change(&s->p, s->context->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }

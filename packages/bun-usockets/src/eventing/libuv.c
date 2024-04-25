@@ -127,7 +127,7 @@ int us_poll_events(struct us_poll_t *p) {
 
 unsigned int us_internal_accept_poll_event(struct us_poll_t *p) { return 0; }
 
-int us_internal_poll_type(struct us_poll_t *p) { return p->poll_type & 0b111; }
+int us_internal_poll_type(struct us_poll_t *p) { return p->poll_type & 0b11; }
 
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
   p->poll_type = poll_type | (p->poll_type & 12);

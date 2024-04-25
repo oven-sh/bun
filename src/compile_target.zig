@@ -359,7 +359,7 @@ pub const CompileTarget = struct {
                 const version = bun.Semver.Version.parse(bun.Semver.SlicedString.init(token[1..], token[1..]));
                 if (version.valid) {
                     if (version.version.major == null or version.version.minor == null or version.version.patch == null) {
-                        Output.errGeneric("Please pass a complete version number to --target. For example, --target=bun-v" ++ Environment.version, .{});
+                        Output.errGeneric("Please pass a complete version number to --target. For example, --target=bun-v" ++ Environment.version_string, .{});
                         Global.exit(1);
                     }
 

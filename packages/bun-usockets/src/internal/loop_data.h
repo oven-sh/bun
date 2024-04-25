@@ -29,6 +29,7 @@ struct us_internal_loop_data_t {
     void *ssl_data;
     void (*pre_cb)(struct us_loop_t *);
     void (*post_cb)(struct us_loop_t *);
+    struct us_udp_socket_t *closed_udp_head;
     struct us_socket_t *closed_head;
     struct us_socket_t *low_prio_head;
     int low_prio_budget;

@@ -98,12 +98,14 @@ void *us_udp_socket_user(struct us_udp_socket_t *s) {
 }
 
 void us_udp_socket_close(struct us_udp_socket_t *s) {
-  struct us_poll_t *p = (struct us_poll_t *) s;
-//   us_poll_stop(p, s->loop);
-//   bsd_close_socket(us_poll_fd(p));
+    struct us_loop_t *loop = s->loop;
+    struct us_poll_t *p = (struct us_poll_t *) s;
+    us_poll_stop(p, loop);
+    bsd_close_socket(us_poll_fd(p));
     s->closed = 1;
-    // change to writable poll to trigger cleanup on next loop cycle
-    us_poll_change(p, s->loop, LIBUS_SOCKET_WRITABLE);
+    s->next = loop->data.closed_udp_head;
+    loop->data.closed_udp_head = s;
+    s->on_close(s);
 }
 
 int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {
@@ -118,6 +120,7 @@ struct us_udp_socket_t *us_create_udp_socket(
     struct us_loop_t *loop, 
     void (*data_cb)(struct us_udp_socket_t *, void *, int), 
     void (*drain_cb)(struct us_udp_socket_t *), 
+    void (*close_cb)(struct us_udp_socket_t *),
     const char *host, 
     unsigned short port, 
     void *user
@@ -150,6 +153,8 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->connected = 0;
     udp->on_data = data_cb;
     udp->on_drain = drain_cb;
+    udp->on_close = close_cb;
+    udp->next = NULL;
 
     us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     

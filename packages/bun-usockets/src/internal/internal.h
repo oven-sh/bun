@@ -128,6 +128,7 @@ struct us_udp_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
     void (*on_data)(struct us_udp_socket_t *, void *, int);
     void (*on_drain)(struct us_udp_socket_t *);
+    void (*on_close)(struct us_udp_socket_t *);
     void *user;
     struct us_loop_t *loop;
     /* An UDP socket can only ever be bound to one single port regardless of how
@@ -136,6 +137,7 @@ struct us_udp_socket_t {
     uint16_t port;
     uint16_t closed : 1;
     uint16_t connected : 1;
+    struct us_udp_socket_t *next;
 };
 
 #if defined(LIBUS_USE_KQUEUE)

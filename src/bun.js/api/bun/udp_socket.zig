@@ -22,6 +22,15 @@ extern fn inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: c_int)
 extern fn inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
 extern fn JSSocketAddress__create(global: *JSGlobalObject, address: JSValue, port: i32, v6: bool) JSValue;
 
+fn onClose(socket: *uws.udp.Socket) callconv(.C) void {
+    JSC.markBinding(@src());
+
+    const this: *UDPSocket = bun.cast(*UDPSocket, socket.user().?);
+    this.closed = true;
+    this.poll_ref.unref(this.globalThis.bunVM());
+    _ = this.js_refcount.fetchSub(1, .Monotonic);
+}
+
 fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     JSC.markBinding(@src());
 
@@ -230,7 +239,7 @@ pub const UDPSocketConfig = struct {
     }
 
     pub fn deinit(this: This) void {
-        // this.unprotect();
+        this.unprotect();
         default_allocator.free(this.hostname);
         if (this.connect) |val| {
             default_allocator.free(val.address);
@@ -251,6 +260,7 @@ pub const UDPSocket = struct {
 
     ref: JSC.Ref = JSC.Ref.init(),
     poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
+    // if marked as closed the socket pointer may be stale
     closed: bool = false,
     connect_info: ?ConnectInfo = null,
     vm: *JSC.VirtualMachine,
@@ -294,6 +304,7 @@ pub const UDPSocket = struct {
             this.loop,
             onData,
             onDrain,
+            onClose,
             config.hostname,
             config.port,
             this,
@@ -559,27 +570,12 @@ pub const UDPSocket = struct {
 
     pub fn close(
         this: *This,
-        globalThis: *JSGlobalObject,
+        _: *JSGlobalObject,
         _: *CallFrame,
     ) callconv(.C) JSValue {
-        if (this.closed) {
-            globalThis.throw("Socket is already closed", .{});
-            return .zero;
-        }
-
-        this.doClose();
+        if (!this.closed) this.socket.close();
 
         return .undefined;
-    }
-
-    fn doClose(
-        this: *This,
-    ) void {
-        this.closed = true;
-        this.config.unprotect();
-        this.poll_ref.unref(this.globalThis.bunVM());
-        this.socket.close();
-        _ = this.js_refcount.fetchSub(1, .Monotonic);
     }
 
     pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
@@ -613,6 +609,7 @@ pub const UDPSocket = struct {
     }
 
     pub fn getPort(this: *This, _: *JSGlobalObject) callconv(.C) JSValue {
+        if (this.closed) return .undefined;
         return JSValue.jsNumber(this.socket.boundPort());
     }
 
@@ -629,6 +626,7 @@ pub const UDPSocket = struct {
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+        if (this.closed) return .undefined;
         var buf: [64]u8 = [_]u8{0} ** 64;
         var length: i32 = 64;
         this.socket.boundIp(&buf, &length);
@@ -644,6 +642,7 @@ pub const UDPSocket = struct {
     }
 
     pub fn getRemoteAddress(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (this.closed) return .undefined;
         const connect_info = this.connect_info orelse return .undefined;
         var buf: [64]u8 = [_]u8{0} ** 64;
         var length: i32 = 64;
@@ -676,9 +675,9 @@ pub const UDPSocket = struct {
     }
 
     pub fn deinit(this: *This) void {
-        if (!this.closed) {
-            this.doClose();
-        }
+        // finalize is only called when js_refcount reaches 0
+        // js_refcount can only reach 0 when the socket is closed
+        bun.assert(this.closed);
 
         this.config.deinit();
         this.destroy();
@@ -694,6 +693,11 @@ pub const UDPSocket = struct {
 
         if (this.connect_info != null) {
             globalThis.throw("Socket is already connected", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            globalThis.throw("Socket is closed", .{});
             return .zero;
         }
 
@@ -737,6 +741,11 @@ pub const UDPSocket = struct {
 
         if (this.connect_info == null) {
             globalObject.throw("Socket is not connected", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            globalObject.throw("Socket is closed", .{});
             return .zero;
         }
 

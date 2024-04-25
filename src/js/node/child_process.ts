@@ -364,13 +364,17 @@ function execFile(file, args, options, callback) {
             encodedLength += actualLen;
 
             if (encodedLength > maxBuffer) {
-              let combined = ArrayPrototypeJoin.$call(array, "") + chunk;
+              const joined = ArrayPrototypeJoin.$call(array, "");
+              let combined = joined + chunk;
               combined = StringPrototypeSlice.$call(combined, 0, maxBuffer);
-              array = [combined];
+              array.length = 1;
+              array[0] = combined;
               ex = ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
               kill();
             } else {
-              array = [ArrayPrototypeJoin.$call(array, "") + chunk];
+              const val = ArrayPrototypeJoin.$call(array, "") + chunk;
+              array.length = 1;
+              array[0] = val;
             }
           } else {
             $arrayPush(array, chunk);

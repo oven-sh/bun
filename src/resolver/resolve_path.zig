@@ -596,6 +596,24 @@ pub fn isDriveLetterT(comptime T: type, c: T) bool {
     return 'a' <= c and c <= 'z' or 'A' <= c and c <= 'Z';
 }
 
+pub fn hasAnyIllegalChars(maybe_path: []const u8) bool {
+    if (!bun.Environment.isWindows) return false;
+    var maybe_path_ = maybe_path;
+    // check for disk discrimnator; remove it since it has a ':'
+    if (startsWithDiskDiscriminator(maybe_path_)) maybe_path_ = maybe_path_[2..];
+    // guard against OBJECT_NAME_INVALID => unreachable
+    return std.mem.indexOfAny(u8, maybe_path_, "<>:\"|?*") != null;
+}
+
+pub fn startsWithDiskDiscriminator(maybe_path: []const u8) bool {
+    if (!bun.Environment.isWindows) return false;
+    if (maybe_path.len < 3) return false;
+    if (!isDriveLetter(maybe_path[0])) return false;
+    if (maybe_path[1] != ':') return false;
+    if (maybe_path[2] != '\\') return false;
+    return true;
+}
+
 // path.relative lets you do relative across different share drives
 pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
     // minimum: `C:`

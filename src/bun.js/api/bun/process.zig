@@ -283,9 +283,23 @@ pub const Process = struct {
         this.onExit(status, &rusage_result);
     }
 
-    pub fn watch(this: *Process, vm: anytype) JSC.Maybe(void) {
-        _ = vm; // autofix
+    pub fn watchOrReap(this: *Process) JSC.Maybe(bool) {
+        switch (this.watch()) {
+            .err => |err| {
+                if (comptime Environment.isPosix) {
+                    if (err.getErrno() == .SRCH) {
+                        this.wait(true);
+                        return .{ .result = this.hasExited() };
+                    }
+                }
 
+                return .{ .err = err };
+            },
+            .result => return .{ .result = this.hasExited() },
+        }
+    }
+
+    pub fn watch(this: *Process) JSC.Maybe(void) {
         if (comptime Environment.isWindows) {
             this.poller.uv.ref();
             return JSC.Maybe(void){ .result = {} };
@@ -319,10 +333,6 @@ pub const Process = struct {
             },
             .err => |err| {
                 this.poller.fd.disableKeepingProcessAlive(this.event_loop);
-
-                if (err.getErrno() != .SRCH) {
-                    @panic("This shouldn't happen");
-                }
 
                 return .{ .err = err };
             },

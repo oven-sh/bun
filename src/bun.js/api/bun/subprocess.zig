@@ -2107,7 +2107,7 @@ pub const Subprocess = struct {
         var send_exit_notification = false;
 
         if (comptime !is_sync) {
-            switch (subprocess.process.watch(jsc_vm)) {
+            switch (subprocess.process.watch()) {
                 .result => {},
                 .err => {
                     send_exit_notification = true;
@@ -2150,7 +2150,7 @@ pub const Subprocess = struct {
         }
 
         if (comptime is_sync) {
-            switch (subprocess.process.watch(jsc_vm)) {
+            switch (subprocess.process.watch()) {
                 .result => {},
                 .err => {
                     subprocess.process.wait(true);

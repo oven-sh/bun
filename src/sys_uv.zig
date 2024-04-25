@@ -165,7 +165,7 @@ pub fn unlink(file_path: [:0]const u8) Maybe(void) {
         .{ .result = {} };
 }
 
-pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe([:0]const u8) {
+pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();

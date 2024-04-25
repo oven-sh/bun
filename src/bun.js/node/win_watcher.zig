@@ -12,8 +12,9 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Output = bun.Output;
 const Watcher = @import("../../watcher.zig");
 
+const FSWatcher = bun.JSC.Node.FSWatcher;
 const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
-const Event = bun.JSC.Node.FSWatcher.Event;
+const Event = FSWatcher.Event;
 
 var default_manager: ?*PathWatcherManager = null;
 
@@ -155,8 +156,11 @@ pub const PathWatcher = struct {
         var debug_count: if (bun.Environment.isDebug) usize else u0 = 0;
         for (this.handlers.values(), 0..) |*event, i| {
             if (event.emit(hash, timestamp, event_type)) {
-                const ctx = this.handlers.keys()[i];
-                onPathUpdateFn(ctx, event_type.toEvent(path), is_file);
+                const ctx: *FSWatcher = @alignCast(@ptrCast(this.handlers.keys()[i]));
+                onPathUpdateFn(ctx, event_type.toEvent(switch (ctx.encoding) {
+                    .utf8 => .{ .string = bun.String.createUTF8(path) },
+                    else => .{ .bytes_to_free = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory() },
+                }), is_file);
                 if (comptime bun.Environment.isDebug)
                     debug_count += 1;
                 onUpdateEndFn(ctx);

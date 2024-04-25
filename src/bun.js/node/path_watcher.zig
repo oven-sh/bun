@@ -22,6 +22,7 @@ var default_manager_mutex: Mutex = Mutex.init();
 var default_manager: ?*PathWatcherManager = null;
 
 const Event = bun.JSC.Node.FSWatcher.Event;
+const StringOrBytesToDecode = bun.JSC.Node.FSWatcher.FSWatchTaskWindows.StringOrBytesToDecode;
 
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
@@ -756,12 +757,9 @@ pub const PathWatcher = struct {
         rename,
         change,
 
-        pub fn toEvent(event_type: EventType, path: []const u8) Event {
+        pub fn toEvent(event_type: EventType, path: StringOrBytesToDecode) Event {
             return switch (event_type) {
-                inline else => |t| @unionInit(Event, @tagName(t), switch (Environment.os) {
-                    else => path,
-                    .windows => .{ .bytes_to_free = path },
-                }),
+                inline else => |t| @unionInit(Event, @tagName(t), path),
             };
         }
     };

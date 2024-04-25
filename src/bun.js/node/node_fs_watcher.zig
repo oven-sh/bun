@@ -204,7 +204,7 @@ pub const FSWatcher = struct {
 
         pub usingnamespace bun.New(@This());
 
-        const StringOrBytesToDecode = union(enum) {
+        pub const StringOrBytesToDecode = union(enum) {
             string: bun.String,
             bytes_to_free: []const u8,
 

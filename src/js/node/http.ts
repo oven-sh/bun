@@ -576,6 +576,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
         const http_res = new ResponseClass(http_req, reply);
 
         http_req.socket[kInternalSocketData] = [_server, http_res, req];
+        server.emit("connection", http_req.socket);
 
         const rejectFn = err => reject(err);
         http_req.once("error", rejectFn);
@@ -1267,8 +1268,9 @@ ServerResponse.prototype.assignSocket = function (socket) {
     throw ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = this;
-  socket.on("close", onServerResponseClose);
+  socket.on("close", () => onServerResponseClose.$call(socket));
   this.socket = socket;
+  this._writableState.autoDestroy = false;
   this.emit("socket", socket);
 };
 
@@ -1479,6 +1481,8 @@ class ClientRequest extends OutgoingMessage {
         fetchOptions.unix = socketPath;
       }
 
+      this._writableState.autoDestroy = false;
+      this.emit("socket", this.socket);
       //@ts-ignore
       this.#fetchRequest = fetch(url, fetchOptions)
         .then(response => {
@@ -1498,6 +1502,7 @@ class ClientRequest extends OutgoingMessage {
         .finally(() => {
           this.#fetchRequest = null;
           this[kClearTimeout]();
+          emitCloseNT(this);
         });
     } catch (err) {
       if (!!$debug) globalReportError(err);
@@ -1745,17 +1750,6 @@ class ClientRequest extends OutgoingMessage {
 
     const { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
-
-    // needs to run on the next tick so that consumer has time to register the event handler
-    // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L353
-    // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L865
-    process.nextTick(() => {
-      // this will be FakeSocket since we use fetch() atm under the hood.
-      // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
-      if (this.destroyed) return;
-      if (this.listenerCount("socket") === 0) return;
-      this.emit("socket", this.socket);
-    });
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

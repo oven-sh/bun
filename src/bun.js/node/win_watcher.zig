@@ -44,7 +44,7 @@ pub const PathWatcherManager = struct {
         if (std.mem.indexOfScalar(*PathWatcher, this.watchers.values(), watcher)) |index| {
             if (comptime bun.Environment.isDebug) {
                 if (path.len > 0)
-                    std.debug.assert(bun.strings.eql(this.watchers.keys()[index], path));
+                    bun.assert(bun.strings.eql(this.watchers.keys()[index], path));
             }
 
             bun.default_allocator.free(this.watchers.keys()[index]);
@@ -118,7 +118,7 @@ pub const PathWatcher = struct {
         }
         const this: *PathWatcher = @alignCast(@fieldParentPtr("handle", event));
         if (comptime bun.Environment.isDebug) {
-            std.debug.assert(event.data == @as(?*anyopaque, @ptrCast(this)));
+            bun.assert(event.data == @as(?*anyopaque, @ptrCast(this)));
         }
 
         const timestamp = event.loop.time;

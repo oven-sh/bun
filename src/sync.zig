@@ -450,11 +450,11 @@ pub fn Channel(
         }
 
         pub fn writeAll(self: *Self, items: []const T) !void {
-            std.debug.assert((try self.writeItems(items, true)) == items.len);
+            bun.assert((try self.writeItems(items, true)) == items.len);
         }
 
         pub fn readAll(self: *Self, items: []T) !void {
-            std.debug.assert((try self.readItems(items, true)) == items.len);
+            bun.assert((try self.readItems(items, true)) == items.len);
         }
 
         fn writeItems(self: *Self, items: []const T, should_block: bool) !usize {
@@ -537,7 +537,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
             };
 
             const rc = std.c.pthread_rwlock_destroy(&self.rwlock);
-            std.debug.assert(rc == .SUCCESS or rc == safe_rc);
+            bun.assert(rc == .SUCCESS or rc == safe_rc);
 
             self.* = undefined;
         }
@@ -548,12 +548,12 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
 
         pub fn lock(self: *RwLock) void {
             const rc = pthread_rwlock_wrlock(&self.rwlock);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn unlock(self: *RwLock) void {
             const rc = pthread_rwlock_unlock(&self.rwlock);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn tryLockShared(self: *RwLock) bool {
@@ -562,12 +562,12 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
 
         pub fn lockShared(self: *RwLock) void {
             const rc = pthread_rwlock_rdlock(&self.rwlock);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn unlockShared(self: *RwLock) void {
             const rc = pthread_rwlock_unlock(&self.rwlock);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         const PTHREAD_RWLOCK_INITIALIZER = pthread_rwlock_t{};
@@ -886,7 +886,7 @@ else if (@import("builtin").link_libc)
             };
 
             const rc = std.c.pthread_mutex_destroy(&self.mutex);
-            std.debug.assert(rc == .SUCCESS or rc == safe_rc);
+            bun.assert(rc == .SUCCESS or rc == safe_rc);
 
             self.* = undefined;
         }
@@ -897,12 +897,12 @@ else if (@import("builtin").link_libc)
 
         pub fn lock(self: *Mutex) void {
             const rc = std.c.pthread_mutex_lock(&self.mutex);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn unlock(self: *Mutex) void {
             const rc = std.c.pthread_mutex_unlock(&self.mutex);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         extern "c" fn pthread_mutex_trylock(m: *std.c.pthread_mutex_t) callconv(.C) c_int;
@@ -1041,7 +1041,7 @@ pub const Condvar = if (@import("builtin").os.tag == .windows)
                 @as(system.ULONG, 0),
             );
 
-            std.debug.assert(rc != system.FALSE);
+            bun.assert(rc != system.FALSE);
         }
 
         pub fn signal(self: *Condvar) void {
@@ -1080,24 +1080,24 @@ else if (@import("builtin").link_libc)
             };
 
             const rc = std.c.pthread_cond_destroy(&self.cond);
-            std.debug.assert(rc == .SUCCESS or rc == safe_rc);
+            bun.assert(rc == .SUCCESS or rc == safe_rc);
 
             self.* = undefined;
         }
 
         pub fn wait(self: *Condvar, mutex: *Mutex) void {
             const rc = std.c.pthread_cond_wait(&self.cond, &mutex.mutex);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn signal(self: *Condvar) void {
             const rc = std.c.pthread_cond_signal(&self.cond);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn broadcast(self: *Condvar) void {
             const rc = std.c.pthread_cond_broadcast(&self.cond);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
     }
 else

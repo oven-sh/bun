@@ -137,7 +137,7 @@ pub const WriteFile = struct {
         wrote: *usize,
     ) bool {
         const fd = this.opened_fd;
-        std.debug.assert(fd != invalid_fd);
+        bun.assert(fd != invalid_fd);
 
         const result: JSC.Maybe(usize) =
             // We do not use pwrite() because the file may not be
@@ -446,7 +446,7 @@ pub const WriteFileWindows = struct {
 
         // libuv always returns 0 when a callback is specified
         if (rc.errEnum()) |err| {
-            std.debug.assert(err != .NOENT);
+            bun.assert(err != .NOENT);
 
             this.throw(.{
                 .errno = @intFromEnum(err),
@@ -460,7 +460,7 @@ pub const WriteFileWindows = struct {
 
     pub fn onOpen(req: *uv.fs_t) callconv(.C) void {
         var this: *WriteFileWindows = @fieldParentPtr("io_request", req);
-        std.debug.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
+        bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
         const rc = this.io_request.result;
         if (comptime Environment.allow_assert)
             log("onOpen({s}) = {}", .{ this.file_blob.store.?.data.file.pathlike.path.slice(), rc });
@@ -518,14 +518,14 @@ pub const WriteFileWindows = struct {
 
     fn onMkdirpCompleteConcurrent(this: *WriteFileWindows, err_: JSC.Maybe(void)) void {
         log("mkdirp complete", .{});
-        std.debug.assert(this.err == null);
+        bun.assert(this.err == null);
         this.err = if (err_ == .err) err_.err else null;
         this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.ManagedTask.New(WriteFileWindows, onMkdirpComplete).init(this)));
     }
 
     fn onWriteComplete(req: *uv.fs_t) callconv(.C) void {
         var this: *WriteFileWindows = @fieldParentPtr("io_request", req);
-        std.debug.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
+        bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
         const rc = this.io_request.result;
         if (rc.errno()) |err| {
             this.throw(.{
@@ -566,7 +566,7 @@ pub const WriteFileWindows = struct {
     }
 
     pub fn throw(this: *WriteFileWindows, err: bun.sys.Error) void {
-        std.debug.assert(this.err == null);
+        bun.assert(this.err == null);
         this.err = err;
         this.onFinish();
     }

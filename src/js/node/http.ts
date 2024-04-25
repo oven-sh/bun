@@ -86,7 +86,6 @@ const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in No
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
-const ArrayIsArray = Array.isArray;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
 
@@ -137,7 +136,7 @@ function validateFunction(callable: any, field: string) {
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]!: [import("bun").Server, OutgoingMessage, Request];
+  [kInternalSocketData]!: [import("bun").Server, typeof OutgoingMessage, typeof Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -577,6 +576,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
         const http_res = new ResponseClass(http_req, reply);
 
         http_req.socket[kInternalSocketData] = [_server, http_res, req];
+        server.emit("connection", http_req.socket);
 
         const rejectFn = err => reject(err);
         http_req.once("error", rejectFn);
@@ -1268,8 +1268,9 @@ ServerResponse.prototype.assignSocket = function (socket) {
     throw ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = this;
-  socket.on("close", onServerResponseClose);
+  socket.on("close", () => onServerResponseClose.$call(socket));
   this.socket = socket;
+  this._writableState.autoDestroy = false;
   this.emit("socket", socket);
 };
 
@@ -1388,6 +1389,7 @@ class ClientRequest extends OutgoingMessage {
   #timeoutTimer?: Timer = undefined;
   #options;
   #finished;
+  #tls;
 
   get path() {
     return this.#path;
@@ -1462,6 +1464,7 @@ class ClientRequest extends OutgoingMessage {
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
+        tls: this.#tls,
       };
 
       if (!!$debug) {
@@ -1478,6 +1481,8 @@ class ClientRequest extends OutgoingMessage {
         fetchOptions.unix = socketPath;
       }
 
+      this._writableState.autoDestroy = false;
+      this.emit("socket", this.socket);
       //@ts-ignore
       this.#fetchRequest = fetch(url, fetchOptions)
         .then(response => {
@@ -1497,6 +1502,7 @@ class ClientRequest extends OutgoingMessage {
         .finally(() => {
           this.#fetchRequest = null;
           this[kClearTimeout]();
+          emitCloseNT(this);
         });
     } catch (err) {
       if (!!$debug) globalReportError(err);
@@ -1681,13 +1687,14 @@ class ClientRequest extends OutgoingMessage {
     this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
+    this.#tls = options.tls;
 
     const timeout = options.timeout;
     if (timeout !== undefined && timeout !== 0) {
       this.setTimeout(timeout, undefined);
     }
 
-    const headersArray = ArrayIsArray(headers);
+    const headersArray = $isJSArray(headers);
     if (!headersArray) {
       var headers = options.headers;
       if (headers) {
@@ -1743,17 +1750,6 @@ class ClientRequest extends OutgoingMessage {
 
     const { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
-
-    // needs to run on the next tick so that consumer has time to register the event handler
-    // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L353
-    // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L865
-    process.nextTick(() => {
-      // this will be FakeSocket since we use fetch() atm under the hood.
-      // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
-      if (this.destroyed) return;
-      if (this.listenerCount("socket") === 0) return;
-      this.emit("socket", this.socket);
-    });
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

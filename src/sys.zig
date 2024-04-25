@@ -345,7 +345,7 @@ pub const Error = struct {
     };
 
     pub inline fn withFd(this: Error, fd: anytype) Error {
-        if (Environment.allow_assert) std.debug.assert(fd != bun.invalid_fd);
+        if (Environment.allow_assert) bun.assert(fd != bun.invalid_fd);
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,
@@ -715,6 +715,10 @@ pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
 
 pub fn getErrno(rc: anytype) bun.C.E {
     if (comptime Environment.isWindows) {
+        if (comptime @TypeOf(rc) == bun.windows.NTSTATUS) {
+            return bun.windows.translateNTStatusToErrno(rc);
+        }
+
         if (bun.windows.Win32Error.get().toSystemErrno()) |e| {
             return e.toE();
         }
@@ -929,13 +933,13 @@ pub fn openFileAtWindowsNtPath(
     disposition: w.ULONG,
     options: w.ULONG,
 ) Maybe(bun.FileDescriptor) {
-    var result: windows.HANDLE = undefined;
-
     // Another problem re: normalization is that you can use relative paths, but no leading '.\' or './''
     // this path is probably already backslash normalized so we're only going to check for '.\'
     // const path = if (bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, ".\\")) path_maybe_leading_dot[2..] else path_maybe_leading_dot;
-    // std.debug.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
+    // bun.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
     assertIsValidWindowsPath(u16, path);
+
+    var result: windows.HANDLE = undefined;
 
     const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
         .err = .{
@@ -1100,9 +1104,23 @@ pub noinline fn openFileAtWindowsA(
 }
 
 pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode) Maybe(bun.FileDescriptor) {
+    return openatWindowsTMaybeNormalize(T, dir, path, flags, true);
+}
+
+fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
     if (flags & O.DIRECTORY != 0) {
+        const windows_options: WindowsOpenDirOptions = .{ .iterable = flags & O.PATH == 0, .no_follow = flags & O.NOFOLLOW != 0, .can_rename_or_delete = false };
+        if (comptime !normalize and T == u16) {
+            return openDirAtWindowsNtPath(dir, path, windows_options);
+        }
+
         // we interpret O_PATH as meaning that we don't want iteration
-        return openDirAtWindowsT(T, dir, path, .{ .iterable = flags & O.PATH == 0, .no_follow = flags & O.NOFOLLOW != 0, .can_rename_or_delete = false });
+        return openDirAtWindowsT(
+            T,
+            dir,
+            path,
+            windows_options,
+        );
     }
 
     const nonblock = flags & O.NONBLOCK != 0;
@@ -1139,15 +1157,19 @@ pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T
 
     const options: windows.ULONG = if (follow_symlinks) file_or_dir_flag | blocking_flag else file_or_dir_flag | windows.FILE_OPEN_REPARSE_POINT;
 
+    if (comptime !normalize and T == u16) {
+        return openFileAtWindowsNtPath(dir, path, access_mask, creation, options);
+    }
+
     return openFileAtWindowsT(T, dir, path, access_mask, creation, options);
 }
 
 pub fn openatWindows(
-    dir: bun.FileDescriptor,
+    dir: anytype,
     path: []const u16,
     flags: bun.Mode,
 ) Maybe(bun.FileDescriptor) {
-    return openatWindowsT(u16, dir, path, flags);
+    return openatWindowsT(u16, bun.toFD(dir), path, flags);
 }
 
 pub fn openatWindowsA(
@@ -1296,7 +1318,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
         .windows => {
             // "WriteFile sets this value to zero before doing any work or error checking."
             var bytes_written: u32 = undefined;
-            std.debug.assert(bytes.len > 0);
+            bun.assert(bytes.len > 0);
             const rc = kernel32.WriteFile(
                 fd.cast(),
                 bytes.ptr,
@@ -1780,14 +1802,16 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
         var w_buf_from: bun.WPathBuffer = undefined;
         var w_buf_to: bun.WPathBuffer = undefined;
 
-        return bun.C.renameAtW(
+        const rc = bun.C.renameAtW(
             from_dir,
-            bun.strings.toWPathNormalized(&w_buf_from, from),
+            bun.strings.toNTPath(&w_buf_from, from),
             to_dir,
-            bun.strings.toWPathNormalized(&w_buf_to, to),
+            bun.strings.toNTPath(&w_buf_to, to),
             // @paperdave why waas this set to false?
             true,
         );
+
+        return rc;
     }
     while (true) {
         if (Maybe(void).errnoSys(sys.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {
@@ -1841,11 +1865,11 @@ pub const WindowsSymlinkOptions = packed struct {
     pub var has_failed_to_create_symlink = false;
 };
 
-pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe(void) {
+pub fn symlinkOrJunctionOnWindows(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
         var sym16: bun.WPathBuffer = undefined;
         var target16: bun.WPathBuffer = undefined;
-        const sym_path = bun.strings.toNTPath(&sym16, sym);
+        const sym_path = bun.strings.toNTPath(&sym16, dest);
         const target_path = bun.strings.toNTPath(&target16, target);
         switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
             .result => {
@@ -1859,17 +1883,17 @@ pub fn symlinkOrJunctionOnWindows(sym: [:0]const u8, target: [:0]const u8) Maybe
         }
     }
 
-    return sys_uv.symlinkUV(sym, target, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
+    return sys_uv.symlinkUV(target, dest, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
 }
 
-pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
+pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
     while (true) {
         const flags = options.flags();
 
-        if (windows.kernel32.CreateSymbolicLinkW(sym, target, flags) == 0) {
+        if (windows.kernel32.CreateSymbolicLinkW(dest, target, flags) == 0) {
             const errno = bun.windows.Win32Error.get();
             log("CreateSymbolicLinkW({}, {}, {any}) = {s}", .{
-                bun.fmt.fmtPath(u16, sym, .{}),
+                bun.fmt.fmtPath(u16, dest, .{}),
                 bun.fmt.fmtPath(u16, target, .{}),
                 flags,
                 @tagName(errno),
@@ -1896,7 +1920,7 @@ pub fn symlinkW(sym: [:0]const u16, target: [:0]const u16, options: WindowsSymli
         }
 
         log("CreateSymbolicLinkW({}, {}, {any}) = 0", .{
-            bun.fmt.fmtPath(u16, sym, .{}),
+            bun.fmt.fmtPath(u16, dest, .{}),
             bun.fmt.fmtPath(u16, target, .{}),
             flags,
         });
@@ -1969,22 +1993,22 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
 }
 
 pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
-    if (Environment.isWindows) {
-        return Maybe(void).todo();
-    }
-    while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, std.posix.AT.REMOVEDIR), .rmdir)) |err| {
-            if (err.getErrno() == .INTR) continue;
-            return err;
-        }
-        return Maybe(void).success;
-    }
+    return unlinkatWithFlags(dirfd, to, std.os.AT.REMOVEDIR);
 }
 
 pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) Maybe(void) {
     if (Environment.isWindows) {
-        return Maybe(void).todo();
+        if (comptime std.meta.Elem(@TypeOf(to)) == u8) {
+            var w_buf: bun.WPathBuffer = undefined;
+            return unlinkatWithFlags(dirfd, bun.strings.toNTPath(&w_buf, bun.span(to)), flags);
+        }
+
+        return bun.windows.DeleteFileBun(to, .{
+            .dir = if (dirfd != bun.invalid_fd) dirfd.cast() else null,
+            .remove_dir = flags & std.os.AT.REMOVEDIR != 0,
+        });
     }
+
     while (true) {
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, flags), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -2001,7 +2025,7 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
 
 pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     if (Environment.isWindows) {
-        return Maybe(void).todo();
+        return unlinkatWithFlags(dirfd, to, 0);
     }
     while (true) {
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, 0), .unlink)) |err| {
@@ -2126,7 +2150,7 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
 
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {
     if (comptime !Environment.isLinux) @compileError("Linux-only");
-    std.debug.assert(capacity > 0);
+    bun.assert(capacity > 0);
 
     // In  Linux  versions  before 2.6.11, the capacity of a
     // pipe was the same as the system page size (e.g., 4096
@@ -2226,9 +2250,76 @@ pub fn exists(path: []const u8) bool {
     @compileError("TODO: existsOSPath");
 }
 
+pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
+    const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
+    const dir_fd = bun.toFD(dir_);
+    if (comptime Environment.isWindows) {
+        var wbuf: bun.WPathBuffer = undefined;
+        const path = bun.strings.toNTPath(&wbuf, subpath);
+        const path_len_bytes: u16 = @truncate(path.len * 2);
+        var nt_name = w.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(path.ptr),
+        };
+        var attr = w.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
+                null
+            else if (dir_fd == bun.invalid_fd)
+                std.fs.cwd().fd
+            else
+                dir_fd.cast(),
+            .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        };
+        var basic_info: w.FILE_BASIC_INFORMATION = undefined;
+        const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
+        if (JSC.Maybe(bool).errnoSysP(rc, .access, subpath)) |err| {
+            syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err });
+            return err;
+        }
+
+        const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0;
+        syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_dir) });
+
+        return .{
+            .result = is_dir,
+        };
+    }
+
+    if (comptime !has_sentinel) {
+        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
+        return directoryExistsAt(dir_fd, path);
+    }
+
+    if (comptime Environment.isLinux) {
+        // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
+        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
+        syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(linux.getErrno(rc)) });
+        if (rc == 0) {
+            return JSC.Maybe(bool){ .result = true };
+        }
+
+        return JSC.Maybe(bool){ .result = false };
+    }
+
+    // on other platforms use faccessat from libc
+    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.F_OK, 0);
+    syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(std.c.getErrno(rc)) });
+    if (rc == 0) {
+        return JSC.Maybe(bool){ .result = true };
+    }
+
+    return JSC.Maybe(bool){ .result = false };
+}
+
 pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
     if (comptime Environment.isPosix) {
-        return system.faccessat(bun.toFD(fd), &(std.posix.toPosixPath(subpath) catch return false), 0, 0) == 0;
+        return system.faccessat(fd.cast(), &(std.posix.toPosixPath(subpath) catch return false), 0, 0) == 0;
     }
 
     if (comptime Environment.isWindows) {
@@ -2384,6 +2475,14 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
     return .{ .result = .{ bun.toFD(fds[0]), bun.toFD(fds[1]) } };
 }
 
+pub fn openNullDevice() Maybe(bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.open("nul", 0, 0);
+    }
+
+    return open("/dev/null", os.O.RDWR, 0);
+}
+
 pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         var target: windows.HANDLE = undefined;
@@ -2456,7 +2555,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
     }
 
     if (comptime Environment.allow_assert)
-        std.debug.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
+        bun.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
 
     return Maybe(void).errnoSysP(
         std.os.linux.linkat(
@@ -2802,8 +2901,22 @@ pub const File = struct {
     /// 1. Open a file for reading
     /// 2. Read the file to a buffer
     /// 3. Return the File handle and the buffer
-    pub fn readFileFrom(dir_fd: anytype, path: [:0]const u8, allocator: std.mem.Allocator) Maybe(struct { File, []u8 }) {
-        const this = switch (bun.sys.openat(from(dir_fd).handle, path, O.RDONLY, 0)) {
+    pub fn readFileFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(struct { File, []u8 }) {
+        const ElementType = std.meta.Elem(@TypeOf(path));
+
+        const rc = brk: {
+            if (comptime Environment.isWindows and ElementType == u16) {
+                break :brk openatWindowsTMaybeNormalize(u16, from(dir_fd).handle, path, O.RDONLY, false);
+            }
+
+            if (comptime ElementType == u8 and std.meta.sentinel(@TypeOf(path)) == null) {
+                break :brk Syscall.openatA(from(dir_fd).handle, path, O.RDONLY, 0);
+            }
+
+            break :brk Syscall.openat(from(dir_fd).handle, path, O.RDONLY, 0);
+        };
+
+        const this = switch (rc) {
             .err => |err| return .{ .err = err },
             .result => |fd| from(fd),
         };
@@ -2823,7 +2936,7 @@ pub const File = struct {
     /// 2. Read the file to a buffer
     /// 3. Close the file
     /// 4. Return the buffer
-    pub fn readFrom(dir_fd: anytype, path: [:0]const u8, allocator: std.mem.Allocator) Maybe([]u8) {
+    pub fn readFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
         const file, const bytes = switch (readFileFrom(dir_fd, path, allocator)) {
             .err => |err| return .{ .err = err },
             .result => |result| result,
@@ -2833,20 +2946,15 @@ pub const File = struct {
         return .{ .result = bytes };
     }
 
-    pub fn toSource(path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
-        if (std.meta.sentinel(@TypeOf(path)) == null) {
-            return toSource(
-                &(std.os.toPosixPath(path) catch return .{
-                    .err = Error.oom,
-                }),
-                allocator,
-            );
-        }
-
-        return switch (readFrom(std.fs.cwd(), path, allocator)) {
+    pub fn toSourceAt(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
+        return switch (readFrom(dir_fd, path, allocator)) {
             .err => |err| .{ .err = err },
             .result => |bytes| .{ .result = bun.logger.Source.initPathString(path, bytes) },
         };
+    }
+
+    pub fn toSource(path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
+        return toSourceAt(std.fs.cwd(), path, allocator);
     }
 };
 

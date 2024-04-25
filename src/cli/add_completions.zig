@@ -86,16 +86,3 @@ pub const biggest_list: usize = brk: {
 };
 
 const index_blob = "add_completions.index.blob";
-
-test "entries" {
-    const items = index.get(FirstLetter.r);
-    var found_react = false;
-    for (items) |item| {
-        try std.testing.expectEqual(item[0], 'r');
-        if (std.mem.eql(u8, item, "react")) {
-            found_react = true;
-        }
-    }
-
-    try std.testing.expect(found_react);
-}

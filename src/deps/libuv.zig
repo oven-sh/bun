@@ -730,7 +730,7 @@ pub const uv_buf_t = extern struct {
     base: [*]u8,
 
     pub fn init(input: []const u8) uv_buf_t {
-        std.debug.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
+        bun.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
         return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
     }
 
@@ -1938,7 +1938,7 @@ pub const struct_uv_utsname_s = extern struct {
     machine: [255:0]u8,
 
     comptime {
-        std.debug.assert(@sizeOf(struct_uv_utsname_s) == 256 * 4);
+        bun.assert(@sizeOf(struct_uv_utsname_s) == 256 * 4);
     }
 };
 pub const uv_utsname_t = struct_uv_utsname_s;

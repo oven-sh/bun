@@ -1,4 +1,5 @@
-const JSC = @import("root").bun.JSC;
+const bun = @import("root").bun;
+const JSC = bun.JSC;
 
 pub const Classes = struct {
     pub const Blob = JSC.WebCore.Blob;
@@ -32,12 +33,12 @@ pub const Classes = struct {
     pub const Transpiler = JSC.API.JSTranspiler;
     pub const JSTranspiler = Transpiler;
     pub const Listener = JSC.API.Listener;
-    pub const MD4 = JSC.API.Bun.Crypto.MD4;
-    pub const MD5 = JSC.API.Bun.Crypto.MD5;
     pub const MatchedRoute = JSC.API.MatchedRoute;
     pub const NodeJSFS = JSC.Node.NodeJSFS;
     pub const Request = JSC.WebCore.Request;
     pub const Response = JSC.WebCore.Response;
+    pub const MD4 = JSC.API.Bun.Crypto.MD4;
+    pub const MD5 = JSC.API.Bun.Crypto.MD5;
     pub const SHA1 = JSC.API.Bun.Crypto.SHA1;
     pub const SHA224 = JSC.API.Bun.Crypto.SHA224;
     pub const SHA256 = JSC.API.Bun.Crypto.SHA256;

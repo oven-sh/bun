@@ -150,8 +150,9 @@ pub const WebWorker = struct {
             return;
         }
 
-        std.debug.assert(this.status.load(.acquire) == .start);
-        std.debug.assert(this.vm == null);
+        assert(this.status.load(.acquire) == .start);
+        assert(this.vm == null);
+
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
             .allocator = this.arena.allocator(),
@@ -262,7 +263,7 @@ pub const WebWorker = struct {
         log("[{d}] spin start", .{this.execution_context_id});
 
         var vm = this.vm.?;
-        std.debug.assert(this.status.load(.acquire) == .start);
+        assert(this.status.load(.acquire) == .start);
         this.setStatus(.starting);
 
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
@@ -390,3 +391,5 @@ pub const WebWorker = struct {
         }
     }
 };
+
+const assert = bun.assert;

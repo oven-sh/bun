@@ -2,13 +2,13 @@ const Output = @This();
 const bun = @import("root").bun;
 const std = @import("std");
 const Environment = @import("./env.zig");
-const string = @import("root").bun.string;
+const string = bun.string;
 const root = @import("root");
-const strings = @import("root").bun.strings;
-const StringTypes = @import("root").bun.StringTypes;
-const Global = @import("root").bun.Global;
-const ComptimeStringMap = @import("root").bun.ComptimeStringMap;
-const use_mimalloc = @import("root").bun.use_mimalloc;
+const strings = bun.strings;
+const StringTypes = bun.StringTypes;
+const Global = bun.Global;
+const ComptimeStringMap = bun.ComptimeStringMap;
+const use_mimalloc = bun.use_mimalloc;
 const writeStream = std.json.writeStream;
 const WriteStream = std.json.WriteStream;
 
@@ -87,7 +87,7 @@ pub const Source = struct {
 
     pub fn configureThread() void {
         if (source_set) return;
-        std.debug.assert(stdout_stream_set);
+        bun.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
     }
 
@@ -214,6 +214,20 @@ pub const Source = struct {
     };
 
     pub const Stdio = struct {
+        extern "C" var bun_is_stdio_null: [3]i32;
+
+        pub fn isStderrNull() bool {
+            return bun_is_stdio_null[2] == 1;
+        }
+
+        pub fn isStdoutNull() bool {
+            return bun_is_stdio_null[1] == 1;
+        }
+
+        pub fn isStdinNull() bool {
+            return bun_is_stdio_null[0] == 1;
+        }
+
         pub fn init() void {
             bun.C.bun_initialize_process();
 
@@ -346,17 +360,17 @@ pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
 pub fn errorWriter() WriterType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.error_stream.quietWriter();
 }
 
 pub fn errorStream() Source.StreamType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.error_stream;
 }
 
 pub fn writer() WriterType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.stream.quietWriter();
 }
 
@@ -519,7 +533,7 @@ pub fn debug(comptime fmt: string, args: anytype) void {
 }
 
 pub inline fn _debug(comptime fmt: string, args: anytype) void {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     println(fmt, args);
 }
 
@@ -530,8 +544,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
         std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
-        if (comptime Environment.allow_assert)
-            std.debug.assert(source_set);
+        bun.debugAssert(source_set);
 
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
         if (enable_buffering) {
@@ -549,27 +562,45 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
-const _log_fn = fn (comptime fmt: string, args: anytype) void;
-pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
+const LogFunction = fn (comptime fmt: string, args: anytype) void;
+pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
     const tagname = switch (@TypeOf(tag)) {
         @Type(.EnumLiteral) => @tagName(tag),
-        []const u8 => tag,
-        else => @compileError("Output.scoped expected @Type(.EnumLiteral) or []const u8, you gave: " ++ @typeName(@Type(tag))),
+        else => tag,
     };
-    if (comptime !Environment.isDebug or !Environment.isNative) {
+
+    if (comptime !Environment.isDebug) {
         return struct {
+            pub fn isVisible() bool {
+                return false;
+            }
             pub fn log(comptime _: string, _: anytype) void {}
-        }.log;
+        };
     }
 
     return struct {
         const BufferedWriter = std.io.BufferedWriter(4096, bun.sys.File.QuietWriter);
+
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
         var lock = std.Thread.Mutex{};
+
+        pub fn isVisible() bool {
+            if (!evaluated_disable) {
+                evaluated_disable = true;
+                if (bun.getenvZ("BUN_DEBUG_" ++ tagname)) |val| {
+                    really_disable = strings.eqlComptime(val, "0");
+                } else if (bun.getenvZ("BUN_DEBUG_ALL")) |val| {
+                    really_disable = strings.eqlComptime(val, "0");
+                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
+                    really_disable = really_disable or !strings.eqlComptime(val, "0");
+                }
+            }
+            return !really_disable;
+        }
 
         /// Debug-only logs which should not appear in release mode
         /// To enable a specific log at runtime, set the environment variable
@@ -587,18 +618,7 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
                 return;
             }
 
-            if (!evaluated_disable) {
-                evaluated_disable = true;
-                if (bun.getenvZ("BUN_DEBUG_" ++ tagname)) |val| {
-                    really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZ("BUN_DEBUG_ALL")) |val| {
-                    really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
-                    really_disable = really_disable or !strings.eqlComptime(val, "0");
-                }
-            }
-
-            if (really_disable)
+            if (!isVisible())
                 return;
 
             if (!out_set) {
@@ -631,7 +651,11 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
                 };
             }
         }
-    }.log;
+    };
+}
+
+pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
+    return Scoped(tag, disabled).log;
 }
 
 // Valid "colors":
@@ -663,7 +687,7 @@ pub const color_map = ComptimeStringMap(string, .{
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
-    if (comptime @import("root").bun.fast_debug_build_mode)
+    if (comptime bun.fast_debug_build_mode)
         return fmt;
 
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
@@ -753,7 +777,7 @@ pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime 
 }
 
 pub noinline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
-    if (comptime @import("root").bun.fast_debug_build_mode)
+    if (comptime bun.fast_debug_build_mode)
         return printFn(ctx, comptime prettyFmt(fmt, false), args);
 
     if (enable_ansi_colors) {
@@ -811,9 +835,9 @@ pub noinline fn printError(comptime fmt: string, args: anytype) void {
 }
 
 pub const DebugTimer = struct {
-    timer: @import("root").bun.DebugOnly(std.time.Timer) = undefined,
+    timer: bun.DebugOnly(std.time.Timer) = undefined,
 
-    pub fn start() DebugTimer {
+    pub inline fn start() DebugTimer {
         if (comptime Environment.isDebug) {
             return DebugTimer{
                 .timer = std.time.Timer.start() catch unreachable,
@@ -845,9 +869,11 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
+const debugWarnScope = Scoped("debug warn", false);
+
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
-    if (Environment.isDebug) {
+    if (debugWarnScope.isVisible()) {
         prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
         flush();
     }
@@ -899,7 +925,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         // enum literals
         if (info == .EnumLiteral) {
             const tag = @tagName(info);
-            comptime std.debug.assert(tag.len > 0); // how?
+            comptime bun.assert(tag.len > 0); // how?
             if (tag[0] != 'E') break :display_name .{ "E" ++ tag, true };
             break :display_name .{ tag, true };
         }
@@ -936,7 +962,7 @@ pub fn enableScopedDebugWriter() void {
 extern "c" fn getpid() c_int;
 
 pub fn initScopedDebugWriterAtStartup() void {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
 
     if (bun.getenvZ("BUN_DEBUG")) |path| {
         if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {
@@ -974,7 +1000,7 @@ fn scopedWriter() File.QuietWriter {
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
 pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
-    prettyErrorln("<red>error<r><d>:<r> " ++ fmt, args);
+    prettyErrorln("<r><red>error<r><d>:<r> " ++ fmt, args);
 }
 
 /// This struct is a workaround a Windows terminal bug.

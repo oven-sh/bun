@@ -289,7 +289,7 @@ pub const Version = struct {
     }
 
     pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
-        if (comptime Environment.allow_assert) std.debug.assert(lhs.tag == rhs.tag);
+        if (comptime Environment.allow_assert) bun.assert(lhs.tag == rhs.tag);
         return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
@@ -396,6 +396,12 @@ pub const Version = struct {
         pub fn infer(dependency: string) Tag {
             // empty string means `latest`
             if (dependency.len == 0) return .dist_tag;
+
+            if (strings.startsWithWindowsDriveLetter(dependency) and (std.fs.path.isSep(dependency[2]))) {
+                if (isTarball(dependency)) return .tarball;
+                return .folder;
+            }
+
             switch (dependency[0]) {
                 // =1
                 // >1.2
@@ -688,6 +694,23 @@ pub fn eql(
     return a.name_hash == b.name_hash and a.name.len() == b.name.len() and a.version.eql(&b.version, lhs_buf, rhs_buf);
 }
 
+pub fn isWindowsAbsPathWithLeadingSlashes(dep: string) ?string {
+    var i: usize = 0;
+    if (dep.len > 2 and dep[i] == '/') {
+        while (dep[i] == '/') {
+            i += 1;
+
+            // not possible to have windows drive letter and colon
+            if (i > dep.len - 3) return null;
+        }
+        if (strings.startsWithWindowsDriveLetter(dep[i..])) {
+            return dep[i..];
+        }
+    }
+
+    return null;
+}
+
 pub inline fn parse(
     allocator: std.mem.Allocator,
     alias: String,
@@ -832,7 +855,7 @@ pub fn parseWithTag(
                 alias;
 
             // name should never be empty
-            if (comptime Environment.allow_assert) std.debug.assert(!actual.isEmpty());
+            if (comptime Environment.allow_assert) bun.assert(!actual.isEmpty());
 
             return .{
                 .literal = sliced.value(),
@@ -900,7 +923,7 @@ pub fn parseWithTag(
                 }
             }
 
-            if (comptime Environment.allow_assert) std.debug.assert(isGitHubRepoPath(input));
+            if (comptime Environment.allow_assert) bun.assert(isGitHubRepoPath(input));
 
             var hash_index: usize = 0;
             var slash_index: usize = 0;
@@ -967,18 +990,81 @@ pub fn parseWithTag(
         .folder => {
             if (strings.indexOfChar(dependency, ':')) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
-                    const folder = brk: {
-                        if (dependency.len > protocol + 1 and dependency[protocol + 1] == '/') {
-                            if (dependency.len > protocol + 2 and dependency[protocol + 2] == '/') {
-                                break :brk dependency[protocol + 3 ..];
+                    const folder = folder: {
+
+                        // from npm:
+                        //
+                        // turn file://../foo into file:../foo
+                        // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L269
+                        //
+                        // something like this won't behave the same
+                        // file://bar/../../foo
+                        const maybe_dot_dot = maybe_dot_dot: {
+                            if (dependency.len > protocol + 1 and dependency[protocol + 1] == '/') {
+                                if (dependency.len > protocol + 2 and dependency[protocol + 2] == '/') {
+                                    if (dependency.len > protocol + 3 and dependency[protocol + 3] == '/') {
+                                        break :maybe_dot_dot dependency[protocol + 4 ..];
+                                    }
+                                    break :maybe_dot_dot dependency[protocol + 3 ..];
+                                }
+                                break :maybe_dot_dot dependency[protocol + 2 ..];
                             }
-                            break :brk dependency[protocol + 2 ..];
+                            break :folder dependency[protocol + 1 ..];
+                        };
+
+                        if (maybe_dot_dot.len > 1 and maybe_dot_dot[0] == '.' and maybe_dot_dot[1] == '.') {
+                            return .{
+                                .literal = sliced.value(),
+                                .value = .{ .folder = sliced.sub(maybe_dot_dot).value() },
+                                .tag = .folder,
+                            };
                         }
 
-                        break :brk dependency[protocol + 1 ..];
+                        break :folder dependency[protocol + 1 ..];
                     };
 
-                    return .{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(folder).value() }, .tag = .folder };
+                    // from npm:
+                    //
+                    // turn /C:/blah info just C:/blah on windows
+                    // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
+                    if (comptime Environment.isWindows) {
+                        if (isWindowsAbsPathWithLeadingSlashes(folder)) |dep| {
+                            return .{
+                                .literal = sliced.value(),
+                                .value = .{ .folder = sliced.sub(dep).value() },
+                                .tag = .folder,
+                            };
+                        }
+                    }
+
+                    return .{
+                        .literal = sliced.value(),
+                        .value = .{ .folder = sliced.sub(folder).value() },
+                        .tag = .folder,
+                    };
+                }
+
+                // check for absolute windows paths
+                if (comptime Environment.isWindows) {
+                    if (protocol == 1 and strings.startsWithWindowsDriveLetter(dependency)) {
+                        return .{
+                            .literal = sliced.value(),
+                            .value = .{ .folder = sliced.sub(dependency).value() },
+                            .tag = .folder,
+                        };
+                    }
+
+                    // from npm:
+                    //
+                    // turn /C:/blah info just C:/blah on windows
+                    // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
+                    if (isWindowsAbsPathWithLeadingSlashes(dependency)) |dep| {
+                        return .{
+                            .literal = sliced.value(),
+                            .value = .{ .folder = sliced.sub(dep).value() },
+                            .tag = .folder,
+                        };
+                    }
                 }
 
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;
@@ -1186,10 +1272,10 @@ pub const Behavior = packed struct(u8) {
     }
 
     comptime {
-        std.debug.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
-        std.debug.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
-        std.debug.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
-        std.debug.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
-        std.debug.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
+        bun.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
+        bun.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
+        bun.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
+        bun.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
+        bun.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
     }
 };

@@ -12,15 +12,15 @@ const ExternalStringMap = @import("./install.zig").ExternalStringMap;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
-const logger = @import("root").bun.logger;
-const Output = @import("root").bun.Output;
+const logger = bun.logger;
+const Output = bun.Output;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
-const Environment = @import("root").bun.Environment;
+const Environment = bun.Environment;
 const Aligner = @import("./install.zig").Aligner;
-const HTTPClient = @import("root").bun.http;
+const HTTPClient = bun.http;
 const json_parser = bun.JSON;
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
@@ -216,7 +216,7 @@ pub const Registry = struct {
         not_found: void,
     };
 
-    const Pico = @import("root").bun.picohttp;
+    const Pico = bun.picohttp;
     pub fn getPackageMetadata(
         allocator: std.mem.Allocator,
         response: Pico.Response,
@@ -892,7 +892,7 @@ pub const PackageManifest = struct {
         const source = logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
-        var arena = @import("root").bun.ArenaAllocator.init(allocator);
+        var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = json_parser.ParseJSONUTF8(
             &source,
@@ -960,7 +960,7 @@ pub const PackageManifest = struct {
                     const sliced_version = SlicedString.init(version_name, version_name);
                     const parsed_version = Semver.Version.parse(sliced_version);
 
-                    if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
+                    if (Environment.allow_assert) assert(parsed_version.valid);
                     if (!parsed_version.valid) {
                         log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
                         continue;
@@ -1149,15 +1149,15 @@ pub const PackageManifest = struct {
                     var sliced_version = SlicedString.init(version_name, version_name);
                     var parsed_version = Semver.Version.parse(sliced_version);
 
-                    if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
+                    if (Environment.allow_assert) assert(parsed_version.valid);
                     // We only need to copy the version tags if it contains pre and/or build
                     if (parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre()) {
                         const version_string = string_builder.append(String, version_name);
                         sliced_version = version_string.sliced(string_buf);
                         parsed_version = Semver.Version.parse(sliced_version);
                         if (Environment.allow_assert) {
-                            std.debug.assert(parsed_version.valid);
-                            std.debug.assert(parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre());
+                            assert(parsed_version.valid);
+                            assert(parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre());
                         }
                     }
                     if (!parsed_version.valid) continue;
@@ -1522,13 +1522,13 @@ pub const PackageManifest = struct {
                                 if (comptime Environment.allow_assert) {
                                     const dependencies_list = @field(package_version, pair.field);
 
-                                    std.debug.assert(dependencies_list.name.off < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.value.off < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len);
+                                    assert(dependencies_list.name.off < all_extern_strings.len);
+                                    assert(dependencies_list.value.off < all_extern_strings.len);
+                                    assert(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len);
+                                    assert(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len);
 
-                                    std.debug.assert(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names));
-                                    std.debug.assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
+                                    assert(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names));
+                                    assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
                                     var j: usize = 0;
                                     const name_dependencies = dependencies_list.name.get(all_extern_strings);
 
@@ -1536,31 +1536,31 @@ pub const PackageManifest = struct {
                                         if (optional_peer_dep_names.items.len == 0) {
                                             while (j < name_dependencies.len) : (j += 1) {
                                                 const dep_name = name_dependencies[j];
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
                                             }
 
                                             j = 0;
                                             while (j < dependencies_list.value.len) : (j += 1) {
                                                 const dep_name = dependencies_list.value.get(version_extern_strings)[j];
 
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
                                             }
                                         }
                                     } else {
                                         while (j < name_dependencies.len) : (j += 1) {
                                             const dep_name = name_dependencies[j];
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
                                         }
 
                                         j = 0;
                                         while (j < dependencies_list.value.len) : (j += 1) {
                                             const dep_name = dependencies_list.value.get(version_extern_strings)[j];
 
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
                                         }
                                     }
                                 }
@@ -1613,8 +1613,8 @@ pub const PackageManifest = struct {
                 };
 
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(std.meta.eql(result.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]));
-                    std.debug.assert(std.meta.eql(result.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]));
+                    assert(std.meta.eql(result.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]));
+                    assert(std.meta.eql(result.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]));
                 }
 
                 extern_strings = extern_strings[dist_tag_i..];
@@ -1723,13 +1723,13 @@ pub const PackageManifest = struct {
                             const first = semver_versions_[0];
                             const second = semver_versions_[1];
                             const order = second.order(first, string_buf, string_buf);
-                            std.debug.assert(order == .gt);
+                            assert(order == .gt);
                         }
                     }
                 }
             },
             else => {
-                std.debug.assert(max_versions_count == 0);
+                assert(max_versions_count == 0);
             },
         }
 
@@ -1737,7 +1737,7 @@ pub const PackageManifest = struct {
             const src = std.mem.sliceAsBytes(all_tarball_url_strings[0 .. all_tarball_url_strings.len - tarball_url_strings.len]);
             if (src.len > 0) {
                 var dst = std.mem.sliceAsBytes(all_extern_strings[all_extern_strings.len - extern_strings.len ..]);
-                std.debug.assert(dst.len >= src.len);
+                assert(dst.len >= src.len);
                 @memcpy(dst[0..src.len], src);
             }
 
@@ -1769,3 +1769,5 @@ pub const PackageManifest = struct {
         return result;
     }
 };
+
+const assert = bun.assert;

@@ -297,7 +297,7 @@ pub const Runtime = struct {
         };
 
         pub fn hashForRuntimeTranspiler(this: *const Features, hasher: *std.hash.Wyhash) void {
-            std.debug.assert(this.runtime_transpiler_cache != null);
+            bun.assert(this.runtime_transpiler_cache != null);
 
             var bools: [std.meta.fieldNames(@TypeOf(hash_fields_for_runtime_transpiler)).len]bool = undefined;
             inline for (hash_fields_for_runtime_transpiler, 0..) |field, i| {

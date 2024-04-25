@@ -899,9 +899,9 @@ pub const FromBunRunContext = struct {
     /// Was --bun passed?
     force_use_bun: bool,
     /// A pointer to a function that can launch `Run.boot`
-    direct_launch_with_bun_js: *const fn (wpath: []u16, args: *const CommandContext) void,
+    direct_launch_with_bun_js: *const fn (wpath: []u16, args: CommandContext) void,
     /// Command.Context
-    cli_context: *const CommandContext,
+    cli_context: CommandContext,
     /// Passed directly to CreateProcessW's lpEnvironment with CREATE_UNICODE_ENVIRONMENT
     environment: ?[*]const u16,
 };

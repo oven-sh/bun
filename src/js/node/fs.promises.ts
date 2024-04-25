@@ -19,6 +19,7 @@ const kTransfer = Symbol("kTransfer");
 const kTransferList = Symbol("kTransferList");
 const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
+const kFlag = Symbol("kFlag");
 
 function watch(
   filename: string | Buffer | URL,
@@ -158,7 +159,13 @@ const exports = {
   close: fs.close.bind(fs),
   copyFile: fs.copyFile.bind(fs),
   cp,
-  exists: fs.exists.bind(fs),
+  exists: async function exists() {
+    try {
+      return await fs.exists.$apply(fs, arguments);
+    } catch (e) {
+      return false;
+    }
+  },
   chown: fs.chown.bind(fs),
   chmod: fs.chmod.bind(fs),
   fchmod: fs.fchmod.bind(fs),
@@ -174,8 +181,8 @@ const exports = {
   lstat: fs.lstat.bind(fs),
   mkdir: fs.mkdir.bind(fs),
   mkdtemp: fs.mkdtemp.bind(fs),
-  open: async (path, flags, mode) => {
-    return new FileHandle(await fs.open(path, flags, mode));
+  open: async (path, flags = "r", mode = 0o666) => {
+    return new FileHandle(await fs.open(path, flags, mode), flags);
   },
   read: fs.read.bind(fs),
   write: fs.write.bind(fs),
@@ -240,11 +247,12 @@ export default exports;
   // These functions await the result so that errors propagate correctly with
   // async stack traces and so that the ref counting is correct.
   var FileHandle = (private_symbols.FileHandle = class FileHandle extends EventEmitter {
-    constructor(fd) {
+    constructor(fd, flag) {
       super();
       this[kFd] = fd ? fd : -1;
       this[kRefs] = 1;
       this[kClosePromise] = null;
+      this[kFlag] = flag;
     }
 
     getAsyncId() {
@@ -255,13 +263,23 @@ export default exports;
       return this[kFd];
     }
 
-    async appendFile(data, options) {
+    async appendFile(data, options: object | string | undefined) {
       const fd = this[kFd];
       throwEBADFIfNecessary(writeFile, fd);
+      let encoding = "utf8";
+      let flush = false;
+
+      if (options == null || typeof options === "function") {
+      } else if (typeof options === "string") {
+        encoding = options;
+      } else {
+        encoding = options?.encoding ?? encoding;
+        flush = options?.flush ?? flush;
+      }
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, options);
+        return await writeFile(fd, data, { encoding, flush, flag: this[kFlag] });
       } finally {
         this[kUnref]();
       }
@@ -415,13 +433,21 @@ export default exports;
       }
     }
 
-    async writeFile(data, options) {
+    async writeFile(data: string, options: object | string | undefined = "utf8") {
       const fd = this[kFd];
       throwEBADFIfNecessary(writeFile, fd);
+      let encoding: string = "utf8";
+
+      if (options == null || typeof options === "function") {
+      } else if (typeof options === "string") {
+        encoding = options;
+      } else {
+        encoding = options?.encoding ?? encoding;
+      }
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, options);
+        return await writeFile(fd, data, { encoding, flag: this[kFlag] });
       } finally {
         this[kUnref]();
       }

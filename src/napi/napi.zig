@@ -1,6 +1,6 @@
 const std = @import("std");
-const JSC = @import("root").bun.JSC;
-const strings = @import("root").bun.strings;
+const JSC = bun.JSC;
+const strings = bun.strings;
 const bun = @import("root").bun;
 const Lock = @import("../lock.zig").Lock;
 const JSValue = JSC.JSValue;
@@ -32,7 +32,7 @@ pub const Ref = opaque {
     pub fn create(globalThis: *JSC.JSGlobalObject, value: JSValue) *Ref {
         JSC.markBinding(@src());
         var ref: *Ref = undefined;
-        std.debug.assert(
+        bun.assert(
             napi_create_reference(
                 globalThis,
                 value,
@@ -41,7 +41,7 @@ pub const Ref = opaque {
             ) == .ok,
         );
         if (comptime bun.Environment.isDebug) {
-            std.debug.assert(ref.get() == value);
+            bun.assert(ref.get() == value);
         }
         return ref;
     }
@@ -223,7 +223,7 @@ pub export fn napi_get_boolean(_: napi_env, value: bool, result: *napi_value) na
 }
 pub export fn napi_create_array(env: napi_env, result: *napi_value) napi_status {
     log("napi_create_array", .{});
-    result.* = JSValue.c(JSC.C.JSObjectMakeArray(env.ref(), 0, null, null));
+    result.* = JSValue.createEmptyArray(env, 0);
     return .ok;
 }
 const prefilled_undefined_args_array: [128]JSC.JSValue = brk: {
@@ -887,21 +887,7 @@ pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool)
     is_promise.* = value.asAnyPromise() != null;
     return .ok;
 }
-pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status {
-    log("napi_run_script", .{});
-    // TODO: don't copy
-    const ref = JSC.C.JSValueToStringCopy(env.ref(), script.asObjectRef(), TODO_EXCEPTION);
-    defer JSC.C.JSStringRelease(ref);
-
-    var exception = [_]JSC.C.JSValueRef{null};
-    const val = JSC.C.JSEvaluateScript(env.ref(), ref, env.ref(), null, 0, &exception);
-    if (exception[0] != null) {
-        return genericFailure();
-    }
-
-    result.* = JSValue.c(val);
-    return .ok;
-}
+pub extern fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_adjust_external_memory(env: napi_env, change_in_bytes: i64, adjusted_value: [*c]i64) napi_status;
 pub export fn napi_create_date(env: napi_env, time: f64, result: *napi_value) napi_status {
     log("napi_create_date", .{});
@@ -1184,19 +1170,19 @@ pub export fn napi_create_async_work(
 }
 pub export fn napi_delete_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_delete_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     work.deinit();
     return .ok;
 }
 pub export fn napi_queue_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_queue_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     work.schedule();
     return .ok;
 }
 pub export fn napi_cancel_async_work(env: napi_env, work: *napi_async_work) napi_status {
     log("napi_cancel_async_work", .{});
-    std.debug.assert(env == work.global);
+    bun.assert(env == work.global);
     if (work.cancel()) {
         return .ok;
     }
@@ -1531,14 +1517,14 @@ pub export fn napi_release_threadsafe_function(func: napi_threadsafe_function, m
 }
 pub export fn napi_unref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_unref_threadsafe_function", .{});
-    std.debug.assert(func.event_loop.global == env);
+    bun.assert(func.event_loop.global == env);
 
     func.unref();
     return .ok;
 }
 pub export fn napi_ref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_ref_threadsafe_function", .{});
-    std.debug.assert(func.event_loop.global == env);
+    bun.assert(func.event_loop.global == env);
 
     func.ref();
     return .ok;

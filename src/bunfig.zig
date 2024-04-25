@@ -11,7 +11,7 @@ const default_allocator = bun.default_allocator;
 const URL = @import("./url.zig").URL;
 const C = bun.C;
 const options = @import("./options.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
 const Defines = @import("./defines.zig");
@@ -25,7 +25,6 @@ pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.BundleOverride);
 const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
-const Analytics = @import("./analytics.zig");
 const JSONParser = bun.JSON;
 const Command = @import("cli.zig").Command;
 const TOML = @import("./toml/toml_parser.zig").TOML;
@@ -49,7 +48,7 @@ pub const Bunfig = struct {
         log: *logger.Log,
         allocator: std.mem.Allocator,
         bunfig: *Api.TransformOptions,
-        ctx: *Command.Context,
+        ctx: Command.Context,
 
         fn addError(this: *Parser, loc: logger.Loc, comptime text: string) !void {
             this.log.addError(this.source, loc, text) catch unreachable;
@@ -163,7 +162,7 @@ pub const Bunfig = struct {
         }
 
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
-            Analytics.Features.bunfig += 1;
+            bun.analytics.Features.bunfig += 1;
 
             const json = this.json;
             var allocator = this.allocator;
@@ -222,7 +221,7 @@ pub const Bunfig = struct {
 
                 if (json.get("telemetry")) |expr| {
                     try this.expect(expr, .e_boolean);
-                    Analytics.disabled = !expr.data.e_boolean.value;
+                    bun.analytics.enabled = if (expr.data.e_boolean.value) .yes else .no;
                 }
             }
 
@@ -693,7 +692,7 @@ pub const Bunfig = struct {
                 } else {
                     this.ctx.debug.macros = .{ .map = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source) };
                 }
-                Analytics.Features.macros += 1;
+                bun.analytics.Features.macros += 1;
             }
 
             if (json.get("external")) |expr| {
@@ -777,7 +776,7 @@ pub const Bunfig = struct {
         }
     };
 
-    pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
         const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {

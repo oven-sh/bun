@@ -12,7 +12,7 @@ const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const std = @import("std");
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -46,11 +46,10 @@ const NodeFallbackModules = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const URL = @import("./url.zig").URL;
-const Report = @import("./report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 
 pub fn MacroJSValueType_() type {
@@ -557,20 +556,9 @@ pub const Bundler = struct {
             else => {},
         }
 
-        if (this.env.get("DO_NOT_TRACK")) |dnt| {
-            // https://do-not-track.dev/
-            if (strings.eqlComptime(dnt, "1")) {
-                Analytics.disabled = true;
-            }
-        }
-
-        Analytics.is_ci = Analytics.is_ci or this.env.isCI();
-
         if (strings.eqlComptime(this.env.get("BUN_DISABLE_TRANSPILER") orelse "0", "1")) {
             this.options.disable_transpilation = true;
         }
-
-        Analytics.disabled = Analytics.disabled or this.env.get("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null;
     }
 
     // This must be run after a framework is configured, if a framework is enabled
@@ -1609,7 +1597,7 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             .text => {
-                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                const expr = js_ast.Expr.init(js_ast.E.UTF8String, js_ast.E.UTF8String{
                     .data = source.contents,
                 }, logger.Loc.Empty);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
@@ -1719,7 +1707,7 @@ pub const Bundler = struct {
                     bun.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname.ext);
                     len += absolute_pathname.ext.len;
 
-                    if (comptime Environment.allow_assert) std.debug.assert(len > 0);
+                    if (comptime Environment.allow_assert) bun.assert(len > 0);
 
                     const decoded_entry_point_path = tmp_buildfile_buf2[0..len];
                     break :brk try bundler.resolver.resolve(bundler.fs.top_level_dir, decoded_entry_point_path, .entry_point);

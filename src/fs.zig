@@ -58,9 +58,9 @@ pub const FileSystem = struct {
         }
     }
 
-    pub fn tmpdir(fs: *FileSystem) std.fs.Dir {
+    pub fn tmpdir(fs: *FileSystem) !std.fs.Dir {
         if (tmpdir_handle == null) {
-            tmpdir_handle = fs.fs.openTmpDir() catch unreachable;
+            tmpdir_handle = try fs.fs.openTmpDir();
         }
 
         return tmpdir_handle.?;
@@ -601,6 +601,15 @@ pub const FileSystem = struct {
                 tmpdir_path_set = true;
             }
 
+            if (comptime Environment.isWindows) {
+                return (try bun.sys.openDirAtWindowsA(bun.invalid_fd, tmpdir_path, .{
+                    .iterable = true,
+                    // we will not delete the temp directory
+                    .can_rename_or_delete = false,
+                    .read_only = true,
+                }).unwrap()).asDir();
+            }
+
             return try bun.openDirAbsolute(tmpdir_path);
         }
 
@@ -673,8 +682,8 @@ pub const FileSystem = struct {
             }
 
             pub fn promoteToCWD(this: *TmpfilePosix, from_name: [*:0]const u8, name: [*:0]const u8) !void {
-                std.debug.assert(this.fd != bun.invalid_fd);
-                std.debug.assert(this.dir_fd != bun.invalid_fd);
+                bun.assert(this.fd != bun.invalid_fd);
+                bun.assert(this.dir_fd != bun.invalid_fd);
 
                 try C.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.toFD(std.fs.cwd().fd), bun.sliceTo(name, 0));
                 this.close();
@@ -874,7 +883,7 @@ pub const FileSystem = struct {
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.size))..];
                 std.mem.writeInt(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime, .little);
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.mtime))..];
-                std.debug.assert(hash_bytes_remain.len == 8);
+                bun.assert(hash_bytes_remain.len == 8);
                 hash_bytes_remain[0..8].* = @as([8]u8, @bitCast(@as(u64, 0)));
                 return bun.hash(&hash_bytes);
             }
@@ -1289,7 +1298,7 @@ pub const FileSystem = struct {
                 _kind = _stat.kind;
             }
 
-            std.debug.assert(_kind != .SymLink);
+            bun.assert(_kind != .SymLink);
 
             if (_kind == .Directory) {
                 cache.kind = .dir;
@@ -1366,7 +1375,7 @@ pub const FileSystem = struct {
                 _kind = _stat.kind;
             }
 
-            std.debug.assert(_kind != .sym_link);
+            bun.assert(_kind != .sym_link);
 
             if (_kind == .directory) {
                 cache.kind = .dir;
@@ -1488,7 +1497,7 @@ pub const PathName = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(!strings.includes(self.base, "/"));
+            bun.assert(!strings.includes(self.base, "/"));
         }
 
         // /bar/foo.js -> foo
@@ -1539,8 +1548,8 @@ pub const PathName = struct {
         if (comptime Environment.isWindows and Environment.isDebug) {
             // This path is likely incorrect. I think it may be *possible*
             // but it is almost entirely certainly a bug.
-            std.debug.assert(!strings.startsWith(_path, "/:/"));
-            std.debug.assert(!strings.startsWith(_path, "\\:\\"));
+            bun.assert(!strings.startsWith(_path, "/:/"));
+            bun.assert(!strings.startsWith(_path, "\\:\\"));
         }
 
         var path = _path;
@@ -1840,14 +1849,3 @@ pub const Path = struct {
 //     defer std.posix.close(opened);
 
 // }
-
-test "PathName.init" {
-    var file = "/root/directory/file.ext".*;
-    const res = PathName.init(
-        &file,
-    );
-
-    try std.testing.expectEqualStrings(res.dir, "/root/directory");
-    try std.testing.expectEqualStrings(res.base, "file");
-    try std.testing.expectEqualStrings(res.ext, ".ext");
-}

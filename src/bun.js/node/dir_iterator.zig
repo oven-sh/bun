@@ -10,13 +10,13 @@ const std = @import("std");
 const posix = std.posix;
 
 const Dir = std.fs.Dir;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const PathString = JSC.PathString;
 const bun = @import("root").bun;
 
 const IteratorError = error{ AccessDenied, SystemResources } || posix.UnexpectedError;
 const mem = std.mem;
-const strings = @import("root").bun.strings;
+const strings = bun.strings;
 const Maybe = JSC.Maybe;
 const File = std.fs.File;
 

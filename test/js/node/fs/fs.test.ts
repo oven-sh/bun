@@ -250,6 +250,17 @@ it("Dirent.name setter", () => {
   expect(dirent.name).toBe("hello");
 });
 
+it("writeFileSync should correctly resolve ../..", () => {
+  const base = join(tmpdir(), `fs-test-${Math.random().toString(36).slice(2)}`);
+  const path = join(base, "foo", "bar");
+  mkdirSync(path, { recursive: true });
+  const cwd = process.cwd();
+  process.chdir(path);
+  writeFileSync("../../test.txt", "hello");
+  expect(readFileSync(join(base, "test.txt"), "utf8")).toBe("hello");
+  process.chdir(cwd);
+});
+
 it("writeFileSync in append should not truncate the file", () => {
   const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
   var str = "";
@@ -2970,4 +2981,28 @@ describe.if(isWindows)("windows path handling", () => {
       expect(stats.length).toBeGreaterThan(0);
     });
   }
+});
+
+it("using writeFile on an fd does not truncate it", () => {
+  const filepath = join(tmpdir(), `file-${Math.random().toString(32).slice(2)}.txt`);
+  const fd = fs.openSync(filepath, "w+");
+  fs.writeFileSync(fd, "x");
+  fs.writeFileSync(fd, "x");
+  fs.closeSync(fd);
+  const content = fs.readFileSync(filepath, "utf8");
+  expect(content).toBe("xx");
+});
+
+it("fs.close with one arg works", () => {
+  const filepath = join(tmpdir(), `file-${Math.random().toString(32).slice(2)}.txt`);
+  const fd = fs.openSync(filepath, "w+");
+  fs.close(fd);
+});
+
+it("existsSync should never throw ENAMETOOLONG", () => {
+  expect(existsSync(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
+});
+
+it("promises exists should never throw ENAMETOOLONG", async () => {
+  expect(await _promises.exists(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
 });

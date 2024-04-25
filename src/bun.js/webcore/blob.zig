@@ -3,20 +3,20 @@ const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const MimeType = http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const http = @import("root").bun.http;
-const JSC = @import("root").bun.JSC;
+const http = bun.http;
+const JSC = bun.JSC;
 const js = JSC.C;
 const io = bun.io;
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
@@ -34,9 +34,9 @@ const NullableAllocator = @import("../../nullable_allocator.zig").NullableAlloca
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 const invalid_fd = bun.invalid_fd;
 const Response = JSC.WebCore.Response;
@@ -478,7 +478,7 @@ pub const Blob = struct {
         const blob = _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch return .zero;
 
         if (Environment.allow_assert) {
-            std.debug.assert(total_length - reader.context.pos == reserved_space_for_serialization);
+            assert(total_length - reader.context.pos == reserved_space_for_serialization);
         }
 
         return blob;
@@ -518,7 +518,7 @@ pub const Blob = struct {
         allocator: std.mem.Allocator,
         form_data: *JSC.DOMFormData,
     ) Blob {
-        var arena = @import("root").bun.ArenaAllocator.init(allocator);
+        var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         var stack_allocator = std.heap.stackFallback(1024, arena.allocator());
         const stack_mem_all = stack_allocator.get();
@@ -653,7 +653,7 @@ pub const Blob = struct {
                                     );
                                 } else {
                                     if (Environment.allow_assert) {
-                                        comptime std.debug.assert(Environment.isWindows);
+                                        comptime assert(Environment.isWindows);
                                         @panic("this shouldn't be reachable.");
                                     }
                                     try writer.print(
@@ -1602,7 +1602,7 @@ pub const Blob = struct {
         };
 
         pub fn ref(this: *Store) void {
-            std.debug.assert(this.ref_count > 0);
+            assert(this.ref_count > 0);
             this.ref_count += 1;
         }
 
@@ -1658,7 +1658,7 @@ pub const Blob = struct {
         }
 
         pub fn deref(this: *Blob.Store) void {
-            std.debug.assert(this.ref_count >= 1);
+            assert(this.ref_count >= 1);
             this.ref_count -= 1;
             if (this.ref_count == 0) {
                 this.deinit();
@@ -2036,7 +2036,8 @@ pub const Blob = struct {
 
             fn onCopyFile(req: *libuv.fs_t) callconv(.C) void {
                 var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
-                std.debug.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
+                bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
+
                 var event_loop = this.event_loop;
                 event_loop.virtual_machine.event_loop_handle.?.unrefConcurrently();
                 const rc = req.result;
@@ -2139,7 +2140,7 @@ pub const Blob = struct {
 
             fn onMkdirpCompleteConcurrent(this: *CopyFileWindows, err_: JSC.Maybe(void)) void {
                 bun.sys.syslog("mkdirp complete", .{});
-                std.debug.assert(this.err == null);
+                assert(this.err == null);
                 this.err = if (err_ == .err) err_.err else null;
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.ManagedTask.New(CopyFileWindows, onMkdirpComplete).init(this)));
             }
@@ -2615,8 +2616,8 @@ pub const Blob = struct {
                     return;
                 }
 
-                std.debug.assert(this.destination_fd != invalid_fd);
-                std.debug.assert(this.source_fd != invalid_fd);
+                assert(this.destination_fd != invalid_fd);
+                assert(this.source_fd != invalid_fd);
 
                 if (this.destination_file_store.pathlike == .fd) {}
 
@@ -3604,7 +3605,7 @@ pub const Blob = struct {
 
     pub fn toJS(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         // if (comptime Environment.allow_assert) {
-        //     std.debug.assert(this.allocator != null);
+        //     assert(this.allocator != null);
         // }
 
         this.calculateEstimatedByteSize();
@@ -3697,7 +3698,7 @@ pub const Blob = struct {
             },
             .transfer => {
                 const store = this.store.?;
-                std.debug.assert(store.data == .bytes);
+                assert(store.data == .bytes);
                 this.transfer();
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
                 return ZigString.init(buf).external(global, store, Store.external);
@@ -4498,7 +4499,7 @@ pub const InlineBlob = extern struct {
 
     pub fn concat(first: []const u8, second: []const u8) InlineBlob {
         const total = first.len + second.len;
-        std.debug.assert(total <= available_bytes);
+        assert(total <= available_bytes);
 
         var inline_blob: JSC.WebCore.InlineBlob = .{};
         var bytes_slice = inline_blob.bytes[0..total];
@@ -4514,7 +4515,7 @@ pub const InlineBlob = extern struct {
     }
 
     fn internalInit(data: []const u8, was_string: bool) InlineBlob {
-        std.debug.assert(data.len <= available_bytes);
+        assert(data.len <= available_bytes);
 
         var blob = InlineBlob{
             .len = @as(IntSize, @intCast(data.len)),
@@ -4574,3 +4575,5 @@ pub const InlineBlob = extern struct {
 
     pub fn clearAndFree(_: *@This()) void {}
 };
+
+const assert = bun.assert;

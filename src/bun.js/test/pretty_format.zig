@@ -400,7 +400,6 @@ pub const JestPrettyFormat = struct {
                 };
 
                 // Cell is the "unknown" type
-                // if we call JSObjectGetPrivate, it can segfault
                 if (js_type == .Cell) {
                     return .{
                         .tag = .NativeCode,
@@ -1513,7 +1512,7 @@ pub const JestPrettyFormat = struct {
                             .skip_empty_name = true,
 
                             .include_value = true,
-                        }).init(this.globalThis, props.asObjectRef());
+                        }).init(this.globalThis, props);
                         defer props_iter.deinit();
 
                         const children_prop = props.get(this.globalThis, "children");

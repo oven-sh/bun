@@ -45,7 +45,7 @@ const Expr = JSAst.Expr;
 pub usingnamespace JSC.Codegen.JSTranspiler;
 
 bundler: Bundler.Bundler,
-arena: @import("root").bun.ArenaAllocator,
+arena: bun.ArenaAllocator,
 transpiler_options: TranspilerOptions,
 scan_pass_result: ScanPassResult,
 buffer_writer: ?JSPrinter.BufferWriter = null,
@@ -343,7 +343,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 .skip_empty_name = true,
 
                 .include_value = true,
-            }).init(globalThis, define.asObjectRef());
+            }).init(globalThis, define);
             defer define_iter.deinit();
 
             // cannot be a temporary because it may be loaded on different threads.
@@ -657,7 +657,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             var iter = JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
                 .include_value = true,
-            }).init(globalThis, replace.asObjectRef());
+            }).init(globalThis, replace);
 
             if (iter.len > 0) {
                 errdefer iter.deinit();
@@ -744,7 +744,7 @@ pub fn constructor(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) callconv(.C) ?*Transpiler {
-    var temp = @import("root").bun.ArenaAllocator.init(getAllocator(globalThis));
+    var temp = bun.ArenaAllocator.init(getAllocator(globalThis));
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(
         globalThis.bunVM(),
@@ -1196,7 +1196,7 @@ pub fn transformSync(
 
 fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExports) JSC.JSValue {
     if (named_exports.count() == 0)
-        return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArray(global, 0, null, null));
+        return JSValue.createEmptyArray(global, 0);
 
     var named_exports_iter = named_exports.iterator();
     var stack_fallback = std.heap.stackFallback(@sizeOf(bun.String) * 32, getAllocator(global));

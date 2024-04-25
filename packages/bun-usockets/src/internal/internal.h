@@ -254,7 +254,10 @@ void us_internal_ssl_socket_context_on_data(
     struct us_internal_ssl_socket_t *(*on_data)(
         struct us_internal_ssl_socket_t *s, char *data, int length));
 
-void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s);
+void us_internal_update_handshake(struct us_internal_ssl_socket_t *s);
+int us_internal_renegotiate(struct us_internal_ssl_socket_t *s);
+void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
+                                            int success);
 void us_internal_on_ssl_handshake(
     struct us_internal_ssl_socket_context_t *context,
     us_internal_on_handshake_t onhandshake, void *custom_data);
@@ -289,7 +292,7 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
     int port, int options, int socket_ext_size);
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *path, 
+    struct us_internal_ssl_socket_context_t *context, const char *path,
     size_t pathlen, int options, int socket_ext_size);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(

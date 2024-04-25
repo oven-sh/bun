@@ -77,6 +77,7 @@ pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
 pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
 
 pub const HANDLE = win32.HANDLE;
+pub const HMODULE = win32.HMODULE;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 pub extern "kernel32" fn GetFileInformationByHandle(
@@ -3042,7 +3043,7 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .OBJECT_NAME_NOT_FOUND => .NOENT,
         .NOT_A_DIRECTORY => .NOTDIR,
         .RETRY => .AGAIN,
-        .DIRECTORY_NOT_EMPTY => .EXIST,
+        .DIRECTORY_NOT_EMPTY => .NOTEMPTY,
         .FILE_TOO_LARGE => .@"2BIG",
         .SHARING_VIOLATION => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE", .{});
@@ -3050,6 +3051,7 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         } else .BUSY,
         .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
+            std.debug.dumpCurrentStackTrace(null);
             break :brk .INVAL;
         } else .INVAL,
 
@@ -3076,7 +3078,7 @@ pub extern "kernel32" fn GetTempPathW(
 pub extern "kernel32" fn CreateJobObjectA(
     lpJobAttributes: ?*anyopaque, // [in, optional]
     lpName: ?LPCSTR, // [in, optional]
-) callconv(windows.WINAPI) HANDLE;
+) callconv(windows.WINAPI) ?HANDLE;
 
 pub extern "kernel32" fn AssignProcessToJobObject(
     hJob: HANDLE, // [in]
@@ -3364,6 +3366,42 @@ pub fn GetFinalPathNameByHandle(
     return std.os.windows.GetFinalPathNameByHandle(hFile, fmt, out_buffer);
 }
 
+extern "kernel32" fn GetModuleHandleExW(
+    dwFlags: u32, // [in]
+    lpModuleName: ?*anyopaque, // [in, optional]
+    phModule: *HMODULE, // [out]
+) BOOL;
+
+extern "kernel32" fn GetModuleFileNameW(
+    hModule: HMODULE, // [in]
+    lpFilename: LPWSTR, // [out]
+    nSize: DWORD, // [in]
+) BOOL;
+
+const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS = 0x00000004;
+
+pub fn getModuleHandleFromAddress(addr: usize) ?HMODULE {
+    var module: HMODULE = undefined;
+    const rc = GetModuleHandleExW(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        @ptrFromInt(addr),
+        &module,
+    );
+    // If the function succeeds, the return value is nonzero.
+    return if (rc != 0) module else null;
+}
+
+pub fn getModuleNameW(module: HMODULE, buf: []u16) ?[]const u16 {
+    const rc = GetModuleFileNameW(module, @ptrCast(buf.ptr), @intCast(buf.len));
+    if (rc == 0) return null;
+    return buf[0..@intCast(rc)];
+}
+
+pub extern "kernel32" fn GetThreadDescription(
+    thread: ?*anyopaque, // [in]
+    *PWSTR, // [out]
+) std.os.windows.HRESULT;
+
 pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
@@ -3373,3 +3411,117 @@ pub extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
 pub extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
 pub extern fn GetConsoleOutputCP() u32;
 pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+
+pub const DeleteFileOptions = struct {
+    dir: ?HANDLE,
+    remove_dir: bool = false,
+};
+
+const FILE_DISPOSITION_DELETE: ULONG = 0x00000001;
+const FILE_DISPOSITION_POSIX_SEMANTICS: ULONG = 0x00000002;
+const FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK: ULONG = 0x00000004;
+const FILE_DISPOSITION_ON_CLOSE: ULONG = 0x00000008;
+const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
+
+// Copy-paste of the standard library function except without unreachable.
+pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JSC.Maybe(void) {
+    const create_options_flags: ULONG = if (options.remove_dir)
+        FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT
+    else
+        windows.FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT; // would we ever want to delete the target instead?
+
+    const path_len_bytes = @as(u16, @intCast(sub_path_w.len * 2));
+    var nt_name = UNICODE_STRING{
+        .Length = path_len_bytes,
+        .MaximumLength = path_len_bytes,
+        // The Windows API makes this mutable, but it will not mutate here.
+        .Buffer = @constCast(sub_path_w.ptr),
+    };
+
+    if (sub_path_w[0] == '.' and sub_path_w[1] == 0) {
+        // Windows does not recognize this, but it does work with empty string.
+        nt_name.Length = 0;
+    }
+
+    var attr = OBJECT_ATTRIBUTES{
+        .Length = @sizeOf(OBJECT_ATTRIBUTES),
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(sub_path_w)) null else options.dir,
+        .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        .ObjectName = &nt_name,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+    var io: IO_STATUS_BLOCK = undefined;
+    var tmp_handle: HANDLE = undefined;
+    var rc = ntdll.NtCreateFile(
+        &tmp_handle,
+        windows.SYNCHRONIZE | windows.DELETE,
+        &attr,
+        &io,
+        null,
+        0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        windows.FILE_OPEN,
+        create_options_flags,
+        null,
+        0,
+    );
+    bun.sys.syslog("NtCreateFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
+    if (bun.JSC.Maybe(void).errnoSys(rc, .open)) |err| {
+        return err;
+    }
+    defer _ = bun.windows.CloseHandle(tmp_handle);
+
+    // FileDispositionInformationEx (and therefore FILE_DISPOSITION_POSIX_SEMANTICS and FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
+    // are only supported on NTFS filesystems, so the version check on its own is only a partial solution. To support non-NTFS filesystems
+    // like FAT32, we need to fallback to FileDispositionInformation if the usage of FileDispositionInformationEx gives
+    // us INVALID_PARAMETER.
+    // The same reasoning for win10_rs5 as in os.renameatW() applies (FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5).
+    var need_fallback = true;
+    // Deletion with posix semantics if the filesystem supports it.
+    var info = windows.FILE_DISPOSITION_INFORMATION_EX{
+        .Flags = FILE_DISPOSITION_DELETE |
+            FILE_DISPOSITION_POSIX_SEMANTICS |
+            FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
+    };
+
+    rc = ntdll.NtSetInformationFile(
+        tmp_handle,
+        &io,
+        &info,
+        @sizeOf(windows.FILE_DISPOSITION_INFORMATION_EX),
+        .FileDispositionInformationEx,
+    );
+    bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
+    switch (rc) {
+        .SUCCESS => return .{ .result = {} },
+        // INVALID_PARAMETER here means that the filesystem does not support FileDispositionInformationEx
+        .INVALID_PARAMETER => {},
+        // For all other statuses, fall down to the switch below to handle them.
+        else => need_fallback = false,
+    }
+    if (need_fallback) {
+        // Deletion with file pending semantics, which requires waiting or moving
+        // files to get them removed (from here).
+        var file_dispo = windows.FILE_DISPOSITION_INFORMATION{
+            .DeleteFile = TRUE,
+        };
+
+        rc = ntdll.NtSetInformationFile(
+            tmp_handle,
+            &io,
+            &file_dispo,
+            @sizeOf(windows.FILE_DISPOSITION_INFORMATION),
+            .FileDispositionInformation,
+        );
+        bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
+    }
+    if (bun.JSC.Maybe(void).errnoSys(rc, .NtSetInformationFile)) |err| {
+        return err;
+    }
+
+    return .{ .result = {} };
+}
+
+pub const EXCEPTION_CONTINUE_EXECUTION = -1;
+pub const MS_VC_EXCEPTION = 0x406d1388;

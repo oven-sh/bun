@@ -5,12 +5,12 @@ const String = Semver.String;
 const Output = bun.Output;
 const Global = bun.Global;
 const std = @import("std");
-const strings = @import("root").bun.strings;
+const strings = bun.strings;
 const Environment = @import("../env.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const C = @import("../c.zig");
 const Fs = @import("../fs.zig");
-const stringZ = @import("root").bun.stringZ;
+const stringZ = bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
 const bun = @import("root").bun;
 const string = bun.string;
@@ -364,7 +364,7 @@ pub const Bin = extern struct {
                 var filename3_buf: bun.WPathBuffer = undefined;
 
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(strings.hasPrefixComptime(target_path, "..\\"));
+                    bun.assert(strings.hasPrefixComptime(target_path, "..\\"));
                 }
 
                 const target_wpath = bun.strings.toWPathNormalized(&filename1_buf, target_path[3..]);

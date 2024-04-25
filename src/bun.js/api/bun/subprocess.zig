@@ -1,15 +1,15 @@
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
@@ -31,7 +31,7 @@ pub inline fn assertStdioResult(result: StdioResult) void {
     if (comptime Environment.allow_assert) {
         if (Environment.isPosix) {
             if (result) |fd| {
-                std.debug.assert(fd != bun.invalid_fd);
+                bun.assert(fd != bun.invalid_fd);
             }
         }
     }
@@ -126,6 +126,30 @@ pub const ResourceUsage = struct {
         bun.default_allocator.destroy(this);
     }
 };
+
+pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) !void {
+    var object_iter = JSC.JSPropertyIterator(.{
+        .skip_empty_name = false,
+        .include_value = true,
+    }).init(globalThis, object);
+    defer object_iter.deinit();
+    try envp.ensureTotalCapacityPrecise(object_iter.len +
+        // +1 incase there's IPC
+        // +1 for null terminator
+        2);
+    while (object_iter.next()) |key| {
+        var value = object_iter.value;
+        if (value == .undefined) continue;
+
+        var line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, value.getZigString(globalThis) });
+
+        if (key.eqlComptime("PATH")) {
+            PATH.* = bun.asByteSlice(line["PATH=".len..]);
+        }
+
+        try envp.append(line);
+    }
+}
 
 pub const Subprocess = struct {
     const log = Output.scoped(.Subprocess, false);
@@ -1055,11 +1079,11 @@ pub const Subprocess = struct {
 
         fn deinit(this: *PipeReader) void {
             if (comptime Environment.isPosix) {
-                std.debug.assert(this.reader.isDone());
+                bun.assert(this.reader.isDone());
             }
 
             if (comptime Environment.isWindows) {
-                std.debug.assert(this.reader.source == null or this.reader.source.?.isClosed());
+                bun.assert(this.reader.source == null or this.reader.source.?.isClosed());
             }
 
             if (this.state == .done) {
@@ -1238,7 +1262,7 @@ pub const Subprocess = struct {
                     };
                 },
                 .memfd => |memfd| {
-                    std.debug.assert(memfd != bun.invalid_fd);
+                    bun.assert(memfd != bun.invalid_fd);
                     return Writable{ .memfd = memfd };
                 },
                 .fd => {
@@ -1485,7 +1509,7 @@ pub const Subprocess = struct {
         // access GC'd values during the finalizer
         this.this_jsvalue = .zero;
 
-        std.debug.assert(!this.hasPendingActivity() or JSC.VirtualMachine.get().isShuttingDown());
+        bun.assert(!this.hasPendingActivity() or JSC.VirtualMachine.get().isShuttingDown());
         this.finalizeStreams();
 
         this.process.detach();
@@ -1555,7 +1579,7 @@ pub const Subprocess = struct {
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) JSValue {
-        var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
+        var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
 
@@ -1591,6 +1615,7 @@ pub const Subprocess = struct {
         var argv0: ?[*:0]const u8 = null;
 
         var windows_hide: bool = false;
+        var windows_verbatim_arguments: bool = false;
 
         {
             if (args.isEmptyOrUndefinedOrNull()) {
@@ -1761,40 +1786,14 @@ pub const Subprocess = struct {
                     }
 
                     override_env = true;
-                    var object_iter = JSC.JSPropertyIterator(.{
-                        .skip_empty_name = false,
-                        .include_value = true,
-                    }).init(globalThis, object.asObjectRef());
-                    defer object_iter.deinit();
-                    env_array.ensureTotalCapacityPrecise(allocator, object_iter.len +
-                        // +1 incase there's IPC
-                        // +1 for null terminator
-                        2) catch {
+                    // If the env object does not include a $PATH, it must disable path lookup for argv[0]
+                    PATH = "";
+                    var envp_managed = env_array.toManaged(allocator);
+                    appendEnvpFromJS(globalThis, object, &envp_managed, &PATH) catch {
                         globalThis.throwOutOfMemory();
                         return .zero;
                     };
-
-                    // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-                    PATH = "";
-
-                    while (object_iter.next()) |key| {
-                        var value = object_iter.value;
-                        if (value == .undefined) continue;
-
-                        var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        };
-
-                        if (key.eqlComptime("PATH")) {
-                            PATH = bun.asByteSlice(line["PATH=".len..]);
-                        }
-
-                        env_array.append(allocator, line) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        };
-                    }
+                    env_array = envp_managed.moveToUnmanaged();
                 }
 
                 if (args.get(globalThis, "stdio")) |stdio_val| {
@@ -1867,6 +1866,12 @@ pub const Subprocess = struct {
                     if (args.get(globalThis, "windowsHide")) |val| {
                         if (val.isBoolean()) {
                             windows_hide = val.asBoolean();
+                        }
+                    }
+
+                    if (args.get(globalThis, "windowsVerbatimArguments")) |val| {
+                        if (val.isBoolean()) {
+                            windows_verbatim_arguments = val.asBoolean();
                         }
                     }
                 }
@@ -1966,6 +1971,7 @@ pub const Subprocess = struct {
 
             .windows = if (Environment.isWindows) .{
                 .hide_window = windows_hide,
+                .verbatim_arguments = windows_verbatim_arguments,
                 .loop = JSC.EventLoopHandle.init(jsc_vm),
             } else {},
         };

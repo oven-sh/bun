@@ -1,6 +1,6 @@
-const fs = @import("root").bun.fs;
+const fs = bun.fs;
 const bun = @import("root").bun;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const std = @import("std");
 const Ref = @import("ast/base.zig").Ref;
 const Index = @import("ast/base.zig").Index;
@@ -214,12 +214,34 @@ pub const ImportRecord = struct {
 
         with_type_sqlite,
         with_type_sqlite_embedded,
+        with_type_text,
+        with_type_json,
+        with_type_toml,
+        with_type_file,
 
         pub fn loader(this: Tag) ?bun.options.Loader {
             return switch (this) {
                 .with_type_sqlite => .sqlite,
                 .with_type_sqlite_embedded => .sqlite_embedded,
+                .with_type_text => .text,
+                .with_type_json => .json,
+                .with_type_toml => .toml,
+                .with_type_file => .file,
                 else => null,
+            };
+        }
+
+        pub fn onlySupportsDefaultImports(this: Tag) bool {
+            return switch (this) {
+                .with_type_file, .with_type_text => true,
+                else => false,
+            };
+        }
+
+        pub fn isSQLite(this: Tag) bool {
+            return switch (this) {
+                .with_type_sqlite, .with_type_sqlite_embedded => true,
+                else => false,
             };
         }
 

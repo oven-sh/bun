@@ -81,7 +81,7 @@ pub const BunxCommand = struct {
         bun.JSAst.Expr.Data.Store.create(default_allocator);
         bun.JSAst.Stmt.Data.Store.create(default_allocator);
 
-        const expr = try bun.JSON.ParseJSONUTF8(&source, bundler.log, bundler.allocator);
+        const expr = try bun.JSON.ParsePackageJSONUTF8(&source, bundler.log, bundler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -212,8 +212,7 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
-        var ctx = ctx_;
+    pub fn exec(ctx: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
         // Don't log stuff
         ctx.debug.silent = true;
 
@@ -269,7 +268,7 @@ pub const BunxCommand = struct {
             exitWithUsage();
         }
 
-        std.debug.assert(update_requests.len == 1); // One positional cannot parse to multiple requests
+        bun.assert(update_requests.len == 1); // One positional cannot parse to multiple requests
         var update_request = update_requests[0];
 
         // if you type "tsc" and TypeScript is not installed:
@@ -331,8 +330,7 @@ pub const BunxCommand = struct {
                 else => ":",
             };
 
-            const has_banned_char = std.mem.indexOfAny(u8, update_request.name, banned_path_chars) != null or
-                std.mem.indexOfAny(u8, display_version, banned_path_chars) != null;
+            const has_banned_char = bun.strings.indexAnyComptime(update_request.name, banned_path_chars) != null or bun.strings.indexAnyComptime(display_version, banned_path_chars) != null;
 
             break :brk try if (has_banned_char)
                 // This branch gets hit usually when a URL is requested as the package
@@ -531,7 +529,7 @@ pub const BunxCommand = struct {
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
             const root_dir_fd = root_dir_info.getFileDescriptor();
-            std.debug.assert(root_dir_fd != .zero);
+            bun.assert(root_dir_fd != .zero);
             if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {

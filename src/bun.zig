@@ -29,6 +29,7 @@ else
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
+pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
@@ -54,7 +55,7 @@ pub const shell = struct {
 };
 
 pub const Output = @import("./output.zig");
-pub const Global = @import("./__global.zig");
+pub const Global = @import("./Global.zig");
 
 // make this non-pub after https://github.com/ziglang/zig/issues/18462 is resolved
 pub const FileDescriptorInt = if (Environment.isBrowser)
@@ -130,7 +131,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     }
 
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
-        std.debug.assert(FDImpl.decode(fd).kind == kind);
+        assert(FDImpl.decode(fd).kind == kind);
     }
 
     pub fn cwd() FileDescriptor {
@@ -263,7 +264,7 @@ pub fn len(value: anytype) usize {
                 return indexOfSentinel(info.child, sentinel, value);
             },
             .C => {
-                std.debug.assert(value != null);
+                assert(value != null);
                 return indexOfSentinel(info.child, 0, value);
             },
             .Slice => value.len,
@@ -399,14 +400,14 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    if (comptime Environment.allow_assert) std.debug.assert(dest.len >= src.len);
+    if (comptime Environment.allow_assert) assert(dest.len >= src.len);
     if (@intFromPtr(src.ptr) == @intFromPtr(dest.ptr) or src.len == 0) return;
 
     const input: []const u8 = std.mem.sliceAsBytes(src);
     const output: []u8 = std.mem.sliceAsBytes(dest);
 
-    std.debug.assert(input.len > 0);
-    std.debug.assert(output.len > 0);
+    assert(input.len > 0);
+    assert(output.len > 0);
 
     const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
         @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
@@ -516,9 +517,7 @@ pub fn rand(bytes: []u8) void {
 pub const ObjectPool = @import("./pool.zig").ObjectPool;
 
 pub fn assertNonBlocking(fd: anytype) void {
-    std.debug.assert(
-        (std.posix.fcntl(fd, std.posix.F.GETFL, 0) catch unreachable) & O.NONBLOCK != 0,
-    );
+    assert((std.posix.fcntl(fd, std.posix.F.GETFL, 0) catch unreachable) & O.NONBLOCK != 0);
 }
 
 pub fn ensureNonBlocking(fd: anytype) void {
@@ -531,7 +530,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
         @panic("TODO on Windows");
     }
-    std.debug.assert(fd != invalid_fd);
+    assert(fd != invalid_fd);
     var polls = [_]std.posix.pollfd{
         .{
             .fd = fd.cast(),
@@ -578,7 +577,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         }
         return;
     }
-    std.debug.assert(fd != invalid_fd);
+    assert(fd != invalid_fd);
 
     var polls = [_]std.posix.pollfd{
         .{
@@ -676,7 +675,7 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
         @as(u32, @truncate(slice.len)),
     };
     if (comptime Environment.allow_assert)
-        std.debug.assert(strings.eqlLong(slice, buffer[r[0]..][0..r[1]], false));
+        assert(strings.eqlLong(slice, buffer[r[0]..][0..r[1]], false));
     return r;
 }
 
@@ -697,7 +696,8 @@ pub const uws = @import("./deps/uws.zig");
 pub const BoringSSL = @import("./boringssl.zig");
 pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
-pub const analytics = @import("./analytics.zig");
+pub const analytics = @import("./analytics/analytics_thread.zig");
+pub const zlib = @import("./zlib.zig");
 
 pub var start_time: i128 = 0;
 
@@ -772,7 +772,7 @@ pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 
 /// This wrapper exists to avoid the call to sliceTo(0)
 /// Zig's sliceTo(0) is scalar
-pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
+pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     if (comptime !Environment.isNative) {
         return null;
     }
@@ -782,8 +782,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
         for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            const key = line[0..key_end];
-            if (strings.eqlInsensitive(key, path_)) {
+            if (strings.eqlInsensitive(line[0..key_end], key)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }
@@ -791,7 +790,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
         return null;
     }
 
-    const ptr = std.c.getenv(path_.ptr) orelse return null;
+    const ptr = std.c.getenv(key.ptr) orelse return null;
     return sliceTo(ptr, 0);
 }
 
@@ -800,7 +799,7 @@ pub const FDHashMapContext = struct {
         // a file descriptor is i32 on linux, u64 on windows
         // the goal here is to do zero work and widen the 32 bit type to 64
         // this should compile error if FileDescriptor somehow is larger than 64 bits.
-        comptime std.debug.assert(@bitSizeOf(FileDescriptor) <= 64);
+        comptime assert(@bitSizeOf(FileDescriptor) <= 64);
         return @intCast(fd.int());
     }
     pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
@@ -1335,7 +1334,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
                 return i;
             },
             .C => {
-                std.debug.assert(ptr != null);
+                assert(ptr != null);
                 return indexOfSentinel(ptr_info.child, end, ptr);
             },
             .Slice => {
@@ -1396,7 +1395,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
                 .C => {
                     new_ptr_info.sentinel = &end;
                     // C pointers are always allowzero, but we don't want the return type to be.
-                    std.debug.assert(new_ptr_info.is_allowzero);
+                    assert(new_ptr_info.is_allowzero);
                     new_ptr_info.is_allowzero = false;
                 },
             }
@@ -1435,7 +1434,7 @@ pub fn cstring(input: []const u8) [:0]const u8 {
         return "";
 
     if (comptime Environment.allow_assert) {
-        std.debug.assert(
+        assert(
             input.ptr[input.len] == 0,
         );
     }
@@ -1532,11 +1531,11 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
     .free = FailingAllocator.free,
 } };
 
-var is_reload_in_progress = std.atomic.Value(bool).init(false);
-threadlocal var is_reload_in_progress_on_current_thread = false;
-fn isProcessReloadInProgressOnAnotherThread() bool {
+var __reload_in_progress__ = std.atomic.Value(bool).init(false);
+threadlocal var __reload_in_progress__on_current_thread = false;
+pub fn isProcessReloadInProgressOnAnotherThread() bool {
     @fence(.acquire);
-    return is_reload_in_progress.load(.monotonic) and !is_reload_in_progress_on_current_thread;
+    return __reload_in_progress__.load(.monotonic) and !__reload_in_progress__on_current_thread;
 }
 
 pub noinline fn maybeHandlePanicDuringProcessReload() void {
@@ -1562,43 +1561,61 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 }
 
-/// Reload Bun's process
+/// Reload Bun's process. This clones envp, argv, and gets the current
+/// executable path.
 ///
-/// This clones envp, argv, and gets the current executable path
+/// On posix, this overwrites the current process with the new process using
+/// `execve`. On Windows, we dont have this API, instead relying on a dummy
+/// parent process that we can signal via a special exit code.
 ///
-/// Overwrites the current process with the new process
-///
-/// Must be able to allocate memory. malloc is not signal safe, but it's
+/// Must be able to allocate memory. `malloc` is not signal safe, but it's
 /// best-effort. Not much we can do if it fails.
+///
+/// Note that this function is called during the crash handler, in which it is
+/// passed true to `may_return`. If failure occurs, one line of standard error
+/// is printed and then this returns void. If `may_return == false`, then a
+/// panic will occur on failure. The crash handler will not schedule two reloads
+/// at once.
 pub fn reloadProcess(
     allocator: std.mem.Allocator,
     clear_terminal: bool,
-) noreturn {
-    is_reload_in_progress.store(true, .monotonic);
-    is_reload_in_progress_on_current_thread = true;
+    comptime may_return: bool,
+) if (may_return) void else noreturn {
+    __reload_in_progress__.store(true, .monotonic);
+    __reload_in_progress__on_current_thread = true;
 
     if (clear_terminal) {
         Output.flush();
         Output.disableBuffering();
         Output.resetTerminalAll();
     }
+
     Output.Source.Stdio.restore();
     const bun = @This();
 
     if (comptime Environment.isWindows) {
         // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
         // see becomeWatcherManager
-        const rc = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), win32.watcher_reload_exit);
+        const rc = bun.windows.TerminateProcess(bun.windows.GetCurrentProcess(), win32.watcher_reload_exit);
         if (rc == 0) {
             const err = bun.windows.GetLastError();
+            if (may_return) {
+                Output.errGeneric("Failed to reload process: {s}", .{@tagName(err)});
+                return;
+            }
             Output.panic("Error while reloading process: {s}", .{@tagName(err)});
         } else {
+            if (may_return) {
+                Output.errGeneric("Failed to reload process", .{});
+                return;
+            }
             Output.panic("Unexpected error while reloading process\n", .{});
         }
     }
+
     const PosixSpawn = posix.spawn;
-    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
-    for (bun.argv(), dupe_argv) |src, *dest| {
+    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv.len, null) catch unreachable;
+    for (bun.argv, dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, src) catch unreachable).ptr;
     }
 
@@ -1642,9 +1659,17 @@ pub fn reloadProcess(
         ) catch unreachable;
         switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
+                if (may_return) {
+                    Output.errGeneric("Failed to reload process: {s}", .{@tagName(err.getErrno())});
+                    return;
+                }
                 Output.panic("Unexpected error while reloading: {d} {s}", .{ err.errno, @tagName(err.getErrno()) });
             },
             .result => |_| {
+                if (may_return) {
+                    Output.errGeneric("Failed to reload process", .{});
+                    return;
+                }
                 Output.panic("Unexpected error while reloading: posix_spawn returned a result", .{});
             },
         }
@@ -1659,6 +1684,10 @@ pub fn reloadProcess(
             newargv,
             envp,
         );
+        if (may_return) {
+            Output.errGeneric("Failed to reload process: {s}", .{@errorName(err)});
+            return;
+        }
         Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
     } else {
         @compileError("unsupported platform for reloadProcess");
@@ -2066,14 +2095,10 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
 
-var _argv: [][:0]const u8 = &[_][:0]const u8{};
-
-pub inline fn argv() [][:0]const u8 {
-    return _argv;
-}
+pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
 pub fn initArgv(allocator: std.mem.Allocator) !void {
-    _argv = try std.process.argsAlloc(allocator);
+    argv = try std.process.argsAlloc(allocator);
 }
 
 pub const posix = struct {
@@ -2714,9 +2739,7 @@ pub const Dirname = struct {
 
 pub noinline fn outOfMemory() noreturn {
     @setCold(true);
-
-    // TODO: In the future, we should print jsc + mimalloc heap statistics
-    @panic("Bun ran out of memory!");
+    crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
 pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
@@ -2739,6 +2762,18 @@ pub inline fn new(comptime T: type, t: T) *T {
 
     const ptr = default_allocator.create(T) catch outOfMemory();
     ptr.* = t;
+    return ptr;
+}
+
+pub inline fn dupe(comptime T: type, t: *T) *T {
+    if (comptime is_heap_breakdown_enabled) {
+        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+        ptr.* = t.*;
+        return ptr;
+    }
+
+    const ptr = default_allocator.create(T) catch outOfMemory();
+    ptr.* = t.*;
     return ptr;
 }
 
@@ -2819,7 +2854,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
 
         pub fn destroy(self: *T) void {
             if (comptime Environment.allow_assert) {
-                std.debug.assert(self.ref_count == 0);
+                assert(self.ref_count == 0);
                 allocation_logger("destroy() = {*}", .{self});
             }
 
@@ -2867,7 +2902,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
             ptr.* = t;
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(ptr.ref_count == 1);
+                assert(ptr.ref_count == 1);
                 allocation_logger("new() = {*}", .{ptr});
             }
 
@@ -2941,7 +2976,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
         err;
 
     if (Environment.allow_assert) {
-        std.debug.assert(num != 0);
+        assert(num != 0);
     }
 
     if (Environment.os == .windows) {
@@ -2949,7 +2984,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
         num = @abs(num);
     } else {
         if (Environment.allow_assert) {
-            std.debug.assert(num > 0);
+            assert(num > 0);
         }
     }
 
@@ -3026,7 +3061,7 @@ pub inline fn markPosixOnly() if (Environment.isPosix) void else noreturn {
 
 pub fn linuxKernelVersion() Semver.Version {
     if (comptime !Environment.isLinux) @compileError("linuxKernelVersion() is only available on Linux");
-    return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+    return analytics.GenerateHeader.GeneratePlatform.kernelVersion();
 }
 
 pub fn selfExePath() ![:0]u8 {
@@ -3082,3 +3117,52 @@ pub fn SliceIterator(comptime T: type) type {
 }
 
 pub const Futex = @import("./futex.zig");
+
+pub const crash_handler = @import("crash_handler.zig");
+pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
+
+noinline fn assertionFailure() noreturn {
+    if (@inComptime()) {
+        @compileError("assertion failure");
+    }
+
+    @setCold(true);
+    Output.panic("Internal assertion failure", .{});
+}
+
+pub inline fn debugAssert(cheap_value_only_plz: bool) void {
+    if (comptime !Environment.isDebug) {
+        return;
+    }
+
+    if (!cheap_value_only_plz) {
+        unreachable;
+    }
+}
+
+pub fn assert(value: bool) callconv(callconv_inline) void {
+    if (comptime !Environment.allow_assert) {
+        return;
+    }
+
+    if (!value) {
+        if (comptime Environment.isDebug) unreachable;
+        assertionFailure();
+    }
+}
+
+/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+pub inline fn assert_eql(a: anytype, b: anytype) void {
+    return assert(a == b);
+}
+
+/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+pub inline fn assert_neql(a: anytype, b: anytype) void {
+    return assert(a != b);
+}
+
+pub inline fn unsafeAssert(condition: bool) void {
+    if (!condition) {
+        unreachable;
+    }
+}

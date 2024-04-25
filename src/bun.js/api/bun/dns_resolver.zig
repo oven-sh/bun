@@ -1,16 +1,16 @@
 const Bun = @This();
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const c_ares = bun.c_ares;
@@ -119,22 +119,14 @@ const LibInfo = struct {
 
             return promise_value;
         }
-        std.debug.assert(request.backend.libinfo.machport != null);
-        request.backend.libinfo.file_poll = bun.Async.FilePoll.init(
-            this.vm,
-            bun.toFD(std.math.maxInt(i32) - 1),
-            .{},
-            GetAddrInfoRequest,
-            request,
-        );
-
-        const fd = bun.toFD(@as(i32, @intCast(@intFromPtr(request.backend.libinfo.machport))));
-        std.debug.assert(
+        bun.assert(request.backend.libinfo.machport != null);
+        request.backend.libinfo.file_poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
+        bun.assert(
             request.backend.libinfo.file_poll.?.registerWithFd(
                 this.vm.event_loop_handle.?,
                 .machport,
                 .one_shot,
-                fd,
+                bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
             ) == .result,
         );
 
@@ -338,7 +330,7 @@ pub fn addrInfoToJSArray(
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
     var stack = std.heap.stackFallback(2048, parent_allocator);
-    var arena = @import("root").bun.ArenaAllocator.init(stack.get());
+    var arena = bun.ArenaAllocator.init(stack.get());
     const array = JSC.JSValue.createEmptyArray(
         globalThis,
         addrInfoCount(addr_info),
@@ -650,7 +642,7 @@ pub const GetAddrInfo = struct {
                     .addrinfo => |addrinfo| addrInfoToJSArray(globalThis.allocator(), addrinfo orelse return null, globalThis),
                     .list => |list| brk: {
                         var stack = std.heap.stackFallback(2048, globalThis.allocator());
-                        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
+                        var arena = bun.ArenaAllocator.init(stack.get());
                         const array = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
                         var i: u32 = 0;
                         const items: []const Result = list.items;
@@ -1302,7 +1294,7 @@ pub const GetAddrInfoRequest = struct {
     pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) void {
         log("onLibUVComplete: status={d}", .{uv_info.retcode.int()});
         const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
-        std.debug.assert(uv_info == &this.backend.libc.uv);
+        bun.assert(uv_info == &this.backend.libc.uv);
         if (this.backend == .libinfo) {
             if (this.backend.libinfo.file_poll) |poll| poll.deinit();
         }
@@ -1658,7 +1650,7 @@ pub const DNSResolver = struct {
 
     fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8, comptime request_type: type) request_type.PendingCacheKey {
         var cache = &@field(this, cache_name);
-        std.debug.assert(!cache.available.isSet(index));
+        bun.assert(!cache.available.isSet(index));
         const entry = cache.buffer[index];
         cache.buffer[index] = undefined;
 

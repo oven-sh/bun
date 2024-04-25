@@ -5,7 +5,7 @@ pub usingnamespace @import("./webcore/blob.zig");
 pub usingnamespace @import("./webcore/request.zig");
 pub usingnamespace @import("./webcore/body.zig");
 
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -322,8 +322,8 @@ pub const Prompt = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(input.items.len > 0);
-            std.debug.assert(input.items[input.items.len - 1] != '\r');
+            bun.assert(input.items.len > 0);
+            bun.assert(input.items[input.items.len - 1] != '\r');
         }
 
         // 8. Let result be null if the user aborts, or otherwise the string
@@ -342,7 +342,7 @@ pub const Prompt = struct {
 
 pub const Crypto = struct {
     garbage: i32 = 0,
-    const BoringSSL = @import("root").bun.BoringSSL;
+    const BoringSSL = bun.BoringSSL;
 
     pub const doScryptSync = JSC.wrapInstanceMethod(Crypto, "scryptSync", false);
 

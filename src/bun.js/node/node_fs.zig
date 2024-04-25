@@ -6,7 +6,7 @@ const bun = @import("root").bun;
 const strings = bun.strings;
 const windows = bun.windows;
 const string = bun.string;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
 const C = bun.C;
@@ -446,7 +446,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 .basename = bun.PathString.init(bun.default_allocator.dupeZ(u8, basename) catch bun.outOfMemory()),
             },
         );
-        std.debug.assert(readdir_task.subtask_count.fetchAdd(1, .monotonic) > 0);
+        bun.assert(readdir_task.subtask_count.fetchAdd(1, .monotonic) > 0);
         JSC.WorkPool.schedule(&task.task);
     }
 
@@ -569,7 +569,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             return;
         }
 
-        std.debug.assert(this.subtask_count.load(.monotonic) == 0);
+        bun.assert(this.subtask_count.load(.monotonic) == 0);
 
         const root_fd = this.root_fd;
         if (root_fd != bun.invalid_fd) {
@@ -671,7 +671,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     }
 
     pub fn deinit(this: *AsyncReaddirRecursiveTask) void {
-        std.debug.assert(this.root_fd == bun.invalid_fd); // should already have closed it
+        bun.assert(this.root_fd == bun.invalid_fd); // should already have closed it
         if (this.pending_err) |*err| {
             bun.default_allocator.free(err.path);
         }
@@ -4561,7 +4561,7 @@ pub const NodeFS = struct {
     }
 
     fn _read(_: *NodeFS, args: Arguments.Read, comptime _: Flavor) Maybe(Return.Read) {
-        if (Environment.allow_assert) std.debug.assert(args.position == null);
+        if (Environment.allow_assert) bun.assert(args.position == null);
         var buf = args.buffer.slice();
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(buf.len, args.length)];
@@ -5338,58 +5338,12 @@ pub const NodeFS = struct {
     }
 
     pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
-        var path: [:0]const u8 = undefined;
-        var pathbuf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-
         const fd = switch (args.file) {
             .path => brk: {
-                // On Windows, we potentially mutate the path in posixToPlatformInPlace
-                // We cannot mutate JavaScript strings in-place. That will break many things.
-                // So we must always copy the path string on Windows.
-                path = path: {
-                    const temp_path = args.file.path.sliceZWithForceCopy(pathbuf, Environment.isWindows);
-                    if (Environment.isWindows) {
-                        bun.path.posixToPlatformInPlace(u8, temp_path);
-                    }
-                    break :path temp_path;
-                };
-
-                var is_dirfd_different = false;
-                var dirfd = args.dirfd;
-                if (Environment.isWindows) {
-                    while (std.mem.startsWith(u8, path, "..\\")) {
-                        is_dirfd_different = true;
-                        var buffer: bun.WPathBuffer = undefined;
-                        const dirfd_path_len = std.os.windows.kernel32.GetFinalPathNameByHandleW(args.dirfd.cast(), &buffer, buffer.len, 0);
-                        const dirfd_path = buffer[0..dirfd_path_len];
-                        const parent_path = bun.Dirname.dirname(u16, dirfd_path).?;
-                        if (std.mem.startsWith(u16, parent_path, &bun.windows.nt_maxpath_prefix)) @constCast(parent_path)[1] = '?';
-                        const newdirfd = switch (bun.sys.openDirAtWindows(bun.invalid_fd, parent_path, .{ .no_follow = true })) {
-                            .result => |fd| fd,
-                            .err => |err| {
-                                return .{ .err = err.withPath(path) };
-                            },
-                        };
-                        path = path[3..];
-                        dirfd = newdirfd;
-                    }
-                }
-                defer if (is_dirfd_different) {
-                    var d = dirfd.asDir();
-                    d.close();
-                };
-                if (Environment.isWindows) {
-                    // windows openat does not support path traversal, fix it here.
-                    // use pathbuf2 here since without it 'panic: @memcpy arguments alias' triggers
-                    if (std.mem.indexOf(u8, path, "\\.\\") != null or std.mem.indexOf(u8, path, "\\..\\") != null) {
-                        const fixed_path = bun.path.normalizeStringWindows(path, &pathbuf2, false, false);
-                        pathbuf2[fixed_path.len] = 0;
-                        path = pathbuf2[0..fixed_path.len :0];
-                    }
-                }
+                const path = args.file.path.sliceZWithForceCopy(pathbuf, true);
 
                 const open_result = Syscall.openat(
-                    dirfd,
+                    args.dirfd,
                     path,
                     @intFromEnum(args.flag) | bun.O.NOCTTY,
                     args.mode,
@@ -5460,6 +5414,10 @@ pub const NodeFS = struct {
         }
 
         if (Environment.isWindows) {
+            if (args.flag == .a) {
+                return Maybe(Return.WriteFile).success;
+            }
+
             const rc = std.os.windows.kernel32.SetEndOfFile(fd.cast());
             if (rc == 0) {
                 return .{
@@ -5472,7 +5430,9 @@ pub const NodeFS = struct {
             }
         } else {
             // https://github.com/oven-sh/bun/issues/2931
-            if ((@intFromEnum(args.flag) & bun.O.APPEND) == 0) {
+            // https://github.com/oven-sh/bun/issues/10222
+            // only truncate if we're not appending and writing to a path
+            if ((@intFromEnum(args.flag) & bun.O.APPEND) == 0 and args.file != .fd) {
                 _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
             }
         }
@@ -5534,7 +5494,7 @@ pub const NodeFS = struct {
                 } };
 
             // Seems like `rc` does not contain the errno?
-            std.debug.assert(rc.errEnum() == null);
+            bun.assert(rc.errEnum() == null);
             const buf = bun.span(req.ptrAs([*:0]u8));
 
             return .{
@@ -5557,7 +5517,7 @@ pub const NodeFS = struct {
 
         var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var inbuf = &this.sync_error_buf;
-        if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
+        if (comptime Environment.allow_assert) bun.assert(FileSystem.instance_loaded);
 
         const path_slice = args.path.slice();
 
@@ -5864,7 +5824,7 @@ pub const NodeFS = struct {
     }
 
     pub fn watchFile(_: *NodeFS, args: Arguments.WatchFile, comptime flavor: Flavor) Maybe(Return.WatchFile) {
-        std.debug.assert(flavor == .sync);
+        bun.assert(flavor == .sync);
 
         const watcher = args.createStatWatcher() catch |err| {
             const buf = std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}) catch bun.outOfMemory();
@@ -5904,8 +5864,8 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
-        std.debug.assert(args.mtime.tv_nsec <= 1e9);
-        std.debug.assert(args.atime.tv_nsec <= 1e9);
+        bun.assert(args.mtime.tv_nsec <= 1e9);
+        bun.assert(args.atime.tv_nsec <= 1e9);
         var times = [2]std.c.timeval{
             .{
                 .tv_sec = args.atime.tv_sec,
@@ -5944,8 +5904,8 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
-        std.debug.assert(args.mtime.tv_nsec <= 1e9);
-        std.debug.assert(args.atime.tv_nsec <= 1e9);
+        bun.assert(args.mtime.tv_nsec <= 1e9);
+        bun.assert(args.atime.tv_nsec <= 1e9);
         var times = [2]std.c.timeval{
             .{
                 .tv_sec = args.atime.tv_sec,
@@ -5989,7 +5949,7 @@ pub const NodeFS = struct {
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
-        comptime std.debug.assert(flavor == .sync);
+        comptime bun.assert(flavor == .sync);
 
         var src_buf: bun.PathBuffer = undefined;
         var dest_buf: bun.PathBuffer = undefined;

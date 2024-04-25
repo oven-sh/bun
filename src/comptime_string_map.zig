@@ -1,5 +1,6 @@
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const std = @import("std");
+const bun = @import("root").bun;
 const mem = std.mem;
 const strings = @import("./string_immutable.zig");
 
@@ -166,26 +167,26 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
 
         /// Caller must ensure that the input is a string.
         pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) ?V {
-            if (comptime @import("root").bun.Environment.allow_assert) {
+            if (comptime bun.Environment.allow_assert) {
                 if (!input.isString()) {
                     @panic("ComptimeStringMap.fromJS: input is not a string");
                 }
             }
 
-            const str = @import("root").bun.String.tryFromJS(input, globalThis) orelse return null;
+            const str = bun.String.tryFromJS(input, globalThis) orelse return null;
             defer str.deref();
-            return getWithEql(str, @import("root").bun.String.eqlComptime);
+            return getWithEql(str, bun.String.eqlComptime);
         }
 
         /// Caller must ensure that the input is a string.
         pub fn fromJSCaseInsensitive(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) ?V {
-            if (comptime @import("root").bun.Environment.allow_assert) {
+            if (comptime bun.Environment.allow_assert) {
                 if (!input.isString()) {
                     @panic("ComptimeStringMap.fromJS: input is not a string");
                 }
             }
 
-            const str = @import("root").bun.String.tryFromJS(input, globalThis) orelse return null;
+            const str = bun.String.tryFromJS(input, globalThis) orelse return null;
             defer str.deref();
             return str.inMapCaseInsensitive(@This());
         }

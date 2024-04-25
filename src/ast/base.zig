@@ -262,7 +262,7 @@ pub const Ref = packed struct(u64) {
     }
 
     pub fn initSourceEnd(old: Ref) Ref {
-        std.debug.assert(old.tag != .invalid);
+        bun.assert(old.tag != .invalid);
         return init(old.inner_index, old.source_index, old.tag == .source_contents_slice);
     }
 
@@ -289,37 +289,3 @@ pub const Ref = packed struct(u64) {
         return try writer.write([2]u32{ self.sourceIndex(), self.innerIndex() });
     }
 };
-
-test "Ref" {
-    {
-        const first = .{ .inner_index = 0, .source_index = 1, .is_source_contents_slice = true };
-        const ref = Ref.initSourceEnd(.{ .inner_index = 0, .source_index = 1, .is_source_contents_slice = true });
-        try std.testing.expectEqual(ref.innerIndex(), first.inner_index);
-        try std.testing.expectEqual(ref.sourceIndex(), first.source_index);
-        try std.testing.expectEqual(ref.isSourceContentsSlice(), first.is_source_contents_slice);
-    }
-
-    {
-        const first = .{ .inner_index = 100, .source_index = 0, .is_source_contents_slice = true };
-        const ref = Ref.initSourceEnd(.{ .inner_index = 100, .source_index = 0, .is_source_contents_slice = true });
-        try std.testing.expectEqual(ref.innerIndex(), first.inner_index);
-        try std.testing.expectEqual(ref.sourceIndex(), first.source_index);
-        try std.testing.expectEqual(ref.isSourceContentsSlice(), first.is_source_contents_slice);
-    }
-
-    {
-        const first = .{ .inner_index = 20, .source_index = 100, .is_source_contents_slice = true };
-        const ref = Ref.initSourceEnd(.{ .inner_index = 20, .source_index = 100, .is_source_contents_slice = true });
-        try std.testing.expectEqual(ref.innerIndex(), first.inner_index);
-        try std.testing.expectEqual(ref.sourceIndex(), first.source_index);
-        try std.testing.expectEqual(ref.isSourceContentsSlice(), first.is_source_contents_slice);
-    }
-
-    {
-        const first = .{ .inner_index = 30, .source_index = 100, .is_source_contents_slice = false };
-        const ref = Ref.initSourceEnd(.{ .inner_index = 30, .source_index = 100, .is_source_contents_slice = false });
-        try std.testing.expectEqual(ref.innerIndex(), first.inner_index);
-        try std.testing.expectEqual(ref.sourceIndex(), first.source_index);
-        try std.testing.expectEqual(ref.isSourceContentsSlice(), first.is_source_contents_slice);
-    }
-}

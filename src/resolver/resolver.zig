@@ -12,7 +12,7 @@ const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const C = bun.C;
 const ast = @import("../import_record.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const options = @import("../options.zig");
 const Fs = @import("../fs.zig");
 const std = @import("std");
@@ -55,8 +55,8 @@ pub fn isPackagePath(path: string) bool {
 
 pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
     if (Environment.allow_assert) {
-        std.debug.assert(!std.fs.path.isAbsolute(non_absolute_path));
-        std.debug.assert(!strings.startsWith(non_absolute_path, "/"));
+        assert(!std.fs.path.isAbsolute(non_absolute_path));
+        assert(!strings.startsWith(non_absolute_path, "/"));
     }
 
     return !strings.startsWith(non_absolute_path, "./") and
@@ -731,7 +731,7 @@ pub const Resolver = struct {
         // support passing a package.json or path to a package
         const pkg: *const PackageJSON = result.package_json orelse r.packageJSONForResolvedNodeModuleWithIgnoreMissingName(&result, true) orelse return error.MissingPackageJSON;
 
-        const json = (try r.caches.json.parseJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
+        const json = (try r.caches.json.parsePackageJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
 
         pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
         const dir = pkg.source.path.sourceDir();
@@ -1084,7 +1084,7 @@ pub const Resolver = struct {
                                 bun.openFileForPath(span);
 
                             if (!store_fd) {
-                                std.debug.assert(bun.FDTag.get(file.handle) == .none);
+                                assert(bun.FDTag.get(file.handle) == .none);
                                 out = try bun.getFdPath(file.handle, &buf);
                                 file.close();
                                 query.entry.cache.fd = .zero;
@@ -1137,7 +1137,7 @@ pub const Resolver = struct {
         kind: ast.ImportKind,
         global_cache: GlobalCache,
     ) Result.Union {
-        std.debug.assert(std.fs.path.isAbsolute(source_dir));
+        assert(std.fs.path.isAbsolute(source_dir));
 
         var import_path = import_path_;
 
@@ -1935,7 +1935,7 @@ pub const Resolver = struct {
                 const dir_path_for_resolution = manager.pathForResolution(resolved_package_id, resolution, bufs(.path_in_global_disk_cache)) catch |err| {
                     // if it's missing, we need to install it
                     if (err == error.FileNotFound) {
-                        switch (manager.getPreinstallState(resolved_package_id, manager.lockfile)) {
+                        switch (manager.getPreinstallState(resolved_package_id)) {
                             .done => {
                                 var path = Fs.Path.init(import_path);
                                 path.is_disabled = true;
@@ -2096,7 +2096,7 @@ pub const Resolver = struct {
         dir_path_maybe_trail_slash: string,
         package_id: Install.PackageID,
     ) !?*DirInfo {
-        std.debug.assert(r.package_manager != null);
+        assert(r.package_manager != null);
 
         const dir_path = strings.pathWithoutTrailingSlashOne(dir_path_maybe_trail_slash);
 
@@ -2214,7 +2214,7 @@ pub const Resolver = struct {
         var pm = r.getPackageManager();
         if (comptime Environment.allow_assert) {
             // we should never be trying to resolve a dependency that is already resolved
-            std.debug.assert(pm.lockfile.resolve(esm.name, version) == null);
+            assert(pm.lockfile.resolve(esm.name, version) == null);
         }
 
         // Add the containing package to the lockfile
@@ -2578,7 +2578,7 @@ pub const Resolver = struct {
             input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
         }
 
-        std.debug.assert(std.fs.path.isAbsolute(input_path));
+        assert(std.fs.path.isAbsolute(input_path));
 
         const path_without_trailing_slash = strings.pathWithoutTrailingSlashOne(input_path);
         assertValidCacheKey(path_without_trailing_slash);
@@ -2670,7 +2670,7 @@ pub const Resolver = struct {
         }
 
         var queue_slice: []DirEntryResolveQueueItem = bufs(.dir_entry_paths_to_resolve)[0..@as(usize, @intCast(i))];
-        if (Environment.allow_assert) std.debug.assert(queue_slice.len > 0);
+        if (Environment.allow_assert) assert(queue_slice.len > 0);
         var open_dir_count: usize = 0;
 
         // When this function halts, any item not processed means it's not found.
@@ -3546,7 +3546,7 @@ pub const Resolver = struct {
             }
 
             if (Environment.allow_assert) {
-                std.debug.assert(std.fs.path.isAbsolute(file.path));
+                assert(std.fs.path.isAbsolute(file.path));
             }
 
             return MatchResult{
@@ -4141,7 +4141,7 @@ pub const Dirname = struct {
         const root = brk: {
             if (Environment.isWindows) {
                 const root = ResolvePath.windowsFilesystemRoot(path);
-                std.debug.assert(root.len > 0);
+                assert(root.len > 0);
                 break :brk root;
             }
             break :brk "/";
@@ -4229,3 +4229,5 @@ comptime {
         _ = Resolver.Resolver__propForRequireMainPaths;
     }
 }
+
+const assert = bun.assert;

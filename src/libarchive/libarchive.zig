@@ -14,7 +14,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const struct_archive = lib.struct_archive;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 pub const Seek = enum(c_int) {
     set = std.posix.SEEK_SET,
     current = std.posix.SEEK_CUR,
@@ -376,10 +376,10 @@ pub const Archive = struct {
         filename_hash: u64 = 0,
         found: bool = false,
         fd: FileDescriptorType = .zero,
-        pub fn init(filepath: string, estimated_size: usize, allocator: std.mem.Allocator) !Plucker {
+        pub fn init(filepath: bun.OSPathSlice, estimated_size: usize, allocator: std.mem.Allocator) !Plucker {
             return Plucker{
                 .contents = try MutableString.init(allocator, estimated_size),
-                .filename_hash = bun.hash(filepath),
+                .filename_hash = bun.hash(std.mem.sliceAsBytes(filepath)),
                 .fd = .zero,
                 .found = false,
             };

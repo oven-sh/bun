@@ -27,7 +27,7 @@ on:
         type: boolean
 
 env:
-  LLVM_VERSION: 17
+  LLVM_VERSION: 16
   BUN_VERSION: 1.1.2
 
 jobs:

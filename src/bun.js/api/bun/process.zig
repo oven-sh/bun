@@ -178,6 +178,15 @@ pub const Process = struct {
             .event_loop = JSC.EventLoopHandle.init(event_loop),
             .sync = sync_,
             .poller = .{ .detached = {} },
+            .status = brk: {
+                if (posix.has_exited) {
+                    var rusage = std.mem.zeroes(Rusage);
+                    const waitpid_result = PosixSpawn.wait4(posix.pid, 0, &rusage);
+                    break :brk Status.from(posix.pid, &waitpid_result) orelse Status{ .running = {} };
+                }
+
+                break :brk Status{ .running = {} };
+            },
         });
     }
 
@@ -284,6 +293,11 @@ pub const Process = struct {
     }
 
     pub fn watchOrReap(this: *Process) JSC.Maybe(bool) {
+        if (this.hasExited()) {
+            this.onExit(this.status, &std.mem.zeroes(Rusage));
+            return .{ .result = true };
+        }
+
         switch (this.watch()) {
             .err => |err| {
                 if (comptime Environment.isPosix) {
@@ -1062,6 +1076,9 @@ pub const PosixSpawnResult = struct {
 
     memfds: [3]bool = .{ false, false, false },
 
+    // ESRCH can happen when requesting the pidfd
+    has_exited: bool = false,
+
     pub fn close(this: *WindowsSpawnResult) void {
         for (this.extra_pipes.items) |fd| {
             _ = bun.sys.close(fd);
@@ -1125,7 +1142,16 @@ pub const PosixSpawnResult = struct {
                         }
                     }
 
-                    if (err == .NOSYS or err == .NOTSUP or err == .PERM or err == .ACCESS) {
+                    // No such process can happen if it exited between the time we got the pid and called pidfd_open
+                    // Until we switch to clone3, this needs to be handled separately.
+                    if (err == .SRCH) {
+                        return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
+                    }
+
+                    // seccomp filters can be used to block this system call or pidfd's altogether
+                    // https://github.com/moby/moby/issues/42680
+                    // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
+                    if (err == .NOSYS or err == .OPNOTSUPP or err == .PERM or err == .ACCES or err == .INVAL) {
                         WaiterThread.setShouldUseWaiterThread();
                         return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
                     }
@@ -1450,7 +1476,13 @@ pub fn spawnProcessPosix(
                         spawned.pidfd = pidfd;
                     },
                     .err => |err| {
-                        if (!WaiterThread.shouldUseWaiterThread()) {
+                        // we intentionally do not clean up any of the file descriptors in this case
+                        // you could have data sitting in stdout, just waiting.
+                        if (err.getErrno() == .SRCH) {
+                            spawned.has_exited = true;
+
+                            // a real error occurred. one we should not assume means pidfd_open is blocked.
+                        } else if (!WaiterThread.shouldUseWaiterThread()) {
                             failed_after_spawn = true;
                             return .{ .err = err };
                         }

@@ -2118,9 +2118,14 @@ pub const Subprocess = struct {
 
         defer {
             if (send_exit_notification) {
-                // process has already exited
-                // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                subprocess.process.wait(is_sync);
+                if (subprocess.process.hasExited()) {
+                    // process has already exited, we called wait4(), but we did not call onProcessExit()
+                    subprocess.process.onExit(subprocess.process.status, &std.mem.zeroes(Rusage));
+                } else {
+                    // process has already exited, but we haven't called wait4() yet
+                    // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
+                    subprocess.process.wait(is_sync);
+                }
             }
         }
 
@@ -2150,8 +2155,9 @@ pub const Subprocess = struct {
         }
 
         if (comptime is_sync) {
-            switch (subprocess.process.watch()) {
-                .result => {},
+            switch (subprocess.process.watchOrReap()) {
+                .result => {
+                },
                 .err => {
                     subprocess.process.wait(true);
                 },

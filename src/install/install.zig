@@ -1139,6 +1139,7 @@ pub const PackageInstall = struct {
         opening_dest_dir,
         copying_files,
         linking,
+        linking_dependency,
 
         pub fn name(this: Step) []const u8 {
             return switch (this) {
@@ -1146,6 +1147,7 @@ pub const PackageInstall = struct {
                 .opening_cache_dir => "opening cache/package/version dir",
                 .opening_dest_dir => "opening node_modules/package dir",
                 .linking => "linking bins",
+                .linking_dependency => "linking dependency/workspace to node_modules",
             };
         }
     };
@@ -2040,7 +2042,7 @@ pub const PackageInstall = struct {
         const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err| return Result{
             .fail = .{
                 .err = err,
-                .step = .linking,
+                .step = .linking_dependency,
             },
         };
 
@@ -2052,7 +2054,7 @@ pub const PackageInstall = struct {
             if (dest_path_length == 0) {
                 const e = bun.windows.Win32Error.get();
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                return Result.fail(err, .linking);
+                return Result.fail(err, .linking_dependency);
             }
 
             var i: usize = dest_path_length;
@@ -2069,7 +2071,7 @@ pub const PackageInstall = struct {
                 const fullpath = wbuf[0..i :0];
 
                 _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
-                    return Result.fail(err, .linking);
+                    return Result.fail(err, .linking_dependency);
                 };
             }
 
@@ -2104,7 +2106,7 @@ pub const PackageInstall = struct {
                     return Result{
                         .fail = .{
                             .err = bun.errnoToZigErr(err.errno),
-                            .step = .linking,
+                            .step = .linking_dependency,
                         },
                     };
                 },
@@ -2115,7 +2117,7 @@ pub const PackageInstall = struct {
                 break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result{
                     .fail = .{
                         .err = err,
-                        .step = .linking,
+                        .step = .linking_dependency,
                     },
                 };
             } else destination_dir;
@@ -2126,7 +2128,7 @@ pub const PackageInstall = struct {
             const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result{
                 .fail = .{
                     .err = err,
-                    .step = .linking,
+                    .step = .linking_dependency,
                 },
             };
 
@@ -2134,7 +2136,7 @@ pub const PackageInstall = struct {
             std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
                 .fail = .{
                     .err = err,
-                    .step = .linking,
+                    .step = .linking_dependency,
                 },
             };
         }
@@ -2142,7 +2144,7 @@ pub const PackageInstall = struct {
         if (isDanglingSymlink(symlinked_path)) return Result{
             .fail = .{
                 .err = error.DanglingSymlink,
-                .step = .linking,
+                .step = .linking_dependency,
             },
         };
 

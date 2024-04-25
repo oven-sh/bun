@@ -12,9 +12,9 @@ describe("child_process.exec", () => {
     let script;
     if (isWindows) {
       if (io === "stdout") {
-        script = `[Console]::Out.Write.Invoke('=' * ${SIZE})`
+        script = `[Console]::Out.Write.Invoke('=' * ${SIZE})`;
       } else {
-        script = `[Console]::Error.Write.Invoke('=' * ${SIZE})`
+        script = `[Console]::Error.Write.Invoke('=' * ${SIZE})`;
       }
     } else {
       if (io === "stdout") {
@@ -26,17 +26,13 @@ describe("child_process.exec", () => {
 
     test("no encoding", async () => {
       const { resolve, reject, promise } = Promise.withResolvers();
-      exec(
-        script,
-        { maxBuffer: 1024 * 1024 * 10, encoding: "buffer", shell },
-        (err, stdout, stderr) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve({ stdout, stderr });
-          }
-        },
-      );
+      exec(script, { maxBuffer: 1024 * 1024 * 10, encoding: "buffer", shell }, (err, stdout, stderr) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve({ stdout, stderr });
+        }
+      });
       const { stdout, stderr } = await promise;
       const out = io === "stdout" ? stdout : stderr;
       const other = io === "stdout" ? stderr : stdout;

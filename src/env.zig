@@ -66,6 +66,7 @@ pub const OperatingSystem = enum {
         &.{
             .{ "windows", OperatingSystem.windows },
             .{ "win32", OperatingSystem.windows },
+            .{ "win", OperatingSystem.windows },
             .{ "win64", OperatingSystem.windows },
             .{ "win_x64", OperatingSystem.windows },
             .{ "darwin", OperatingSystem.mac },
@@ -74,6 +75,7 @@ pub const OperatingSystem = enum {
             .{ "mac", OperatingSystem.mac },
             .{ "apple", OperatingSystem.mac },
             .{ "linux", OperatingSystem.linux },
+            .{ "Linux", OperatingSystem.linux },
             .{ "linux-gnu", OperatingSystem.linux },
             .{ "gnu/linux", OperatingSystem.linux },
             .{ "wasm", OperatingSystem.wasm },

@@ -335,66 +335,65 @@ pub const CompileTarget = struct {
         // The user shouldn't have to care about the order of the values. As long as it starts with "bun-".
         // Nobody wants to remember whether its "bun-linux-x64" or "bun-x64-linux".
         var splitter = bun.strings.split(input, "-");
-        while ((!found_arch or !found_os or !found_baseline or !found_version or !found_libc) and input.len > 0) {
+        while (input.len > 0) {
             const token = splitter.next() orelse break;
             if (token.len == 0) continue;
 
-            if (!found_arch) {
-                if (Environment.Archictecture.names.get(token)) |arch| {
-                    this.arch = arch;
-                    found_arch = true;
-                    continue;
-                }
-            }
-
-            if (!found_os) {
-                if (Environment.OperatingSystem.names.get(token)) |os| {
-                    this.os = os;
-                    found_os = true;
-                    continue;
-                }
-            }
-
-            if (!found_baseline) {
-                // i don't know what else to call this
-                if (strings.eqlComptime(token, "modern")) {
-                    this.baseline = false;
-                    found_baseline = true;
-                    continue;
-                } else if (strings.eqlComptime(token, "baseline")) {
-                    this.baseline = true;
-                    found_baseline = true;
-                    continue;
-                }
-            }
-
-            if (!found_version) {
-                if (strings.hasPrefixComptime(token, "v1.") or strings.hasPrefixComptime(token, "v0.")) {
-                    const version = bun.Semver.Version.parse(bun.Semver.SlicedString.init(token[1..], token[1..]));
-                    if (version.valid) {
-                        this.version = .{
-                            .major = version.version.major.?,
-                            .minor = version.version.minor.?,
-                            .patch = version.version.patch.?,
-                        };
-                        found_version = true;
-                        continue;
+            if (Environment.Archictecture.names.get(token)) |arch| {
+                this.arch = arch;
+                found_arch = true;
+                continue;
+            } else if (Environment.OperatingSystem.names.get(token)) |os| {
+                this.os = os;
+                found_os = true;
+                continue;
+            } else if (strings.eqlComptime(token, "modern")) {
+                this.baseline = false;
+                found_baseline = true;
+                continue;
+            } else if (strings.eqlComptime(token, "baseline")) {
+                this.baseline = true;
+                found_baseline = true;
+                continue;
+            } else if (strings.hasPrefixComptime(token, "v1.") or strings.hasPrefixComptime(token, "v0.")) {
+                const version = bun.Semver.Version.parse(bun.Semver.SlicedString.init(token[1..], token[1..]));
+                if (version.valid) {
+                    if (version.version.major == null or version.version.minor == null or version.version.patch == null) {
+                        Output.errGeneric("Please pass a complete version number to --target. For example, --target=bun-v" ++ Environment.version, .{});
+                        Global.exit(1);
                     }
-                }
-            }
 
-            if (!found_libc) {
-                if (strings.eqlComptime(token, "musl")) {
-                    this.libc = .musl;
-                    found_libc = true;
+                    this.version = .{
+                        .major = version.version.major.?,
+                        .minor = version.version.minor.?,
+                        .patch = version.version.patch.?,
+                    };
+                    found_version = true;
                     continue;
                 }
+            } else if (strings.eqlComptime(token, "musl")) {
+                this.libc = .musl;
+                found_libc = true;
+                continue;
+            } else {
+                Output.errGeneric(
+                    \\Unsupported target {} in "bun{s}"
+                    \\To see the supported targets:
+                    \\  https://bun.sh/docs/bundler/executables
+                ,
+                    .{
+                        bun.fmt.quote(token),
+                        // received input starts at "-"
+                        input_,
+                    },
+                );
+                Global.exit(1);
             }
         }
 
-        // default to x64 if no arch is specified but OS is specified
-        // On macOS arm64, it's kind of surprising to choose Linux arm64 or Windows arm64
-        if (!found_arch and found_os) {
+        if (found_os and !found_arch) {
+            // default to x64 if no arch is specified but OS is specified
+            // On macOS arm64, it's kind of surprising to choose Linux arm64 or Windows arm64
             this.arch = .x64;
             found_arch = true;
         }

@@ -102,11 +102,16 @@ pub const ProcessHandle = struct {
             try handle.stderr.startWithCurrentPipe().unwrap();
         }
 
+        this.process = .{ .ptr = process };
         process.setExitHandler(handle);
 
-        try process.watch(this.state.event_loop).unwrap();
-
-        this.process = .{ .ptr = process };
+        switch (process.watchOrReap()) {
+            .result => {},
+            .err => |err| {
+                if (!process.hasExited())
+                    process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage));
+            },
+        }
     }
 
     pub fn onReadChunk(this: *This, chunk: []const u8, hasMore: bun.io.ReadState) bool {

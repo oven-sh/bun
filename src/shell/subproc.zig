@@ -889,7 +889,7 @@ pub const ShellSubprocess = struct {
         var send_exit_notification = false;
 
         if (comptime !is_sync) {
-            switch (subprocess.process.watch(event_loop)) {
+            switch (subprocess.process.watch()) {
                 .result => {},
                 .err => {
                     send_exit_notification = true;

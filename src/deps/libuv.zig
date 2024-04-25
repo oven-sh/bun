@@ -597,10 +597,12 @@ pub const Loop = extern struct {
     wq_async: uv_async_t,
 
     pub fn subActive(this: *Loop, value: u32) void {
+        log("subActive({d}) - {d}", .{ value, this.active_handles });
         this.active_handles -= value;
     }
 
     pub fn addActive(this: *Loop, value: u32) void {
+        log("addActive({d})", .{value});
         this.active_handles += value;
     }
 
@@ -608,6 +610,8 @@ pub const Loop = extern struct {
     pub const unref = dec;
 
     pub fn inc(this: *Loop) void {
+        log("inc - {d}", .{this.active_handles + 1});
+
         // This log may be helpful if you are curious where KeepAlives are being created from
         // if (Env.isDebug) {
         //     std.debug.dumpCurrentStackTrace(@returnAddress());
@@ -616,6 +620,7 @@ pub const Loop = extern struct {
     }
 
     pub fn dec(this: *Loop) void {
+        log("dec", .{});
         this.active_handles -= 1;
     }
 

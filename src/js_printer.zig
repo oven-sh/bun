@@ -5642,7 +5642,7 @@ const FileWriterInternal = struct {
         try buffer.growIfNeeded(count);
         return @as([*]u8, @ptrCast(&buffer.list.items.ptr[buffer.list.items.len]));
     }
-    pub fn advanceBy(this: *FileWriterInternal, count: u32) void {
+    pub fn advanceBy(this: *FileWriterInternal, count: u64) void {
         if (comptime Environment.isDebug) bun.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
@@ -5762,7 +5762,7 @@ pub const BufferWriter = struct {
         return @as([*]u8, @ptrCast(&ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]));
     }
 
-    pub fn advanceBy(ctx: *BufferWriter, count: u32) void {
+    pub fn advanceBy(ctx: *BufferWriter, count: u64) void {
         if (comptime Environment.isDebug) bun.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
 
         ctx.buffer.list.items = ctx.buffer.list.items.ptr[0 .. ctx.buffer.list.items.len + count];

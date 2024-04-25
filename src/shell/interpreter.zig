@@ -8745,7 +8745,7 @@ pub const Interpreter = struct {
                 log("Rm(0x{x}).onIOWriterChunk()", .{@intFromPtr(this)});
                 if (comptime bun.Environment.allow_assert) {
                     assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
-                        (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.SeqCst) > 0));
+                        (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.seq_cst) > 0));
                 }
 
                 if (this.state == .exec and this.state.exec.state == .waiting) {
@@ -9203,7 +9203,7 @@ pub const Interpreter = struct {
                         .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
                         .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.event_loop),
                     };
-                    if (Environment.allow_assert) {
+                    if (bun.Environment.allow_assert) {
                         assert(parent_task.subtask_count.fetchAdd(1, .monotonic) > 0);
                     }
 

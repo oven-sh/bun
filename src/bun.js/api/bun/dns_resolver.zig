@@ -119,14 +119,23 @@ const LibInfo = struct {
 
             return promise_value;
         }
+
         bun.assert(request.backend.libinfo.machport != null);
-        request.backend.libinfo.file_poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
+        const fd = bun.toFD(@as(i32, @intCast(@as(u32, @intCast(@intFromPtr(request.backend.libinfo.machport))))));
+
+        request.backend.libinfo.file_poll = bun.Async.FilePoll.init(
+            this.vm,
+            bun.toFD(std.math.maxInt(i32) - 1),
+            .{},
+            GetAddrInfoRequest,
+            request,
+        );
         bun.assert(
             request.backend.libinfo.file_poll.?.registerWithFd(
                 this.vm.event_loop_handle.?,
                 .machport,
                 .one_shot,
-                bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
+                fd,
             ) == .result,
         );
 
@@ -1140,7 +1149,7 @@ pub const GetAddrInfoRequest = struct {
         addr_info: ?*std.c.addrinfo,
         arg: ?*anyopaque,
     ) callconv(.C) void {
-        const this = @as(*GetAddrInfoRequest, @ptrFromInt(@intFromPtr(arg)));
+        const this = @as(*GetAddrInfoRequest, @ptrCast(@alignCast(arg)));
         log("getAddrInfoAsyncCallback: status={d}", .{status});
 
         if (this.backend == .libinfo) {

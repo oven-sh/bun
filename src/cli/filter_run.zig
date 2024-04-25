@@ -351,7 +351,7 @@ const State = struct {
         for (this.handles) |*handle| {
             if (handle.process) |*proc| {
                 // if we get an error here we simply ignore it
-                _ = proc.ptr.kill(std.os.SIG.INT);
+                _ = proc.ptr.kill(std.posix.SIG.INT);
             }
         }
     }
@@ -378,7 +378,7 @@ const AbortHandler = struct {
 
     var should_abort = false;
 
-    fn posixSignalHandler(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+    fn posixSignalHandler(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
         _ = sig;
         _ = info;
         should_abort = true;
@@ -394,13 +394,13 @@ const AbortHandler = struct {
 
     pub fn install() void {
         if (Environment.isPosix) {
-            const action = std.os.Sigaction{
+            const action = std.posix.Sigaction{
                 .handler = .{ .sigaction = AbortHandler.posixSignalHandler },
-                .mask = std.os.empty_sigset,
-                .flags = std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND,
+                .mask = std.posix.empty_sigset,
+                .flags = std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND,
             };
             // if we can't set the handler, we just ignore it
-            std.os.sigaction(std.os.SIG.INT, &action, null) catch |err| {
+            std.posix.sigaction(std.posix.SIG.INT, &action, null) catch |err| {
                 if (Environment.isDebug) {
                     Output.warn("Failed to set abort handler: {s}\n", .{@errorName(err)});
                 }

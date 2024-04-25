@@ -1022,7 +1022,7 @@ pub const PackageInstall = struct {
                 if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
             }
 
-            var package_json_file = File.openat(destination_dir, package_json_path, std.os.O.RDONLY, 0).unwrap() catch return false;
+            var package_json_file = File.openat(destination_dir, package_json_path, bun.O.RDONLY, 0).unwrap() catch return false;
             defer package_json_file.close();
 
             // Heuristic: most package.jsons will be less than 2048 bytes.
@@ -1926,7 +1926,7 @@ pub const PackageInstall = struct {
                     absolute_path: []const u8,
                     task: JSC.WorkPoolTask = .{ .callback = &run },
                     pub fn run(task: *JSC.WorkPoolTask) void {
-                        var unintall_task = @fieldParentPtr(@This(), "task", task);
+                        var unintall_task: *@This() = @fieldParentPtr("task", task);
                         var debug_timer = bun.Output.DebugTimer.start();
                         defer {
                             _ = PackageManager.instance.decrementPendingTasks();
@@ -10221,16 +10221,16 @@ pub const PackageManager = struct {
     }
 
     pub inline fn pendingTaskCount(manager: *const PackageManager) u32 {
-        return manager.pending_tasks.load(.Monotonic);
+        return manager.pending_tasks.load(.monotonic);
     }
 
     pub inline fn incrementPendingTasks(manager: *PackageManager, count: u32) u32 {
         manager.total_tasks += count;
-        return manager.pending_tasks.fetchAdd(count, .Monotonic);
+        return manager.pending_tasks.fetchAdd(count, .monotonic);
     }
 
     pub inline fn decrementPendingTasks(manager: *PackageManager) u32 {
-        return manager.pending_tasks.fetchSub(1, .Monotonic);
+        return manager.pending_tasks.fetchSub(1, .monotonic);
     }
 
     pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {

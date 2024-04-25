@@ -109,6 +109,7 @@ describe("bundler", async () => {
   // expects "bun" to be trimmed
   const sameLocationTarget = CompileTarget.from(`-${process.platform}-${process.arch}-v1.0.9999`);
 
+  // Test that it can load a file that didn't actually come from bun.selfExePath()
   itBundled("compile_cross/RunsFileFromSameLocation", {
     compile: true,
     target: sameLocationTarget,

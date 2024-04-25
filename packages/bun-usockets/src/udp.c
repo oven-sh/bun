@@ -44,11 +44,11 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
     if (num == 0) return 0;
     int fd = us_poll_fd((struct us_poll_t *) s);
 
-    struct udp_sendbuf *buf = (struct udp_sendbuf *)s->loop->data.recv_buf;
+    struct udp_sendbuf *buf = (struct udp_sendbuf *)s->loop->data.send_buf;
 
     int total_sent = 0;
     while (total_sent < num) {
-        int count = bsd_udp_setup_sendbuf(buf, LIBUS_RECV_BUFFER_LENGTH, payloads, lengths, addresses, num);
+        int count = bsd_udp_setup_sendbuf(buf, LIBUS_SEND_BUFFER_LENGTH, payloads, lengths, addresses, num);
         payloads += count;
         lengths += count;
         addresses += count;

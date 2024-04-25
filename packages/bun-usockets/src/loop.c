@@ -27,6 +27,7 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
     loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
     loop->data.ssl_data = 0;
     loop->data.head = 0;
     loop->data.iterator = 0;
@@ -48,6 +49,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 #endif
 
     free(loop->data.recv_buf);
+    free(loop->data.send_buf);
 
     us_timer_close(loop->data.sweep_timer, 0);
     us_internal_async_close(loop->data.wakeup_async);

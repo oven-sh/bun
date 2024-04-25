@@ -30,6 +30,7 @@ pub const InternalLoopData = extern struct {
     head: ?*SocketContext,
     iterator: ?*SocketContext,
     recv_buf: [*]u8,
+    send_buf: [*]u8,
     ssl_data: ?*anyopaque,
     pre_cb: ?*fn (?*Loop) callconv(.C) void,
     post_cb: ?*fn (?*Loop) callconv(.C) void,

@@ -617,7 +617,7 @@ pub const PackageJSON = struct {
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = r.prettyPath(json_source.path);
 
-        const json: js_ast.Expr = (r.caches.json.parseJSON(r.log, json_source, allocator) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }

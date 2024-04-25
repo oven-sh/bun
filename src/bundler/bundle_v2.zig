@@ -2580,7 +2580,7 @@ pub const ParseTask = struct {
             .json => {
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
-                const root = (try resolver.caches.json.parseJSON(log, source, allocator)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
+                const root = (try resolver.caches.json.parsePackageJSON(log, source, allocator)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {

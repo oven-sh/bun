@@ -2675,7 +2675,7 @@ pub const Package = extern struct {
                 };
 
                 initializeStore();
-                break :brk try json_parser.ParseJSONUTF8(
+                break :brk try json_parser.ParsePackageJSONUTF8(
                     &json_src,
                     log,
                     allocator,
@@ -3489,7 +3489,7 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-        const json = json_parser.ParseJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
+        const json = json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
                     log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -3837,13 +3837,13 @@ pub const Package = extern struct {
         workspace_allocator: std.mem.Allocator,
         dir: std.fs.Dir,
         path: []const u8,
-        path_buf: *[bun.MAX_PATH_BYTES]u8,
+        path_buf: *bun.PathBuffer,
         name_to_copy: *[1024]u8,
         log: *logger.Log,
     ) !WorkspaceEntry {
         const path_to_use = if (path.len == 0) "package.json" else brk: {
             const paths = [_]string{ path, "package.json" };
-            break :brk bun.path.joinStringBuf(path_buf, &paths, .posix);
+            break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
         };
 
         // TODO: windows
@@ -3869,7 +3869,7 @@ pub const Package = extern struct {
             .name = name_to_copy[0..workspace_json.found_name.len],
             .name_loc = workspace_json.name_loc,
         };
-        debug("processWorkspaceName({s}) = {s}", .{ path_to_use, entry.name });
+        debug("processWorkspaceName({s}) = {s}", .{ path, entry.name });
         if (workspace_json.has_found_version) {
             entry.version = try allocator.dupe(u8, workspace_json.found_version);
         }
@@ -3896,8 +3896,9 @@ pub const Package = extern struct {
 
         var asterisked_workspace_paths = std.ArrayList(string).init(allocator);
         defer asterisked_workspace_paths.deinit();
-        const filepath_buf = allocator.create([bun.MAX_PATH_BYTES]u8) catch unreachable;
-        defer allocator.destroy(filepath_buf);
+        const filepath_bufOS = allocator.create(bun.PathBuffer) catch unreachable;
+        const filepath_buf = std.mem.asBytes(filepath_bufOS);
+        defer allocator.destroy(filepath_bufOS);
 
         for (arr.slice()) |item| {
             defer fallback.fixed_buffer_allocator.reset();
@@ -3947,12 +3948,12 @@ pub const Package = extern struct {
                 workspace_allocator,
                 std.fs.cwd(),
                 input_path,
-                filepath_buf,
+                filepath_bufOS,
                 workspace_name_buf,
                 log,
             ) catch |err| {
                 switch (err) {
-                    error.FileNotFound => {
+                    error.EISNOTDIR, error.EISDIR, error.EACCESS, error.EPERM, error.ENOENT, error.FileNotFound => {
                         log.addErrorFmt(
                             source,
                             item.loc,
@@ -4083,7 +4084,7 @@ pub const Package = extern struct {
                         workspace_allocator,
                         dir_fd.asDir(),
                         "",
-                        filepath_buf,
+                        filepath_bufOS,
                         workspace_name_buf,
                         log,
                     ) catch |err| {

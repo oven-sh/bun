@@ -5080,7 +5080,7 @@ pub const PackageManager = struct {
                     data.json_buf,
                 );
                 initializeStore();
-                const json = json_parser.ParseJSONUTF8(
+                const json = json_parser.ParsePackageJSONUTF8(
                     &package_json_source,
                     manager.log,
                     manager.allocator,
@@ -7055,7 +7055,7 @@ pub const PackageManager = struct {
                         const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
                         const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                         initializeStore();
-                        const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
+                        const json = try json_parser.ParsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
                         if (json.asProperty("workspaces")) |prop| {
                             const json_array = switch (prop.expr.data) {
                                 .e_array => |arr| arr,
@@ -8349,7 +8349,7 @@ pub const PackageManager = struct {
             current_package_json_buf[current_package_json_contents_len - 1] == '\n';
 
         initializeStore();
-        var current_package_json = json_parser.ParseJSONUTF8(&package_json_source, ctx.log, manager.allocator) catch |err| {
+        var current_package_json = json_parser.ParsePackageJSONUTF8(&package_json_source, ctx.log, manager.allocator) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
                     ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -8500,7 +8500,7 @@ pub const PackageManager = struct {
 
             // Now, we _re_ parse our in-memory edited package.json
             // so we can commit the version we changed from the lockfile
-            current_package_json = json_parser.ParseJSONUTF8(&source, ctx.log, manager.allocator) catch |err| {
+            current_package_json = json_parser.ParsePackageJSONUTF8(&source, ctx.log, manager.allocator) catch |err| {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json failed to parse due to error {s}", .{@errorName(err)});
                 Global.exit(1);
                 return;

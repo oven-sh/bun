@@ -44,6 +44,47 @@ afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
 
+it("should not error when package.json has comments and trailing commas", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    `
+    {
+      // such comment!
+      "name": "foo",
+      /** even multi-line comment!! */
+      "version": "0.0.1",
+      "dependencies": {
+        "bar": "^1",
+      },
+    }
+`,
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain('error: No version matching "^1" found for specifier "bar" (but package exists)');
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toBeEmpty();
+  expect(await exited).toBe(1);
+  expect(urls.sort()).toEqual([`${root_url}/bar`]);
+  expect(requested).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
+
 describe("chooses", () => {
   async function runTest(latest: string, range: string, chosen = "0.0.5") {
     const exeName: string = {

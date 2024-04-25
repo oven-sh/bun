@@ -1215,11 +1215,18 @@ pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]co
     return buf[start_offset..][0..joined.len :0];
 }
 pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []const u8 {
+    return joinStringBufT(u8, buf, parts, _platform);
+}
+pub fn joinStringBufW(buf: []u16, parts: anytype, comptime _platform: Platform) []const u16 {
+    return joinStringBufT(u16, buf, parts, _platform);
+}
+
+pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime _platform: Platform) []const T {
     const platform = comptime _platform.resolve();
 
     var written: usize = 0;
-    var temp_buf_: [4096]u8 = undefined;
-    var temp_buf: []u8 = &temp_buf_;
+    var temp_buf_: [4096]T = undefined;
+    var temp_buf: []T = &temp_buf_;
     var free_temp_buf = false;
     defer {
         if (free_temp_buf) {
@@ -1234,7 +1241,7 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
     }
 
     if (count * 2 > temp_buf.len) {
-        temp_buf = bun.default_allocator.alloc(u8, count * 2) catch @panic("Out of memory");
+        temp_buf = bun.default_allocator.alloc(T, count * 2) catch @panic("Out of memory");
         free_temp_buf = true;
     }
 
@@ -1248,8 +1255,14 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
             written += 1;
         }
 
-        bun.copy(u8, temp_buf[written..], part);
-        written += part.len;
+        const Element = std.meta.Elem(@TypeOf(part));
+        if (comptime T == u16 and Element == u8) {
+            const wrote = bun.strings.convertUTF8toUTF16InBuffer(temp_buf[written..], part);
+            written += wrote.len;
+        } else {
+            bun.copy(T, temp_buf[written..], part);
+            written += part.len;
+        }
     }
 
     if (written == 0) {
@@ -1257,7 +1270,7 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
         return buf[0..1];
     }
 
-    return normalizeStringNode(temp_buf[0..written], buf, platform);
+    return normalizeStringNodeT(T, temp_buf[0..written], buf, platform);
 }
 
 pub fn joinAbsStringBuf(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
@@ -1635,26 +1648,37 @@ pub fn normalizeStringNode(
     buf: []u8,
     comptime platform: Platform,
 ) []u8 {
+    return normalizeStringNodeT(u8, str, buf, platform);
+}
+
+pub fn normalizeStringNodeT(
+    comptime T: type,
+    str: []const T,
+    buf: []T,
+    comptime platform: Platform,
+) []const T {
     if (str.len == 0) {
         buf[0] = '.';
         return buf[0..1];
     }
 
-    const is_absolute = platform.isAbsolute(str);
-    const trailing_separator = platform.isSeparator(str[str.len - 1]);
+    const is_absolute = platform.isAbsoluteT(T, str);
+    const trailing_separator = platform.isSeparatorT(T, str[str.len - 1]);
 
     // `normalizeStringGeneric` handles absolute path cases for windows
     // we should not prefix with /
     var buf_ = if (platform == .windows) buf else buf[1..];
 
-    var out = if (!is_absolute) normalizeStringGeneric(
+    var out = if (!is_absolute) normalizeStringGenericT(
+        T,
         str,
         buf_,
         true,
         comptime platform.resolve().separator(),
         comptime platform.getSeparatorFuncT(),
         false,
-    ) else normalizeStringGeneric(
+    ) else normalizeStringGenericT(
+        T,
         str,
         buf_,
         false,
@@ -1670,7 +1694,8 @@ pub fn normalizeStringNode(
         }
 
         if (trailing_separator) {
-            buf[0..2].* = platform.trailingSeparator();
+            const sep = platform.trailingSeparator();
+            buf[0..2].* = .{ sep[0], sep[1] };
             return buf[0..2];
         }
 
@@ -1679,7 +1704,7 @@ pub fn normalizeStringNode(
     }
 
     if (trailing_separator) {
-        if (!platform.isSeparator(out[out.len - 1])) {
+        if (!platform.isSeparatorT(T, out[out.len - 1])) {
             buf_[out.len] = platform.separator();
             out = buf_[0 .. out.len + 1];
         }

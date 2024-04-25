@@ -81,7 +81,7 @@ pub const BunxCommand = struct {
         bun.JSAst.Expr.Data.Store.create(default_allocator);
         bun.JSAst.Stmt.Data.Store.create(default_allocator);
 
-        const expr = try bun.JSON.ParseJSONUTF8(&source, bundler.log, bundler.allocator);
+        const expr = try bun.JSON.ParsePackageJSONUTF8(&source, bundler.log, bundler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {

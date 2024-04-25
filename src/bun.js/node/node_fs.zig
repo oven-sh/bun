@@ -254,7 +254,10 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         evtloop: JSC.EventLoopHandle,
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
         result: JSC.Maybe(Return.Cp),
-        ref: bun.Async.KeepAlive = .{},
+        /// If this task is called by the shell then we shouldn't call this as
+        /// it is not threadsafe and is unnecessary as the process will be kept
+        /// alive by the shell instance
+        ref: if (!is_shell) bun.Async.KeepAlive else struct {} = .{},
         arena: bun.ArenaAllocator,
         tracker: JSC.AsyncTaskTracker,
         has_result: std.atomic.Value(bool),
@@ -262,6 +265,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         /// When each task is finished, decrement.
         /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
         subtask_count: std.atomic.Value(usize),
+        deinitialized: bool = false,
 
         shelltask: ShellTaskT,
 
@@ -382,7 +386,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     .shelltask = shelltask,
                 },
             );
-            task.ref.ref(vm);
+            if (comptime !is_shell) task.ref.ref(vm);
             task.args.src.toThreadSafe();
             task.args.dest.toThreadSafe();
             task.tracker.didSchedule(globalObject);
@@ -411,7 +415,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     .shelltask = shelltask,
                 },
             );
-            task.ref.ref(mini);
+            if (comptime !is_shell) task.ref.ref(mini);
             task.args.src.toThreadSafe();
             task.args.dest.toThreadSafe();
 
@@ -489,7 +493,9 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         }
 
         pub fn deinit(this: *ThisAsyncCpTask) void {
-            this.ref.unref(this.evtloop);
+            bun.assert(!this.deinitialized);
+            this.deinitialized = true;
+            if (comptime !is_shell) this.ref.unref(this.evtloop);
             this.args.deinit();
             this.promise.strong.deinit();
             this.arena.deinit();

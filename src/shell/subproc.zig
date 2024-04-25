@@ -505,7 +505,7 @@ pub const ShellSubprocess = struct {
         // }
 
         // if (!this.hasCalledGetter(.stderr)) {
-        this.stdout.unref();
+        this.stderr.unref();
         // }
     }
 

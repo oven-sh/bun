@@ -10222,9 +10222,11 @@ pub const Interpreter = struct {
                         const failure_src = task.src_absolute.?;
                         const failure_tgt = task.tgt_absolute.?;
                         if (this.state.ebusy.state.absolute_targets.get(failure_tgt)) |_| {
+                            task.deinit();
                             continue :outer_loop;
                         }
                         if (this.state.ebusy.state.absolute_srcs.get(failure_src)) |_| {
+                            task.deinit();
                             continue :outer_loop;
                         }
                         this.state.ebusy.idx += i + 1;

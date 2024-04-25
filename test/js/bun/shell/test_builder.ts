@@ -263,12 +263,15 @@ export function createTestBuilder(path: string) {
         if (this._quiet) finalPromise = finalPromise.quiet();
         const output = await finalPromise;
 
-        const { stdout, stderr, exitCode } = output!;
+        const { stdout, stderr, exitCode } = output;
         await this.doChecks(stdout, stderr, exitCode);
       } catch (err_) {
         const err: ShellError = err_ as any;
         const { stdout, stderr, exitCode } = err;
         if (this.expected_error === undefined) {
+          if (stdout === undefined || stderr === undefined || exitCode === undefined) {
+            throw err_;
+          }
           this.doChecks(stdout, stderr, exitCode);
           return;
         }
@@ -321,6 +324,7 @@ export function createTestBuilder(path: string) {
               if (tb._miniCwd === undefined) {
                 cwd = tb.newTempdir();
               } else {
+                tb.tempdir = tb._miniCwd;
                 tb._cwd = tb._miniCwd;
                 cwd = tb._cwd;
               }

@@ -563,14 +563,24 @@ describe("literal fast path", async () => {
     const glob = new Glob("packages/*/package.json");
     const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
     expect(entries.sort()).toEqual(
-      [`packages${path.sep}a${path.sep}package.json`, `packages${path.sep}b${path.sep}package.json`, `packages${path.sep}c${path.sep}package.json`].sort(),
+      [
+        `packages${path.sep}a${path.sep}package.json`,
+        `packages${path.sep}b${path.sep}package.json`,
+        `packages${path.sep}c${path.sep}package.json`,
+      ].sort(),
     );
   });
 
   test("works 2", async () => {
     const glob = new Glob("packages/*/foo");
     const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
-    expect(entries.sort()).toEqual([`packages${path.sep}a${path.sep}foo`, `packages${path.sep}b${path.sep}foo`, `packages${path.sep}c${path.sep}foo`].sort());
+    expect(entries.sort()).toEqual(
+      [
+        `packages${path.sep}a${path.sep}foo`,
+        `packages${path.sep}b${path.sep}foo`,
+        `packages${path.sep}c${path.sep}foo`,
+      ].sort(),
+    );
   });
 
   test("works3", async () => {

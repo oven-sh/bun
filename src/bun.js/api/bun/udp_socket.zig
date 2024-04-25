@@ -293,7 +293,6 @@ pub const UDPSocket = struct {
         const config = UDPSocketConfig.fromJS(globalThis, options) orelse {
             return .zero;
         };
-        defer if (globalThis.hasException()) config.deinit();
 
         const vm = globalThis.bunVM();
         var this = This.new(.{
@@ -303,6 +302,14 @@ pub const UDPSocket = struct {
             .loop = uws.Loop.get(),
             .vm = vm,
         });
+
+        // also cleans up config
+        defer {
+            if (globalThis.hasException()) {
+                this.closed = true;
+                this.deinit();
+            }
+        }
 
         if (uws.udp.Socket.create(
             this.loop,

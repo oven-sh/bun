@@ -413,7 +413,7 @@ declare module "bun:test" {
      * @param condition if the test should be skipped
      */
     skipIf(
-      condition?: boolean | undefined,
+      condition: boolean,
     ): (
       label: string,
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),

@@ -1789,37 +1789,6 @@ fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []
                     // ignore unrecognized fmt
                 },
             }
-        } else if (char == '$' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
-            var arg = function_args[args_idx];
-
-            while (arg.isObject()) {
-                const remaining = label[idx + 1 ..];
-                const dot_idx = strings.indexOfChar(remaining, '.') orelse remaining.len;
-                const space_idx = strings.indexOfChar(remaining, ' ') orelse remaining.len;
-
-                if (dot_idx < space_idx) {
-                    const property = remaining[0..dot_idx];
-                    if (property.len == 0) break;
-
-                    idx += property.len;
-                    if (arg.get(globalThis, property)) |value| {
-                        arg = value;
-                    }
-                } else {
-                    const property = remaining[0..space_idx];
-                    if (property.len == 0) break;
-
-                    idx += property.len;
-                    if (arg.get(globalThis, property)) |value| {
-                        if (bun.String.tryFromJS(value, globalThis)) |str| {
-                            const slice = try str.toOwnedSlice(allocator);
-                            defer allocator.free(slice);
-                            try list.appendSlice(allocator, slice);
-                            break;
-                        }
-                    }
-                }
-            }
         } else try list.append(allocator, char);
         idx += 1;
     }

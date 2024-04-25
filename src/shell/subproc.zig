@@ -162,8 +162,7 @@ pub const ShellSubprocess = struct {
 
                             switch (pipe.writer.startWithCurrentPipe()) {
                                 .result => {},
-                                .err => |err| {
-                                    _ = err; // autofix
+                                .err => {
                                     pipe.deref();
                                     return error.UnexpectedCreatingStdin;
                                 },
@@ -365,11 +364,7 @@ pub const ShellSubprocess = struct {
             }
         }
 
-        pub fn init(out_type: bun.shell.Subprocess.OutKind, stdio: Stdio, shellio: ?*sh.IOWriter, event_loop: JSC.EventLoopHandle, process: *ShellSubprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: u32, is_sync: bool) Readable {
-            _ = allocator; // autofix
-            _ = max_size; // autofix
-            _ = is_sync; // autofix
-
+        pub fn init(out_type: bun.shell.Subprocess.OutKind, stdio: Stdio, shellio: ?*sh.IOWriter, event_loop: JSC.EventLoopHandle, process: *ShellSubprocess, result: StdioResult, _: std.mem.Allocator, _: u32, _: bool) Readable {
             assertStdioResult(result);
 
             if (Environment.isWindows) {
@@ -491,8 +486,7 @@ pub const ShellSubprocess = struct {
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-    pub fn unref(this: *@This(), comptime deactivate_poll_ref: bool) void {
-        _ = deactivate_poll_ref; // autofix
+    pub fn unref(this: *@This(), comptime _: bool) void {
         // const vm = this.globalThis.bunVM();
 
         this.process.disableKeepingEventLoopAlive();
@@ -1300,8 +1294,7 @@ pub const PipeReader = struct {
                 this.state = .{ .done = &.{} };
                 return JSC.WebCore.ReadableStream.fromBlob(globalObject, &blob, 0);
             },
-            .err => |err| {
-                _ = err; // autofix
+            .err => {
                 const empty = JSC.WebCore.ReadableStream.empty(globalObject);
                 JSC.WebCore.ReadableStream.cancel(&JSC.WebCore.ReadableStream.fromJS(empty, globalObject).?, globalObject);
                 return empty;

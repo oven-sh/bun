@@ -283,9 +283,7 @@ pub const Process = struct {
         this.onExit(status, &rusage_result);
     }
 
-    pub fn watch(this: *Process, vm: anytype) JSC.Maybe(void) {
-        _ = vm; // autofix
-
+    pub fn watch(this: *Process, _: anytype) JSC.Maybe(void) {
         if (comptime Environment.isWindows) {
             this.poller.uv.ref();
             return JSC.Maybe(void){ .result = {} };
@@ -651,8 +649,7 @@ pub const PollerWindows = union(enum) {
         }
     }
 
-    pub fn enableKeepingEventLoopAlive(this: *PollerWindows, event_loop: JSC.EventLoopHandle) void {
-        _ = event_loop; // autofix
+    pub fn enableKeepingEventLoopAlive(this: *PollerWindows, _: JSC.EventLoopHandle) void {
         switch (this.*) {
             .uv => |*process| {
                 process.ref();
@@ -661,8 +658,7 @@ pub const PollerWindows = union(enum) {
         }
     }
 
-    pub fn disableKeepingEventLoopAlive(this: *PollerWindows, event_loop: JSC.EventLoopHandle) void {
-        _ = event_loop; // autofix
+    pub fn disableKeepingEventLoopAlive(this: *PollerWindows, _: JSC.EventLoopHandle) void {
 
         // This is disabled on Windows
         // uv_unref() causes the onExitUV callback to *never* be called

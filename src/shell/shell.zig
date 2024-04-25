@@ -322,8 +322,7 @@ pub const GlobalMini = struct {
         };
     }
 
-    pub inline fn actuallyThrow(this: @This(), shellerr: ShellErr) void {
-        _ = this; // autofix
+    pub inline fn actuallyThrow(_: @This(), shellerr: ShellErr) void {
         shellerr.throwMini();
     }
 

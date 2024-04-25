@@ -1,6 +1,7 @@
 {
   " != undefined": "This is by definition Undefined Behavior.",
   " == undefined": "This is by definition Undefined Behavior.",
+  "// autofix": "Either use _ or remove this line",
   "@import(\"root\").bun.": "Only import 'bun' once",
   "std.debug.assert": "Use bun.assert instead",
   "std.debug.dumpStackTrace": "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead",

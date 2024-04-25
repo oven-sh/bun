@@ -632,8 +632,7 @@ pub const BunxCommand = struct {
             Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error <b>{s}<r>", .{ install_param, @errorName(err) });
             Global.exit(1);
         })) {
-            .err => |err| {
-                _ = err; // autofix
+            .err => {
                 Global.exit(1);
             },
             .result => |result| result,

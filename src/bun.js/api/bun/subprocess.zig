@@ -423,10 +423,7 @@ pub const Subprocess = struct {
             }
         }
 
-        pub fn init(stdio: Stdio, event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: u32, is_sync: bool) Readable {
-            _ = allocator; // autofix
-            _ = max_size; // autofix
-            _ = is_sync; // autofix
+        pub fn init(stdio: Stdio, event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult, _: std.mem.Allocator, _: u32, _: bool) Readable {
             assertStdioResult(result);
 
             if (Environment.isWindows) {
@@ -490,8 +487,7 @@ pub const Subprocess = struct {
             }
         }
 
-        pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
-            _ = exited; // autofix
+        pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, _: bool) JSValue {
             switch (this.*) {
                 // should only be reachable when the entire output is buffered.
                 .memfd => return this.toBufferedValue(globalThis),
@@ -1029,8 +1025,7 @@ pub const Subprocess = struct {
                     this.state = .{ .done = &.{} };
                     return JSC.WebCore.ReadableStream.fromBlob(globalObject, &blob, 0);
                 },
-                .err => |err| {
-                    _ = err; // autofix
+                .err => {
                     const empty = JSC.WebCore.ReadableStream.empty(globalObject);
                     JSC.WebCore.ReadableStream.cancel(&JSC.WebCore.ReadableStream.fromJS(empty, globalObject).?, globalObject);
                     return empty;
@@ -1183,8 +1178,7 @@ pub const Subprocess = struct {
 
                             switch (pipe.writer.startWithCurrentPipe()) {
                                 .result => {},
-                                .err => |err| {
-                                    _ = err; // autofix
+                                .err => {
                                     pipe.deref();
                                     return error.UnexpectedCreatingStdin;
                                 },
@@ -1234,8 +1228,7 @@ pub const Subprocess = struct {
 
                     switch (pipe.writer.start(pipe.fd, true)) {
                         .result => {},
-                        .err => |err| {
-                            _ = err; // autofix
+                        .err => {
                             pipe.deref();
                             return error.UnexpectedCreatingStdin;
                         },

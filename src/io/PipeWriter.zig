@@ -30,10 +30,10 @@ pub fn PosixPipeWriter(
     comptime onWrite: fn (*This, written: usize, status: WriteStatus) void,
     comptime registerPoll: ?fn (*This) void,
     comptime onError: fn (*This, bun.sys.Error) void,
-    comptime onWritable: fn (*This) void,
+    /// onWritable
+    comptime _: fn (*This) void,
     comptime getFileType: *const fn (*This) FileType,
 ) type {
-    _ = onWritable; // autofix
     return struct {
         pub fn _tryWrite(this: *This, buf_: []const u8) WriteResult {
             return switch (getFileType(this)) {
@@ -139,7 +139,7 @@ pub fn PosixPipeWriter(
         }
 
         pub fn drainBufferedData(parent: *This, input_buffer: []const u8, max_write_size: usize, received_hup: bool) WriteResult {
-            _ = received_hup; // autofix
+            _ = received_hup; // not used currently.
             var buf = input_buffer;
             buf = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
             const original_buf = buf;

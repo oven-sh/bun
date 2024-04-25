@@ -75,8 +75,8 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         const loop = udpSocket.vm.eventLoop();
         loop.enter();
         defer loop.exit();
-        udpSocket.js_refcount += 1;
-        defer udpSocket.js_refcount -= 1;
+        _ = udpSocket.js_refcount.fetchAdd(1, .Monotonic);
+        defer _ = udpSocket.js_refcount.fetchSub(1, .Monotonic);
 
         const result = callback.callWithThis(globalThis, udpSocket.thisValue, &[_]JSValue{
             udpSocket.thisValue,
@@ -253,8 +253,7 @@ pub const UDPSocket = struct {
     closed: bool = false,
     connect_info: ?ConnectInfo = null,
     vm: *JSC.VirtualMachine,
-    js_refcount: usize = 1,
-    ref_count: usize = 1,
+    js_refcount: std.atomic.Value(usize) = std.atomic.Value(usize).init(1),
 
     const ConnectInfo = struct {
         port: u16,
@@ -268,7 +267,7 @@ pub const UDPSocket = struct {
     }
 
     pub fn hasPendingActivity(this: *This) callconv(.C) bool {
-        return this.js_refcount > 0;
+        return this.js_refcount.load(.Monotonic) > 0;
     }
 
     // pub usingnamespace bun.NewRefCounted(@This(), deinit);
@@ -579,7 +578,7 @@ pub const UDPSocket = struct {
         this.config.unprotect();
         this.poll_ref.unref(this.globalThis.bunVM());
         this.socket.close();
-        this.js_refcount -= 1;
+        _ = this.js_refcount.fetchSub(1, .Monotonic);
     }
 
     pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {

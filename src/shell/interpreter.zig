@@ -151,14 +151,14 @@ const CowFd = struct {
     refcount: u32 = 1,
     being_used: bool = false,
 
-    const print = bun.Output.scoped(.CowFd, true);
+    const debug = bun.Output.scoped(.CowFd, true);
 
     pub fn init(fd: bun.FileDescriptor) *CowFd {
         const this = bun.default_allocator.create(CowFd) catch bun.outOfMemory();
         this.* = .{
             .__fd = fd,
         };
-        print("init(0x{x}, fd={})", .{ @intFromPtr(this), fd });
+        debug("init(0x{x}, fd={})", .{ @intFromPtr(this), fd });
         return this;
     }
 
@@ -167,7 +167,7 @@ const CowFd = struct {
             .fd = bun.sys.dup(this.fd),
             .writercount = 1,
         });
-        print("dup(0x{x}, fd={}) = (0x{x}, fd={})", .{ @intFromPtr(this), this.fd, new, new.fd });
+        debug("dup(0x{x}, fd={}) = (0x{x}, fd={})", .{ @intFromPtr(this), this.fd, new, new.fd });
         return new;
     }
 
@@ -359,7 +359,7 @@ pub const EnvStr = packed struct {
     tag: Tag = .empty,
     len: usize = 0,
 
-    const print = bun.Output.scoped(.EnvStr, true);
+    const debug = bun.Output.scoped(.EnvStr, true);
 
     const Tag = enum(u16) {
         /// no value
@@ -438,10 +438,10 @@ pub const RefCountedStr = struct {
     len: u32 = 0,
     ptr: [*]const u8 = undefined,
 
-    const print = bun.Output.scoped(.RefCountedEnvStr, true);
+    const debug = bun.Output.scoped(.RefCountedEnvStr, true);
 
     fn init(slice: []const u8) *RefCountedStr {
-        print("init: {s}", .{slice});
+        debug("init: {s}", .{slice});
         const this = bun.default_allocator.create(RefCountedStr) catch bun.outOfMemory();
         this.* = .{
             .refcount = 1,
@@ -468,7 +468,7 @@ pub const RefCountedStr = struct {
     }
 
     fn deinit(this: *RefCountedStr) void {
-        print("deinit: {s}", .{this.byteSlice()});
+        debug("deinit: {s}", .{this.byteSlice()});
         this.freeStr();
         bun.default_allocator.destroy(this);
     }
@@ -1060,7 +1060,7 @@ pub const Interpreter = struct {
         }
 
         if (comptime bun.Environment.allow_assert) {
-            const print = bun.Output.scoped(.ShellTokens, true);
+            const debug = bun.Output.scoped(.ShellTokens, true);
             var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch @panic("OOPS");
             defer test_tokens.deinit();
             for (lex_result.tokens) |tok| {
@@ -1070,7 +1070,7 @@ pub const Interpreter = struct {
 
             const str = std.json.stringifyAlloc(bun.default_allocator, test_tokens.items[0..], .{}) catch @panic("OOPS");
             defer bun.default_allocator.free(str);
-            print("Tokens: {s}", .{str});
+            debug("Tokens: {s}", .{str});
         }
 
         out_parser.* = try bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs);
@@ -2336,7 +2336,7 @@ pub const Interpreter = struct {
         }
 
         pub const ShellGlobTask = struct {
-            const print = bun.Output.scoped(.ShellGlobTask, true);
+            const debug = bun.Output.scoped(.ShellGlobTask, true);
 
             task: WorkPoolTask = .{ .callback = &runFromThreadPool },
 
@@ -2368,7 +2368,7 @@ pub const Interpreter = struct {
             };
 
             pub fn createOnMainThread(allocator: Allocator, walker: *GlobWalker, expansion: *Expansion) *This {
-                print("createOnMainThread", .{});
+                debug("createOnMainThread", .{});
                 var this = allocator.create(This) catch bun.outOfMemory();
                 this.* = .{
                     .event_loop = expansion.base.eventLoop(),
@@ -2385,7 +2385,7 @@ pub const Interpreter = struct {
             }
 
             pub fn runFromThreadPool(task: *WorkPoolTask) void {
-                print("runFromThreadPool", .{});
+                debug("runFromThreadPool", .{});
                 var this = @fieldParentPtr(This, "task", task);
                 switch (this.walkImpl()) {
                     .result => {},
@@ -2397,7 +2397,7 @@ pub const Interpreter = struct {
             }
 
             fn walkImpl(this: *This) Maybe(void) {
-                print("walkImpl", .{});
+                debug("walkImpl", .{});
 
                 var iter = GlobWalker.Iterator{ .walker = this.walker };
                 defer iter.deinit();
@@ -2417,7 +2417,7 @@ pub const Interpreter = struct {
             }
 
             pub fn runFromMainThread(this: *This) void {
-                print("runFromJS", .{});
+                debug("runFromJS", .{});
                 this.expansion.onGlobWalkDone(this);
                 this.ref.unref(this.event_loop);
             }
@@ -2427,12 +2427,12 @@ pub const Interpreter = struct {
             }
 
             pub fn schedule(this: *This) void {
-                print("schedule", .{});
+                debug("schedule", .{});
                 WorkPool.schedule(&this.task);
             }
 
             pub fn onFinish(this: *This) void {
-                print("onFinish", .{});
+                debug("onFinish", .{});
                 if (this.event_loop == .js) {
                     this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
                 } else {
@@ -2441,7 +2441,7 @@ pub const Interpreter = struct {
             }
 
             pub fn deinit(this: *This) void {
-                print("deinit", .{});
+                debug("deinit", .{});
                 this.result.deinit();
                 this.allocator.destroy(this);
             }
@@ -5553,7 +5553,7 @@ pub const Interpreter = struct {
         }
 
         pub const Cat = struct {
-            const print = bun.Output.scoped(.ShellCat, true);
+            const debug = bun.Output.scoped(.ShellCat, true);
 
             bltn: *Builtin,
             opts: Opts = .{},
@@ -5683,7 +5683,7 @@ pub const Interpreter = struct {
             }
 
             pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) void {
-                print("onIOWriterChunk(0x{x}, {s}, had_err={any})", .{ @intFromPtr(this), @tagName(this.state), err != null });
+                debug("onIOWriterChunk(0x{x}, {s}, had_err={any})", .{ @intFromPtr(this), @tagName(this.state), err != null });
                 const errno: ExitCode = if (err) |e| brk: {
                     defer e.deref();
                     break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
@@ -5744,7 +5744,7 @@ pub const Interpreter = struct {
             }
 
             pub fn onIOReaderChunk(this: *Cat, chunk: []const u8) ReadChunkAction {
-                print("onIOReaderChunk(0x{x}, {s}, chunk_len={d})", .{ @intFromPtr(this), @tagName(this.state), chunk.len });
+                debug("onIOReaderChunk(0x{x}, {s}, chunk_len={d})", .{ @intFromPtr(this), @tagName(this.state), chunk.len });
                 switch (this.state) {
                     .exec_stdin => {
                         if (this.bltn.stdout.needsIO()) {
@@ -5772,7 +5772,7 @@ pub const Interpreter = struct {
                     defer e.deref();
                     break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
                 } else 0;
-                print("onIOReaderDone(0x{x}, {s}, errno={d})", .{ @intFromPtr(this), @tagName(this.state), errno });
+                debug("onIOReaderDone(0x{x}, {s}, errno={d})", .{ @intFromPtr(this), @tagName(this.state), errno });
 
                 switch (this.state) {
                     .exec_stdin => {
@@ -6089,7 +6089,7 @@ pub const Interpreter = struct {
                     try writer.print("ShellTouchTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
                 }
 
-                const print = bun.Output.scoped(.ShellTouchTask, true);
+                const debug = bun.Output.scoped(.ShellTouchTask, true);
 
                 pub fn deinit(this: *ShellTouchTask) void {
                     if (this.err) |e| {
@@ -6112,12 +6112,12 @@ pub const Interpreter = struct {
                 }
 
                 pub fn schedule(this: *@This()) void {
-                    print("{} schedule", .{this});
+                    debug("{} schedule", .{this});
                     WorkPool.schedule(&this.task);
                 }
 
                 pub fn runFromMainThread(this: *@This()) void {
-                    print("{} runFromJS", .{this});
+                    debug("{} runFromJS", .{this});
                     this.touch.onShellTouchTaskDone(this);
                 }
 
@@ -6127,7 +6127,7 @@ pub const Interpreter = struct {
 
                 fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
                     var this: *ShellTouchTask = @fieldParentPtr(ShellTouchTask, "task", task);
-                    print("{} runFromThreadPool", .{this});
+                    debug("{} runFromThreadPool", .{this});
 
                     // We have to give an absolute path
                     const filepath: [:0]const u8 = brk: {
@@ -6473,7 +6473,7 @@ pub const Interpreter = struct {
                 event_loop: JSC.EventLoopHandle,
                 concurrent_task: JSC.EventLoopTask,
 
-                const print = bun.Output.scoped(.ShellMkdirTask, true);
+                const debug = bun.Output.scoped(.ShellMkdirTask, true);
 
                 fn takeOutput(this: *ShellMkdirTask) ArrayList(u8) {
                     const out = this.created_directories;
@@ -6508,12 +6508,12 @@ pub const Interpreter = struct {
                 }
 
                 pub fn schedule(this: *@This()) void {
-                    print("{} schedule", .{this});
+                    debug("{} schedule", .{this});
                     WorkPool.schedule(&this.task);
                 }
 
                 pub fn runFromMainThread(this: *@This()) void {
-                    print("{} runFromJS", .{this});
+                    debug("{} runFromJS", .{this});
                     this.mkdir.onShellMkdirTaskDone(this);
                 }
 
@@ -6523,7 +6523,7 @@ pub const Interpreter = struct {
 
                 fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
                     var this: *ShellMkdirTask = @fieldParentPtr(ShellMkdirTask, "task", task);
-                    print("{} runFromThreadPool", .{this});
+                    debug("{} runFromThreadPool", .{this});
 
                     // We have to give an absolute path to our mkdir
                     // implementation for it to work with cwd
@@ -7349,7 +7349,7 @@ pub const Interpreter = struct {
             };
 
             pub const ShellLsTask = struct {
-                const print = bun.Output.scoped(.ShellLsTask, true);
+                const debug = bun.Output.scoped(.ShellLsTask, true);
                 ls: *Ls,
                 opts: Opts,
 
@@ -7391,7 +7391,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn enqueue(this: *@This(), path: [:0]const u8) void {
-                    print("enqueue: {s}", .{path});
+                    debug("enqueue: {s}", .{path});
                     const new_path = this.join(
                         bun.default_allocator,
                         &[_][]const u8{
@@ -7442,7 +7442,7 @@ pub const Interpreter = struct {
 
                     defer {
                         _ = Syscall.close(fd);
-                        print("run done", .{});
+                        debug("run done", .{});
                     }
 
                     if (!this.opts.list_directories) {
@@ -7486,7 +7486,7 @@ pub const Interpreter = struct {
                 // TODO more complex output like multi-column
                 fn addEntry(this: *@This(), name: [:0]const u8) void {
                     const skip = this.shouldSkipEntry(name);
-                    print("Entry: (skip={}) {s} :: {s}", .{ skip, this.path, name });
+                    debug("Entry: (skip={}) {s} :: {s}", .{ skip, this.path, name });
                     if (skip) return;
                     this.output.ensureUnusedCapacity(name.len + 1) catch bun.outOfMemory();
                     this.output.appendSlice(name) catch bun.outOfMemory();
@@ -7505,7 +7505,7 @@ pub const Interpreter = struct {
                 }
 
                 fn doneLogic(this: *@This()) void {
-                    print("Done", .{});
+                    debug("Done", .{});
                     if (this.event_loop == .js) {
                         this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
                     } else {
@@ -7520,7 +7520,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn runFromMainThread(this: *@This()) void {
-                    print("runFromMainThread", .{});
+                    debug("runFromMainThread", .{});
                     this.ls.onShellLsTaskDone(this);
                 }
 
@@ -7529,7 +7529,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn deinit(this: *@This(), comptime free_this: bool) void {
-                    print("deinit {s}", .{if (free_this) "free_this=true" else "free_this=false"});
+                    debug("deinit {s}", .{if (free_this) "free_this=true" else "free_this=false"});
                     bun.default_allocator.free(this.path);
                     this.output.deinit();
                     if (comptime free_this) bun.default_allocator.destroy(this);
@@ -7982,14 +7982,14 @@ pub const Interpreter = struct {
             } = .idle,
 
             pub const ShellMvCheckTargetTask = struct {
-                const print = bun.Output.scoped(.MvCheckTargetTask, true);
+                const debug = bun.Output.scoped(.MvCheckTargetTask, true);
                 mv: *Mv,
 
                 cwd: bun.FileDescriptor,
                 target: [:0]const u8,
                 result: ?Maybe(?bun.FileDescriptor) = null,
 
-                task: ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
+                task: ShellTask(@This(), runFromThreadPool, runFromMainThread, debug),
 
                 pub fn runFromThreadPool(this: *@This()) void {
                     const fd = switch (ShellSyscall.openat(this.cwd, this.target, os.O.RDONLY | os.O.DIRECTORY, 0)) {
@@ -8020,7 +8020,7 @@ pub const Interpreter = struct {
 
             pub const ShellMvBatchedTask = struct {
                 const BATCH_SIZE = 5;
-                const print = bun.Output.scoped(.MvBatchedTask, true);
+                const debug = bun.Output.scoped(.MvBatchedTask, true);
 
                 mv: *Mv,
                 sources: []const [*:0]const u8,
@@ -8031,7 +8031,7 @@ pub const Interpreter = struct {
 
                 err: ?Syscall.Error = null,
 
-                task: ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
+                task: ShellTask(@This(), runFromThreadPool, runFromMainThread, debug),
                 event_loop: JSC.EventLoopHandle,
 
                 pub fn runFromThreadPool(this: *@This()) void {
@@ -8927,7 +8927,7 @@ pub const Interpreter = struct {
             }
 
             pub const ShellRmTask = struct {
-                const print = bun.Output.scoped(.AsyncRmTask, true);
+                const debug = bun.Output.scoped(.AsyncRmTask, true);
 
                 rm: *Rm,
                 opts: Opts,
@@ -8990,14 +8990,14 @@ pub const Interpreter = struct {
                     const EntryKindHint = enum { idk, dir, file };
 
                     pub fn takeDeletedEntries(this: *DirTask) std.ArrayList(u8) {
-                        print("DirTask(0x{x} path={s}) takeDeletedEntries", .{ @intFromPtr(this), this.path });
+                        debug("DirTask(0x{x} path={s}) takeDeletedEntries", .{ @intFromPtr(this), this.path });
                         const ret = this.deleted_entries;
                         this.deleted_entries = std.ArrayList(u8).init(ret.allocator);
                         return ret;
                     }
 
                     pub fn runFromMainThread(this: *DirTask) void {
-                        print("DirTask(0x{x}, path={s}) runFromMainThread", .{ @intFromPtr(this), this.path });
+                        debug("DirTask(0x{x}, path={s}) runFromMainThread", .{ @intFromPtr(this), this.path });
                         this.task_manager.rm.writeVerbose(this);
                     }
 
@@ -9024,7 +9024,7 @@ pub const Interpreter = struct {
                                 const cwd_path = switch (Syscall.getFdPath(this.task_manager.cwd, &buf)) {
                                     .result => |p| bun.default_allocator.dupeZ(u8, p) catch bun.outOfMemory(),
                                     .err => |err| {
-                                        print("[runFromThreadPoolImpl:getcwd] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
+                                        debug("[runFromThreadPoolImpl:getcwd] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
                                         this.task_manager.err_mutex.lock();
                                         defer this.task_manager.err_mutex.unlock();
                                         if (this.task_manager.err == null) {
@@ -9038,11 +9038,11 @@ pub const Interpreter = struct {
                             }
                         }
 
-                        print("DirTask: {s}", .{this.path});
+                        debug("DirTask: {s}", .{this.path});
                         this.is_absolute = ResolvePath.Platform.auto.isAbsolute(this.path[0..this.path.len]);
                         switch (this.task_manager.removeEntry(this, this.is_absolute)) {
                             .err => |err| {
-                                print("[runFromThreadPoolImpl] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
+                                debug("[runFromThreadPoolImpl] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
                                 this.task_manager.err_mutex.lock();
                                 defer this.task_manager.err_mutex.unlock();
                                 if (this.task_manager.err == null) {
@@ -9057,7 +9057,7 @@ pub const Interpreter = struct {
                     }
 
                     fn handleErr(this: *DirTask, err: Syscall.Error) void {
-                        print("[handleErr] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
+                        debug("[handleErr] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
                         this.task_manager.err_mutex.lock();
                         defer this.task_manager.err_mutex.unlock();
                         if (this.task_manager.err == null) {
@@ -9069,7 +9069,7 @@ pub const Interpreter = struct {
                     }
 
                     pub fn postRun(this: *DirTask) void {
-                        print("DirTask(0x{x}, path={s}) postRun", .{ @intFromPtr(this), this.path });
+                        debug("DirTask(0x{x}, path={s}) postRun", .{ @intFromPtr(this), this.path });
                         // // This is true if the directory has subdirectories
                         // // that need to be deleted
                         if (this.need_to_wait.load(.SeqCst)) return;
@@ -9103,7 +9103,7 @@ pub const Interpreter = struct {
                     }
 
                     pub fn deleteAfterWaitingForChildren(this: *DirTask) void {
-                        print("DirTask(0x{x}, path={s}) deleteAfterWaitingForChildren", .{ @intFromPtr(this), this.path });
+                        debug("DirTask(0x{x}, path={s}) deleteAfterWaitingForChildren", .{ @intFromPtr(this), this.path });
                         // `runFromMainThreadImpl` has a `defer this.postRun()` so need to set this to true to skip that
                         this.deleting_after_waiting_for_children.store(true, .SeqCst);
                         this.need_to_wait.store(false, .SeqCst);
@@ -9117,7 +9117,7 @@ pub const Interpreter = struct {
 
                         switch (this.task_manager.removeEntryDirAfterChildren(this)) {
                             .err => |e| {
-                                print("[deleteAfterWaitingForChildren] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(e.getErrno()), e.path });
+                                debug("[deleteAfterWaitingForChildren] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(e.getErrno()), e.path });
                                 this.task_manager.err_mutex.lock();
                                 defer this.task_manager.err_mutex.unlock();
                                 if (this.task_manager.err == null) {
@@ -9200,7 +9200,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn enqueueNoJoin(this: *ShellRmTask, parent_task: *DirTask, path: [:0]const u8, kind_hint: DirTask.EntryKindHint) void {
-                    defer print("enqueue: {s} {s}", .{ path, @tagName(kind_hint) });
+                    defer debug("enqueue: {s} {s}", .{ path, @tagName(kind_hint) });
 
                     if (this.error_signal.load(.SeqCst)) {
                         return;
@@ -9226,10 +9226,10 @@ pub const Interpreter = struct {
                 }
 
                 pub fn verboseDeleted(this: *@This(), dir_task: *DirTask, path: [:0]const u8) Maybe(void) {
-                    print("deleted: {s}", .{path[0..path.len]});
+                    debug("deleted: {s}", .{path[0..path.len]});
                     if (!this.opts.verbose) return Maybe(void).success;
                     if (dir_task.deleted_entries.items.len == 0) {
-                        print("DirTask(0x{x}, {s}) Incrementing output count (deleted={s})", .{ @intFromPtr(dir_task), dir_task.path, path });
+                        debug("DirTask(0x{x}, {s}) Incrementing output count (deleted={s})", .{ @intFromPtr(dir_task), dir_task.path, path });
                         _ = this.rm.state.exec.incrementOutputCount(.output_count);
                     }
                     dir_task.deleted_entries.appendSlice(path[0..path.len]) catch bun.outOfMemory();
@@ -9238,7 +9238,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn finishConcurrently(this: *ShellRmTask) void {
-                    print("finishConcurrently", .{});
+                    debug("finishConcurrently", .{});
                     if (this.event_loop == .js) {
                         this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
                     } else {
@@ -9269,7 +9269,7 @@ pub const Interpreter = struct {
                 fn removeEntryDir(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
                     const path = dir_task.path;
                     const dirfd = this.cwd;
-                    print("removeEntryDir({s})", .{path});
+                    debug("removeEntryDir({s})", .{path});
 
                     // If `-d` is specified without `-r` then we can just use `rmdirat`
                     if (this.opts.remove_empty_dirs and !this.opts.recursive) out_to_iter: {
@@ -9351,7 +9351,7 @@ pub const Interpreter = struct {
                         },
                         .result => |ent| ent,
                     }) |current| : (entry = iterator.next()) {
-                        print("dir({s}) entry({s}, {s})", .{ path, current.name.slice(), @tagName(current.kind) });
+                        debug("dir({s}) entry({s}, {s})", .{ path, current.name.slice(), @tagName(current.kind) });
                         // TODO this seems bad maybe better to listen to kqueue/epoll event
                         if (fastMod(i, 4) == 0 and this.error_signal.load(.SeqCst)) return Maybe(void).success;
 
@@ -9396,7 +9396,7 @@ pub const Interpreter = struct {
                         _ = Syscall.close(fd);
                     }
 
-                    print("[removeEntryDir] remove after children {s}", .{path});
+                    debug("[removeEntryDir] remove after children {s}", .{path});
                     switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.os.AT.REMOVEDIR)) {
                         .result => {
                             switch (this.verboseDeleted(dir_task, path)) {
@@ -9496,7 +9496,7 @@ pub const Interpreter = struct {
                 };
 
                 fn removeEntryDirAfterChildren(this: *ShellRmTask, dir_task: *DirTask) Maybe(bool) {
-                    print("remove entry after children: {s}", .{dir_task.path});
+                    debug("remove entry after children: {s}", .{dir_task.path});
                     const dirfd = bun.toFD(this.cwd);
                     var state = RemoveFileParent{
                         .task = this,
@@ -9560,7 +9560,7 @@ pub const Interpreter = struct {
                     switch (ShellSyscall.unlinkatWithFlags(dirfd, path, 0)) {
                         .result => return this.verboseDeleted(parent_dir_task, path),
                         .err => |e| {
-                            print("unlinkatWithFlags({s}) = {s}", .{ path, @tagName(e.getErrno()) });
+                            debug("unlinkatWithFlags({s}) = {s}", .{ path, @tagName(e.getErrno()) });
                             switch (e.getErrno()) {
                                 bun.C.E.NOENT => {
                                     if (this.opts.force)
@@ -10427,10 +10427,10 @@ pub const Interpreter = struct {
                 concurrent_task: JSC.EventLoopTask,
                 err: ?bun.shell.ShellErr = null,
 
-                const print = bun.Output.scoped(.ShellCpTask, false);
+                const debug = bun.Output.scoped(.ShellCpTask, false);
 
                 fn deinit(this: *ShellCpTask) void {
-                    print("deinit", .{});
+                    debug("deinit", .{});
                     this.verbose_output.deinit();
                     if (this.err) |e| {
                         e.deinit(bun.default_allocator);
@@ -10445,7 +10445,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn schedule(this: *@This()) void {
-                    print("schedule", .{});
+                    debug("schedule", .{});
                     WorkPool.schedule(&this.task);
                 }
 
@@ -10526,7 +10526,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn runFromMainThread(this: *ShellCpTask) void {
-                    print("runFromMainThread", .{});
+                    debug("runFromMainThread", .{});
                     this.cp.onShellCpTaskDone(this);
                 }
 
@@ -10535,7 +10535,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn runFromThreadPool(task: *WorkPoolTask) void {
-                    print("runFromThreadPool", .{});
+                    debug("runFromThreadPool", .{});
                     var this = @fieldParentPtr(@This(), "task", task);
                     if (this.runFromThreadPoolImpl()) |e| {
                         this.err = e;
@@ -10658,10 +10658,10 @@ pub const Interpreter = struct {
                         },
                     };
 
-                    print("Scheduling {s} -> {s}", .{ this.src_absolute.?, this.tgt_absolute.? });
+                    debug("Scheduling {s} -> {s}", .{ this.src_absolute.?, this.tgt_absolute.? });
                     if (this.event_loop == .js) {
                         const vm: *JSC.VirtualMachine = this.event_loop.js.getVmImpl();
-                        print("Yoops", .{});
+                        debug("Yoops", .{});
                         _ = JSC.Node.ShellAsyncCpTask.createWithShellTask(
                             vm.global,
                             args,
@@ -10683,7 +10683,7 @@ pub const Interpreter = struct {
                 }
 
                 fn onSubtaskFinish(this: *ShellCpTask, err: Maybe(void)) void {
-                    print("onSubtaskFinish", .{});
+                    debug("onSubtaskFinish", .{});
                     if (err.asErr()) |e| {
                         this.err = bun.shell.ShellErr.newSys(e);
                     }
@@ -11131,7 +11131,7 @@ pub const Interpreter = struct {
 
         pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOWriterRefCount";
 
-        const print = bun.Output.scoped(.IOWriter, true);
+        const debug = bun.Output.scoped(.IOWriter, true);
 
         const ChildPtr = IOWriterChildPtr;
 
@@ -11179,13 +11179,13 @@ pub const Interpreter = struct {
             this.writer.parent = this;
             this.flags = flags;
 
-            print("IOWriter(0x{x}, fd={}) init flags={any}", .{ @intFromPtr(this), fd, flags });
+            debug("IOWriter(0x{x}, fd={}) init flags={any}", .{ @intFromPtr(this), fd, flags });
 
             return this;
         }
 
         pub fn __start(this: *This) Maybe(void) {
-            print("IOWriter(0x{x}, fd={}) __start()", .{ @intFromPtr(this), this.fd });
+            debug("IOWriter(0x{x}, fd={}) __start()", .{ @intFromPtr(this), this.fd });
             if (this.writer.start(this.fd, this.flags.pollable).asErr()) |e_| {
                 const e: bun.sys.Error = e_;
                 if (bun.Environment.isPosix) {
@@ -11198,7 +11198,7 @@ pub const Interpreter = struct {
                     // same file descriptor. The shell code here makes sure to
                     // _not_ run into that case, but it is possible.
                     if (e.getErrno() == .INVAL) {
-                        print("IOWriter(0x{x}, fd={}) got EINVAL", .{ @intFromPtr(this), this.fd });
+                        debug("IOWriter(0x{x}, fd={}) got EINVAL", .{ @intFromPtr(this), this.fd });
                         this.flags.pollable = false;
                         this.flags.nonblocking = false;
                         this.flags.is_socket = false;
@@ -11344,7 +11344,7 @@ pub const Interpreter = struct {
 
         pub fn onWrite(this: *This, amount: usize, status: bun.io.WriteStatus) void {
             this.setWriting(false);
-            print("IOWriter(0x{x}, fd={}) onWrite({d}, {})", .{ @intFromPtr(this), this.fd, amount, status });
+            debug("IOWriter(0x{x}, fd={}) onWrite({d}, {})", .{ @intFromPtr(this), this.fd, amount, status });
             if (this.__idx >= this.writers.len()) return;
             const child = this.writers.get(this.__idx);
             if (child.isDead()) {
@@ -11373,7 +11373,7 @@ pub const Interpreter = struct {
 
             log("IOWriter(0x{x}, fd={}) wrote_everything={}, idx={d} writers={d} next_len={d}", .{ @intFromPtr(this), this.fd, wrote_everything, this.__idx, this.writers.len(), if (this.writers.len() >= 1) this.writers.get(0).len else 0 });
             if (!wrote_everything and this.__idx < this.writers.len()) {
-                print("IOWriter(0x{x}, fd={}) poll again", .{ @intFromPtr(this), this.fd });
+                debug("IOWriter(0x{x}, fd={}) poll again", .{ @intFromPtr(this), this.fd });
                 if (comptime bun.Environment.isWindows) {
                     this.setWriting(true);
                     this.writer.write();
@@ -11558,12 +11558,12 @@ pub const Interpreter = struct {
         }
 
         pub fn asyncDeinit(this: *@This()) void {
-            print("IOWriter(0x{x}, fd={}) asyncDeinit", .{ @intFromPtr(this), this.fd });
+            debug("IOWriter(0x{x}, fd={}) asyncDeinit", .{ @intFromPtr(this), this.fd });
             this.async_deinit.enqueue();
         }
 
         pub fn __deinit(this: *This) void {
-            print("IOWriter(0x{x}, fd={}) deinit", .{ @intFromPtr(this), this.fd });
+            debug("IOWriter(0x{x}, fd={}) deinit", .{ @intFromPtr(this), this.fd });
             if (bun.Environment.allow_assert) assert(this.ref_count == 0);
             this.buf.deinit(bun.default_allocator);
             if (comptime bun.Environment.isPosix) {
@@ -11757,7 +11757,7 @@ pub fn ShellTask(
     /// Function that is called on the main thread, once the event loop
     /// processes that the task is done
     comptime runFromMainThread_: fn (*Ctx) void,
-    comptime print: fn (comptime fmt: []const u8, args: anytype) void,
+    comptime debug: fn (comptime fmt: []const u8, args: anytype) void,
 ) type {
     return struct {
         task: WorkPoolTask = .{ .callback = &runFromThreadPool },
@@ -11769,14 +11769,14 @@ pub fn ShellTask(
         pub const InnerShellTask = @This();
 
         pub fn schedule(this: *@This()) void {
-            print("schedule", .{});
+            debug("schedule", .{});
 
             this.ref.ref(this.event_loop);
             WorkPool.schedule(&this.task);
         }
 
         pub fn onFinish(this: *@This()) void {
-            print("onFinish", .{});
+            debug("onFinish", .{});
             if (this.event_loop == .js) {
                 const ctx = @fieldParentPtr(Ctx, "task", this);
                 this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(ctx, .manual_deinit));
@@ -11787,7 +11787,7 @@ pub fn ShellTask(
         }
 
         pub fn runFromThreadPool(task: *WorkPoolTask) void {
-            print("runFromThreadPool", .{});
+            debug("runFromThreadPool", .{});
             var this = @fieldParentPtr(@This(), "task", task);
             const ctx = @fieldParentPtr(Ctx, "task", this);
             runFromThreadPool_(ctx);
@@ -11795,7 +11795,7 @@ pub fn ShellTask(
         }
 
         pub fn runFromMainThread(this: *@This()) void {
-            print("runFromJS", .{});
+            debug("runFromJS", .{});
             const ctx = @fieldParentPtr(Ctx, "task", this);
             this.ref.unref(this.event_loop);
             runFromMainThread_(ctx);

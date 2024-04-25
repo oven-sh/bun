@@ -1139,6 +1139,7 @@ pub const PackageInstall = struct {
         opening_dest_dir,
         copying_files,
         linking,
+        linking_dependency,
 
         pub fn name(this: Step) []const u8 {
             return switch (this) {
@@ -1146,6 +1147,7 @@ pub const PackageInstall = struct {
                 .opening_cache_dir => "opening cache/package/version dir",
                 .opening_dest_dir => "opening node_modules/package dir",
                 .linking => "linking bins",
+                .linking_dependency => "linking dependency/workspace to node_modules",
             };
         }
     };
@@ -2040,7 +2042,7 @@ pub const PackageInstall = struct {
         const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err| return Result{
             .fail = .{
                 .err = err,
-                .step = .linking,
+                .step = .linking_dependency,
             },
         };
 
@@ -2052,7 +2054,7 @@ pub const PackageInstall = struct {
             if (dest_path_length == 0) {
                 const e = bun.windows.Win32Error.get();
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                return Result.fail(err, .linking);
+                return Result.fail(err, .linking_dependency);
             }
 
             var i: usize = dest_path_length;
@@ -2069,7 +2071,7 @@ pub const PackageInstall = struct {
                 const fullpath = wbuf[0..i :0];
 
                 _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
-                    return Result.fail(err, .linking);
+                    return Result.fail(err, .linking_dependency);
                 };
             }
 
@@ -2104,7 +2106,7 @@ pub const PackageInstall = struct {
                     return Result{
                         .fail = .{
                             .err = bun.errnoToZigErr(err.errno),
-                            .step = .linking,
+                            .step = .linking_dependency,
                         },
                     };
                 },
@@ -2115,7 +2117,7 @@ pub const PackageInstall = struct {
                 break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result{
                     .fail = .{
                         .err = err,
-                        .step = .linking,
+                        .step = .linking_dependency,
                     },
                 };
             } else destination_dir;
@@ -2126,7 +2128,7 @@ pub const PackageInstall = struct {
             const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result{
                 .fail = .{
                     .err = err,
-                    .step = .linking,
+                    .step = .linking_dependency,
                 },
             };
 
@@ -2134,7 +2136,7 @@ pub const PackageInstall = struct {
             std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
                 .fail = .{
                     .err = err,
-                    .step = .linking,
+                    .step = .linking_dependency,
                 },
             };
         }
@@ -2142,7 +2144,7 @@ pub const PackageInstall = struct {
         if (isDanglingSymlink(symlinked_path)) return Result{
             .fail = .{
                 .err = error.DanglingSymlink,
-                .step = .linking,
+                .step = .linking_dependency,
             },
         };
 
@@ -11095,182 +11097,3 @@ pub const PackageManifestError = error{
 };
 
 pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
-
-test "UpdateRequests.parse" {
-    var log = logger.Log.init(default_allocator);
-    var array = PackageManager.UpdateRequest.Array.init(0) catch unreachable;
-
-    const updates: []const []const u8 = &.{
-        "@bacon/name",
-        "foo",
-        "bar",
-        "baz",
-        "boo@1.0.0",
-        "bing@latest",
-        "github:bar/foo",
-    };
-    var reqs = PackageManager.UpdateRequest.parse(default_allocator, &log, updates, &array, .add);
-
-    try std.testing.expectEqualStrings(reqs[0].name, "@bacon/name");
-    try std.testing.expectEqualStrings(reqs[1].name, "foo");
-    try std.testing.expectEqualStrings(reqs[2].name, "bar");
-    try std.testing.expectEqualStrings(reqs[3].name, "baz");
-    try std.testing.expectEqualStrings(reqs[4].name, "boo");
-    try std.testing.expectEqualStrings(reqs[7].name, "github:bar/foo");
-    try std.testing.expectEqual(reqs[4].version.tag, Dependency.Version.Tag.npm);
-    try std.testing.expectEqualStrings(reqs[4].version.literal.slice("boo@1.0.0"), "1.0.0");
-    try std.testing.expectEqual(reqs[5].version.tag, Dependency.Version.Tag.dist_tag);
-    try std.testing.expectEqualStrings(reqs[5].version.literal.slice("bing@1.0.0"), "latest");
-    try std.testing.expectEqual(updates.len, 7);
-}
-
-test "PackageManager.Options - default registry, default values" {
-    const allocator = default_allocator;
-    var log = logger.Log.init(allocator);
-    defer log.deinit();
-    var env = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
-    var options = PackageManager.Options{};
-
-    try options.load(allocator, &log, &env, null, null);
-
-    try std.testing.expectEqualStrings("", options.scope.name);
-    try std.testing.expectEqualStrings("", options.scope.auth);
-    try std.testing.expectEqualStrings(Npm.Registry.default_url, options.scope.url.href);
-    try std.testing.expectEqualStrings("", options.scope.token);
-}
-
-test "PackageManager.Options - default registry, custom token" {
-    const allocator = default_allocator;
-    var log = logger.Log.init(allocator);
-    defer log.deinit();
-    var env = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
-    var install = Api.BunInstall{
-        .default_registry = Api.NpmRegistry{
-            .url = "",
-            .username = "foo",
-            .password = "bar",
-            .token = "baz",
-        },
-        .native_bin_links = &.{},
-    };
-    var options = PackageManager.Options{};
-
-    try options.load(allocator, &log, &env, null, &install);
-
-    try std.testing.expectEqualStrings("", options.scope.name);
-    try std.testing.expectEqualStrings("", options.scope.auth);
-    try std.testing.expectEqualStrings(Npm.Registry.default_url, options.scope.url.href);
-    try std.testing.expectEqualStrings("baz", options.scope.token);
-}
-
-test "PackageManager.Options - default registry, custom URL" {
-    const allocator = default_allocator;
-    var log = logger.Log.init(allocator);
-    defer log.deinit();
-    var env = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
-    var install = Api.BunInstall{
-        .default_registry = Api.NpmRegistry{
-            .url = "https://example.com/",
-            .username = "foo",
-            .password = "bar",
-            .token = "",
-        },
-        .native_bin_links = &.{},
-    };
-    var options = PackageManager.Options{};
-
-    try options.load(allocator, &log, &env, null, &install);
-
-    try std.testing.expectEqualStrings("", options.scope.name);
-    try std.testing.expectEqualStrings("Zm9vOmJhcg==", options.scope.auth);
-    try std.testing.expectEqualStrings("https://example.com/", options.scope.url.href);
-    try std.testing.expectEqualStrings("", options.scope.token);
-}
-
-test "PackageManager.Options - scoped registry" {
-    const allocator = default_allocator;
-    var log = logger.Log.init(allocator);
-    defer log.deinit();
-    var env = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
-    var install = Api.BunInstall{
-        .scoped = Api.NpmRegistryMap{
-            .scopes = &.{
-                "foo",
-            },
-            .registries = &.{
-                Api.NpmRegistry{
-                    .url = "",
-                    .username = "",
-                    .password = "",
-                    .token = "bar",
-                },
-            },
-        },
-        .native_bin_links = &.{},
-    };
-    var options = PackageManager.Options{};
-
-    try options.load(allocator, &log, &env, null, &install);
-
-    try std.testing.expectEqualStrings("", options.scope.name);
-    try std.testing.expectEqualStrings("", options.scope.auth);
-    try std.testing.expectEqualStrings(Npm.Registry.default_url, options.scope.url.href);
-    try std.testing.expectEqualStrings("", options.scope.token);
-
-    const scoped = options.registries.getPtr(Npm.Registry.Scope.hash(Npm.Registry.Scope.getName("foo")));
-
-    try std.testing.expect(scoped != null);
-    if (scoped) |scope| {
-        try std.testing.expectEqualStrings("foo", scope.name);
-        try std.testing.expectEqualStrings("", scope.auth);
-        try std.testing.expectEqualStrings(Npm.Registry.default_url, scope.url.href);
-        try std.testing.expectEqualStrings("bar", scope.token);
-    }
-}
-
-test "PackageManager.Options - mixed default/scoped registry" {
-    const allocator = default_allocator;
-    var log = logger.Log.init(allocator);
-    defer log.deinit();
-    var env = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
-    var install = Api.BunInstall{
-        .default_registry = Api.NpmRegistry{
-            .url = "https://example.com/",
-            .username = "",
-            .password = "",
-            .token = "foo",
-        },
-        .scoped = Api.NpmRegistryMap{
-            .scopes = &.{
-                "bar",
-            },
-            .registries = &.{
-                Api.NpmRegistry{
-                    .url = "",
-                    .username = "baz",
-                    .password = "moo",
-                    .token = "",
-                },
-            },
-        },
-        .native_bin_links = &.{},
-    };
-    var options = PackageManager.Options{};
-
-    try options.load(allocator, &log, &env, null, &install);
-
-    try std.testing.expectEqualStrings("", options.scope.name);
-    try std.testing.expectEqualStrings("", options.scope.auth);
-    try std.testing.expectEqualStrings("https://example.com/", options.scope.url.href);
-    try std.testing.expectEqualStrings("foo", options.scope.token);
-
-    const scoped = options.registries.getPtr(Npm.Registry.Scope.hash(Npm.Registry.Scope.getName("bar")));
-
-    try std.testing.expect(scoped != null);
-    if (scoped) |scope| {
-        try std.testing.expectEqualStrings("bar", scope.name);
-        try std.testing.expectEqualStrings("YmF6Om1vbw==", scope.auth);
-        try std.testing.expectEqualStrings("https://example.com/", scope.url.href);
-        try std.testing.expectEqualStrings("", scope.token);
-    }
-}

@@ -610,7 +610,10 @@ pub const BundleV2 = struct {
                     .index = source_index,
                 },
                 .loader = loader,
-                .side_effects = _resolver.SideEffects.has_side_effects,
+                .side_effects = switch (loader) {
+                    .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
+                    else => _resolver.SideEffects.has_side_effects,
+                },
             }) catch @panic("Ran out of memory");
             var task = this.graph.allocator.create(ParseTask) catch @panic("Ran out of memory");
             task.* = ParseTask.init(&resolve_result, source_index, this);
@@ -2587,9 +2590,8 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .text => {
-                const root = Expr.init(E.String, E.String{
+                const root = Expr.init(E.UTF8String, E.UTF8String{
                     .data = source.contents,
-                    .prefer_template = true,
                 }, Logger.Loc{ .start = 0 });
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
@@ -11586,8 +11588,8 @@ fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
     // There are a few cases here we want to handle:
     // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
     // ["/foo/", "/bar.js"] => "/foo/bar.js"
-    if (strings.endsWithChar(prefix, '/')) {
-        if (strings.startsWithChar(suffix, '/')) {
+    if (strings.endsWithChar(prefix, '/') or (Environment.isWindows and strings.endsWithChar(prefix, '\\'))) {
+        if (strings.startsWithChar(suffix, '/') or (Environment.isWindows and strings.startsWithChar(suffix, '\\'))) {
             return .{
                 prefix[0..prefix.len],
                 suffix[1..suffix.len],
@@ -11602,14 +11604,10 @@ fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
         // But it's not worth the complexity to handle these cases right now.
     }
 
-    if (suffix.len > "./".len and strings.hasPrefixComptime(suffix, "./")) {
-        return .{
-            prefix,
-            suffix[2..],
-        };
-    }
-
-    return .{ prefix, suffix };
+    return .{
+        prefix,
+        bun.strings.removeLeadingDotSlash(suffix),
+    };
 }
 
 const components_manifest_path = "./components-manifest.blob";

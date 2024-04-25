@@ -356,10 +356,20 @@ const State = struct {
         }
     }
 
-    pub fn finalize(this: *This) void {
+    pub fn finalize(this: *This) u8 {
         if (this.aborted) {
             this.redraw(true) catch {};
         }
+        for (this.handles) |handle| {
+            if (handle.process) |proc| {
+                switch (proc.status) {
+                    .exited => |exited| if (exited.code != 0) return exited.code,
+                    .signaled => |signal| return signal.toExitCode() orelse 1,
+                    else => return 1,
+                }
+            }
+        }
+        return 0;
     }
 };
 
@@ -460,14 +470,11 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             continue;
         };
 
-        const matches = if (filter_instance.has_name_filters)
-            filter_instance.matchesPathName(path, pkgjson.name)
-        else
-            filter_instance.matchesPath(path);
-
-        if (!matches) continue;
-
         const pkgscripts = pkgjson.scripts orelse continue;
+
+        if (!filter_instance.matches(path, pkgjson.name))
+            continue;
+
         const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_bundler, null, dirpath, ctx.debug.run_in_bun);
 
         for (&[3][]const u8{ pre_script_name, script_name, post_script_name }) |name| {
@@ -617,9 +624,9 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         event_loop.tickOnce(&state);
     }
 
-    state.finalize();
+    const status = state.finalize();
 
-    Global.exit(0);
+    Global.exit(status);
 }
 
 fn hasCycle(current: *ProcessHandle) bool {

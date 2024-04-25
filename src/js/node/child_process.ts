@@ -20,7 +20,6 @@ var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
-var ArrayIsArray = Array.isArray;
 
 // var ArrayBuffer = ArrayBuffer;
 var ArrayBufferIsView = ArrayBuffer.isView;
@@ -263,7 +262,7 @@ function execFile(file, args, options, callback) {
   let exited = false;
   let timeoutId;
 
-  let ex = null;
+  let ex: Error | null = null;
 
   let cmd = file;
 
@@ -368,7 +367,7 @@ function execFile(file, args, options, callback) {
               let combined = ArrayPrototypeJoin.$call(array, "") + chunk;
               combined = StringPrototypeSlice.$call(combined, 0, maxBuffer);
               array = [combined];
-              ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+              ex = ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
               kill();
             } else {
               array = [ArrayPrototypeJoin.$call(array, "") + chunk];
@@ -384,7 +383,7 @@ function execFile(file, args, options, callback) {
             const truncatedLen = maxBuffer - (total - chunk.length);
             $arrayPush(array, chunk.slice(0, truncatedLen));
 
-            ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+            ex = ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
             kill();
           } else {
             $arrayPush(array, chunk);
@@ -542,7 +541,7 @@ function spawnSync(file, args, options) {
     } else if (typeof input === "string") {
       bunStdio[0] = Buffer.from(input, encoding || "utf8");
     } else {
-      throw new ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["Buffer", "TypedArray", "DataView", "string"], input);
+      throw ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["Buffer", "TypedArray", "DataView", "string"], input);
     }
   }
 
@@ -670,7 +669,7 @@ function stdioStringToArray(stdio, channel) {
       options = [0, 1, 2];
       break;
     default:
-      throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
+      throw ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 
   if (channel) $arrayPush(options, channel);
@@ -708,7 +707,7 @@ function fork(modulePath, args = [], options) {
 
   if (args == null) {
     args = [];
-  } else if (typeof args === "object" && !ArrayIsArray(args)) {
+  } else if (typeof args === "object" && !$isJSArray(args)) {
     options = args;
     args = [];
   } else {
@@ -739,12 +738,12 @@ function fork(modulePath, args = [], options) {
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
-  } else if (!ArrayIsArray(options.stdio)) {
+  } else if (!$isJSArray(options.stdio)) {
     // Use a separate fd=3 for the IPC channel. Inherit stdin, stdout,
     // and stderr from the parent if silent isn't set.
     options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
   } else if (!ArrayPrototypeIncludes.$call(options.stdio, "ipc")) {
-    throw new ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
+    throw ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
   }
 
   return spawn(options.execPath, args, options);
@@ -761,14 +760,14 @@ function convertToValidSignal(signal) {
     if (signalName) return signalName;
   }
 
-  throw new ERR_UNKNOWN_SIGNAL(signal);
+  throw ERR_UNKNOWN_SIGNAL(signal);
 }
 
 function sanitizeKillSignal(killSignal) {
   if (typeof killSignal === "string" || typeof killSignal === "number") {
     return convertToValidSignal(killSignal);
   } else if (killSignal != null) {
-    throw new ERR_INVALID_ARG_TYPE("options.killSignal", ["string", "number"], killSignal);
+    throw ERR_INVALID_ARG_TYPE("options.killSignal", ["string", "number"], killSignal);
   }
 }
 
@@ -785,7 +784,7 @@ function getSignalsToNamesMapping() {
 }
 
 function normalizeExecFileArgs(file, args, options, callback) {
-  if (ArrayIsArray(args)) {
+  if ($isJSArray(args)) {
     args = ArrayPrototypeSlice.$call(args);
   } else if (args != null && typeof args === "object") {
     callback = options;
@@ -848,14 +847,14 @@ function normalizeSpawnArguments(file, args, options) {
   validateString(file, "file");
   validateArgumentNullCheck(file, "file");
 
-  if (file.length === 0) throw new ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
+  if (file.length === 0) throw ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
-  if (ArrayIsArray(args)) {
+  if ($isJSArray(args)) {
     args = ArrayPrototypeSlice.$call(args);
   } else if (args == null) {
     args = [];
   } else if (typeof args !== "object") {
-    throw new ERR_INVALID_ARG_TYPE("args", "object", args);
+    throw ERR_INVALID_ARG_TYPE("args", "object", args);
   } else {
     options = args;
     args = [];
@@ -880,17 +879,17 @@ function normalizeSpawnArguments(file, args, options) {
 
   // Validate the uid, if present.
   if (options.uid != null && !isInt32(options.uid)) {
-    throw new ERR_INVALID_ARG_TYPE("options.uid", "int32", options.uid);
+    throw ERR_INVALID_ARG_TYPE("options.uid", "int32", options.uid);
   }
 
   // Validate the gid, if present.
   if (options.gid != null && !isInt32(options.gid)) {
-    throw new ERR_INVALID_ARG_TYPE("options.gid", "int32", options.gid);
+    throw ERR_INVALID_ARG_TYPE("options.gid", "int32", options.gid);
   }
 
   // Validate the shell, if present.
   if (options.shell != null && typeof options.shell !== "boolean" && typeof options.shell !== "string") {
-    throw new ERR_INVALID_ARG_TYPE("options.shell", ["boolean", "string"], options.shell);
+    throw ERR_INVALID_ARG_TYPE("options.shell", ["boolean", "string"], options.shell);
   }
 
   // Validate argv0, if present.
@@ -962,7 +961,7 @@ function normalizeSpawnArguments(file, args, options) {
   };
 }
 
-function checkExecSyncError(ret, args, cmd) {
+function checkExecSyncError(ret, args, cmd?) {
   let err;
   if (ret.error) {
     err = ret.error;
@@ -1201,7 +1200,7 @@ class ChildProcess extends EventEmitter {
     const argv0 = file || options.argv0;
 
     // TODO: better ipc support
-    const ipc = $isArray(stdio) && stdio[3] === "ipc";
+    const ipc = $isJSArray(stdio) && stdio[3] === "ipc";
     var env = options.envPairs || undefined;
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
@@ -1270,7 +1269,7 @@ class ChildProcess extends EventEmitter {
       options = undefined;
     } else if (options !== undefined) {
       if (typeof options !== "object" || options === null) {
-        throw new ERR_INVALID_ARG_TYPE("options", "Object", options);
+        throw ERR_INVALID_ARG_TYPE("options", "Object", options);
       }
     }
 
@@ -1360,11 +1359,47 @@ function nodeToBun(item, index) {
   if (typeof item === "number") {
     return item;
   }
+  if (isNodeStreamReadable(item)) {
+    if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
+    throw new Error(`TODO: stream.Readable stdio @ ${index}`);
+  }
+  if (isNodeStreamWritable(item)) {
+    if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
+    throw new Error(`TODO: stream.Writable stdio @ ${index}`);
+  }
   const result = nodeToBunLookup[item];
   if (result === undefined) {
-    throw new Error(`Invalid stdio option "${item}"`);
+    throw new Error(`Invalid stdio option[${index}] "${item}"`);
   }
   return result;
+}
+
+/**
+ * Safer version of `item instance of node:stream.Readable`.
+ *
+ * @param item {object}
+ * @returns {boolean}
+ */
+function isNodeStreamReadable(item) {
+  if (typeof item !== "object") return false;
+  if (!item) return false;
+  if (typeof item.on !== "function") return false;
+  if (typeof item.pipe !== "function") return false;
+  return true;
+}
+
+/**
+ * Safer version of `item instance of node:stream.Writable`.
+ *
+ * @param item {objects}
+ * @returns {boolean}
+ */
+function isNodeStreamWritable(item) {
+  if (typeof item !== "object") return false;
+  if (!item) return false;
+  if (typeof item.on !== "function") return false;
+  if (typeof item.write !== "function") return false;
+  return true;
 }
 
 function fdToStdioName(fd) {
@@ -1418,9 +1453,9 @@ function normalizeStdio(stdio) {
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:
-        throw new ERR_INVALID_OPT_VALUE("stdio", stdio);
+        throw ERR_INVALID_OPT_VALUE("stdio", stdio);
     }
-  } else if (ArrayIsArray(stdio)) {
+  } else if ($isJSArray(stdio)) {
     // Validate if each is a valid stdio type
     // TODO: Support wrapped types here
 
@@ -1432,7 +1467,7 @@ function normalizeStdio(stdio) {
 
     return processedStdio;
   } else {
-    throw new ERR_INVALID_OPT_VALUE("stdio", stdio);
+    throw ERR_INVALID_OPT_VALUE("stdio", stdio);
   }
 }
 
@@ -1491,13 +1526,13 @@ class ShimmedStdioOutStream extends EventEmitter {
 
 function validateMaxBuffer(maxBuffer) {
   if (maxBuffer != null && !(typeof maxBuffer === "number" && maxBuffer >= 0)) {
-    throw new ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
+    throw ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
   }
 }
 
 function validateArgumentNullCheck(arg, propName) {
   if (typeof arg === "string" && StringPrototypeIncludes.$call(arg, "\u0000")) {
-    throw new ERR_INVALID_ARG_VALUE(propName, arg, "must be a string without null bytes");
+    throw ERR_INVALID_ARG_VALUE(propName, arg, "must be a string without null bytes");
   }
 }
 
@@ -1509,12 +1544,12 @@ function validateArgumentsNullCheck(args, propName) {
 
 function validateTimeout(timeout) {
   if (timeout != null && !(NumberIsInteger(timeout) && timeout >= 0)) {
-    throw new ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
+    throw ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
   }
 }
 
 function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
+  if (typeof value !== "boolean") throw ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
 /**
@@ -1526,7 +1561,7 @@ function validateBoolean(value, name) {
 
 /** @type {validateFunction} */
 function validateFunction(value, name) {
-  if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
+  if (typeof value !== "function") throw ERR_INVALID_ARG_TYPE(name, "Function", value);
 }
 
 /**
@@ -1538,7 +1573,7 @@ function validateFunction(value, name) {
 /** @type {validateAbortSignal} */
 const validateAbortSignal = (signal, name) => {
   if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
+    throw ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
   }
 };
 
@@ -1559,7 +1594,7 @@ const validateOneOf = (value, name, oneOf) => {
       ", ",
     );
     const reason = "must be one of: " + allowed;
-    throw new ERR_INVALID_ARG_VALUE(name, value, reason);
+    throw ERR_INVALID_ARG_VALUE(name, value, reason);
   }
 };
 
@@ -1585,7 +1620,7 @@ const validateObject = (value, name, options = null) => {
     (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
-    throw new ERR_INVALID_ARG_TYPE(name, "object", value);
+    throw ERR_INVALID_ARG_TYPE(name, "object", value);
   }
 };
 
@@ -1600,12 +1635,12 @@ const validateObject = (value, name, options = null) => {
 /** @type {validateArray} */
 const validateArray = (value, name, minLength = 0) => {
   // const validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!ArrayIsArray(value)) {
-    throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
+  if (!$isJSArray(value)) {
+    throw ERR_INVALID_ARG_TYPE(name, "Array", value);
   }
   if (value.length < minLength) {
     const reason = `must be longer than ${minLength}`;
-    throw new ERR_INVALID_ARG_VALUE(name, value, reason);
+    throw ERR_INVALID_ARG_VALUE(name, value, reason);
   }
 };
 
@@ -1618,7 +1653,11 @@ const validateArray = (value, name, minLength = 0) => {
 
 /** @type {validateString} */
 function validateString(value, name) {
-  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
+  if (typeof value !== "string") throw ERR_INVALID_ARG_TYPE(name, "string", value);
+}
+
+function isInt32(value) {
+  return value === (value | 0);
 }
 
 function nullCheck(path, propName, throwError = true) {
@@ -1634,7 +1673,7 @@ function nullCheck(path, propName, throwError = true) {
     return;
   }
 
-  const err = new ERR_INVALID_ARG_VALUE(propName, path, "must be a string or Uint8Array without null bytes");
+  const err = ERR_INVALID_ARG_VALUE(propName, path, "must be a string or Uint8Array without null bytes");
   if (throwError) {
     throw err;
   }
@@ -1643,7 +1682,7 @@ function nullCheck(path, propName, throwError = true) {
 
 function validatePath(path, propName = "path") {
   if (typeof path !== "string" && !isUint8Array(path)) {
-    throw new ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], path);
+    throw ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], path);
   }
 
   const err = nullCheck(path, propName, false);
@@ -1689,7 +1728,7 @@ class AbortError extends Error {
   name = "AbortError";
   constructor(message = "The operation was aborted", options = undefined) {
     if (options !== undefined && typeof options !== "object") {
-      throw new ERR_INVALID_ARG_TYPE("options", "Object", options);
+      throw ERR_INVALID_ARG_TYPE("options", "Object", options);
     }
     super(message, options);
   }
@@ -1741,7 +1780,7 @@ function genericNodeError(message, options) {
 //   "ERR_INVALID_ARG_TYPE",
 //   (name, expected, actual) => {
 //     assert(typeof name === "string", "'name' must be a string");
-//     if (!ArrayIsArray(expected)) {
+//     if (!$isJSArray(expected)) {
 //       expected = [expected];
 //     }
 
@@ -1858,7 +1897,9 @@ function ERR_OUT_OF_RANGE(str, range, input, replaceDefaultBoolean = false) {
 }
 
 function ERR_CHILD_PROCESS_STDIO_MAXBUFFER(stdio) {
-  return Error(`${stdio} maxBuffer length exceeded`);
+  const err = Error(`${stdio} maxBuffer length exceeded`);
+  err.code = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+  return err;
 }
 
 function ERR_UNKNOWN_SIGNAL(name) {
@@ -1874,11 +1915,15 @@ function ERR_INVALID_ARG_TYPE(name, type, value) {
 }
 
 function ERR_INVALID_OPT_VALUE(name, value) {
-  return new TypeError(`The value "${value}" is invalid for option "${name}"`);
+  const err = new TypeError(`The value "${value}" is invalid for option "${name}"`);
+  err.code = "ERR_INVALID_OPT_VALUE";
+  return err;
 }
 
 function ERR_INVALID_ARG_VALUE(name, value, reason) {
-  return new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
+  const err = new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
+  err.code = "ERR_INVALID_ARG_VALUE";
+  return err;
 }
 
 function ERR_CHILD_PROCESS_IPC_REQUIRED(name) {

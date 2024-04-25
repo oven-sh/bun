@@ -28,7 +28,7 @@ function isReadableStream(value) {
 }
 
 function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
+  if (typeof value !== "boolean") throw ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
 $debug("node:stream loaded");
@@ -54,7 +54,7 @@ const validateObject = (value, name, options = null) => {
     (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
-    throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
+    throw ERR_INVALID_ARG_TYPE(name, "Object", value);
   }
 };
 
@@ -67,7 +67,7 @@ const validateObject = (value, name, options = null) => {
 
 /** @type {validateString} */
 function validateString(value, name) {
-  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
+  if (typeof value !== "string") throw ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
 //------------------------------------------------------------------------------
@@ -87,9 +87,6 @@ var require_primordials = __commonJS({
   "node_modules/readable-stream/lib/ours/primordials.js"(exports, module) {
     "use strict";
     module.exports = {
-      ArrayIsArray(self) {
-        return Array.isArray(self);
-      },
       ArrayPrototypeIncludes(self, el) {
         return self.includes(el);
       },
@@ -150,7 +147,6 @@ var require_primordials = __commonJS({
       PromiseReject(err) {
         return Promise.reject(err);
       },
-      ReflectApply: $getByIdDirect(Reflect, "apply"),
       RegExpPrototypeTest(self, value) {
         return self.test(value);
       },
@@ -622,7 +618,6 @@ var require_validators = __commonJS({
   "node_modules/readable-stream/lib/internal/validators.js"(exports, module) {
     "use strict";
     var {
-      ArrayIsArray,
       ArrayPrototypeIncludes,
       ArrayPrototypeJoin,
       ArrayPrototypeMap,
@@ -901,7 +896,7 @@ var require_utils = __commonJS({
       if (typeof (rState === null || rState === void 0 ? void 0 : rState.ended) !== "boolean") return null;
       return rState.ended;
     }
-    function isReadableFinished(stream, strict) {
+    function isReadableFinished(stream, strict?: boolean) {
       if (!isReadableNodeStream(stream)) return null;
       const rState = stream._readableState;
       if (rState !== null && rState !== void 0 && rState.errored) return false;
@@ -1879,7 +1874,7 @@ var require_destroy = __commonJS({
         w.finished = w.writable === false;
       }
     }
-    function errorOrDestroy(stream, err, sync) {
+    function errorOrDestroy(stream, err, sync?: boolean) {
       const r = stream?._readableState;
       const w = stream?._writableState;
       if ((w && w.destroyed) || (r && r.destroyed)) {
@@ -2004,7 +1999,7 @@ var require_destroy = __commonJS({
 var require_legacy = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/legacy.js"(exports, module) {
     "use strict";
-    var { ArrayIsArray, ObjectSetPrototypeOf } = require_primordials();
+    var { ObjectSetPrototypeOf } = require_primordials();
 
     function Stream(options) {
       if (!(this instanceof Stream)) return new Stream(options);
@@ -2128,7 +2123,6 @@ var require_add_abort_signal = __commonJS({
 
 // node_modules/readable-stream/lib/internal/streams/state.js
 var { MathFloor, NumberIsInteger } = require_primordials();
-var { ERR_INVALID_ARG_VALUE } = require_errors().codes;
 function highWaterMarkFrom(options, isDuplex, duplexKey) {
   return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
 }
@@ -4636,7 +4630,7 @@ var require_passthrough = __commonJS({
 var require_pipeline = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/pipeline.js"(exports, module) {
     "use strict";
-    var { ArrayIsArray, Promise: Promise2, SymbolAsyncIterator } = require_primordials();
+    var { Promise: Promise2, SymbolAsyncIterator } = require_primordials();
     var eos = require_end_of_stream();
     var { once } = require_util();
     var destroyImpl = require_destroy();
@@ -5135,7 +5129,7 @@ var require_promises = __commonJS({
 var require_stream = __commonJS({
   "node_modules/readable-stream/lib/stream.js"(exports, module) {
     "use strict";
-    var { ObjectDefineProperty, ObjectKeys, ReflectApply } = require_primordials();
+    var { ObjectDefineProperty, ObjectKeys } = require_primordials();
     var {
       promisify: { custom: customPromisify },
     } = require_util();
@@ -5161,7 +5155,7 @@ var require_stream = __commonJS({
         if (new.target) {
           throw ERR_ILLEGAL_CONSTRUCTOR();
         }
-        return Stream.Readable.from(ReflectApply(op, this, args));
+        return Stream.Readable.from(op.$apply(this, args));
       };
       const op = streamReturningOperators[key];
       ObjectDefineProperty(fn, "name", {
@@ -5182,7 +5176,7 @@ var require_stream = __commonJS({
         if (new.target) {
           throw ERR_ILLEGAL_CONSTRUCTOR();
         }
-        return ReflectApply(op, this, args);
+        return op.$apply(this, args);
       };
       const op = promiseReturningOperators[key];
       ObjectDefineProperty(fn, "name", {
@@ -5364,7 +5358,7 @@ function createNativeStreamReadable(Readable) {
     }
 
     // maxToRead can be the highWaterMark (by default) or the remaining amount of the stream to read
-    // This is so the the consumer of the stream can terminate the stream early if they know
+    // This is so the consumer of the stream can terminate the stream early if they know
     // how many bytes they want to read (ie. when reading only part of a file)
     #getRemainingChunk(maxToRead = this.#highWaterMark) {
       var chunk = this.#remainingChunk;

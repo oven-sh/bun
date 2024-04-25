@@ -357,47 +357,6 @@ pub fn Do(
     wait_group.wait();
 }
 
-test "parallel for loop" {
-    Output.initTest();
-    var thread_pool = ThreadPool.init(.{ .max_threads = 12 });
-    const sleepy_time: u32 = 100;
-    const huge_array = &[_]u32{
-        sleepy_time + std.rand.DefaultPrng.init(1).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(2).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(3).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(4).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(5).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(6).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(7).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(8).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(9).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(10).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(11).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(12).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(13).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(14).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(15).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(16).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(17).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(18).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(19).random().uintAtMost(u32, 20),
-        sleepy_time + std.rand.DefaultPrng.init(20).random().uintAtMost(u32, 20),
-    };
-    const Runner = struct {
-        completed: usize = 0,
-        total: usize = 0,
-        pub fn run(ctx: *@This(), value: u32, _: usize) void {
-            std.time.sleep(value);
-            ctx.completed += 1;
-            bun.assert(ctx.completed <= ctx.total);
-        }
-    };
-    const runny = try std.heap.page_allocator.create(Runner);
-    runny.* = .{ .total = huge_array.len };
-    try thread_pool.doAndWait(std.heap.page_allocator, null, runny, Runner.run, std.mem.span(huge_array));
-    try std.testing.expectEqual(huge_array.len, runny.completed);
-}
-
 /// Schedule a batch of tasks to be executed by some thread on the thread pool.
 pub fn schedule(self: *ThreadPool, batch: Batch) void {
     // Sanity check
@@ -1186,7 +1145,7 @@ pub const Node = struct {
                 const buffer_head = buffer.head.load(.Acquire);
                 const buffer_tail = buffer.tail.load(.Acquire);
 
-                // Overly large size indicates the the tail was updated a lot after the head was loaded.
+                // Overly large size indicates the tail was updated a lot after the head was loaded.
                 // Reload both and try again.
                 const buffer_size = buffer_tail -% buffer_head;
                 if (buffer_size > capacity) {

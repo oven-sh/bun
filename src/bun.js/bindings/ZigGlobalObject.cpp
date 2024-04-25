@@ -948,24 +948,6 @@ static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObjec
     return shadow;
 }
 
-extern "C" JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObject* globalObject, void* arg1, void* arg2, const ZigString* visibleInterfaceName)
-{
-    auto& vm = globalObject->vm();
-    JSClassRef jsClass = reinterpret_cast<JSClassRef>(arg1);
-    JSClassRef protoClass = reinterpret_cast<JSClassRef>(arg2);
-    JSObjectRef objectRef = JSObjectMakeConstructor(reinterpret_cast<JSContextRef>(globalObject), protoClass, jsClass->callAsConstructor);
-    JSObjectRef wrappedRef = JSObjectMake(reinterpret_cast<JSContextRef>(globalObject), jsClass, nullptr);
-    JSC::JSObject* object = JSC::JSValue::decode(reinterpret_cast<JSC__JSValue>(objectRef)).getObject();
-    JSC::JSObject* wrapped = JSC::JSValue::decode(reinterpret_cast<JSC__JSValue>(wrappedRef)).getObject();
-    object->setPrototypeDirect(vm, wrapped);
-    JSString* nameString = JSC::jsNontrivialString(vm, Zig::toString(*visibleInterfaceName));
-    object->putDirect(vm, vm.propertyNames->name, nameString, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
-    object->putDirect(vm, vm.propertyNames->toStringTagSymbol,
-        nameString, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
-
-    return JSC::JSValue::encode(JSC::JSValue(object));
-}
-
 extern "C" int Bun__VM__scriptExecutionStatus(void*);
 JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject*)
 {
@@ -1576,7 +1558,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
         LChar* ptr;
         unsigned length = encodedString.length();
         auto dest = WTF::String::createUninitialized(length, ptr);
-        WTF::StringImpl::copyCharacters(ptr, encodedString.characters16(), length);
+        WTF::StringImpl::copyCharacters(ptr, { encodedString.characters16(), length });
         encodedString = WTFMove(dest);
     }
 
@@ -3884,8 +3866,25 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
         resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
     }
 
+    // This gets passed through the "parameters" argument to moduleLoaderFetch.
+    // Therefore, we modify it in place.
+    if (parameters && parameters.isObject()) {
+        auto* object = parameters.toObject(globalObject);
+        if (auto withObject = object->getIfPropertyExists(globalObject, vm.propertyNames->withKeyword)) {
+            if (withObject.isObject()) {
+                auto* with = jsCast<JSObject*>(withObject);
+                if (auto type = with->getIfPropertyExists(globalObject, vm.propertyNames->type)) {
+                    if (type.isString()) {
+                        const auto typeString = type.toWTFString(globalObject);
+                        parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
+                    }
+                }
+            }
+        }
+    }
+
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
-        JSC::jsUndefined(), parameters, JSC::jsUndefined());
+        JSC::jsUndefined(), parameters, jsUndefined());
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
     return result;

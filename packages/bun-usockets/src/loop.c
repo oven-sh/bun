@@ -294,6 +294,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             }
         break;
     }
+    case POLL_TYPE_SOCKET_SHUT_DOWN:
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;

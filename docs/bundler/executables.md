@@ -55,13 +55,14 @@ bun build --compile --target=bun-windows-x64-baseline ./path/to/my/app.ts --outf
 
 # To explicitly only support CPUs from 2013 and later, use the modern version (haswell)
 bun build --compile --target=bun-windows-x64-modern ./path/to/my/app.ts --outfile myapp
+
+# note: if no .exe extension is provided, Bun will automatically add it for Windows executables
 ```
 
 To build for macOS arm64:
 
 ```sh
 bun build --compile --target=bun-darwin-arm64 ./path/to/my/app.ts --outfile myapp
-# note: if no .exe extension is provided, Bun will automatically add it for Windows executables
 ```
 
 To build for macOS x64:

@@ -6747,7 +6747,7 @@ pub const PackageManager = struct {
                                 logger.Loc.Empty,
                             ).clone(allocator);
                             request.e_string = new_dependencies[k].value.?.data.e_string;
-                            if (request.is_aliased) continue :outer;
+                            continue :outer;
                         }
                     }
                 }

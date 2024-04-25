@@ -1896,7 +1896,7 @@ pub const PackageInstall = struct {
         if (comptime Environment.isWindows) {
             bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
                 if (err == error.ENOTDIR) {
-                    _ = bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap();
+                    _ = bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath);
                 }
             };
         } else {

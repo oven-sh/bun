@@ -857,7 +857,7 @@ pub const RunCommand = struct {
             } else {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
-            Output.prettyErrorln("error loading current directory", .{});
+            Output.prettyErrorln(("Could not read the current directory. Please check if the directory exists and your application has the necessary permissions.", .{}));
             Output.flush();
             return error.CouldntReadCurrentDirectory;
         };

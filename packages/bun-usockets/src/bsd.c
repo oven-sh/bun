@@ -37,6 +37,7 @@
 #include <errno.h>
 #endif
 
+#define HAS_MSGX (defined(__APPLE__) && defined(__aarch64__))
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
@@ -71,7 +72,9 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
     // so that we can get rid of this code.
     // One of the weird things is that once a non-empty message has been sent on the socket,
     // empty messages start working as well. Bizzare.
+#ifdef HAS_MSGX
     if (sendbuf->has_empty) {
+#endif
         for (int i = 0; i < sendbuf->num; i++) {
             while (1) {
                 ssize_t ret = sendmsg(fd, &sendbuf->msgvec[i].msg_hdr, flags);
@@ -84,11 +87,13 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
             }
         }
         return sendbuf->num;
+#ifdef HAS_MSGX
     }
     while (1) {
         int ret = sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
         if (ret >= 0 || errno != EINTR) return ret;
     }
+#endif
 #else
     while (1) {
         int ret = sendmmsg(fd, sendbuf->msgvec, sendbuf->num, flags | MSG_NOSIGNAL);
@@ -110,10 +115,26 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
         return 1;
     }
 #elif defined(__APPLE__)
+#ifdef HAS_MSGX
     while (1) {
-        int ret = recvmsg_x(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
+        int ret = recvmsg_x(fd, recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
         if (ret >= 0 || errno != EINTR) return ret;
     }
+#else
+    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; ++i) {
+        while (1) {
+            ssize_t ret = recvmsg(fd, &recvbuf->msgvec[i].msg_hdr, flags);
+            if (ret < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                return ret;
+            }
+            recvbuf->msgvec[i].msg_len = ret;
+            break;
+        }
+    }
+    return LIBUS_UDP_RECV_COUNT;
+#endif
 #else
     while (1) {
         int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags, 0);

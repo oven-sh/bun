@@ -1125,9 +1125,9 @@ pub const PosixSpawnResult = struct {
                         }
                     }
 
-                    if (err == .NOSYS) {
+                    if (err == .NOSYS or err == .NOTSUP or err == .PERM or err == .ACCESS) {
                         WaiterThread.setShouldUseWaiterThread();
-                        return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
+                        return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
                     }
 
                     var status: u32 = 0;
@@ -1424,9 +1424,19 @@ pub fn spawnProcessPosix(
         argv,
         envp,
     );
+    var failed_after_spawn = false;
+    defer {
+        if (failed_after_spawn) {
+            for (to_close_on_error.items) |fd| {
+                _ = bun.sys.close(fd);
+            }
+            to_close_on_error.clearAndFree();
+        }
+    }
 
     switch (spawn_result) {
         .err => {
+            failed_after_spawn = true;
             return .{ .err = spawn_result.err };
         },
         .result => |pid| {
@@ -1439,7 +1449,12 @@ pub fn spawnProcessPosix(
                     .result => |pidfd| {
                         spawned.pidfd = pidfd;
                     },
-                    .err => {},
+                    .err => |err| {
+                        if (!WaiterThread.shouldUseWaiterThread()) {
+                            failed_after_spawn = true;
+                            return .{ .err = err };
+                        }
+                    },
                 }
             }
 

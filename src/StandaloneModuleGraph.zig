@@ -462,7 +462,7 @@ pub const StandaloneModuleGraph = struct {
         return cloned_executable_fd;
     }
 
-    pub const CompileTarget = @import("./compile_target.zig").CompileTarget;
+    pub const CompileTarget = @import("./compile_target.zig");
 
     pub fn download(allocator: std.mem.Allocator, target: *const CompileTarget, env: *bun.DotEnv.Loader) ![:0]const u8 {
         var exe_path_buf: bun.PathBuffer = undefined;

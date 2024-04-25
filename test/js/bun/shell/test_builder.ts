@@ -216,34 +216,34 @@ export function createTestBuilder(path: string) {
     }
 
     async doChecks(stdout: Buffer, stderr: Buffer, exitCode: number): Promise<void> {
-        const tempdir = this.tempdir || "NO_TEMP_DIR";
-        if (this.expected_stdout !== undefined) {
-          if (typeof this.expected_stdout === "string") {
-            expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
-          } else {
-            this.expected_stdout(stdout.toString(), tempdir);
-          }
+      const tempdir = this.tempdir || "NO_TEMP_DIR";
+      if (this.expected_stdout !== undefined) {
+        if (typeof this.expected_stdout === "string") {
+          expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
+        } else {
+          this.expected_stdout(stdout.toString(), tempdir);
         }
-        if (this.expected_stderr !== undefined) {
-          if (typeof this.expected_stderr === "string") {
-            expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
-          } else if (typeof this.expected_stderr === "function") {
-            this.expected_stderr(stderr.toString(), tempdir);
-          } else {
-            expect(stderr.toString()).toContain(this.expected_stderr.contains);
-          }
+      }
+      if (this.expected_stderr !== undefined) {
+        if (typeof this.expected_stderr === "string") {
+          expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
+        } else if (typeof this.expected_stderr === "function") {
+          this.expected_stderr(stderr.toString(), tempdir);
+        } else {
+          expect(stderr.toString()).toContain(this.expected_stderr.contains);
         }
-        if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
+      }
+      if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
-        for (const [filename, expected_raw] of Object.entries(this.file_equals)) {
-          const expected = typeof expected_raw === "string" ? expected_raw : await expected_raw();
-          const actual = await Bun.file(join(this.tempdir!, filename)).text();
-          expect(actual).toEqual(expected);
-        }
+      for (const [filename, expected_raw] of Object.entries(this.file_equals)) {
+        const expected = typeof expected_raw === "string" ? expected_raw : await expected_raw();
+        const actual = await Bun.file(join(this.tempdir!, filename)).text();
+        expect(actual).toEqual(expected);
+      }
 
-        for (const fsname of this._doesNotExist) {
-          expect(fs.existsSync(join(this.tempdir!, fsname))).toBeFalsy();
-        }
+      for (const fsname of this._doesNotExist) {
+        expect(fs.existsSync(join(this.tempdir!, fsname))).toBeFalsy();
+      }
     }
 
     async run(): Promise<undefined> {
@@ -267,7 +267,7 @@ export function createTestBuilder(path: string) {
         await this.doChecks(stdout, stderr, exitCode);
       } catch (err_) {
         const err: ShellError = err_ as any;
-        const { stdout, stderr, exitCode } = err
+        const { stdout, stderr, exitCode } = err;
         if (this.expected_error === undefined) {
           this.doChecks(stdout, stderr, exitCode);
           return;
@@ -283,7 +283,7 @@ export function createTestBuilder(path: string) {
           expect(e.stdout.toString()).toEqual(this.expected_error.stdout.toString());
           expect(e.stderr.toString()).toEqual(this.expected_error.stderr.toString());
         }
-        return undefined
+        return undefined;
       }
 
       // return output;

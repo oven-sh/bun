@@ -13,7 +13,7 @@ const p = process.platform === "win32" ? (s: string) => s.replaceAll("/", "\\") 
 
 $.nothrow();
 
-const builtinDisabled = (name: string) => false
+const builtinDisabled = (name: string) => false;
 
 describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cp -v lmao.txt lmao2.txt`

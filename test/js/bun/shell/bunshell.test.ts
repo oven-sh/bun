@@ -102,7 +102,7 @@ describe("bunshell", () => {
 
       expect(async () => {
         await TestBuilder.command`echo hi > \\${buf}`.error("Redirection with no file").run();
-      })
+      });
     });
 
     test("in command position", async () => {

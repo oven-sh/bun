@@ -10,6 +10,7 @@ describe("CryptoHasher", () => {
   it("CryptoHasher.algorithms", () => {
     expect(CryptoHasher.algorithms).toEqual([
       "blake2b256",
+      "blake2b512",
       "md4",
       "md5",
       "ripemd160",
@@ -18,43 +19,47 @@ describe("CryptoHasher", () => {
       "sha256",
       "sha384",
       "sha512",
+      "sha512-224",
       "sha512-256",
+      "sha3-224",
+      "sha3-256",
+      "sha3-384",
+      "sha3-512",
     ]);
   });
 
-  it("CryptoHasher md5", () => {
-    var hasher = new CryptoHasher("md5");
-    hasher.update("hello world");
-    expect(hasher.digest("hex")).toBe("5eb63bbbe01eeed093cb22bb8f5acdc3");
-    expect(hasher.algorithm).toBe("md5");
-  });
+  // prettier-ignore
+  const expected = {
+    blake2b256: "256c83b297114d201b30179f3f0ef0cace9783622da5974326b436178aeef610",
+    blake2b512: "021ced8799296ceca557832ab941a50b4a11f83478cf141f51f933f653ab9fbcc05a037cddbed06e309bf334942c4e58cdf1a46e237911ccd7fcf9787cbc7fd0",
+    md4: "aa010fbc1d14c795d86ef98c95479d17",
+    md5: "5eb63bbbe01eeed093cb22bb8f5acdc3",
+    ripemd160: "98c615784ccb5fe5936fbc0cbe9dfdb408d92f0f",
+    sha1: "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed",
+    sha224: "2f05477fc24bb4faefd86517156dafdecec45b8ad3cf2522a563582b",
+    sha256: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+    sha384: "fdbd8e75a67f29f701a4e040385e2e23986303ea10239211af907fcbb83578b3e417cb71ce646efd0819dd8c088de1bd",
+    sha512: "309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f",
+    "sha512-224": "22e0d52336f64a998085078b05a6e37b26f8120f43bf4db4c43a64ee",
+    "sha512-256": "0ac561fac838104e3f2e4ad107b4bee3e938bf15f2b15f009ccccd61a913f017",
+    "sha3-224": "dfb7f18c77e928bb56faeb2da27291bd790bc1045cde45f3210bb6c5",
+    "sha3-256": "644bcc7e564373040999aac89e7622f3ca71fba1d972fd94a31c3bfbf24e3938",
+    "sha3-384": "83bff28dde1b1bf5810071c6643c08e5b05bdb836effd70b403ea8ea0a634dc4997eb1053aa3593f590f9c63630dd90b",
+    "sha3-512": "840006653e9ac9e95117a15c915caab81662918e925de9e004f774ff82d7079a40d4d27b1b372657c61d46d470304c88c788b3a4527ad074d1dccbee5dbaa99a",
+  } as const;
 
-  it("CryptoHasher blake2b256", () => {
-    var hasher = new CryptoHasher("blake2b256");
-    hasher.update("hello world");
-    expect(hasher.algorithm).toBe("blake2b256");
+  for (const algorithm of CryptoHasher.algorithms) {
+    it(`new CryptoHasher ${algorithm}`, () => {
+      var hasher = new CryptoHasher(algorithm);
+      expect(hasher.algorithm).toEqual(algorithm);
+      hasher.update("hello world");
+      expect(hasher.digest("hex")).toEqual(expected[algorithm]);
+    });
 
-    expect(hasher.digest("hex")).toBe(
-      //  b2sum --length=256
-      "256c83b297114d201b30179f3f0ef0cace9783622da5974326b436178aeef610",
-    );
-  });
-
-  it("CryptoHasher sha512", () => {
-    var hasher = new CryptoHasher("sha512");
-    hasher.update("hello world");
-    expect(hasher.digest("hex")).toBe(
-      "309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f",
-    );
-    expect(hasher.algorithm).toBe("sha512");
-  });
-
-  it("CryptoHasher sha256", () => {
-    var hasher = new CryptoHasher("sha256");
-    hasher.update("hello world");
-    expect(hasher.digest("hex")).toBe("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
-    expect(hasher.algorithm).toBe("sha256");
-  });
+    it(`CryptoHasher.hash ${algorithm}`, () => {
+      expect(CryptoHasher.hash(algorithm, "hello world").toString("hex")).toEqual(expected[algorithm]);
+    });
+  }
 
   it("CryptoHasher sha256 multi-part", () => {
     var hasher = new CryptoHasher("sha256");

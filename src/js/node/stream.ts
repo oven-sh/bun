@@ -145,7 +145,6 @@ var require_primordials = __commonJS({
       PromiseReject(err) {
         return Promise.reject(err);
       },
-      ReflectApply: $getByIdDirect(Reflect, "apply"),
       RegExpPrototypeTest(self, value) {
         return self.test(value);
       },
@@ -5130,7 +5129,7 @@ var require_promises = __commonJS({
 var require_stream = __commonJS({
   "node_modules/readable-stream/lib/stream.js"(exports, module) {
     "use strict";
-    var { ObjectDefineProperty, ObjectKeys, ReflectApply } = require_primordials();
+    var { ObjectDefineProperty, ObjectKeys } = require_primordials();
     var {
       promisify: { custom: customPromisify },
     } = require_util();
@@ -5156,7 +5155,7 @@ var require_stream = __commonJS({
         if (new.target) {
           throw ERR_ILLEGAL_CONSTRUCTOR();
         }
-        return Stream.Readable.from(ReflectApply(op, this, args));
+        return Stream.Readable.from(op.$apply(this, args));
       };
       const op = streamReturningOperators[key];
       ObjectDefineProperty(fn, "name", {
@@ -5177,7 +5176,7 @@ var require_stream = __commonJS({
         if (new.target) {
           throw ERR_ILLEGAL_CONSTRUCTOR();
         }
-        return ReflectApply(op, this, args);
+        return op.$apply(this, args);
       };
       const op = promiseReturningOperators[key];
       ObjectDefineProperty(fn, "name", {

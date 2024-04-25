@@ -4,8 +4,8 @@ import { beforeAll, describe, test, expect, beforeEach } from "bun:test";
 import { sortedShellOutput } from "../util";
 import { tempDirWithFiles } from "harness";
 import fs from "fs";
-// import { shellInternals } from "bun:internal-for-testing";
-// const { builtinDisabled } = shellInternals;
+import { shellInternals } from "bun:internal-for-testing";
+const { builtinDisabled } = shellInternals;
 
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -13,7 +13,6 @@ const p = process.platform === "win32" ? (s: string) => s.replaceAll("/", "\\") 
 
 $.nothrow();
 
-const builtinDisabled = (name: string) => false;
 
 describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cp -v lmao.txt lmao2.txt`

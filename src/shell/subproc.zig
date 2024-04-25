@@ -208,8 +208,10 @@ pub const ShellSubprocess = struct {
                 }
             }
             switch (stdio) {
-                // The shell never uses this
-                .dup2 => @panic("Unimplemented stdin dup2"),
+                .dup2 => {
+                    // The shell never uses this
+                    @panic("Unimplemented stdin dup2");
+                },
                 .pipe => {
                     // The shell never uses this
                     @panic("Unimplemented stdin pipe");
@@ -887,7 +889,7 @@ pub const ShellSubprocess = struct {
         var send_exit_notification = false;
 
         if (comptime !is_sync) {
-            switch (subprocess.process.watch(event_loop)) {
+            switch (subprocess.process.watch()) {
                 .result => {},
                 .err => {
                     send_exit_notification = true;

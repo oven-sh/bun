@@ -18746,9 +18746,11 @@ pub extern fn EVP_sha224() *const EVP_MD;
 pub extern fn EVP_sha256() *const EVP_MD;
 pub extern fn EVP_sha384() *const EVP_MD;
 pub extern fn EVP_sha512() *const EVP_MD;
+pub extern fn EVP_sha512_224() *const EVP_MD;
 pub extern fn EVP_sha512_256() *const EVP_MD;
 
 pub extern fn EVP_blake2b256() *const EVP_MD;
+pub extern fn EVP_blake2b512() *const EVP_MD;
 
 pub extern fn ERR_clear_error() void;
 pub extern fn ERR_set_mark() c_int;

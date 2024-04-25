@@ -781,7 +781,7 @@ describe("crypto.KeyObjects", () => {
   });
 
   describe("Test async elliptic curve key generation with 'jwk' encoding and RSA.", () => {
-    [256, 1024, 2048].forEach(modulusLength => {
+    [512, 1024, 2048, 4096].forEach(modulusLength => {
       test(`should work with ${modulusLength}`, async () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         generateKeyPair(
@@ -1140,7 +1140,7 @@ describe("crypto.KeyObjects", () => {
   });
 
   describe("Test sync elliptic curve key generation with 'jwk' encoding and RSA.", () => {
-    [256, 1024, 2048].forEach(modulusLength => {
+    [512, 1024, 2048, 4096].forEach(modulusLength => {
       test(`should work with ${modulusLength}`, async () => {
         const { publicKey, privateKey } = generateKeyPairSync("rsa", {
           modulusLength,

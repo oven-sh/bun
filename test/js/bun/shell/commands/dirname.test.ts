@@ -3,7 +3,6 @@ import { describe, test, expect } from "bun:test";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
-$.nothrow();
 describe("dirname", async () => {
   TestBuilder.command`dirname`.exitCode(1).stdout("").stderr("usage: dirname string\n").runAsTest("shows usage");
 

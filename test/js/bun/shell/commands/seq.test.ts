@@ -3,7 +3,6 @@ import { describe } from "bun:test";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
-$.nothrow();
 describe("seq", async () => {
   TestBuilder.command`seq`
     .exitCode(1)

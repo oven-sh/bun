@@ -5,7 +5,6 @@ const TestBuilder = createTestBuilder(import.meta.path);
 import { sortedShellOutput } from "../util";
 import { join } from "path";
 
-$.nothrow();
 describe("exit", async () => {
   TestBuilder.command`exit`.exitCode(0).runAsTest("works");
 

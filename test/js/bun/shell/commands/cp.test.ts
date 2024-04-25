@@ -4,8 +4,8 @@ import { beforeAll, describe, test, expect, beforeEach } from "bun:test";
 import { sortedShellOutput } from "../util";
 import { tempDirWithFiles } from "harness";
 import fs from "fs";
-import { shellInternals } from "bun:internal-for-testing";
-const { builtinDisabled } = shellInternals;
+// import { shellInternals } from "bun:internal-for-testing";
+// const { builtinDisabled } = shellInternals;
 
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -13,25 +13,27 @@ const p = process.platform === "win32" ? (s: string) => s.replaceAll("/", "\\") 
 
 $.nothrow();
 
+const builtinDisabled = (name: string) => false
+
 describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cp -v lmao.txt lmao2.txt`
     .stdout(p("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao2.txt\n"))
     .ensureTempDir()
     .testMini()
-    .fileEquals("lmao2.txt", await $`cat ${import.meta.filename}`.text())
+    .fileEquals("lmao2.txt", () => $`cat ${import.meta.filename}`.text())
     .runAsTest("file -> file");
 
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; touch lmao2.txt; cp -v lmao.txt lmao2.txt`
     .stdout(p("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao2.txt\n"))
     .ensureTempDir()
     .testMini()
-    .fileEquals("lmao2.txt", await $`cat ${import.meta.filename}`.text())
+    .fileEquals("lmao2.txt", () => $`cat ${import.meta.filename}`.text())
     .runAsTest("file -> existing file replaces contents");
 
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; mkdir lmao2; cp -v lmao.txt lmao2`
     .ensureTempDir()
     .stdout(p("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao2/lmao.txt\n"))
-    .fileEquals("lmao2/lmao.txt", await $`cat ${import.meta.filename}`.text())
+    .fileEquals("lmao2/lmao.txt", () => $`cat ${import.meta.filename}`.text())
     .testMini()
     .runAsTest("file -> dir");
 
@@ -49,8 +51,8 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
         p("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao3/lmao.txt\n$TEMP_DIR/lmao2.txt -> $TEMP_DIR/lmao3/lmao2.txt\n"),
       ),
     )
-    .fileEquals("lmao3/lmao.txt", await $`cat ${import.meta.filename}`.text())
-    .fileEquals("lmao3/lmao2.txt", await $`cat ${import.meta.filename}`.text())
+    .fileEquals("lmao3/lmao.txt", () => $`cat ${import.meta.filename}`.text())
+    .fileEquals("lmao3/lmao2.txt", () => $`cat ${import.meta.filename}`.text())
     .testMini()
     .runAsTest("file+ -> dir");
 

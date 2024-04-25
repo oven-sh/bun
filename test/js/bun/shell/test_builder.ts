@@ -25,7 +25,7 @@ export function createTestBuilder(path: string) {
     expected_stderr: string | ((stderr: string, tempdir: string) => void) | { contains: string } = "";
     expected_exit_code: number = 0;
     expected_error: ShellError | string | boolean | undefined = undefined;
-    file_equals: { [filename: string]: string } = {};
+    file_equals: { [filename: string]: string | (() => string | Promise<string>) } = {};
     _doesNotExist: string[] = [];
     _timeout: number | undefined = undefined;
 
@@ -181,7 +181,7 @@ export function createTestBuilder(path: string) {
       return this;
     }
 
-    fileEquals(filename: string, expected: string): this {
+    fileEquals(filename: string, expected: string | (() => string | Promise<string>)): this {
       this.getTempDir();
       this.file_equals[filename] = expected;
       return this;
@@ -215,16 +215,7 @@ export function createTestBuilder(path: string) {
       return this;
     }
 
-    async run(): Promise<undefined> {
-      try {
-        let finalPromise = Bun.$(this._scriptStr, ...this._expresssions);
-        if (this.tempdir) finalPromise = finalPromise.cwd(this.tempdir);
-        if (this._cwd) finalPromise = finalPromise.cwd(this._cwd);
-        if (this._env) finalPromise = finalPromise.env(this._env);
-        if (this._quiet) finalPromise = finalPromise.quiet();
-        const output = await finalPromise;
-
-        const { stdout, stderr, exitCode } = output!;
+    async doChecks(stdout: Buffer, stderr: Buffer, exitCode: number): Promise<void> {
         const tempdir = this.tempdir || "NO_TEMP_DIR";
         if (this.expected_stdout !== undefined) {
           if (typeof this.expected_stdout === "string") {
@@ -244,7 +235,8 @@ export function createTestBuilder(path: string) {
         }
         if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
-        for (const [filename, expected] of Object.entries(this.file_equals)) {
+        for (const [filename, expected_raw] of Object.entries(this.file_equals)) {
+          const expected = typeof expected_raw === "string" ? expected_raw : await expected_raw();
           const actual = await Bun.file(join(this.tempdir!, filename)).text();
           expect(actual).toEqual(expected);
         }
@@ -252,8 +244,34 @@ export function createTestBuilder(path: string) {
         for (const fsname of this._doesNotExist) {
           expect(fs.existsSync(join(this.tempdir!, fsname))).toBeFalsy();
         }
-      } catch (err) {
-        if (this.expected_error === undefined) throw err;
+    }
+
+    async run(): Promise<undefined> {
+      if (!insideTestScope) {
+        const err = new Error("TestBuilder.run() must be called inside a test scope");
+        test("TestBuilder.run() must be called inside a test scope", () => {
+          throw err;
+        });
+        return Promise.resolve(undefined);
+      }
+
+      try {
+        let finalPromise = Bun.$(this._scriptStr, ...this._expresssions);
+        if (this.tempdir) finalPromise = finalPromise.cwd(this.tempdir);
+        if (this._cwd) finalPromise = finalPromise.cwd(this._cwd);
+        if (this._env) finalPromise = finalPromise.env(this._env);
+        if (this._quiet) finalPromise = finalPromise.quiet();
+        const output = await finalPromise;
+
+        const { stdout, stderr, exitCode } = output!;
+        await this.doChecks(stdout, stderr, exitCode);
+      } catch (err_) {
+        const err: ShellError = err_ as any;
+        const { stdout, stderr, exitCode } = err
+        if (this.expected_error === undefined) {
+          this.doChecks(stdout, stderr, exitCode);
+          return;
+        }
         if (this.expected_error === true) return undefined;
         if (this.expected_error === false) expect(err).toBeUndefined();
         if (typeof this.expected_error === "string") {
@@ -265,6 +283,7 @@ export function createTestBuilder(path: string) {
           expect(e.stdout.toString()).toEqual(this.expected_error.stdout.toString());
           expect(e.stderr.toString()).toEqual(this.expected_error.stderr.toString());
         }
+        return undefined
       }
 
       // return output;

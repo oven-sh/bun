@@ -23,7 +23,7 @@ All imported files and packages are bundled into the executable, along with a co
 
 ## Cross-compile to other platforms
 
-To target a different operating system, architecture, or version of Bun, use the `--target` flag.
+The `--target` flag lets you compile your standalone executable for a different operating system, architecture, or version of Bun than the machine you're running `bun build` on.
 
 To build for Linux x64 (most servers):
 

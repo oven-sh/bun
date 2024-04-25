@@ -2692,8 +2692,9 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
                             buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + @as(usize, Scalar.lengths[c]));
                             const copy_len = @intFromPtr(ptr) - @intFromPtr(latin1.ptr);
-                            @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
+                            if (comptime Environment.allow_assert) assert(copy_len <= buf.capacity);
                             buf.items.len = copy_len;
+                            @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
                             any_needs_escape = true;
                             break :scan_and_allocate_lazily;
                         },
@@ -5104,7 +5105,7 @@ pub inline fn charIsAnySlash(char: u8) bool {
 }
 
 pub inline fn startsWithWindowsDriveLetter(s: []const u8) bool {
-    return s.len >= 2 and s[0] == ':' and switch (s[1]) {
+    return s.len > 2 and s[1] == ':' and switch (s[0]) {
         'a'...'z', 'A'...'Z' => true,
         else => false,
     };

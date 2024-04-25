@@ -580,6 +580,7 @@ pub const MarkedArrayBuffer = struct {
             .buffer = ArrayBuffer.fromTypedArray(ctx, value),
         };
     }
+
     pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,

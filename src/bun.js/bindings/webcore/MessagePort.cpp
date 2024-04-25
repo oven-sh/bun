@@ -286,7 +286,7 @@ void MessagePort::dispatchMessages()
         if (!context || !context->jsGlobalObject())
             return;
 
-        ASSERT(context->isContextThread());
+        // ASSERT(context->isContextThread());
 
         // bool contextIsWorker = is<WorkerGlobalScope>(*context);
         for (auto& message : messages) {

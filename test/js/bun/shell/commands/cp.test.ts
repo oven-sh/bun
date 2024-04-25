@@ -115,69 +115,62 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     const tmpdir: string = tempDirWithFiles("cp-uutils", tempFiles);
     const mini_tmpdir: string = tempDirWithFiles("cp-uutils-mini", tempFiles);
 
-    // TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_DEST}`
-    //   .ensureTempDir(tmpdir)
-    //   .fileEquals(TEST_HELLO_WORLD_DEST, "Hello, World!")
-    //   .testMini({ cwd: mini_tmpdir })
-    //   .runAsTest("cp_cp");
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_DEST}`
+      .ensureTempDir(tmpdir)
+      .fileEquals(TEST_HELLO_WORLD_DEST, "Hello, World!")
+      .testMini({ cwd: mini_tmpdir })
+      .runAsTest("cp_cp");
 
-    // TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_EXISTING_FILE}`
-    //   .ensureTempDir(tmpdir)
-    //   .fileEquals(TEST_EXISTING_FILE, "Hello, World!")
-    //   .testMini({ cwd: mini_tmpdir })
-    //   .runAsTest("cp_existing_target");
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_EXISTING_FILE}`
+      .ensureTempDir(tmpdir)
+      .fileEquals(TEST_EXISTING_FILE, "Hello, World!")
+      .testMini({ cwd: mini_tmpdir })
+      .runAsTest("cp_existing_target");
 
-    // TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_SOURCE} ${TEST_COPY_TO_FOLDER}`
-    //   .ensureTempDir(tmpdir)
-    //   .file(TEST_EXISTING_FILE, "Hello, World!\n")
-    //   .testMini({ cwd: mini_tmpdir })
-    //   .runAsTest("cp_duplicate_files");
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_SOURCE} ${TEST_COPY_TO_FOLDER}`
+      .ensureTempDir(tmpdir)
+      .file(TEST_EXISTING_FILE, "Hello, World!\n")
+      .testMini({ cwd: mini_tmpdir })
+      .runAsTest("cp_duplicate_files");
 
-    // TestBuilder.command`touch a; cp a a`
-    //   .ensureTempDir(tmpdir)
-    //   .stderr_contains("cp: a and a are identical (not copied)\n")
-    //   .exitCode(1)
-    //   .testMini({ cwd: mini_tmpdir })
-    //   .runAsTest("cp_same_file");
+    TestBuilder.command`touch a; cp a a`
+      .ensureTempDir(tmpdir)
+      .stderr_contains("cp: a and a are identical (not copied)\n")
+      .exitCode(1)
+      .testMini({ cwd: mini_tmpdir })
+      .runAsTest("cp_same_file");
 
-    // TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_SOURCE} ${TEST_EXISTING_FILE}`
-    //   .ensureTempDir(tmpdir)
-    //   .stderr_contains(`cp: ${TEST_EXISTING_FILE} is not a directory\n`)
-    //   .exitCode(1)
-    //   .testMini({ cwd: mini_tmpdir })
-    //   .runAsTest("cp_multiple_files_target_is_file");
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_SOURCE} ${TEST_EXISTING_FILE}`
+      .ensureTempDir(tmpdir)
+      .stderr_contains(`cp: ${TEST_EXISTING_FILE} is not a directory\n`)
+      .exitCode(1)
+      .testMini({ cwd: mini_tmpdir })
+      .runAsTest("cp_multiple_files_target_is_file");
 
-    // TestBuilder.command`cp ${TEST_COPY_TO_FOLDER} ${TEST_HELLO_WORLD_DEST}`
-    //   .ensureTempDir(tmpdir)
-    //   .stderr_contains(`cp: ${TEST_COPY_TO_FOLDER} is a directory (not copied)\n`)
-    //   .exitCode(1)
-    //   .testMini({ cwd: mini_tmpdir })
-    //   .runAsTest("cp_directory_not_recursive");
+    TestBuilder.command`cp ${TEST_COPY_TO_FOLDER} ${TEST_HELLO_WORLD_DEST}`
+      .ensureTempDir(tmpdir)
+      .stderr_contains(`cp: ${TEST_COPY_TO_FOLDER} is a directory (not copied)\n`)
+      .exitCode(1)
+      .testMini({ cwd: mini_tmpdir })
+      .runAsTest("cp_directory_not_recursive");
 
-    for (let i = 0; i < 1000; i++) {
-    // TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HOW_ARE_YOU_SOURCE} ${TEST_COPY_TO_FOLDER}`
-    //   .ensureTempDir(tmpdir)
-    //   .fileEquals(TEST_COPY_TO_FOLDER_FILE, "Hello, World!")
-    //   .fileEquals(TEST_HOW_ARE_YOU_DEST, "How are you?")
-    //   .testMini({ cwd: mini_tmpdir })
-    //   .runAsTest("cp_multiple_files");
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HOW_ARE_YOU_SOURCE} ${TEST_COPY_TO_FOLDER}`
+      .ensureTempDir(tmpdir)
+      .fileEquals(TEST_COPY_TO_FOLDER_FILE, "Hello, World!")
+      .fileEquals(TEST_HOW_ARE_YOU_DEST, "How are you?")
+      .testMini({ cwd: mini_tmpdir })
+      .runAsTest("cp_multiple_files");
 
     TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HOW_ARE_YOU_SOURCE} ${TEST_COPY_TO_FOLDER} && ${bunExe()} -e ${'console.log("HI")'}`
       .ensureTempDir(tmpdir)
       .stdout('HI\n')
       .runAsTest("cp_multiple_files");
 
-    // TestBuilder.command`${bunExe()} -e ${'console.log("HI")'} && ${bunExe()} -e ${'console.log("HI")'}`
-    //   .ensureTempDir(tmpdir)
-    //   .stdout('HI\nHI\n')
-    //   .runAsTest("cp_multiple_files");
-    }
-
-    // TestBuilder.command`cp -R ${TEST_COPY_FROM_FOLDER} ${TEST_COPY_TO_FOLDER_NEW}`
-    //   .ensureTempDir(tmpdir)
-    //   .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
-    //   .testMini({ cwd: mini_tmpdir })
-    //   .runAsTest("cp_recurse");
+    TestBuilder.command`cp -R ${TEST_COPY_FROM_FOLDER} ${TEST_COPY_TO_FOLDER_NEW}`
+      .ensureTempDir(tmpdir)
+      .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
+      .testMini({ cwd: mini_tmpdir })
+      .runAsTest("cp_recurse");
   });
 });
 

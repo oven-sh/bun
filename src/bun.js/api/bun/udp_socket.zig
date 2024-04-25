@@ -305,9 +305,12 @@ pub const UDPSocket = struct {
         }
 
         if (config.connect) |connect| {
-            if (this.socket.connect(connect.address, connect.port) == -1) {
-                globalThis.throw("Failed to connect socket", .{});
-                return .zero;
+            const ret = this.socket.connect(connect.address, connect.port);
+            if (ret != 0) {
+                if (JSC.Maybe(void).errnoSys(ret, .connect)) |err| {
+                    globalThis.throwValue(err.toJS(globalThis));
+                    return .zero;
+                }
             }
             this.connect_info = .{ .port = connect.port };
         }

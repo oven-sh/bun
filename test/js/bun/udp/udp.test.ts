@@ -213,7 +213,7 @@ describe("udpSocket()", () => {
           client = await udpSocket({
             connect: {
               port: server.port,
-              hostname: server.hostname,
+              hostname: "127.0.0.1",
             },
           });
 
@@ -287,7 +287,7 @@ describe("udpSocket()", () => {
         client = await udpSocket({
           connect: {
             port: server.port,
-            hostname: server.hostname,
+            hostname: "127.0.0.1",
           },
         });
 
@@ -445,7 +445,7 @@ describe("createSocket()", () => {
       }
       server.on("listening", () => {
         const addr = server.address();
-        client.connect(addr.port, addr.address, () => {
+        client.connect(addr.port, "127.0.0.1", () => {
           sendRec();
         });
       });

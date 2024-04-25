@@ -67,6 +67,7 @@ pub const Tag = enum(u8) {
 
     dup,
     access,
+    connect,
     chmod,
     chown,
     clonefile,

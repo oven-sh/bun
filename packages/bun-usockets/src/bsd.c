@@ -45,25 +45,17 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
     for (int i = 0; i < sendbuf->num; i++) {
         int ret = 0;
         struct sockaddr *addr = (struct sockaddr *)sendbuf->addresses[i];
-        switch (addr->sa_family) {
-            case AF_INET: {
-                socklen_t len = sizeof(struct sockaddr_in);
-                ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
-                break;
-            }
-            case AF_INET6: {
-                socklen_t len = sizeof(struct sockaddr_in6);
-                ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
-                break;
-            }
-            case AF_UNSPEC: {
-                ret = send(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags);
-                break;
-            }
-            default: {
-                errno = EAFNOSUPPORT;
-                return -1;
-            }
+        if (!addr || addr->sa_family == AF_UNSPEC) {
+            ret = send(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags);
+        } else if (addr->sa_family == AF_INET) {
+            socklen_t len = sizeof(struct sockaddr_in);
+            ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
+        } else if (addr->sa_family == AF_INET6) {
+            socklen_t len = sizeof(struct sockaddr_in6);
+            ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
+        } else {
+            errno = EAFNOSUPPORT;
+            return -1;
         }
         if (ret < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {

@@ -61,6 +61,27 @@ pub const OperatingSystem = enum {
     // wAsM is nOt aN oPeRaTiNg SyStEm
     wasm,
 
+    pub const names = @import("root").bun.ComptimeStringMap(
+        OperatingSystem,
+        &.{
+            .{ "windows", OperatingSystem.windows },
+            .{ "win32", OperatingSystem.windows },
+            .{ "win", OperatingSystem.windows },
+            .{ "win64", OperatingSystem.windows },
+            .{ "win_x64", OperatingSystem.windows },
+            .{ "darwin", OperatingSystem.mac },
+            .{ "macos", OperatingSystem.mac },
+            .{ "macOS", OperatingSystem.mac },
+            .{ "mac", OperatingSystem.mac },
+            .{ "apple", OperatingSystem.mac },
+            .{ "linux", OperatingSystem.linux },
+            .{ "Linux", OperatingSystem.linux },
+            .{ "linux-gnu", OperatingSystem.linux },
+            .{ "gnu/linux", OperatingSystem.linux },
+            .{ "wasm", OperatingSystem.wasm },
+        },
+    );
+
     /// user-facing name with capitalization
     pub fn displayString(self: OperatingSystem) []const u8 {
         return switch (self) {
@@ -80,6 +101,16 @@ pub const OperatingSystem = enum {
             .wasm => "wasm",
         };
     }
+
+    /// npm package name
+    pub fn npmName(self: OperatingSystem) []const u8 {
+        return switch (self) {
+            .mac => "darwin",
+            .linux => "linux",
+            .windows => "windows",
+            .wasm => "wasm",
+        };
+    }
 };
 
 pub const os: OperatingSystem = if (isMac)
@@ -92,3 +123,36 @@ else if (isWasm)
     OperatingSystem.wasm
 else
     @compileError("Please add your OS to the OperatingSystem enum");
+
+pub const Archictecture = enum {
+    x64,
+    arm64,
+    wasm,
+
+    pub fn npmName(this: Archictecture) []const u8 {
+        return switch (this) {
+            .x64 => "x64",
+            .arm64 => "aarch64",
+            .wasm => "wasm",
+        };
+    }
+
+    pub const names = @import("root").bun.ComptimeStringMap(
+        Archictecture,
+        &.{
+            .{ "x86_64", Archictecture.x64 },
+            .{ "x64", Archictecture.x64 },
+            .{ "amd64", Archictecture.x64 },
+            .{ "aarch64", Archictecture.arm64 },
+            .{ "arm64", Archictecture.arm64 },
+            .{ "wasm", Archictecture.wasm },
+        },
+    );
+};
+
+pub const arch = if (isX64)
+    Archictecture.x64
+else if (isAarch64)
+    Archictecture.arm64
+else
+    @compileError("Please add your architecture to the Archictecture enum");

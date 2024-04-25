@@ -731,7 +731,7 @@ pub const Resolver = struct {
         // support passing a package.json or path to a package
         const pkg: *const PackageJSON = result.package_json orelse r.packageJSONForResolvedNodeModuleWithIgnoreMissingName(&result, true) orelse return error.MissingPackageJSON;
 
-        const json = (try r.caches.json.parseJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
+        const json = (try r.caches.json.parsePackageJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
 
         pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
         const dir = pkg.source.path.sourceDir();

@@ -140,6 +140,7 @@ pub const UDPSocketConfig = struct {
                 break :brk default_allocator.dupeZ(u8, "0.0.0.0") catch bun.outOfMemory();
             }
         };
+        defer if (globalThis.hasException()) default_allocator.free(hostname);
 
         const port: u16 = brk: {
             if (options.getTruthy(globalThis, "port")) |value| {
@@ -184,44 +185,47 @@ pub const UDPSocketConfig = struct {
             }
         }
 
-        const connect_config: ?ConnectConfig = brk: {
-            if (options.getTruthy(globalThis, "connect")) |connect| {
-                if (!connect.isObject()) {
-                    globalThis.throwInvalidArguments("Expected \"connect\" to be an object", .{});
-                    return null;
+        defer {
+            if (globalThis.hasException()) {
+                if (config.connect) |connect| {
+                    default_allocator.free(connect.address);
                 }
-
-                const connect_host_js = connect.getTruthy(globalThis, "hostname") orelse {
-                    globalThis.throwInvalidArguments("Expected \"connect.hostname\" to be a string", .{});
-                    return null;
-                };
-
-                if (!connect_host_js.isString()) {
-                    globalThis.throwInvalidArguments("Expected \"connect.hostname\" to be a string", .{});
-                    return null;
-                }
-
-                const str = connect_host_js.toBunString(globalThis);
-                defer str.deref();
-                const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
-
-                const connect_port_js = connect.getTruthy(globalThis, "port") orelse {
-                    globalThis.throwInvalidArguments("Expected \"connect.port\" to be an integer", .{});
-                    return null;
-                };
-
-                const connect_port = connect_port_js.coerceToInt32(globalThis);
-
-                break :brk .{
-                    .port = if (connect_port < 1 or connect_port > 0xffff) 0 else @as(u16, @intCast(connect_port)),
-                    .address = connect_host,
-                };
-            } else {
-                break :brk null;
             }
-        };
+        }
 
-        config.connect = connect_config;
+        if (options.getTruthy(globalThis, "connect")) |connect| {
+            if (!connect.isObject()) {
+                globalThis.throwInvalidArguments("Expected \"connect\" to be an object", .{});
+                return null;
+            }
+
+            const connect_host_js = connect.getTruthy(globalThis, "hostname") orelse {
+                globalThis.throwInvalidArguments("Expected \"connect.hostname\" to be a string", .{});
+                return null;
+            };
+
+            if (!connect_host_js.isString()) {
+                globalThis.throwInvalidArguments("Expected \"connect.hostname\" to be a string", .{});
+                return null;
+            }
+
+            const connect_port_js = connect.getTruthy(globalThis, "port") orelse {
+                globalThis.throwInvalidArguments("Expected \"connect.port\" to be an integer", .{});
+                return null;
+            };
+            const connect_port = connect_port_js.coerceToInt32(globalThis);
+
+            const str = connect_host_js.toBunString(globalThis);
+            defer str.deref();
+            const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
+
+            config.connect = .{
+                .port = if (connect_port < 1 or connect_port > 0xffff) 0 else @as(u16, @intCast(connect_port)),
+                .address = connect_host,
+            };
+        }
+
+        config.protect();
 
         return config;
     }
@@ -281,7 +285,6 @@ pub const UDPSocket = struct {
         return this.js_refcount.load(.Monotonic) > 0;
     }
 
-    // pub usingnamespace bun.NewRefCounted(@This(), deinit);
     pub usingnamespace bun.New(@This());
 
     pub fn udpSocket(globalThis: *JSGlobalObject, options: JSValue) JSValue {
@@ -290,6 +293,7 @@ pub const UDPSocket = struct {
         const config = UDPSocketConfig.fromJS(globalThis, options) orelse {
             return .zero;
         };
+        defer if (globalThis.hasException()) config.deinit();
 
         const vm = globalThis.bunVM();
         var this = This.new(.{
@@ -327,7 +331,6 @@ pub const UDPSocket = struct {
         }
 
         this.poll_ref.ref(vm);
-        this.config.protect();
         const thisValue = this.toJS(globalThis);
         thisValue.ensureStillAlive();
         this.thisValue = thisValue;

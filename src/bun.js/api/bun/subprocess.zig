@@ -2156,8 +2156,7 @@ pub const Subprocess = struct {
 
         if (comptime is_sync) {
             switch (subprocess.process.watchOrReap()) {
-                .result => {
-                },
+                .result => {},
                 .err => {
                     subprocess.process.wait(true);
                 },

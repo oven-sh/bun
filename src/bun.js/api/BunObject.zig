@@ -2702,7 +2702,7 @@ pub const Crypto = struct {
                 if (bun.strings.eqlComptime(algorithm.slice(), item[0])) {
                     return CryptoHasher.new(.{ .zig = .{
                         .algorithm = @field(EVP.Algorithm, item[0]),
-                        .state = bun.new(item[1], .{}),
+                        .state = bun.new(item[1], item[1].init(.{})),
                         .digest_length = item[1].digest_length,
                     } });
                 }

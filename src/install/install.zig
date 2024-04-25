@@ -1893,7 +1893,19 @@ pub const PackageInstall = struct {
 
     // these are just a symlink/junction
     pub fn uninstallLinkBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
-        _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
+        if (comptime Environment.isWindows) {
+            bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
+                if (err == error.ENOTDIR) {
+                    _ = bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap();
+                }
+            };
+        } else {
+            bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
+                if (err == error.EISDIR or err == error.EPERM) {
+                    _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
+                }
+            };
+        }
     }
 
     pub fn uninstallBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {

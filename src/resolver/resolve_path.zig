@@ -602,7 +602,7 @@ pub fn hasAnyIllegalChars(maybe_path: []const u8) bool {
     // check for disk discrimnator; remove it since it has a ':'
     if (startsWithDiskDiscriminator(maybe_path_)) maybe_path_ = maybe_path_[2..];
     // guard against OBJECT_NAME_INVALID => unreachable
-    return std.mem.indexOfAny(u8, maybe_path_, "<>:\"|?*") != null;
+    return bun.strings.indexAnyComptime(maybe_path_, "<>:\"|?*") != null;
 }
 
 pub fn startsWithDiskDiscriminator(maybe_path: []const u8) bool {

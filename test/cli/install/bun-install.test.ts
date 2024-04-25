@@ -44,6 +44,40 @@ afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
 
+it("should not run install script, issue#10376", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      scripts: {
+        install: "bun install",
+      },
+    }),
+  );
+  const { stderr, exited, kill } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  let run = await new Promise(async (resolve, reject) => {
+    setTimeout(() => {
+      reject(false);
+    }, 2000);
+    expect(await exited).toBe(1);
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain('package.json script calling "bun install" causes an infinite loop.');
+    resolve(true);
+  });
+  if (!run) {
+    kill(15);
+  }
+});
+
 describe("chooses", () => {
   async function runTest(latest: string, range: string, chosen = "0.0.5") {
     const exeName: string = {

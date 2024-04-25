@@ -123,6 +123,11 @@ pub const LifecycleScriptSubprocess = struct {
 
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
 
+        if (bun.strings.hasPrefixComptime(combined_script, "bun install")) {
+            Output.errGeneric("\"{s}\" package.json script calling \"bun install\" causes an infinite loop.", .{this.scriptName()});
+            Global.exit(1);
+        }
+
         if (this.foreground and this.manager.options.log_level != .silent) {
             Output.prettyError("<r><d><magenta>$<r> <d><b>{s}<r>\n", .{combined_script});
             Output.flush();

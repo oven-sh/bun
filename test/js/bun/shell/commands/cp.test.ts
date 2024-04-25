@@ -163,7 +163,7 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
 
     TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HOW_ARE_YOU_SOURCE} ${TEST_COPY_TO_FOLDER} && ${bunExe()} -e ${'console.log("HI")'}`
       .ensureTempDir(tmpdir)
-      .stdout('HI\n')
+      .stdout("HI\n")
       .runAsTest("cp_multiple_files");
 
     TestBuilder.command`cp -R ${TEST_COPY_FROM_FOLDER} ${TEST_COPY_TO_FOLDER_NEW}`

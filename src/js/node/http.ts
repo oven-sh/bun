@@ -337,7 +337,7 @@ class Agent extends EventEmitter {
 function emitListeningNextTick(self, onListen, err, hostname, port) {
   if (typeof onListen === "function") {
     try {
-      onListen(err, hostname, port);
+      onListen.$apply(self, [err, hostname, port]);
     } catch (err) {
       self.emit("error", err);
     }

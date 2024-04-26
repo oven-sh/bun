@@ -37,6 +37,16 @@ Object.defineProperty(ReadStream, "prototype", {
       // On POSIX, I tried to use the same approach, but it didn't work reliably,
       // so we just use the file descriptor and use termios APIs directly.
       if (process.platform === "win32") {
+        // Special case for stdin, as it has a shared uv_tty handle
+        // and it's stream is constructed differently
+        if (this.fd === 0) {
+          const err = ttySetMode(flag);
+          if (err) {
+            this.emit("error", new Error("setRawMode failed with errno: " + err));
+          }
+          return this;
+        }
+
         const handle = this.$bunNativePtr;
         if (!handle) {
           this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));

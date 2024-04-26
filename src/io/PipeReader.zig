@@ -487,6 +487,10 @@ pub fn WindowsPipeReader(
                         pipe.close(onPipeClose);
                     },
                     .tty => |tty| {
+                        if (Source.stdin_tty == tty) {
+                            Source.stdin_tty = null;
+                        }
+
                         tty.data = tty;
                         tty.close(onTTYClose);
                     },

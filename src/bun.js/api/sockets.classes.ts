@@ -218,4 +218,63 @@ export default [
     construct: true,
     klass: {},
   }),
+
+  define({
+    name: "UDPSocket",
+    noConstructor: true,
+    JSType: "0b11101110",
+    finalize: true,
+    construct: true,
+    hasPendingActivity: true,
+    proto: {
+      send: {
+        fn: "send",
+        length: 3,
+      },
+      sendMany: {
+        fn: "sendMany",
+        length: 3,
+      },
+      close: {
+        fn: "close",
+        length: 0,
+      },
+      reload: {
+        fn: "reload",
+        length: 1,
+      },
+      ref: {
+        fn: "ref",
+        length: 0,
+      },
+      unref: {
+        fn: "unref",
+        length: 0,
+      },
+      hostname: {
+        getter: "getHostname",
+        cache: true,
+      },
+      port: {
+        getter: "getPort",
+        cache: true,
+      },
+      address: {
+        getter: "getAddress",
+        cache: true,
+      },
+      remoteAddress: {
+        getter: "getRemoteAddress",
+        cache: true,
+      },
+      binaryType: {
+        getter: "getBinaryType",
+        cache: true,
+      },
+      closed: {
+        getter: "getClosed",
+      },
+    },
+    klass: {},
+  }),
 ];

@@ -22,16 +22,16 @@
 #include <sys/ioctl.h>
 #endif
 
-#include <limits.h>
-
 /* The loop has 2 fallthrough polls */
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
     loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
     loop->data.ssl_data = 0;
     loop->data.head = 0;
     loop->data.iterator = 0;
+    loop->data.closed_udp_head = 0;
     loop->data.closed_head = 0;
     loop->data.low_prio_head = 0;
     loop->data.low_prio_budget = 0;
@@ -50,6 +50,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 #endif
 
     free(loop->data.recv_buf);
+    free(loop->data.send_buf);
 
     us_timer_close(loop->data.sweep_timer, 0);
     us_internal_async_close(loop->data.wakeup_async);
@@ -174,6 +175,14 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
             s = next;
         }
         loop->data.closed_head = 0;
+    }
+    if (loop->data.closed_udp_head) {
+        for (struct us_udp_socket_t *s = loop->data.closed_udp_head; s; ) {
+            struct us_udp_socket_t *next = s->next;
+            us_poll_free((struct us_poll_t *) s, loop);
+            s = next;
+        }
+        loop->data.closed_udp_head = 0;
     }
 }
 
@@ -394,6 +403,43 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 /* Todo: decide what code we give here */
                 s = us_socket_close(0, s, 0, NULL);
                 return;
+            }
+            break;
+        }
+        case POLL_TYPE_UDP: {
+            struct us_udp_socket_t *u = (struct us_udp_socket_t *) p;
+            if (u->closed) {
+                break;
+            }
+
+            if (events & LIBUS_SOCKET_WRITABLE && !error) {
+                u->on_drain(u);
+                if (u->closed) {
+                    break;
+                }
+                // We only poll for writable after a read has failed, and only send one drain notification.
+                // Otherwise we would receive a writable event on every tick of the event loop.
+                us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
+            }
+            if (events & LIBUS_SOCKET_READABLE) {
+                struct udp_recvbuf recvbuf;
+                bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
+                while (1) {
+                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
+                    if (npackets > 0) {
+                        u->on_data(u, &recvbuf, npackets);
+                        if (u->closed) {
+                            break;
+                        }
+                    } else if (npackets == LIBUS_SOCKET_ERROR && bsd_would_block()) {
+                        // break receive loop when we receive EAGAIN or similar
+                        break;
+                    } else if (npackets == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
+                        // close the socket on error
+                        us_udp_socket_close(u);
+                        break;
+                    }
+                }
             }
             break;
         }

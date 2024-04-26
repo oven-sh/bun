@@ -26,7 +26,6 @@
 #include <stdlib.h>
 
 #ifndef _WIN32
-//#define _GNU_SOURCE
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -38,107 +37,185 @@
 #include <errno.h>
 #endif
 
-/* Internal structure of packet buffer */
-struct us_internal_udp_packet_buffer {
-#if defined(_WIN32) || defined(__APPLE__)
-    char *buf[LIBUS_UDP_MAX_NUM];
-    size_t len[LIBUS_UDP_MAX_NUM];
-    struct sockaddr_storage addr[LIBUS_UDP_MAX_NUM];
-#else
-    struct mmsghdr msgvec[LIBUS_UDP_MAX_NUM];
-    struct iovec iov[LIBUS_UDP_MAX_NUM];
-    struct sockaddr_storage addr[LIBUS_UDP_MAX_NUM];
-    char control[LIBUS_UDP_MAX_NUM][256];
+#if defined(__APPLE__) && defined(__aarch64__)
+#define HAS_MSGX
 #endif
-};
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
-int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, int flags) {
-#if defined(__APPLE__)
-
-struct mmsghdr {
-    struct msghdr msg_hdr;  /* Message header */
-    unsigned int  msg_len;  /* Number of bytes transmitted */
-};
-
-    struct mmsghdr *hdrs = (struct mmsghdr *) msgvec;
-
-    for (int i = 0; i < vlen; i++) {
-        int ret = sendmsg(fd, &hdrs[i].msg_hdr, flags);
-        if (ret == -1) {
-            if (i) {
-                return i;
+int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
+#if defined(_WIN32)// || defined(__APPLE__)
+    for (int i = 0; i < sendbuf->num; i++) {
+        while (1) {
+            int ret = 0;
+            struct sockaddr *addr = (struct sockaddr *)sendbuf->addresses[i];
+            if (!addr || addr->sa_family == AF_UNSPEC) {
+                ret = send(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags);
+            } else if (addr->sa_family == AF_INET) {
+                socklen_t len = sizeof(struct sockaddr_in);
+                ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
+            } else if (addr->sa_family == AF_INET6) {
+                socklen_t len = sizeof(struct sockaddr_in6);
+                ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
             } else {
+                errno = EAFNOSUPPORT;
                 return -1;
             }
-        } else {
-            hdrs[i].msg_len = ret;
+            if (ret < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                return ret;
+            }
+            break;
         }
     }
-
-    return vlen;
-
-#elif defined(_WIN32)
-
-    struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
-
-    /* Let's just use sendto here */
-    /* Winsock does not have sendmsg, while macOS has, however, we simply use sendto since both macOS and Winsock has it.
-     * Besides, you should use Linux either way to get best performance with the sendmmsg */
-
-
-    // while we do not get error, send next
-
-    for (int i = 0; i < LIBUS_UDP_MAX_NUM; i++) {
-        // need to support ipv6 addresses also!
-        int ret = sendto(fd, packet_buffer->buf[i], packet_buffer->len[i], flags, (struct sockaddr *)&packet_buffer->addr[i], sizeof(struct sockaddr_in));
-
-        if (ret == -1) {
-            // if we fail then we need to buffer up, no that's not our problem
-            // we do need to register poll out though and have a callback for it
-            return i;
+    return sendbuf->num;
+#elif defined(__APPLE__)
+    // TODO figure out why sendmsg_x fails when one of the messages is empty
+    // so that we can get rid of this code.
+    // One of the weird things is that once a non-empty message has been sent on the socket,
+    // empty messages start working as well. Bizzare.
+#ifdef HAS_MSGX
+    if (sendbuf->has_empty) {
+#endif
+        for (int i = 0; i < sendbuf->num; i++) {
+            while (1) {
+                ssize_t ret = sendmsg(fd, &sendbuf->msgvec[i].msg_hdr, flags);
+                if (ret < 0) {
+                    if (errno == EINTR) continue;
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                    return ret;
+                }
+                break;
+            }
         }
-
-        //printf("sendto: %d\n", ret);
+        return sendbuf->num;
+#ifdef HAS_MSGX
     }
-
-    return LIBUS_UDP_MAX_NUM; // one message
+    while (1) {
+        int ret = sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
+        if (ret >= 0 || errno != EINTR) return ret;
+    }
+#endif
 #else
-    return sendmmsg(fd, (struct mmsghdr *)msgvec, vlen, flags | MSG_NOSIGNAL);
+    while (1) {
+        int ret = sendmmsg(fd, sendbuf->msgvec, sendbuf->num, flags | MSG_NOSIGNAL);
+        if (ret >= 0 || errno != EINTR) return ret;
+    }
 #endif
 }
 
-int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, int flags, void *timeout) {
-#if defined(_WIN32) || defined(__APPLE__)
-    struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
-
-
-    for (int i = 0; i < LIBUS_UDP_MAX_NUM; i++) {
-        socklen_t addr_len = sizeof(struct sockaddr_storage);
-        int ret = recvfrom(fd, packet_buffer->buf[i], LIBUS_UDP_MAX_SIZE, flags, (struct sockaddr *)&packet_buffer->addr[i], &addr_len);
-
-        if (ret == -1) {
-            return i;
+int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags) {
+#if defined(_WIN32)
+    socklen_t addr_len = sizeof(struct sockaddr_storage);
+    while (1) {
+        ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            return ret;
         }
-
-        packet_buffer->len[i] = ret;
+        recvbuf->recvlen = ret;
+        return 1;
     }
-
-    return LIBUS_UDP_MAX_NUM;
+#elif defined(__APPLE__)
+#ifdef HAS_MSGX
+    while (1) {
+        int ret = recvmsg_x(fd, recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
+        if (ret >= 0 || errno != EINTR) return ret;
+    }
 #else
-    // we need to set controllen for ip packet
-    for (int i = 0; i < vlen; i++) {
-        ((struct mmsghdr *)msgvec)[i].msg_hdr.msg_controllen = 256;
+    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; ++i) {
+        while (1) {
+            ssize_t ret = recvmsg(fd, &recvbuf->msgvec[i].msg_hdr, flags);
+            if (ret < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                return ret;
+            }
+            recvbuf->msgvec[i].msg_len = ret;
+            break;
+        }
     }
+    return LIBUS_UDP_RECV_COUNT;
+#endif
+#else
+    while (1) {
+        int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags, 0);
+        if (ret >= 0 || errno != EINTR) return ret;
+    }
+#endif
+}
 
-    return recvmmsg(fd, (struct mmsghdr *)msgvec, vlen, flags, 0);
+void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen) {
+#if defined(_WIN32)
+    recvbuf->buf = databuf;
+    recvbuf->buflen = databuflen;
+#else
+    // assert(databuflen > LIBUS_UDP_MAX_SIZE * LIBUS_UDP_RECV_COUNT);
+
+    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
+        recvbuf->iov[i].iov_base = (char*)databuf + i * LIBUS_UDP_MAX_SIZE;
+        recvbuf->iov[i].iov_len = LIBUS_UDP_MAX_SIZE;
+
+        recvbuf->msgvec[i].msg_hdr.msg_name = &recvbuf->addr[i];
+        recvbuf->msgvec[i].msg_hdr.msg_namelen = sizeof(struct sockaddr_storage);
+
+        recvbuf->msgvec[i].msg_hdr.msg_iov = &recvbuf->iov[i];
+        recvbuf->msgvec[i].msg_hdr.msg_iovlen = 1;
+
+        recvbuf->msgvec[i].msg_hdr.msg_control = recvbuf->control[i];
+        recvbuf->msgvec[i].msg_hdr.msg_controllen = 256;
+    }
+#endif
+}
+
+int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloads, size_t* lengths, void** addresses, int num) {
+#if defined(_WIN32)
+    buf->payloads = payloads;
+    buf->lengths = lengths;
+    buf->addresses = addresses;
+    buf->num = num;
+    return num;
+#else
+    buf->has_empty = 0;
+    struct mmsghdr *msgvec = buf->msgvec;
+    // todo check this math
+    size_t count = (bufsize - sizeof(struct udp_sendbuf)) / (sizeof(struct mmsghdr) + sizeof(struct iovec));
+    if (count > num) {
+        count = num;
+    }
+    struct iovec *iov = (struct iovec *) (msgvec + count);
+    for (int i = 0; i < count; i++) {
+        struct sockaddr *addr = (struct sockaddr *)addresses[i];
+        socklen_t addr_len = 0;
+        if (addr) {
+            addr_len = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) 
+                     : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) 
+                     : 0;
+        }
+        iov[i].iov_base = payloads[i];
+        iov[i].iov_len = lengths[i];
+        msgvec[i].msg_hdr.msg_name = addresses[i];
+        msgvec[i].msg_hdr.msg_namelen = addr_len;
+        msgvec[i].msg_hdr.msg_control = NULL;
+        msgvec[i].msg_hdr.msg_controllen = 0;
+        msgvec[i].msg_hdr.msg_iov = iov + i;
+        msgvec[i].msg_hdr.msg_iovlen = 1;
+        msgvec[i].msg_hdr.msg_flags = 0;
+        msgvec[i].msg_len = 0;
+
+        if (lengths[i] == 0) {
+            buf->has_empty = 1;
+        }
+    }
+    buf->num = count;
+    return count;
 #endif
 }
 
 // this one is needed for knowing the destination addr of udp packet
 // an udp socket can only bind to one port, and that port never changes
 // this function returns ONLY the IP address, not any port
-int bsd_udp_packet_buffer_local_ip(void *msgvec, int index, char *ip) {
+int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *ip) {
 #if defined(_WIN32) || defined(__APPLE__)
     return 0; // not supported
 #else
@@ -163,96 +240,27 @@ int bsd_udp_packet_buffer_local_ip(void *msgvec, int index, char *ip) {
 #endif
 }
 
-char *bsd_udp_packet_buffer_peer(void *msgvec, int index) {
-#if defined(_WIN32) || defined(__APPLE__)
-    struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
-    return (char *)&packet_buffer->addr[index];
+char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index) {
+#if defined(_WIN32)
+    return (char *)&msgvec->addr;
 #else
     return ((struct mmsghdr *) msgvec)[index].msg_hdr.msg_name;
 #endif
 }
 
-char *bsd_udp_packet_buffer_payload(void *msgvec, int index) {
-#if defined(_WIN32) || defined(__APPLE__)
-    struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
-    return packet_buffer->buf[index];
+char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index) {
+#if defined(_WIN32)
+    return msgvec->buf;
 #else
     return ((struct mmsghdr *) msgvec)[index].msg_hdr.msg_iov[0].iov_base;
 #endif
 }
 
-int bsd_udp_packet_buffer_payload_length(void *msgvec, int index) {
-#if defined(_WIN32) || defined(__APPLE__)
-    struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
-    return packet_buffer->len[index];
+int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index) {
+#if defined(_WIN32)
+    return msgvec->recvlen;
 #else
     return ((struct mmsghdr *) msgvec)[index].msg_len;
-#endif
-}
-
-void bsd_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr) {
-#if defined(_WIN32) || defined(__APPLE__)
-    struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) send_buf;
-
-    memcpy(packet_buffer->buf[index], payload, length);
-    memcpy(&packet_buffer->addr[index], peer_addr, sizeof(struct sockaddr_storage));
-
-    packet_buffer->len[index] = length;
-#else
-    //printf("length: %d, offset: %d\n", length, offset);
-
-    struct mmsghdr *ss = (struct mmsghdr *) send_buf;
-
-    // copy the peer address
-    memcpy(ss[index].msg_hdr.msg_name, peer_addr, /*ss[index].msg_hdr.msg_namelen*/ sizeof(struct sockaddr_in));
-
-    // set control length to 0
-    ss[index].msg_hdr.msg_controllen = 0;
-
-    // copy the payload
-    
-    ss[index].msg_hdr.msg_iov->iov_len = length + offset;
-
-
-    memcpy(((char *) ss[index].msg_hdr.msg_iov->iov_base) + offset, payload, length);
-#endif
-}
-
-/* The maximum UDP payload size is 64kb, but in IPV6 you can have jumbopackets larger than so.
- * We do not support those jumbo packets currently, but will safely ignore them.
- * Any sane sender would assume we don't support them if we consistently drop them.
- * Therefore a udp_packet_buffer_t will be 64 MB in size (64kb * 1024). */
-void *bsd_create_udp_packet_buffer() {
-#if defined(_WIN32) || defined(__APPLE__)
-    struct us_internal_udp_packet_buffer *b = malloc(sizeof(struct us_internal_udp_packet_buffer) + LIBUS_UDP_MAX_SIZE * LIBUS_UDP_MAX_NUM);
-
-    for (int i = 0; i < LIBUS_UDP_MAX_NUM; i++) {
-        b->buf[i] = ((char *) b) + sizeof(struct us_internal_udp_packet_buffer) + LIBUS_UDP_MAX_SIZE * i;
-    }
-
-    return (struct us_udp_packet_buffer_t *) b;
-#else
-    /* Allocate 64kb times 1024 */
-    struct us_internal_udp_packet_buffer *b = malloc(sizeof(struct us_internal_udp_packet_buffer) + LIBUS_UDP_MAX_SIZE * LIBUS_UDP_MAX_NUM);
-
-    for (int n = 0; n < LIBUS_UDP_MAX_NUM; ++n) {
-
-        b->iov[n].iov_base = &((char *) (b + 1))[n * LIBUS_UDP_MAX_SIZE];
-        b->iov[n].iov_len = LIBUS_UDP_MAX_SIZE;
-
-        b->msgvec[n].msg_hdr = (struct msghdr) {
-            .msg_name       = &b->addr,
-            .msg_namelen    = sizeof (struct sockaddr_storage),
-
-            .msg_iov        = &b->iov[n],
-            .msg_iovlen     = 1,
-
-            .msg_control    = b->control[n],
-            .msg_controllen = 256,
-        };
-    }
-
-    return (struct us_udp_packet_buffer_t *) b;
 #endif
 }
 
@@ -766,10 +774,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVPKTINFO, (void *) &enabled, sizeof(enabled)) == -1) {
         if (errno == 92) {
             if (setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, (void *) &enabled, sizeof(enabled)) != 0) {
-                printf("Error setting IPv4 pktinfo!\n");
+                //printf("Error setting IPv4 pktinfo!\n");
             }
         } else {
-            printf("Error setting IPv6 pktinfo!\n");
+            //printf("Error setting IPv6 pktinfo!\n");
         }
     }
 
@@ -777,10 +785,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVTCLASS, (void *) &enabled, sizeof(enabled)) == -1) {
         if (errno == 92) {
             if (setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, (void *) &enabled, sizeof(enabled)) != 0) {
-                printf("Error setting IPv4 ECN!\n");
+                //printf("Error setting IPv4 ECN!\n");
             }
         } else {
-            printf("Error setting IPv6 ECN!\n");
+            //printf("Error setting IPv6 ECN!\n");
         }
     }
 
@@ -795,36 +803,82 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     return listenFd;
 }
 
-int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
+int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(struct addrinfo));
 
-#if defined(_WIN32) || defined(__APPLE__)
-    printf("ECN not supported!\n");
-#else
-    // we should iterate all control messages once, after recvmmsg and then only fetch them with these functions
-    struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
-    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(mh); cmsg != NULL; cmsg = CMSG_NXTHDR(mh, cmsg)) {
-        // do we need to get TOS from ipv6 also?
-        if (cmsg->cmsg_level == IPPROTO_IP) {
-            if (cmsg->cmsg_type == IP_TOS) {
-                uint8_t tos = *(uint8_t *)CMSG_DATA(cmsg);
-                return tos & 3;
-            }
-        }
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
 
-        if (cmsg->cmsg_level == IPPROTO_IPV6) {
-            if (cmsg->cmsg_type == IPV6_TCLASS) {
-                // is this correct?
-                uint8_t tos = *(uint8_t *)CMSG_DATA(cmsg);
-                return tos & 3;
-            }
+    char port_string[16];
+    snprintf(port_string, 16, "%d", port);
+
+    if (getaddrinfo(host, port_string, &hints, &result)) {
+        return -1;
+    }
+
+    if (result == NULL) {
+        return -1;
+    }
+
+    for (struct addrinfo *rp = result; rp != NULL; rp = rp->ai_next) {
+        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
+            freeaddrinfo(result);
+            return 0;
         }
     }
-#endif
 
-    printf("We got no ECN!\n");
-
-    return 0; // no ecn defaults to 0
+    freeaddrinfo(result);
+    return LIBUS_SOCKET_ERROR;
 }
+
+int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
+    struct sockaddr addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sa_family = AF_UNSPEC;
+    #ifdef __APPLE__
+    addr.sa_len = sizeof(addr);
+    #endif
+
+    int res = connect(fd, &addr, sizeof(addr));
+    // EAFNOSUPPORT is harmless in this case - we just want to disconnect
+    if (res == 0 || errno == EAFNOSUPPORT) {
+        return 0;
+    } else {
+        return -1;
+    }
+}
+
+// int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
+
+// #if defined(_WIN32) || defined(__APPLE__)
+//     errno = ENOSYS;
+//     return -1;
+// #else
+//     // we should iterate all control messages once, after recvmmsg and then only fetch them with these functions
+//     struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
+//     for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(mh); cmsg != NULL; cmsg = CMSG_NXTHDR(mh, cmsg)) {
+//         // do we need to get TOS from ipv6 also?
+//         if (cmsg->cmsg_level == IPPROTO_IP) {
+//             if (cmsg->cmsg_type == IP_TOS) {
+//                 uint8_t tos = *(uint8_t *)CMSG_DATA(cmsg);
+//                 return tos & 3;
+//             }
+//         }
+
+//         if (cmsg->cmsg_level == IPPROTO_IPV6) {
+//             if (cmsg->cmsg_type == IPV6_TCLASS) {
+//                 // is this correct?
+//                 uint8_t tos = *(uint8_t *)CMSG_DATA(cmsg);
+//                 return tos & 3;
+//             }
+//         }
+//     }
+// #endif
+
+//     //printf("We got no ECN!\n");
+//     return 0; // no ecn defaults to 0
+// }
 
 static int bsd_do_connect_raw(struct addrinfo *rp, int fd)
 {

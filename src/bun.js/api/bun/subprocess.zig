@@ -1707,7 +1707,6 @@ pub const Subprocess = struct {
                     if (arg.len == 0) {
                         continue;
                     }
-
                     argv.appendAssumeCapacity(arg.toOwnedSliceZ(allocator) catch {
                         globalThis.throwOutOfMemory();
                         return .zero;

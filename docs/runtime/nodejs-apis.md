@@ -80,7 +80,7 @@ Some methods are not optimized yet.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟡 Missing `BlockList` `SocketAddress` `Stream` `getDefaultAutoSelectFamily` `getDefaultAutoSelectFamilyAttemptTimeout` `setDefaultAutoSelectFamily` `setDefaultAutoSelectFamilyAttemptTimeout`
+🟡 Missing `BlockList` `SocketAddress` `Stream`
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 

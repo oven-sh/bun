@@ -20,6 +20,11 @@ on:
         type: string
         required: true
         description: The tag to use for the release
+      clobber:
+        type: boolean
+        required: false
+        default: false
+        description: Whether to overwrite existing release artifacts or not
   release:
     types:
       - created
@@ -85,7 +90,7 @@ jobs:
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
       tag: darwin-x64
       arch: x64
       cpu: haswell
@@ -95,7 +100,7 @@ jobs:
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
       tag: darwin-x64-baseline
       arch: x64
       cpu: nehalem
@@ -105,7 +110,7 @@ jobs:
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-13' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-12' }}
       tag: darwin-aarch64
       arch: aarch64
       cpu: native
@@ -165,4 +170,4 @@ jobs:
           title: "Bun v${{ inputs.version }} release artifacts uploaded"
       - name: "Upload Artifacts"
         run: |
-          gh release upload ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} --clobber bun-releases/*
+          gh release upload ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} ${{ inputs.clobber && '--clobber' || '' }} bun-releases/*

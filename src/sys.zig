@@ -122,6 +122,7 @@ pub const Tag = enum(u8) {
     futime,
     pidfd_open,
     poll,
+    watch,
 
     kevent,
     kqueue,
@@ -1584,7 +1585,7 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     }
 }
 
-pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
+pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     if (comptime Environment.isWindows) {
         return sys_uv.readlink(in, buf);
     }
@@ -1592,15 +1593,16 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
     while (true) {
         const rc = sys.readlink(in, buf.ptr, buf.len);
 
-        if (Maybe(usize).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]u8).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+        buf[@intCast(rc)] = 0;
+        return .{ .result = buf[0..@intCast(rc) :0] };
     }
 }
 
-pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usize) {
+pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0]const u8) {
     while (true) {
         const rc = sys.readlinkat(fd, in, buf.ptr, buf.len);
 
@@ -1608,7 +1610,8 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usi
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+        buf[@intCast(rc)] = 0;
+        return Maybe(usize){ .result = buf[0..@intCast(rc)] };
     }
 }
 
@@ -1955,20 +1958,9 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
             const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
             return switch (readlink(proc_path, out_buffer)) {
                 .err => |err| return .{ .err = err },
-                .result => |len| return .{ .result = out_buffer[0..len] },
+                .result => |result| .{ .result = result },
             };
         },
-        // .solaris => {
-        //     var procfs_buf: ["/proc/self/path/-2147483648".len:0]u8 = undefined;
-        //     const proc_path = std.fmt.bufPrintZ(procfs_buf[0..], "/proc/self/path/{d}", .{fd}) catch unreachable;
-
-        //     const target = readlinkZ(proc_path, out_buffer) catch |err| switch (err) {
-        //         error.UnsupportedReparsePointType => unreachable,
-        //         error.NotLink => unreachable,
-        //         else => |e| return e,
-        //     };
-        //     return target;
-        // },
         else => @compileError("querying for canonical path of a handle is unsupported on this host"),
     }
 }
@@ -2138,8 +2130,37 @@ pub fn exists(path: []const u8) bool {
     @compileError("TODO: existsOSPath");
 }
 
-pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
+pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
+    const dir_fd = bun.toFD(dir_);
+
+    if (comptime !has_sentinel) {
+        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
+        return faccessat(dir_fd, path);
+    }
+
+    if (comptime Environment.isLinux) {
+        // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
+        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
+        syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(linux.getErrno(rc)) });
+        if (rc == 0) {
+            return JSC.Maybe(bool){ .result = true };
+        }
+
+        return JSC.Maybe(bool){ .result = false };
+    }
+
+    // on other platforms use faccessat from libc
+    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.F_OK, 0);
+    syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(std.c.getErrno(rc)) });
+    if (rc == 0) {
+        return JSC.Maybe(bool){ .result = true };
+    }
+
+    return JSC.Maybe(bool){ .result = false };
+}
+
+pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     const dir_fd = bun.toFD(dir_);
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
@@ -2179,40 +2200,17 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
         };
     }
 
-    if (comptime !has_sentinel) {
-        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
-        return directoryExistsAt(dir_fd, path);
-    }
-
-    if (comptime Environment.isLinux) {
-        // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
-        const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
-        syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(linux.getErrno(rc)) });
-        if (rc == 0) {
-            return JSC.Maybe(bool){ .result = true };
-        }
-
-        return JSC.Maybe(bool){ .result = false };
-    }
-
-    // on other platforms use faccessat from libc
-    const rc = std.c.faccessat(dir_fd.cast(), subpath, std.os.F_OK, 0);
-    syslog("faccessat({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(std.c.getErrno(rc)) });
-    if (rc == 0) {
-        return JSC.Maybe(bool){ .result = true };
-    }
-
-    return JSC.Maybe(bool){ .result = false };
+    return faccessat(dir_fd, subpath);
 }
 
-pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
+pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
     if (comptime Environment.isPosix) {
-        return system.faccessat(fd.cast(), &(std.os.toPosixPath(subpath) catch return false), 0, 0) == 0;
+        return faccessat(fd, subpath).result;
     }
 
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
-        const path = bun.strings.toWPath(&wbuf, subpath);
+        const path = bun.strings.toNTPath(&wbuf, subpath);
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,
@@ -2233,10 +2231,17 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
             .SecurityQualityOfService = null,
         };
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
-        return switch (kernel32.NtQueryAttributesFile(&attr, &basic_info)) {
-            .SUCCESS => true,
-            else => false,
-        };
+        const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
+        if (JSC.Maybe(bool).errnoSysP(rc, .access, subpath)) |err| {
+            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
+            return false;
+        }
+
+        const is_regular_file = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_NORMAL != 0;
+        syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_regular_file) });
+
+        return is_regular_file;
     }
 
     @compileError("TODO: existsAtOSPath");

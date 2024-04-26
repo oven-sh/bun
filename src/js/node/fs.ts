@@ -51,17 +51,10 @@ class FSWatcher extends EventEmitter {
     this.#listener = listener;
     try {
       this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
-    } catch (e) {
-      if (!e.message?.startsWith("FileNotFound")) {
-        throw e;
-      }
-      const notFound = new Error(`ENOENT: no such file or directory, watch '${path}'`);
-      notFound.code = "ENOENT";
-      notFound.errno = -2;
-      notFound.path = path;
-      notFound.syscall = "watch";
-      notFound.filename = path;
-      throw notFound;
+    } catch (e: any) {
+      e.path = path;
+      e.filename = path;
+      throw e;
     }
   }
 
@@ -74,6 +67,12 @@ class FSWatcher extends EventEmitter {
       });
       return;
     } else if (eventType === "error") {
+      // TODO: Next.js/watchpack causes this to emits weird EACCES errors on
+      // paths that shouldn't be watched. A better solution is to figure out why
+      // these paths get watched in the first place. For now we will rewrite the
+      // .code, which will cause their code path to ignore the error.
+      if (filenameOrError.code === "EACCES") filenameOrError.code = "EPERM";
+
       this.emit(eventType, filenameOrError);
     } else {
       this.emit("change", eventType, filenameOrError);

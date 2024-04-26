@@ -242,6 +242,7 @@ pub const Tag = enum(u8) {
     futime,
     pidfd_open,
     poll,
+    watch,
 
     kevent,
     kqueue,
@@ -1696,7 +1697,7 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     }
 }
 
-pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
+pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     if (comptime Environment.isWindows) {
         return sys_uv.readlink(in, buf);
     }
@@ -1704,15 +1705,16 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
     while (true) {
         const rc = sys.readlink(in, buf.ptr, buf.len);
 
-        if (Maybe(usize).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]u8).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+        buf[@intCast(rc)] = 0;
+        return .{ .result = buf[0..@intCast(rc) :0] };
     }
 }
 
-pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usize) {
+pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0]const u8) {
     while (true) {
         const rc = sys.readlinkat(fd, in, buf.ptr, buf.len);
 
@@ -1720,7 +1722,8 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usi
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+        buf[@intCast(rc)] = 0;
+        return Maybe(usize){ .result = buf[0..@intCast(rc)] };
     }
 }
 
@@ -2067,20 +2070,9 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
             const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
             return switch (readlink(proc_path, out_buffer)) {
                 .err => |err| return .{ .err = err },
-                .result => |len| return .{ .result = out_buffer[0..len] },
+                .result => |result| .{ .result = result },
             };
         },
-        // .solaris => {
-        //     var procfs_buf: ["/proc/self/path/-2147483648".len:0]u8 = undefined;
-        //     const proc_path = std.fmt.bufPrintZ(procfs_buf[0..], "/proc/self/path/{d}", .{fd}) catch unreachable;
-
-        //     const target = readlinkZ(proc_path, out_buffer) catch |err| switch (err) {
-        //         error.UnsupportedReparsePointType => unreachable,
-        //         error.NotLink => unreachable,
-        //         else => |e| return e,
-        //     };
-        //     return target;
-        // },
         else => @compileError("querying for canonical path of a handle is unsupported on this host"),
     }
 }

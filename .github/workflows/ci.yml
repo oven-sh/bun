@@ -81,7 +81,7 @@ jobs:
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
       tag: darwin-x64
       arch: x64
       cpu: haswell
@@ -92,7 +92,7 @@ jobs:
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
       tag: darwin-x64-baseline
       arch: x64
       cpu: nehalem
@@ -103,7 +103,7 @@ jobs:
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-13' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-12' }}
       tag: darwin-aarch64
       arch: aarch64
       cpu: native
@@ -172,7 +172,7 @@ jobs:
     with:
       run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
       tag: darwin-x64
   darwin-x64-baseline-test:
     if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' }}
@@ -183,7 +183,7 @@ jobs:
     with:
       run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-large' || 'macos-13' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
       tag: darwin-x64-baseline
   darwin-aarch64-test:
     if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' }}
@@ -194,7 +194,7 @@ jobs:
     with:
       run-id: ${{ inputs.run-id }}
       pr-number: ${{ github.event.number }}
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-13' }}
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-12' }}
       tag: darwin-aarch64
   windows-x64-test:
     if: ${{ inputs.run-id && always() || github.event_name == 'pull_request' }}

@@ -1523,7 +1523,7 @@ pub const struct_uv_fs_event_req_s = extern struct {
     next_req: [*c]struct_uv_req_s,
 };
 pub const uv_fs_event_t = struct_uv_fs_event_s;
-pub const uv_fs_event_cb = ?*const fn (*uv_fs_event_t, [*c]const u8, c_int, c_int) callconv(.C) void;
+pub const uv_fs_event_cb = ?*const fn (*uv_fs_event_t, [*c]const u8, c_int, ReturnCode) callconv(.C) void;
 pub const struct_uv_fs_event_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
@@ -1547,7 +1547,7 @@ pub const struct_uv_fs_event_s = extern struct {
         return this.dirw != null;
     }
 
-    pub fn hash(this: *const uv_fs_event_t, filename: []const u8, events: c_int, status: c_int) u64 {
+    pub fn hash(this: *const uv_fs_event_t, filename: []const u8, events: c_int, status: ReturnCode) u64 {
         var hasher = std.hash.Wyhash.init(0);
         if (this.path) |path| {
             hasher.update(bun.sliceTo(path, 0));
@@ -2438,10 +2438,11 @@ pub const UV_FS_EVENT_WATCH_ENTRY: c_int = 1;
 pub const UV_FS_EVENT_STAT: c_int = 2;
 pub const UV_FS_EVENT_RECURSIVE: c_int = 4;
 pub const enum_uv_fs_event_flags = c_uint;
-pub extern fn uv_fs_event_init(loop: *uv_loop_t, handle: *uv_fs_event_t) c_int;
-pub extern fn uv_fs_event_start(handle: *uv_fs_event_t, cb: uv_fs_event_cb, path: [*]const u8, flags: c_uint) c_int;
+pub extern fn uv_fs_event_init(loop: *uv_loop_t, handle: *uv_fs_event_t) ReturnCode;
+pub extern fn uv_fs_event_start(handle: *uv_fs_event_t, cb: uv_fs_event_cb, path: [*:0]const u8, flags: c_uint) ReturnCode;
+/// always returns zero
 pub extern fn uv_fs_event_stop(handle: *uv_fs_event_t) c_int;
-pub extern fn uv_fs_event_getpath(handle: *uv_fs_event_t, buffer: [*]u8, size: [*c]usize) c_int;
+pub extern fn uv_fs_event_getpath(handle: *uv_fs_event_t, buffer: [*]u8, size: *usize) ReturnCode;
 pub extern fn uv_ip4_addr(ip: [*]const u8, port: c_int, addr: [*c]sockaddr_in) c_int;
 pub extern fn uv_ip6_addr(ip: [*]const u8, port: c_int, addr: ?*sockaddr_in6) c_int;
 pub extern fn uv_ip4_name(src: [*c]const sockaddr_in, dst: [*]u8, size: usize) c_int;

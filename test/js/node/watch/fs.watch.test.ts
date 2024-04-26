@@ -230,7 +230,7 @@ describe("fs.watch", () => {
     } catch (err: any) {
       expect(err).toBeInstanceOf(Error);
       expect(err.code).toBe("ENOENT");
-      expect(err.syscall).toBe("watch");
+      expect(err.syscall).toBe("open");
       done();
     }
   });
@@ -418,7 +418,9 @@ describe("fs.watch", () => {
       watcher.close();
       expect.unreachable();
     } catch (err: any) {
-      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
+      expect(err.message).toBe("Permission denied");
+      expect(err.code).toBe("EACCES");
+      expect(err.syscall).toBe("open");
     }
   });
 
@@ -432,7 +434,9 @@ describe("fs.watch", () => {
       watcher.close();
       expect.unreachable();
     } catch (err: any) {
-      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
+      expect(err.message).toBe("Permission denied");
+      expect(err.code).toBe("EACCES");
+      expect(err.syscall).toBe("open");
     }
   });
 });

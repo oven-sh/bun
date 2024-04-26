@@ -116,6 +116,37 @@ function verifyJWTHelper(jwtString, secretOrPrivateKey, options, callback) {
  * @param {function(err, token):void} callback
  */
 function signJWTHelper(payload, secretOrPrivateKey, options, callback) {
+  // make sure they are created with the same timestamp
+  // https://github.com/auth0/node-jsonwebtoken/blob/bc28861f1fa981ed9c009e29c044a19760a0b128/sign.js#L185
+  const timestamp = Math.floor(Date.now() / 1000);
+  if (typeof payload === "object" && !Buffer.isBuffer(payload) && !payload.iat) {
+    payload = { ...payload, iat: timestamp };
+  }
+  jwt.sign(payload, secretOrPrivateKey, options, (err, asyncSigned) => {
+    let error;
+    let syncSigned;
+    try {
+      syncSigned = jwt.sign(payload, secretOrPrivateKey, options);
+    } catch (err) {
+      error = err;
+    }
+    try {
+      expectError(error, err);
+      if (error) {
+        callback(err);
+      } else {
+        expect(syncSigned).toEqual(asyncSigned);
+        callback(null, syncSigned);
+      }
+    } catch (err) {
+      callback(err);
+    }
+  });
+}
+
+// Same as above but won't automatically set the iat field. When we implement fake timers,
+// we can delete this function and use the one above with a fake timer.
+function signJWTHelperWithoutAddingTimestamp(payload, secretOrPrivateKey, options, callback) {
   jwt.sign(payload, secretOrPrivateKey, options, (err, asyncSigned) => {
     let error;
     let syncSigned;
@@ -144,5 +175,6 @@ export default {
   asyncCheck,
   base64UrlEncode,
   signJWTHelper,
+  signJWTHelperWithoutAddingTimestamp,
   verifyJWTHelper,
 };

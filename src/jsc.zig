@@ -46,6 +46,7 @@ pub const API = struct {
     pub const MatchedRoute = @import("./bun.js/api/filesystem_router.zig").MatchedRoute;
     pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
     pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
+    pub const UDPSocket = @import("./bun.js/api/bun/udp_socket.zig").UDPSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
 };

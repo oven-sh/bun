@@ -22,10 +22,6 @@
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
 const { addServerName } = require("../internal/net");
-const { validateBoolean, validateInt32 } = require("../internal/validators");
-
-const _autoSelectFamilyDefault = $zig("node_net_binding.zig", "_autoSelectFamilyDefault");
-const _autoSelectFamilyAttemptTimeoutDefault = $zig("node_net_binding.zig", "_autoSelectFamilyAttemptTimeoutDefault");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -995,19 +991,8 @@ export default {
   Socket,
   [Symbol.for("::bunternal::")]: SocketClass,
 
-  getDefaultAutoSelectFamily: function getDefaultAutoSelectFamily() {
-    return _autoSelectFamilyDefault.get();
-  },
-  setDefaultAutoSelectFamily: function setDefaultAutoSelectFamily(value) {
-    validateBoolean(value, "value");
-    _autoSelectFamilyDefault.set(value);
-  },
-  getDefaultAutoSelectFamilyAttemptTimeout: function getDefaultAutoSelectFamilyAttemptTimeout() {
-    return _autoSelectFamilyAttemptTimeoutDefault.get();
-  },
-  setDefaultAutoSelectFamilyAttemptTimeout: function setDefaultAutoSelectFamilyAttemptTimeout(value) {
-    validateInt32(value, "value", 1);
-    if (value < 10) value = 10;
-    _autoSelectFamilyAttemptTimeoutDefault.set(value);
-  },
+  getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),
+  setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),
+  getDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"),
+  setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
 };

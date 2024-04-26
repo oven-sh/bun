@@ -10,29 +10,19 @@ const ZigString = JSC.ZigString;
 //
 
 pub var autoSelectFamilyDefault: bool = true;
-pub const _autoSelectFamilyDefault = MixinBool(@This(), "autoSelectFamilyDefault").access;
 
-pub var autoSelectFamilyAttemptTimeoutDefault: u32 = 250;
-pub const _autoSelectFamilyAttemptTimeoutDefault = MixinUInt(@This(), "autoSelectFamilyAttemptTimeoutDefault").access;
-
-//
-//
-
-fn MixinBool(comptime Scope: type, comptime name: string) type {
-    const S = struct {
-        pub fn access(globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-            const object = JSC.JSValue.createEmptyObject(globalThis, 2);
-            object.put(globalThis, ZigString.static("get"), JSC.JSFunction.create(globalThis, "get_" ++ name, getter, 0, .{}));
-            object.put(globalThis, ZigString.static("set"), JSC.JSFunction.create(globalThis, "set_" ++ name, setter, 1, .{}));
-            return object;
-        }
-
+pub fn getDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    return JSC.JSFunction.create(global, "getDefaultAutoSelectFamily", (struct {
         fn getter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
             _ = globalThis;
             _ = callframe;
-            return JSC.jsBoolean(@field(Scope, name));
+            return JSC.jsBoolean(autoSelectFamilyDefault);
         }
+    }).getter, 0, .{});
+}
 
+pub fn setDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    return JSC.JSFunction.create(global, "setDefaultAutoSelectFamily", (struct {
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
             const arguments = callframe.arguments(1);
             if (arguments.len < 1) {
@@ -41,31 +31,33 @@ fn MixinBool(comptime Scope: type, comptime name: string) type {
             }
             const arg = arguments.slice()[0];
             if (!arg.isBoolean()) {
-                globalThis.throwInvalidArguments(name ++ " is a boolean", .{});
+                globalThis.throwInvalidArguments("autoSelectFamilyDefault", .{});
                 return .undefined;
             }
-            @field(Scope, name) = arg.toBoolean();
-            return JSC.jsBoolean(@field(Scope, name));
+            const value = arg.toBoolean();
+            autoSelectFamilyDefault = value;
+            return JSC.jsBoolean(value);
         }
-    };
-    return S;
+    }).setter, 1, .{});
 }
 
-fn MixinUInt(comptime Scope: type, comptime name: string) type {
-    const S = struct {
-        pub fn access(globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-            const object = JSC.JSValue.createEmptyObject(globalThis, 2);
-            object.put(globalThis, ZigString.static("get"), JSC.JSFunction.create(globalThis, "get_" ++ name, getter, 0, .{}));
-            object.put(globalThis, ZigString.static("set"), JSC.JSFunction.create(globalThis, "set_" ++ name, setter, 1, .{}));
-            return object;
-        }
+//
+//
 
+pub var autoSelectFamilyAttemptTimeoutDefault: u32 = 250;
+
+pub fn getDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    return JSC.JSFunction.create(global, "getDefaultAutoSelectFamilyAttemptTimeout", (struct {
         fn getter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
             _ = globalThis;
             _ = callframe;
-            return JSC.jsNumber(@field(Scope, name));
+            return JSC.jsNumber(autoSelectFamilyAttemptTimeoutDefault);
         }
+    }).getter, 0, .{});
+}
 
+pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    return JSC.JSFunction.create(global, "setDefaultAutoSelectFamilyAttemptTimeout", (struct {
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
             const arguments = callframe.arguments(1);
             if (arguments.len < 1) {
@@ -73,13 +65,13 @@ fn MixinUInt(comptime Scope: type, comptime name: string) type {
                 return .undefined;
             }
             const arg = arguments.slice()[0];
-            if (!arg.isInt32()) {
-                globalThis.throwInvalidArguments(name ++ " is a boolean", .{});
+            if (!arg.isInt32AsAnyInt()) {
+                globalThis.throwInvalidArguments("autoSelectFamilyAttemptTimeoutDefault", .{});
                 return .undefined;
             }
-            @field(Scope, name) = arg.toU32();
-            return JSC.jsNumber(@field(Scope, name));
+            const value: u32 = @max(10, arg.coerceToInt32(globalThis));
+            autoSelectFamilyAttemptTimeoutDefault = value;
+            return JSC.jsNumber(value);
         }
-    };
-    return S;
+    }).setter, 1, .{});
 }

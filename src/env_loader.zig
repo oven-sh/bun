@@ -166,7 +166,7 @@ pub const Loader = struct {
                     }
                     //strips .
                     if (host[0] == '.') {
-                        host = host[1.. :0];
+                        host = host[1..];
                     }
                     //hostname ends with suffix
                     if (strings.endsWith(url.hostname, host)) {

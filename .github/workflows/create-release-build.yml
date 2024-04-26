@@ -20,6 +20,11 @@ on:
         type: string
         required: true
         description: The tag to use for the release
+      clobber:
+        type: boolean
+        required: false
+        default: false
+        description: Whether to overwrite existing release artifacts or not
   release:
     types:
       - created
@@ -165,4 +170,4 @@ jobs:
           title: "Bun v${{ inputs.version }} release artifacts uploaded"
       - name: "Upload Artifacts"
         run: |
-          gh release upload ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} --clobber bun-releases/*
+          gh release upload ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} ${{ inputs.clobber && '--clobber' || '' }} bun-releases/*

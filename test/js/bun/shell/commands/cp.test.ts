@@ -127,11 +127,11 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_existing_target");
 
-      TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_SOURCE} ${TEST_COPY_TO_FOLDER}`
-        .ensureTempDir(tmpdir)
-        .file(TEST_EXISTING_FILE, "Hello, World!\n")
-        .testMini({ cwd: mini_tmpdir })
-        .runAsTest("cp_duplicate_files");
+    TestBuilder.command`cp ${TEST_HELLO_WORLD_SOURCE} ${TEST_HELLO_WORLD_SOURCE} ${TEST_COPY_TO_FOLDER}`
+      .ensureTempDir(tmpdir)
+      .file(TEST_EXISTING_FILE, "Hello, World!\n")
+      .testMini({ cwd: mini_tmpdir })
+      .runAsTest("cp_duplicate_files");
 
     TestBuilder.command`touch a; cp a a`
       .ensureTempDir(tmpdir)

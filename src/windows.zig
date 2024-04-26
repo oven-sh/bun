@@ -3047,6 +3047,7 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .RETRY => .AGAIN,
         .DIRECTORY_NOT_EMPTY => .NOTEMPTY,
         .FILE_TOO_LARGE => .@"2BIG",
+        .NOT_SAME_DEVICE => .XDEV,
         .SHARING_VIOLATION => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE", .{});
             break :brk .BUSY;

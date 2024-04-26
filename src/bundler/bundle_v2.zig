@@ -2109,7 +2109,7 @@ pub const BundleV2 = struct {
 
                 if (this.bun_watcher != null) {
                     if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
-                        this.bun_watcher.?.addFile(
+                        _ = this.bun_watcher.?.addFile(
                             empty_result.watcher_data.fd,
                             input_files.items(.source)[empty_result.source_index.get()].path.text,
                             bun.hash32(input_files.items(.source)[empty_result.source_index.get()].path.text),
@@ -2117,7 +2117,7 @@ pub const BundleV2 = struct {
                             empty_result.watcher_data.dir_fd,
                             null,
                             false,
-                        ) catch {};
+                        );
                     }
                 }
             },
@@ -2128,7 +2128,7 @@ pub const BundleV2 = struct {
                     // to minimize contention, we add watcher here
                     if (this.bun_watcher != null) {
                         if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
-                            this.bun_watcher.?.addFile(
+                            _ = this.bun_watcher.?.addFile(
                                 result.watcher_data.fd,
                                 result.source.path.text,
                                 bun.hash32(result.source.path.text),
@@ -2136,7 +2136,7 @@ pub const BundleV2 = struct {
                                 result.watcher_data.dir_fd,
                                 result.watcher_data.package_json,
                                 false,
-                            ) catch {};
+                            );
                         }
                     }
                 }

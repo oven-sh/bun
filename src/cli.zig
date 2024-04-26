@@ -418,12 +418,12 @@ pub const Arguments = struct {
         }
 
         var cwd: []u8 = undefined;
-        if (args.option("--cwd")) |cwd_| {
+        if (args.option("--cwd")) |cwd_arg| {
             cwd = brk: {
                 var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_);
+                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
                 bun.sys.chdir(out).unwrap() catch |err| {
-                    Output.prettyErrorln("{}\n", .{err});
+                    Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
                     Global.exit(1);
                 };
                 break :brk try allocator.dupe(u8, out);

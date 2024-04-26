@@ -264,10 +264,17 @@ pub const DirEntryAccessor = struct {
         }
     };
 
-    pub fn statat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
-        const fd: bun.FileDescriptor = (handle.value orelse @panic("File descriptor is null")).fd; // TODO when is this null?
-        if (comptime bun.Environment.isWindows) return statatWindows(fd, path);
-        return Syscall.fstatat(fd, path);
+    pub fn statat(handle: Handle, path_: [:0]const u8) Maybe(bun.Stat) {
+        var path: [:0]const u8 = path_;
+        var buf: bun.PathBuffer = undefined;
+        if (!bun.path.Platform.auto.isAbsolute(path)) {
+            if (handle.value) |entry| {
+                const slice = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path }, .auto);
+                buf[slice.len] = 0;
+                path = buf[0..slice.len :0];
+            }
+        }
+        return Syscall.stat(path);
     }
 
     pub fn open(path: [:0]const u8) !Maybe(Handle) {

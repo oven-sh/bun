@@ -3805,6 +3805,16 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("push", .{ value, globalObject, out });
     }
 
+    /// Return the pointer to the wrapped object only if it is a direct instance of the type.
+    /// If the object does not match the type, return null.
+    /// If the object is a subclass of the type or has mutated the structure, return null.
+    /// Note: this may return null for direct instances of the type if the user adds properties to the object.
+    pub fn asDirect(value: JSValue, comptime ZigType: type) ?*ZigType {
+        bun.assert(value.isCell()); // you must have already checked this.
+
+        return ZigType.fromJSDirect(value);
+    }
+
     pub fn as(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (value.isEmptyOrUndefinedOrNull())
             return null;
@@ -4649,6 +4659,14 @@ pub const JSValue = enum(JSValueReprInt) {
             return bun.ComptimeEnumMap(BuiltinName).has(property);
         }
     };
+
+    pub fn fastGetOrElse(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName, alternate: ?JSC.JSValue) ?JSValue {
+        return this.fastGet(global, builtin_name) orelse {
+            if (alternate) |alt| return alt.fastGet(global, builtin_name);
+
+            return null;
+        };
+    }
 
     // intended to be more lightweight than ZigString
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {

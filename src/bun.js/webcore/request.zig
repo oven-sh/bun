@@ -518,7 +518,7 @@ pub const Request = struct {
             const value_type = value.jsType();
             const explicit_check = values_to_try.len == 2 and value_type == .FinalObject and values_to_try[1].jsType() == .DOMWrapper;
             if (value_type == .DOMWrapper) {
-                if (value.as(Request)) |request| {
+                if (value.asDirect(Request)) |request| {
                     if (values_to_try.len == 1) {
                         request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
                         return req;
@@ -547,7 +547,7 @@ pub const Request = struct {
                     }
                 }
 
-                if (value.as(JSC.WebCore.Response)) |response| {
+                if (value.asDirect(JSC.WebCore.Response)) |response| {
                     if (!fields.contains(.method)) {
                         req.method = response.init.method;
                         fields.insert(.method);

@@ -37,7 +37,9 @@
 #include <errno.h>
 #endif
 
-#define HAS_MSGX (defined(__APPLE__) && defined(__aarch64__))
+#if defined(__APPLE__) && defined(__aarch64__)
+#define HAS_MSGX
+#endif
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {

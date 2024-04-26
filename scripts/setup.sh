@@ -15,7 +15,7 @@ fail() {
   printf "${C_RED}setup error${C_RESET}: %s\n" "$@"
 }
 
-LLVM_VERSION=17
+LLVM_VERSION=16
 
 # this compiler detection could be better
 # it is copy pasted from ./env.sh

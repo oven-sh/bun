@@ -518,7 +518,7 @@ pub const RuntimeTranspilerStore = struct {
                     if (input_file_fd != .zero) {
                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                             should_close_input_file_fd = false;
-                            vm.bun_watcher.addFile(
+                            _ = vm.bun_watcher.addFile(
                                 input_file_fd,
                                 path.text,
                                 hash,
@@ -526,7 +526,7 @@ pub const RuntimeTranspilerStore = struct {
                                 .zero,
                                 package_json,
                                 true,
-                            ) catch {};
+                            );
                         }
                     }
                 }
@@ -541,7 +541,7 @@ pub const RuntimeTranspilerStore = struct {
                         std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules"))
                     {
                         should_close_input_file_fd = false;
-                        vm.bun_watcher.addFile(
+                        _ = vm.bun_watcher.addFile(
                             input_file_fd,
                             path.text,
                             hash,
@@ -549,7 +549,7 @@ pub const RuntimeTranspilerStore = struct {
                             .zero,
                             package_json,
                             true,
-                        ) catch {};
+                        );
                     }
                 }
             }
@@ -1445,7 +1445,7 @@ pub const ModuleLoader = struct {
 
                 if (parse_result.input_fd) |fd_| {
                     if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                        jsc_vm.bun_watcher.addFile(
+                        _ = jsc_vm.bun_watcher.addFile(
                             fd_,
                             path.text,
                             this.hash,
@@ -1453,7 +1453,7 @@ pub const ModuleLoader = struct {
                             .zero,
                             this.package_json,
                             true,
-                        ) catch {};
+                        );
                     }
                 }
 
@@ -1690,7 +1690,7 @@ pub const ModuleLoader = struct {
                                     if (input_file_fd != .zero) {
                                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                             should_close_input_file_fd = false;
-                                            jsc_vm.bun_watcher.addFile(
+                                            _ = jsc_vm.bun_watcher.addFile(
                                                 input_file_fd,
                                                 path.text,
                                                 hash,
@@ -1698,7 +1698,7 @@ pub const ModuleLoader = struct {
                                                 .zero,
                                                 package_json,
                                                 true,
-                                            ) catch {};
+                                            );
                                         }
                                     }
                                 }
@@ -1733,7 +1733,7 @@ pub const ModuleLoader = struct {
                         if (input_file_fd != .zero) {
                             if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                 should_close_input_file_fd = false;
-                                jsc_vm.bun_watcher.addFile(
+                                _ = jsc_vm.bun_watcher.addFile(
                                     input_file_fd,
                                     path.text,
                                     hash,
@@ -1741,7 +1741,7 @@ pub const ModuleLoader = struct {
                                     .zero,
                                     package_json,
                                     true,
-                                ) catch {};
+                                );
                             }
                         }
                     }

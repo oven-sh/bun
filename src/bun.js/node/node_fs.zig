@@ -2574,34 +2574,28 @@ pub const Arguments = struct {
                 if (current.isNumber() or current.isBigInt()) {
                     args.offset = current.to(u52);
 
-                    if (arguments.remaining.len < 2) {
-                        JSC.throwInvalidArguments(
-                            "length and position are required",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-
+                    if (arguments.remaining.len < 1) {
+                        JSC.throwInvalidArguments("length is required", .{}, ctx, exception);
                         return null;
                     }
-                    if (arguments.remaining[0].isNumber() or arguments.remaining[0].isBigInt())
-                        args.length = arguments.remaining[0].to(u52);
 
+                    const arg_length = arguments.next().?;
+                    arguments.eat();
+
+                    if (arg_length.isNumber() or arg_length.isBigInt()) {
+                        args.length = arg_length.to(u52);
+                    }
                     if (args.length == 0) {
-                        JSC.throwInvalidArguments(
-                            "length must be greater than 0",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-
+                        JSC.throwInvalidArguments("length must be greater than 0", .{}, ctx, exception);
                         return null;
                     }
 
-                    if (arguments.remaining[1].isNumber() or arguments.remaining[1].isBigInt())
-                        args.position = @as(ReadPosition, @intCast(arguments.remaining[1].to(i52)));
-
-                    arguments.remaining = arguments.remaining[2..];
+                    if (arguments.next()) |arg_position| {
+                        arguments.eat();
+                        if (arg_position.isNumber() or arg_position.isBigInt()) {
+                            args.position = @as(ReadPosition, @intCast(arg_position.to(i52)));
+                        }
+                    }
                 } else if (current.isObject()) {
                     if (current.getTruthy(ctx.ptr(), "offset")) |num| {
                         if (num.isNumber() or num.isBigInt()) {

@@ -240,7 +240,13 @@ pub const LifecycleScriptSubprocess = struct {
         this.process = process;
         process.setExitHandler(this);
 
-        try process.watch(event_loop).unwrap();
+        switch (process.watchOrReap()) {
+            .err => |err| {
+                if (!process.hasExited())
+                    process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage));
+            },
+            .result => {},
+        }
     }
 
     pub fn printOutput(this: *LifecycleScriptSubprocess) void {

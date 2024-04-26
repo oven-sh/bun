@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "../../../harness";
 import { Subprocess } from "bun";
-import { copyFileSync, rmSync } from "fs";
+import { copyFileSync } from "fs";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
 import { cp, rm } from "fs/promises";
@@ -113,31 +113,41 @@ afterAll(() => {
   }
 });
 
-test("hot reloading works on the client (+ tailwind hmr)", async () => {
-  expect(dev_server).not.toBeUndefined();
-  expect(baseUrl).not.toBeUndefined();
-  var pid: number, exited;
-  let timeout = setTimeout(() => {
-    if (timeout && pid) {
-      process.kill?.(pid);
-      pid = 0;
+// Chrome for Testing doesn't support arm64 yet
+//
+// https://github.com/GoogleChromeLabs/chrome-for-testing/issues/1
+// https://github.com/puppeteer/puppeteer/issues/7740
+const puppeteer_unsupported = process.platform === "linux" && process.arch === "arm64";
 
-      if (dev_server_pid) {
-        process?.kill?.(dev_server_pid);
-        dev_server_pid = undefined;
+test.skipIf(puppeteer_unsupported)(
+  "hot reloading works on the client (+ tailwind hmr)",
+  async () => {
+    expect(dev_server).not.toBeUndefined();
+    expect(baseUrl).not.toBeUndefined();
+    var pid: number, exited;
+    let timeout = setTimeout(() => {
+      if (timeout && pid) {
+        process.kill?.(pid);
+        pid = 0;
+
+        if (dev_server_pid) {
+          process?.kill?.(dev_server_pid);
+          dev_server_pid = undefined;
+        }
       }
-    }
-  }, 30000).unref();
+    }, 30000).unref();
 
-  ({ exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
-    cwd: root,
-    env: bunEnv,
-    stdio: ["ignore", "inherit", "inherit"],
-  }));
+    ({ exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
+      cwd: root,
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+    }));
 
-  expect(await exited).toBe(0);
-  pid = 0;
-  clearTimeout(timeout);
-  // @ts-expect-error
-  timeout = undefined;
-}, 30000);
+    expect(await exited).toBe(0);
+    pid = 0;
+    clearTimeout(timeout);
+    // @ts-expect-error
+    timeout = undefined;
+  },
+  30000,
+);

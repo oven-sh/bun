@@ -1672,6 +1672,10 @@ pub const Path = struct {
 
     pub fn isJSONCFile(this: *const Path) bool {
         const str = this.name.filename;
+        if (strings.eqlComptime(str, "package.json")) {
+            return true;
+        }
+
         if (!(strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig."))) {
             return false;
         }

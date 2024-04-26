@@ -375,8 +375,8 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
     }
 
     let flags = 0;
-    if (state.reuseAddr) flags |= UV_UDP_REUSEADDR;
-    if (state.ipv6Only) flags |= UV_UDP_IPV6ONLY;
+    if (state.reuseAddr) flags |= 0; //UV_UDP_REUSEADDR;
+    if (state.ipv6Only) flags |= 0; //UV_UDP_IPV6ONLY;
 
     // TODO flags
     const family = this.type === "udp4" ? "IPv4" : "IPv6";

@@ -90,7 +90,7 @@ pub const PathWatcherManager = struct {
         }
 
         switch (switch (Environment.os) {
-            else => bun.sys.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0),
+            else => bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0),
             // windows bun.sys.open does not pass iterable=true,
             .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, .{ .iterable = true, .read_only = true }),
         }) {
@@ -132,9 +132,9 @@ pub const PathWatcherManager = struct {
     }
 
     const PathWatcherManagerError = std.mem.Allocator.Error ||
-        std.os.KQueueError ||
+        std.posix.KQueueError ||
         error{KQueueError} ||
-        std.os.INotifyInitError ||
+        std.posix.INotifyInitError ||
         std.Thread.SpawnError;
 
     pub fn init(vm: *JSC.VirtualMachine) PathWatcherManagerError!*PathWatcherManager {
@@ -456,7 +456,9 @@ pub const PathWatcherManager = struct {
                         .errno = @truncate(@intFromEnum(switch (err) {
                             error.AccessDenied => bun.C.E.ACCES,
                             error.SystemResources => bun.C.E.NOMEM,
-                            error.Unexpected => bun.C.E.INVAL,
+                            error.Unexpected,
+                            error.InvalidUtf8,
+                            => bun.C.E.INVAL,
                         })),
                         .syscall = .watch,
                     },

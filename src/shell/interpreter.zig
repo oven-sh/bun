@@ -10142,6 +10142,10 @@ pub const Interpreter = struct {
                 done,
             } = .idle,
 
+            pub fn format(this: *const Cp, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                try writer.print("Cp(0x{x})", .{@intFromPtr(this)});
+            }
+
             /// On Windows it is possible to get an EBUSY error very simply
             /// by running the following command:
             ///
@@ -10322,6 +10326,7 @@ pub const Interpreter = struct {
 
             pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
                 assert(this.state == .exec);
+                log("task done: 0x{x} {d}", .{ @intFromPtr(task), this.state.exec.tasks_count });
                 this.state.exec.tasks_count -= 1;
 
                 const err_ = task.err;
@@ -10335,7 +10340,9 @@ pub const Interpreter = struct {
                             (task.src_absolute != null and
                             err.sys.path.eqlUTF8(task.src_absolute.?)))
                         {
+                            log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                             this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
+                            this.next();
                             return;
                         }
                     } else {

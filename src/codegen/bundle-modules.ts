@@ -373,6 +373,7 @@ pub const ResolvedSourceTag = enum(u32) {
     file = 4,
     esm = 5,
     json_for_object_loader = 6,
+    exports_object = 7,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
@@ -396,6 +397,7 @@ writeIfNotChanged(
     File = 4,
     ESM = 5,
     JSONForObjectLoader = 6,
+    ExportsObject = 7,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`

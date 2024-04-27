@@ -3888,7 +3888,7 @@ var require_writable = __commonJS({
           errorOrDestroy(stream, err, state.sync);
         } else if (needFinish(state)) {
           state.prefinished = true;
-          stream.emit("prefinish");
+          ProcessNextTick(() => stream.emit("prefinish"));
           state.pendingcb++;
           ProcessNextTick(finish, stream, state);
         }

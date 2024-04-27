@@ -3,15 +3,7 @@
 
 #include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
-#include "JavaScriptCore/ExceptionScope.h"
-#include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSCJSValue.h"
-#include "JavaScriptCore/JSCast.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSGlobalObjectInlines.h"
-#include "JavaScriptCore/Operations.h"
 #include "_NativeModule.h"
-#include "headers-handwritten.h"
 #include "isBuiltinModule.h"
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -425,7 +417,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths, (JSC::JSGlobalObject * gl
   RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
-extern "C" JSC::EncodedJSValue NodeModuleModule__findPath(JSGlobalObject*, BunString, JSArray*, bool);
+extern "C" JSC::EncodedJSValue NodeModuleModule__findPath(JSGlobalObject*, BunString, JSArray*);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
   JSC::VM &vm = globalObject->vm();
@@ -433,7 +425,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
 
   JSValue request_value = callFrame->argument(0);
   JSValue paths_value = callFrame->argument(1);
-  bool is_main = callFrame->argument(2).isTrue();
   
   String request = request_value.toWTFString(globalObject);
   RETURN_IF_EXCEPTION(scope, {});
@@ -441,7 +432,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
 
   JSArray* paths = paths_value.isCell() ? jsDynamicCast<JSArray*>(paths_value) : nullptr;
 
-  return NodeModuleModule__findPath(globalObject, request_bun_str, paths, is_main);
+  return NodeModuleModule__findPath(globalObject, request_bun_str, paths);
 }
 
 // These two setters are only used if you directly hit

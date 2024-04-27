@@ -977,13 +977,7 @@ pub export fn NodeModuleModule__findPath(
     global: *JSGlobalObject,
     request_bun_str: bun.String,
     paths_maybe: ?*JSC.JSArray,
-    is_main: bool,
 ) JSValue {
-    _ = is_main; // autofix
-
-    // const isWindows = Environment.isWindows;
-    // const Path = bun.JSC.Node.Path;
-
     var stack_buf = std.heap.stackFallback(8192, default_allocator);
     const alloc = stack_buf.get();
 
@@ -995,34 +989,6 @@ pub export fn NodeModuleModule__findPath(
     if (!absolute_request and paths_maybe == null) {
         return .false;
     }
-
-    // const trailing_slash = request.len > 0 and
-    //     request[request.len - 1] == '/' or
-    //     (request[request.len - 1] == '.' and
-    //     (request.len == 1 or
-    //     request[request.len - 2] == '/' or
-    //     (request[request.len - 2] == '.' and
-    //     (request.len == 2 or
-    //     request[request.len - 3] == '/'))));
-
-    // const is_relative = request.len > 0 and
-    //     request[0] == '.' and
-    //     (request.len == 1 or
-    //     request[1] == '/' or
-    //     (isWindows and request[1] == '\\') or
-    //     (request[1] == '.' and
-    //     ((request.len == 2 or
-    //     request[2] == '/') or
-    //     (isWindows and (request[2] == '\\')))));
-
-    // var inside_path = true;
-    // if (is_relative) {
-    //     var normalize_buf: bun.PathBuffer = undefined;
-    //     const normalized = Path.normalizeT(u8, request, &normalize_buf);
-    //     if (bun.strings.hasPrefixComptime(normalized, "..")) {
-    //         inside_path = false;
-    //     }
-    // }
 
     // for each path
     const found = if (paths_maybe) |paths| found: {
@@ -1052,15 +1018,13 @@ fn findPathInner(
     global: *JSGlobalObject,
 ) ?bun.String {
     var errorable: ErrorableString = undefined;
-    JSC.VirtualMachine.resolveMaybeNeedsTrailingSlash(
+    JSC.VirtualMachine.resolve(
         &errorable,
         global,
         request,
         cur_path,
         null,
         false,
-        true,
     );
-
     return errorable.unwrap() catch null;
 }

@@ -15,16 +15,16 @@ on:
       version:
         type: string
         required: true
-        description: "Version to use for the release build. Example: 1.1.4. Exclude the 'v' prefix."
+        description: "Release version. Example: 1.1.4. Exclude the 'v' prefix."
       tag:
         type: string
         required: true
-        description: The tag to use for the release
+        description: "GitHub tag to use"
       clobber:
         type: boolean
         required: false
         default: false
-        description: Whether to overwrite existing release artifacts or not
+        description: "Overwrite existing release artifacts?"
   release:
     types:
       - created
@@ -151,8 +151,10 @@ jobs:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: bun-*
           path: bun-releases
+          pattern: bun-*
+          merge-multiple: true
+          github-token: ${{ github.token }}
       - name: Check for Artifacts
         run: |
           if [ ! -d "bun-releases" ] || [ -z "$(ls -A bun-releases)" ]; then

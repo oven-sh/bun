@@ -8,6 +8,7 @@ describe("Bun.Transpiler", () => {
       "process.env.NODE_ENV": JSON.stringify("development"),
       user_undefined: "undefined",
       user_nested: "location.origin",
+      "hello.earth": "hello.mars",
     },
     macro: {
       react: {
@@ -1939,6 +1940,7 @@ console.log(resolve.length)
       expectPrinted_(`export default !user_undefined;`, `export default true`);
 
       expectPrinted_(`export default user_nested;`, `export default location.origin`);
+      expectPrinted_("hello.earth('hi')", 'hello.mars("hi")');
     });
 
     it("jsx symbol should work", () => {

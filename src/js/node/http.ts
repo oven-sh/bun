@@ -1391,6 +1391,8 @@ class ClientRequest extends OutgoingMessage {
   #finished;
   #tls;
 
+  _httpMessage;
+
   get path() {
     return this.#path;
   }
@@ -1482,7 +1484,6 @@ class ClientRequest extends OutgoingMessage {
       }
 
       this._writableState.autoDestroy = false;
-      this.emit("socket", this.socket);
       //@ts-ignore
       this.#fetchRequest = fetch(url, fetchOptions)
         .then(response => {
@@ -1750,6 +1751,14 @@ class ClientRequest extends OutgoingMessage {
 
     const { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
+
+    this._httpMessage = this;
+
+    process.nextTick(() => {
+      // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
+      if (this.destroyed) return;
+      this.emit("socket", this.socket);
+    });
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

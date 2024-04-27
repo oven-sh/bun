@@ -113,22 +113,26 @@ const LibInfo = struct {
         );
 
         if (errno != 0) {
-            request.head.promise.reject(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(std.c.getErrno(errno))}));
+            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(std.c.getErrno(errno))}));
             if (request.cache.pending_cache) this.pending_host_cache_native.available.set(request.cache.pos_in_pending);
             this.vm.allocator.destroy(request);
 
             return promise_value;
         }
         bun.assert(request.backend.libinfo.machport != null);
-        request.backend.libinfo.file_poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
-        bun.assert(
-            request.backend.libinfo.file_poll.?.registerWithFd(
-                this.vm.event_loop_handle.?,
-                .machport,
-                .one_shot,
-                bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
-            ) == .result,
+        var poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
+        request.backend.libinfo.file_poll = poll;
+        const rc = poll.registerWithFd(
+            this.vm.event_loop_handle.?,
+            .machport,
+            .one_shot,
+            bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
         );
+        bun.assert(
+            rc == .result,
+        );
+
+        poll.enableKeepingProcessAlive(this.vm.eventLoop());
 
         return promise_value;
     }
@@ -923,7 +927,7 @@ pub const CAresNameInfo = struct {
                 JSC.ZigString.init(err.code()).toValueGC(globalThis),
             );
 
-            promise.reject(globalThis, error_value);
+            promise.rejectTask(globalThis, error_value);
             this.deinit();
             return;
         }
@@ -937,7 +941,7 @@ pub const CAresNameInfo = struct {
                 JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
             );
 
-            promise.reject(globalThis, error_value);
+            promise.rejectTask(globalThis, error_value);
             this.deinit();
             return;
         }
@@ -951,7 +955,7 @@ pub const CAresNameInfo = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolve(globalThis, result);
+        promise.resolveTask(globalThis, result);
         this.deinit();
     }
 
@@ -1341,7 +1345,7 @@ pub const CAresReverse = struct {
                 JSC.ZigString.init(err.code()).toValueGC(globalThis),
             );
 
-            promise.reject(globalThis, error_value);
+            promise.rejectTask(globalThis, error_value);
             this.deinit();
             return;
         }
@@ -1355,7 +1359,7 @@ pub const CAresReverse = struct {
                 JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
             );
 
-            promise.reject(globalThis, error_value);
+            promise.rejectTask(globalThis, error_value);
             this.deinit();
             return;
         }
@@ -1369,7 +1373,7 @@ pub const CAresReverse = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolve(globalThis, result);
+        promise.resolveTask(globalThis, result);
         this.deinit();
     }
 
@@ -1420,7 +1424,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
                     JSC.ZigString.init(err.code()).toValueGC(globalThis),
                 );
 
-                promise.reject(globalThis, error_value);
+                promise.rejectTask(globalThis, error_value);
                 this.deinit();
                 return;
             }
@@ -1433,7 +1437,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
                     JSC.ZigString.static("code"),
                     JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
                 );
-                promise.reject(globalThis, error_value);
+                promise.rejectTask(globalThis, error_value);
                 this.deinit();
                 return;
             }
@@ -1448,7 +1452,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             var promise = this.promise;
             const globalThis = this.globalThis;
             this.promise = .{};
-            promise.resolve(globalThis, result);
+            promise.resolveTask(globalThis, result);
             this.deinit();
         }
 
@@ -1513,7 +1517,7 @@ pub const DNSLookup = struct {
             };
 
             this.deinit();
-            promise.reject(globalThis, error_value);
+            promise.rejectTask(globalThis, error_value);
             return;
         }
         onCompleteNative(this, .{ .addrinfo = result });
@@ -1530,7 +1534,7 @@ pub const DNSLookup = struct {
                 JSC.ZigString.static("code"),
                 JSC.ZigString.init(err.code()).toValueGC(globalThis),
             );
-            promise.reject(globalThis, error_value);
+            promise.rejectTask(globalThis, error_value);
             this.deinit();
             return;
         }
@@ -1545,7 +1549,7 @@ pub const DNSLookup = struct {
                 JSC.ZigString.static("code"),
                 JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
             );
-            promise.reject(globalThis, error_value);
+            promise.rejectTask(globalThis, error_value);
             this.deinit();
             return;
         }
@@ -1561,10 +1565,11 @@ pub const DNSLookup = struct {
 
     pub fn onCompleteWithArray(this: *DNSLookup, result: JSC.JSValue) void {
         log("onCompleteWithArray", .{});
+
         var promise = this.promise;
         this.promise = .{};
         const globalThis = this.globalThis;
-        promise.resolve(globalThis, result);
+        promise.resolveTask(globalThis, result);
         this.deinit();
     }
 

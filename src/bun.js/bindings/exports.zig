@@ -212,6 +212,8 @@ pub const ResolvedSource = extern struct {
 
     allocator: ?*anyopaque = null,
 
+    jsvalue_for_export: JSC.JSValue = .zero,
+
     tag: Tag = Tag.javascript,
 
     /// This is for source_code

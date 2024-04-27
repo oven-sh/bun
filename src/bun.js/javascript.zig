@@ -1853,7 +1853,7 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: bun.String,
         source: bun.String,
-        query_string: *ZigString,
+        query_string: ?*ZigString,
         is_esm: bool,
     ) void {
         resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false);
@@ -1864,7 +1864,7 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: bun.String,
         source: bun.String,
-        query_string: *ZigString,
+        query_string: ?*ZigString,
         is_esm: bool,
     ) void {
         resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
@@ -1875,7 +1875,7 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: bun.String,
         source: bun.String,
-        query_string: *ZigString,
+        query_string: ?*ZigString,
         is_esm: bool,
     ) void {
         resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);

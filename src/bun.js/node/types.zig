@@ -3492,6 +3492,13 @@ pub const Path = struct {
         return buf[0..bufSize];
     }
 
+    pub fn normalizeT(comptime T: type, path: []const T, buf: []T) []const T {
+        return switch (Environment.os) {
+            .windows => normalizeWindowsT(T, path, buf),
+            else => normalizePosixT(T, path, buf),
+        };
+    }
+
     pub inline fn normalizePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T) JSC.JSValue {
         return toJSString(globalObject, normalizePosixT(T, path, buf));
     }

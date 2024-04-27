@@ -36,8 +36,6 @@ pub const Source = struct {
             break :brk std.io.FixedBufferStream([]u8);
         } else {
             break :brk File;
-            // var stdout = std.io.getStdOut();
-            // return @TypeOf(std.io.bufferedWriter(stdout.writer()));
         }
     };
     pub const BufferedStream: type = struct {
@@ -555,6 +553,8 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
     }
 }
 
+var debug_scoped_add_pid: enum { yes, no, unknown } = .unknown;
+
 /// Debug-only logs which should not appear in release mode
 /// To enable a specific log at runtime, set the environment variable
 ///   BUN_DEBUG_${TAG} to 1
@@ -631,24 +631,41 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
             lock.lock();
             defer lock.unlock();
 
-            if (Output.enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
-                out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
-                    really_disable = true;
-                    return;
-                };
-                buffered_writer.flush() catch {
-                    really_disable = true;
-                    return;
-                };
-            } else {
-                out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, false), args) catch {
-                    really_disable = true;
-                    return;
-                };
-                buffered_writer.flush() catch {
-                    really_disable = true;
-                    return;
-                };
+            switch (Output.enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
+                inline else => |colors| {
+                    const should_add_pid = switch (debug_scoped_add_pid) {
+                        .yes, .no => |t| t == .yes,
+                        .unknown => brk: {
+                            debug_scoped_add_pid = if (bun.getenvZ("BUN_DEBUG_ADD_PID")) |val|
+                                if (bun.strings.eqlComptime(val, "1")) .yes else .no
+                            else
+                                .no;
+                            break :brk debug_scoped_add_pid == .yes;
+                        },
+                    };
+                    out.print(comptime prettyFmt("<r><d>", colors), .{}) catch {
+                        really_disable = true;
+                        return;
+                    };
+                    if (should_add_pid) {
+                        out.print("[{d}] ", .{getpid()}) catch {
+                            really_disable = true;
+                            return;
+                        };
+                    }
+                    out.print(comptime prettyFmt("[{s}]<r> ", colors), .{tagname}) catch {
+                        really_disable = true;
+                        return;
+                    };
+                    out.print(comptime prettyFmt(fmt, colors), args) catch {
+                        really_disable = true;
+                        return;
+                    };
+                    buffered_writer.flush() catch {
+                        really_disable = true;
+                        return;
+                    };
+                },
             }
         }
     };
@@ -970,9 +987,6 @@ pub fn initScopedDebugWriterAtStartup() void {
 
     if (bun.getenvZ("BUN_DEBUG")) |path| {
         if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {
-            if (std.fs.path.dirname(path)) |dir| {
-                std.fs.cwd().makePath(dir) catch {};
-            }
 
             // do not use libuv through this code path, since it might not be initialized yet.
             const pid = std.fmt.allocPrint(bun.default_allocator, "{d}", .{getpid()}) catch @panic("failed to allocate path");
@@ -981,16 +995,12 @@ pub fn initScopedDebugWriterAtStartup() void {
             const path_fmt = std.mem.replaceOwned(u8, bun.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
             defer bun.default_allocator.free(path_fmt);
 
-            const fd = std.os.openat(
-                std.fs.cwd().fd,
-                path_fmt,
-                std.os.O.CREAT | std.os.O.WRONLY,
-                // on windows this is u0
-                if (Environment.isWindows) 0 else 0o644,
-            ) catch |err_| {
-                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(err_), path });
-            };
-            _ = bun.sys.ftruncate(bun.toFD(fd), 0); // windows
+            if (std.fs.path.dirname(path_fmt)) |dir|
+                std.fs.cwd().makePath(dir) catch {};
+
+            const fd = (std.fs.cwd().createFile(path_fmt, .{}) catch |err_| {
+                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(err_), path_fmt });
+            }).handle;
             ScopedDebugWriter.scoped_file_writer = File.from(fd).quietWriter();
             return;
         }

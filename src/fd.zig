@@ -356,6 +356,14 @@ pub const FDImpl = packed struct {
             @compileError("invalid format string for FDImpl.format. must be empty like '{}'");
         }
 
+        // if (std.debug.runtime_safety) {
+        //     const undef = comptime std.mem.bytesAsValue(FDImpl, &([_]u8{0xAA} ** @sizeOf(FDImpl))).encode();
+        //     if (this.encode() == undef) {
+        //         try writer.writeAll("[garbage memory]");
+        //         return;
+        //     }
+        // }
+
         switch (env.os) {
             else => {
                 const fd = this.system();

@@ -377,6 +377,7 @@ pub fn WindowsPipeReader(
                 return;
             }
             var this: *This = bun.cast(*This, fs.data);
+            const fd = bun.toFD(fs.file.fd);
             fs.deinit();
 
             switch (nread_int) {
@@ -393,36 +394,31 @@ pub fn WindowsPipeReader(
                         this.onRead(.{ .err = err }, "", .progress);
                         return;
                     }
-                    defer {
-                        // if we are not paused we keep reading until EOF or err
-                        if (!this.flags.is_paused) {
-                            if (this.source) |source| {
-                                if (source == .file) {
-                                    const file = source.file;
-                                    source.setData(this);
-                                    const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
-                                    file.iov = uv.uv_buf_t.init(buf);
-                                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFileRead).toError(.write)) |err| {
-                                        this.flags.is_paused = true;
-                                        // we should inform the error if we are unable to keep reading
-                                        this.onRead(.{ .err = err }, "", .progress);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    const len: usize = @intCast(nread_int);
                     // we got some data lets get the current iov
-                    if (this.source) |source| {
-                        if (source == .file) {
-                            var buf = source.file.iov.slice();
-                            return this.onRead(.{ .result = len }, buf[0..len], .progress);
-                        }
+                    const len: usize = @intCast(nread_int);
+                    if (this.source == null) {
+                        bun.Output.panic("oh uh {}, {d}", .{ fd, nread_int });
                     }
-                    // ops we should not hit this lets fail with EPIPE
-                    bun.assert(false);
-                    return this.onRead(.{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .read) }, "", .progress);
+                    const source = bun.releaseNonNull(this.source);
+                    switch (source) {
+                        .file => |file| {
+                            defer if (!this.flags.is_paused) {
+                                source.setData(this);
+                                const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
+                                file.iov = uv.uv_buf_t.init(buf);
+                                bun.Output.debug("continue reading({}, {d}) = {}", .{ fd, buf.len, this.flags.is_paused });
+                                if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFileRead).toError(.write)) |err| {
+                                    this.flags.is_paused = true;
+                                    // we should inform the error if we are unable to keep reading
+                                    this.onRead(.{ .err = err }, "", .progress);
+                                }
+                            };
+
+                            var buf = file.iov.slice();
+                            return this.onRead(.{ .result = len }, buf[0..len], .progress);
+                        },
+                        else => bun.unexpectedTag(source),
+                    }
                 },
             }
         }
@@ -439,6 +435,7 @@ pub fn WindowsPipeReader(
                     source.setData(this);
                     const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                     file.iov = uv.uv_buf_t.init(buf);
+                    bun.Output.debug("startReading({}, {d}) = {}", .{ bun.toFD(file.file), buf.len, this.flags.is_paused });
                     if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFileRead).toError(.write)) |err| {
                         return .{ .err = err };
                     }
@@ -473,11 +470,10 @@ pub fn WindowsPipeReader(
             if (this.source) |source| {
                 switch (source) {
                     .sync_file, .file => |file| {
-                        if (!this.flags.is_paused) {
-                            // always cancel the current one
-                            file.fs.cancel();
-                            this.flags.is_paused = true;
-                        }
+                        // cancel the current one
+                        file.fs.cancel();
+                        this.flags.is_paused = true;
+
                         // always use close_fs here because we can have a operation in progress
                         file.close_fs.data = file;
                         _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
@@ -487,13 +483,13 @@ pub fn WindowsPipeReader(
                         pipe.close(onPipeClose);
                     },
                     .tty => |tty| {
+                        tty.data = tty;
+                        tty.close(onTTYClose);
+
                         if (tty == &Source.stdin_tty) {
                             Source.stdin_tty = undefined;
                             Source.stdin_tty_init = false;
                         }
-
-                        tty.data = tty;
-                        tty.close(onTTYClose);
                     },
                 }
                 this.source = null;
@@ -538,6 +534,7 @@ pub fn WindowsPipeReader(
             switch (hasMore) {
                 .eof => {
                     // we call report EOF and close
+                    _ = this.stopReading();
                     _ = onReadChunk(this, slice, hasMore);
                     close(this);
                 },

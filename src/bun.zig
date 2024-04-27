@@ -3155,3 +3155,23 @@ pub inline fn unsafeAssert(condition: bool) void {
         unreachable;
     }
 }
+
+pub fn unexpectedTag(union_value: anytype) noreturn {
+    @setCold(true);
+
+    const non_pointer = switch (@typeInfo(@TypeOf(union_value))) {
+        else => union_value,
+        .Pointer => union_value.*,
+    };
+
+    Output.panic("Unexpected tag: " ++ @typeName(@TypeOf(non_pointer)) ++ ".{s}", .{
+        @tagName(non_pointer),
+    });
+}
+
+pub fn releaseNonNull(optional: anytype) @TypeOf(optional.?) {
+    return optional orelse {
+        const name = @typeName(@TypeOf(optional.?));
+        Output.panic("Unexpected null (" ++ name ++ ")", .{});
+    };
+}

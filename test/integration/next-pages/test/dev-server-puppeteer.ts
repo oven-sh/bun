@@ -65,8 +65,11 @@ async function main() {
   await counter_root.$eval(".dec", x => (x as HTMLElement).click());
   assert.strictEqual(await getCount(), "Count A: 1");
 
+  console.log("reloading");
+  const wait2 = waitForConsoleMessage(p, /counter a/);
   p.reload({});
-  await waitForConsoleMessage(p, /counter a/);
+  await wait2;
+  console.log("reloaded");
 
   assert.strictEqual(await p.$eval("code.font-bold", x => x.innerText), Bun.version);
 
@@ -108,6 +111,9 @@ async function main() {
 
 try {
   await main();
+} catch (e) {
+  console.error(e);
+  process.exit(1);
 } finally {
   await b?.close?.();
 }

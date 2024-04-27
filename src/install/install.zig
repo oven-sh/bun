@@ -9250,7 +9250,7 @@ pub const PackageManager = struct {
                 },
                 else => {
                     if (comptime Environment.allow_assert) {
-                        @panic("bad");
+                        @panic("Internal assertion failure: unexpected resolution tag");
                     }
                     this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                     return;

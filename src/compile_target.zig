@@ -264,7 +264,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                 defer tmpdir.close();
                 defer std.fs.cwd().deleteTree(tempdir_name) catch {};
                 _ = libarchive.Archive.extractToDir(
-                    compressed_archive_bytes.list.items,
+                    tarball_bytes.items,
                     tmpdir,
                     null,
                     void,

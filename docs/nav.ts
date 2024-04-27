@@ -309,6 +309,9 @@ export default {
     page("api/tcp", "TCP sockets", {
       description: `Bun's native API implements Web-standard TCP Sockets, plus a Bun-native API for building fast TCP servers.`,
     }), // "`Bun.{listen|connect}`")
+    page("api/tcp", "TCP sockets", {
+      description: `Bun's native API implements fast and flexible UDP sockets.`,
+    }), // "`Bun.{listen|connect}`")
     page("api/globals", "Globals", {
       description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available in the global scope.`,
     }), // "`Bun.write`"),

@@ -1889,7 +1889,7 @@ pub const VirtualMachine = struct {
         return source;
     }
 
-    fn resolveMaybeNeedsTrailingSlash(
+    pub fn resolveMaybeNeedsTrailingSlash(
         res: *ErrorableString,
         global: *JSGlobalObject,
         specifier: bun.String,

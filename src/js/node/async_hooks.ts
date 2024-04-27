@@ -309,8 +309,8 @@ function createWarning(message) {
     if (warned) return;
 
     // zx does not need createHook to function
-    const isFromZX = new Error().stack!.includes("zx/build/core.js");
-    if (isFromZX) return;
+    const isFromKnownSupportedModule = new Error().stack!.includes("zx/build/core.js");
+    if (isFromKnownSupportedModule) return;
 
     warned = true;
     console.warn("[bun] Warning:", message);

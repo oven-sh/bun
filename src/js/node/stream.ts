@@ -4,6 +4,8 @@
 
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
+const ProcessNextTick = process.nextTick;
+
 const {
   BufferList,
   ReadableState,
@@ -1222,28 +1224,28 @@ var require_end_of_stream = __commonJS({
       }
       stream.on("close", onclose);
       if (closed) {
-        process.nextTick(onclose);
+        ProcessNextTick(onclose);
       } else if (
         (wState !== null && wState !== void 0 && wState.errorEmitted) ||
         (rState !== null && rState !== void 0 && rState.errorEmitted)
       ) {
         if (!willEmitClose) {
-          process.nextTick(onclose);
+          ProcessNextTick(onclose);
         }
       } else if (
         !readable &&
         (!willEmitClose || isReadable(stream)) &&
         (writableFinished || isWritable(stream) === false)
       ) {
-        process.nextTick(onclose);
+        ProcessNextTick(onclose);
       } else if (
         !writable &&
         (!willEmitClose || isWritable(stream)) &&
         (readableFinished || isReadable(stream) === false)
       ) {
-        process.nextTick(onclose);
+        ProcessNextTick(onclose);
       } else if (rState && stream.req && stream.aborted) {
-        process.nextTick(onclose);
+        ProcessNextTick(onclose);
       }
       const cleanup = () => {
         callback = nop;
@@ -1271,7 +1273,7 @@ var require_end_of_stream = __commonJS({
           );
         };
         if (options.signal.aborted) {
-          process.nextTick(abort);
+          ProcessNextTick(abort);
         } else {
           const originalCallback = callback;
           callback = once((...args) => {
@@ -1802,9 +1804,9 @@ var require_destroy = __commonJS({
           cb(err2);
         }
         if (err2) {
-          process.nextTick(emitErrorCloseNT, self, err2);
+          ProcessNextTick(emitErrorCloseNT, self, err2);
         } else {
-          process.nextTick(emitCloseNT, self);
+          ProcessNextTick(emitCloseNT, self);
         }
       }
       try {
@@ -1888,7 +1890,7 @@ var require_destroy = __commonJS({
           r.errored = err;
         }
         if (sync) {
-          process.nextTick(emitErrorNT, stream, err);
+          ProcessNextTick(emitErrorNT, stream, err);
         } else {
           emitErrorNT(stream, err);
         }
@@ -1910,7 +1912,7 @@ var require_destroy = __commonJS({
       if (stream.listenerCount(kConstruct) > 1) {
         return;
       }
-      process.nextTick(constructNT, stream);
+      ProcessNextTick(constructNT, stream);
     }
     function constructNT(stream) {
       let called = false;
@@ -1934,7 +1936,7 @@ var require_destroy = __commonJS({
         } else if (err) {
           errorOrDestroy(stream, err, true);
         } else {
-          process.nextTick(emitConstructNT, stream);
+          ProcessNextTick(emitConstructNT, stream);
         }
       }
       try {
@@ -1954,7 +1956,7 @@ var require_destroy = __commonJS({
     }
     function emitErrorCloseLegacy(stream, err) {
       stream.emit("error", err);
-      process.nextTick(emitCloseLegacy, stream);
+      ProcessNextTick(emitCloseLegacy, stream);
     }
     function destroyer(stream, err) {
       if (!stream || isDestroyed(stream)) {
@@ -1975,9 +1977,9 @@ var require_destroy = __commonJS({
       } else if (typeof stream.close === "function") {
         stream.close();
       } else if (err) {
-        process.nextTick(emitErrorCloseLegacy, stream);
+        ProcessNextTick(emitErrorCloseLegacy, stream);
       } else {
-        process.nextTick(emitCloseLegacy, stream);
+        ProcessNextTick(emitCloseLegacy, stream);
       }
       if (!stream.destroyed) {
         stream[kDestroyed] = true;
@@ -2195,8 +2197,8 @@ var require_from = __commonJS({
       readable._destroy = function (error, cb) {
         PromisePrototypeThen(
           close(error),
-          () => process.nextTick(cb, error),
-          e => process.nextTick(cb, e || error),
+          () => ProcessNextTick(cb, error),
+          e => ProcessNextTick(cb, e || error),
         );
       };
       async function close(error) {
@@ -2316,7 +2318,7 @@ var require_readable = __commonJS({
           if (state.length) {
             emitReadable(this, state);
           } else if (!state.reading) {
-            process.nextTick(nReadingNextTick, this);
+            ProcessNextTick(nReadingNextTick, this);
           }
         } else if (state.endEmitted) {
           $debug("end already emitted...", this.__id);
@@ -2514,7 +2516,7 @@ var require_readable = __commonJS({
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();
     function maybeReadMore(stream, state) {
-      process.nextTick(_maybeReadMore, stream, state);
+      ProcessNextTick(_maybeReadMore, stream, state);
     }
     function emitReadable(stream, state) {
       $debug("NativeReadable - emitReadable", stream.__id);
@@ -2522,7 +2524,7 @@ var require_readable = __commonJS({
       if (!state.emittedReadable) {
         state.emittedReadable = true;
         // stream.emit("readable"); // TODO:
-        process.nextTick(_emitReadable, stream, state);
+        ProcessNextTick(_emitReadable, stream, state);
       }
     }
     var destroyImpl = require_destroy();
@@ -2865,7 +2867,7 @@ var require_readable = __commonJS({
       $debug("pipe count=%d opts=%j", state.pipes.length, pipeOpts, src.__id);
       const doEnd = (!pipeOpts || pipeOpts.end !== false) && dest !== process.stdout && dest !== process.stderr;
       const endFn = doEnd ? onend : unpipe;
-      if (state.endEmitted) process.nextTick(endFn);
+      if (state.endEmitted) ProcessNextTick(endFn);
       else src.once("end", endFn);
       dest.on("unpipe", onunpipe);
       function onunpipe(readable, unpipeInfo) {
@@ -3006,7 +3008,7 @@ var require_readable = __commonJS({
     Readable.prototype.removeListener = function (ev, fn) {
       const res = Stream.prototype.removeListener.$call(this, ev, fn);
       if (ev === "readable") {
-        process.nextTick(updateReadableListening, this);
+        ProcessNextTick(updateReadableListening, this);
       }
       return res;
     };
@@ -3014,7 +3016,7 @@ var require_readable = __commonJS({
     Readable.prototype.removeAllListeners = function (ev) {
       const res = Stream.prototype.removeAllListeners.$apply(this, arguments);
       if (ev === "readable" || ev === void 0) {
-        process.nextTick(updateReadableListening, this);
+        ProcessNextTick(updateReadableListening, this);
       }
       return res;
     };
@@ -3277,7 +3279,7 @@ var require_readable = __commonJS({
       $debug("endEmitted @ endReadable", state.endEmitted, stream.__id);
       if (!state.endEmitted) {
         state.ended = true;
-        process.nextTick(endReadableNT, state, stream);
+        ProcessNextTick(endReadableNT, state, stream);
       }
     }
     function endReadableNT(state, stream) {
@@ -3287,7 +3289,7 @@ var require_readable = __commonJS({
         stream.emit("end");
         $debug("end emitted @ endReadableNT", stream.__id);
         if (stream.writable && stream.allowHalfOpen === false) {
-          process.nextTick(endWritableNT, stream);
+          ProcessNextTick(endWritableNT, stream);
         } else if (state.autoDestroy) {
           const wState = stream._writableState;
           const autoDestroy = !wState || (wState.autoDestroy && (wState.finished || wState.writable === false));
@@ -3589,7 +3591,7 @@ var require_writable = __commonJS({
         err = new ERR_STREAM_DESTROYED("write");
       }
       if (err) {
-        process.nextTick(cb, err);
+        ProcessNextTick(cb, err);
         errorOrDestroy(stream, err, true);
         return err;
       }
@@ -3679,7 +3681,7 @@ var require_writable = __commonJS({
           stream._readableState.errored = er;
         }
         if (sync) {
-          process.nextTick(onwriteError, stream, state, er, cb);
+          ProcessNextTick(onwriteError, stream, state, er, cb);
         } else {
           onwriteError(stream, state, er, cb);
         }
@@ -3697,7 +3699,7 @@ var require_writable = __commonJS({
               stream,
               state,
             };
-            process.nextTick(afterWriteTick, state.afterWriteTickInfo);
+            ProcessNextTick(afterWriteTick, state.afterWriteTickInfo);
           }
         } else {
           afterWrite(stream, state, 1, cb);
@@ -3847,7 +3849,7 @@ var require_writable = __commonJS({
       }
       if (typeof cb === "function") {
         if (err || state.finished) {
-          process.nextTick(cb, err);
+          ProcessNextTick(cb, err);
         } else {
           state[kOnFinished].push(cb);
         }
@@ -3888,7 +3890,7 @@ var require_writable = __commonJS({
           state.prefinished = true;
           stream.emit("prefinish");
           state.pendingcb++;
-          process.nextTick(finish, stream, state);
+          ProcessNextTick(finish, stream, state);
         }
       }
       state.sync = true;
@@ -3920,7 +3922,8 @@ var require_writable = __commonJS({
       if (state.pendingcb === 0) {
         if (sync) {
           state.pendingcb++;
-          process.nextTick(
+          ProcessNextTick.$call(
+            null,
             (stream2, state2) => {
               if (needFinish(state2)) {
                 finish(stream2, state2);
@@ -4043,7 +4046,7 @@ var require_writable = __commonJS({
     Writable.prototype.destroy = function (err, cb) {
       const state = this._writableState;
       if (!state.destroyed && (state.bufferedIndex < state.buffered.length || state[kOnFinished].length)) {
-        process.nextTick(errorBuffer, state);
+        ProcessNextTick(errorBuffer, state);
       }
       destroy.$call(this, err, cb);
       return this;
@@ -4172,9 +4175,9 @@ var require_duplexify = __commonJS({
               final(async () => {
                 try {
                   await promise;
-                  process.nextTick(cb, null);
+                  ProcessNextTick(cb, null);
                 } catch (err) {
-                  process.nextTick(cb, err);
+                  ProcessNextTick(cb, err);
                 }
               });
             },
@@ -4265,7 +4268,7 @@ var require_duplexify = __commonJS({
             const _promise = promise;
             promise = null;
             const { chunk, done, cb } = await _promise;
-            process.nextTick(cb);
+            ProcessNextTick(cb);
             if (done) return;
             if (signal.aborted)
               throw new AbortError(void 0, {
@@ -4779,7 +4782,7 @@ var require_pipeline = __commonJS({
           if (!error) {
             lastStreamCleanup.forEach(fn => fn());
           }
-          process.nextTick(callback, error, value);
+          ProcessNextTick(callback, error, value);
         }
       }
       let ret;
@@ -4852,11 +4855,11 @@ var require_pipeline = __commonJS({
                   if (end) {
                     pt.end();
                   }
-                  process.nextTick(finish);
+                  ProcessNextTick(finish);
                 },
                 err => {
                   pt.destroy(err);
-                  process.nextTick(finish, err);
+                  ProcessNextTick(finish, err);
                 },
               );
             } else if (isIterable(ret, true)) {
@@ -4900,7 +4903,7 @@ var require_pipeline = __commonJS({
         (signal !== null && signal !== void 0 && signal.aborted) ||
         (outerSignal !== null && outerSignal !== void 0 && outerSignal.aborted)
       ) {
-        process.nextTick(abort);
+        ProcessNextTick(abort);
       }
       return ret;
     }
@@ -5392,7 +5395,7 @@ function createNativeStreamReadable(Readable) {
 
         return handleNumberResult(this, result, view, isClosed);
       } else if (typeof result === "boolean") {
-        process.nextTick(() => {
+        ProcessNextTick(() => {
           this.push(null);
         });
         return view?.byteLength ?? 0 > 0 ? view : undefined;
@@ -5530,8 +5533,8 @@ NativeWritable.prototype = Object.create(Writable.prototype);
 function NativeWritable_internalConstruct(cb) {
   this._writableState.constructed = true;
   this.constructed = true;
-  if (typeof cb === "function") process.nextTick(cb);
-  process.nextTick(() => {
+  if (typeof cb === "function") ProcessNextTick(cb);
+  ProcessNextTick(() => {
     this.emit("open", this.fd);
     this.emit("ready");
   });

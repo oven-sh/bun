@@ -1,6 +1,10 @@
 
+
 #include "node_api.h"
 #include "root.h"
+
+#include "JavaScriptCore/DateInstance.h"
+#include "JavaScriptCore/JSCast.h"
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/SourceCode.h"
@@ -534,6 +538,32 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
     scope.clearException();
     return napi_ok;
 }
+
+extern "C" napi_status napi_get_date_value(napi_env env, napi_value value, double* result)
+{
+    NAPI_PREMABLE
+
+    if (UNLIKELY(!env)) {
+        return napi_invalid_arg;
+    }
+
+    JSValue jsValue = toJS(value);
+    if (UNLIKELY(!jsValue)) {
+        return napi_date_expected;
+    }
+
+    auto* date = jsDynamicCast<JSC::DateInstance*>(jsValue);
+    if (UNLIKELY(!date)) {
+        return napi_date_expected;
+    }
+
+    if (result) {
+        *result = date->internalNumber();
+    }
+
+    return napi_ok;
+}
+
 extern "C" napi_status napi_get_property(napi_env env, napi_value object,
     napi_value key, napi_value* result)
 {

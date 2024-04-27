@@ -140,6 +140,21 @@ describe("node:http", () => {
       listenResponse.close();
     });
 
+    it("listen callback should be bound to server", async () => {
+      const server = createServer();
+      const { resolve, reject, promise } = Promise.withResolvers();
+      server.listen(0, function () {
+        try {
+          expect(this === server).toBeTrue();
+          resolve();
+        } catch (e) {
+          reject();
+        }
+      });
+      await promise;
+      server.close();
+    });
+
     it("option method should be uppercase (#7250)", async () => {
       try {
         var server = createServer((req, res) => {

@@ -110,3 +110,11 @@ test("Module._extensions", () => {
   expect(".node" in Module._extensions).toBeTrue();
   expect(require.extensions).toBe(Module._extensions);
 });
+
+test("Module._resolveLookupPaths", () => {
+  expect(Module._resolveLookupPaths("foo")).toEqual([]);
+  expect(Module._resolveLookupPaths("./bar", { id: "1", filename: "/baz/abc" })).toEqual(["/baz"]);
+  expect(Module._resolveLookupPaths("./bar", {})).toEqual(["."]);
+  expect(Module._resolveLookupPaths("./bar", { paths: ["a"] })).toEqual(["."]);
+  expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a"]);
+});

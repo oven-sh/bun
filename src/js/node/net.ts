@@ -980,6 +980,17 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 
+// TODO:
+class BlockList {
+  constructor() {}
+
+  addSubnet(net, prefix, type) {}
+
+  check(address, type) {
+    return false;
+  }
+}
+
 export default {
   createServer,
   Server,
@@ -995,4 +1006,6 @@ export default {
   setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),
   getDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"),
   setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
+
+  BlockList,
 };

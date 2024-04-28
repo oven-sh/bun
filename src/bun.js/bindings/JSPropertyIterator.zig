@@ -49,6 +49,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         pub fn next(this: *@This()) ?bun.String {
             const i: usize = this.iter_i;
             if (i >= this.len) {
+                this.i = this.iter_i;
                 return null;
             }
 

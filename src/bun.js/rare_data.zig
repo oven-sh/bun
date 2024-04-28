@@ -283,7 +283,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
         }
 
         store.* = Blob.Store{
-            .ref_count = 2,
+            .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
                 .file = Blob.FileStore{
@@ -315,7 +315,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             .err => {},
         }
         store.* = Blob.Store{
-            .ref_count = 2,
+            .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
                 .file = Blob.FileStore{
@@ -347,7 +347,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
         }
         store.* = Blob.Store{
             .allocator = default_allocator,
-            .ref_count = 2,
+            .ref_count = std.atomic.Value(u32).init(2),
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{

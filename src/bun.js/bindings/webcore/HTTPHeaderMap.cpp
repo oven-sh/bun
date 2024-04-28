@@ -155,7 +155,7 @@ void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const Stri
     if (index == notFound) {
         LChar* ptr = nullptr;
         auto nameCopy = WTF::String::createUninitialized(name.length(), ptr);
-        memcpy(ptr, name.characters8(), name.length());
+        memcpy(ptr, name.span8().data(), name.length());
         m_uncommonHeaders.append(UncommonHeader { nameCopy, value });
     } else
         m_uncommonHeaders[index].value = value;

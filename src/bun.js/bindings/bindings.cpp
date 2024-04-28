@@ -117,29 +117,64 @@ static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsi
 }
 
 template<typename UWSResponse>
+static void writeResponseHeader(UWSResponse* res, const WTF::StringView& name, const WTF::StringView& value)
+{
+    WTF::CString nameStr;
+    WTF::CString valueStr;
+
+    std::string_view nameView;
+    std::string_view valueView;
+
+    if (name.is8Bit()) {
+        const auto nameSpan = name.span8();
+        nameView = std::string_view(reinterpret_cast<const char*>(nameSpan.data()), nameSpan.size());
+    } else {
+        nameStr = name.utf8();
+        nameView = std::string_view(nameStr.data(), nameStr.length());
+    }
+
+    if (value.is8Bit()) {
+        const auto valueSpan = value.span8();
+        valueView = std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size());
+    } else {
+        valueStr = value.utf8();
+        valueView = std::string_view(valueStr.data(), valueStr.length());
+    }
+
+    res->writeHeader(nameView, valueView);
+}
+
+template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 {
     auto& internalHeaders = headers->internalHeaders();
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
-        res->writeHeader(std::string_view("set-cookie", 10), std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
+
+        if (value.is8Bit()) {
+            const auto valueSpan = value.span8();
+            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
+        } else {
+            WTF::CString valueStr = value.utf8();
+            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
+        }
     }
 
     for (const auto& header : internalHeaders.commonHeaders()) {
         const auto& name = WebCore::httpHeaderNameString(header.key);
         const auto& value = header.value;
 
-        res->writeHeader(
-            std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
-            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
+        writeResponseHeader<UWSResponse>(res, name, value);
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
         const auto& name = header.key;
         const auto& value = header.value;
-        res->writeHeader(
-            std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
-            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
+
+        WTF::CString nameStr;
+        WTF::CString valueStr;
+
+        writeResponseHeader<UWSResponse>(res, name, value);
     }
 }
 
@@ -1437,18 +1472,21 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
         auto value = pair->value;
         names[count] = { i, name.length() };
 
-        if (name.is8Bit())
-            memcpy(&buf[i], name.characters8(), name.length());
-        else {
-            StringImpl::copyCharacters(&buf[i], { name.characters16(), name.length() });
+        if (name.is8Bit()) {
+            const auto nameSpan = name.span8();
+            memcpy(&buf[i], nameSpan.data(), nameSpan.size());
+        } else {
+            StringImpl::copyCharacters(&buf[i], name.span16());
         }
 
         i += name.length();
         values[count++] = { i, value.length() };
-        if (value.is8Bit())
-            memcpy(&buf[i], value.characters8(), value.length());
-        else
-            StringImpl::copyCharacters(&buf[i], { value.characters16(), value.length() });
+        if (value.is8Bit()) {
+            const auto nameSpan = value.span8();
+            memcpy(&buf[i], nameSpan.data(), nameSpan.size());
+        } else {
+            StringImpl::copyCharacters(&buf[i], value.span16());
+        }
 
         i += value.length();
     }
@@ -2781,9 +2819,9 @@ void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, JSC__JSGl
     auto str = strValue->value(arg2);
 
     if (str.is8Bit()) {
-        arg1->ptr = str.characters8();
+        arg1->ptr = str.span8().data();
     } else {
-        arg1->ptr = Zig::taggedUTF16Ptr(str.characters16());
+        arg1->ptr = Zig::taggedUTF16Ptr(str.span16().data());
     }
 
     arg1->len = str.length();
@@ -2923,9 +2961,14 @@ void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlob
 void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
+    JSValue target = JSValue::decode(JSValue2);
+
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
     ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
-    ASSERT_WITH_MESSAGE(!JSValue::decode(JSValue2).inherits<JSC::JSPromise>(), "Called .resolve() with another Promise. Did you mean to do that?");
+    ASSERT(!target.isEmpty());
+    ASSERT_WITH_MESSAGE(arg0 != target, "Promise cannot be resoled to itself");
+
+    // Note: the Promise can be another promise. Since we go through the generic promise resolve codepath.
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
 
@@ -3941,8 +3984,8 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     while ((lineStop < sourceLength) && ('\n' != sourceString[lineStop])) {
         lineStop++;
     }
-    if (source_lines_count > 1 && source_lines != nullptr) {
-        auto chars = sourceString.characters8();
+    if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
+        auto chars = sourceString.span8().data();
 
         // Most of the time, when you look at a stack trace, you want a couple lines above
 

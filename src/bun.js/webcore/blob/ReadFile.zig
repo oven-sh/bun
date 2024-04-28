@@ -287,6 +287,7 @@ pub const ReadFile = struct {
 
         defer store.deref();
         const system_error = this.system_error;
+        const total_size = this.total_size;
         bun.destroy(this);
 
         if (system_error) |err| {
@@ -294,7 +295,7 @@ pub const ReadFile = struct {
             return;
         }
 
-        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.total_size, .is_temporary = true } });
+        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = total_size, .is_temporary = true } });
     }
 
     pub fn run(this: *ReadFile, task: *ReadFileTask) void {

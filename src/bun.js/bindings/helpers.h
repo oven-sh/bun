@@ -261,7 +261,7 @@ static ZigString toZigString(WTF::String* str)
 {
     return str->isEmpty()
         ? ZigStringEmpty
-        : ZigString { str->is8Bit() ? str->characters8() : taggedUTF16Ptr(str->characters16()),
+        : ZigString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
               str->length() };
 }
 
@@ -269,7 +269,7 @@ static ZigString toZigString(WTF::StringImpl& str)
 {
     return str.isEmpty()
         ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
@@ -277,7 +277,7 @@ static ZigString toZigString(WTF::StringView& str)
 {
     return str.isEmpty()
         ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
@@ -285,7 +285,7 @@ static ZigString toZigString(const WTF::StringView& str)
 {
     return str.isEmpty()
         ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 

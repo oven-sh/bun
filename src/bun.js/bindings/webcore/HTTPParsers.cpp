@@ -126,8 +126,9 @@ bool isValidHTTPHeaderValue(const String& value)
     if (isTabOrSpace(c))
         return false;
     if (value.is8Bit()) {
-        const LChar* end = value.characters8() + value.length();
-        for (const LChar* p = value.characters8(); p != end; ++p) {
+        const LChar* begin = value.span8().data();
+        const LChar* end = begin + value.length();
+        for (const LChar* p = begin; p != end; ++p) {
             if (UNLIKELY(*p <= 13)) {
                 LChar c = *p;
                 if (c == 0x00 || c == 0x0A || c == 0x0D)
@@ -198,7 +199,7 @@ bool isValidHTTPToken(StringView value)
         return false;
 
     if (value.is8Bit()) {
-        const LChar* characters = value.characters8();
+        const LChar* characters = value.span8().data();
         const LChar* end = characters + value.length();
         while (characters < end) {
             if (!RFC7230::isTokenCharacter(*characters++))

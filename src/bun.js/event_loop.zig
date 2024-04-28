@@ -1917,7 +1917,7 @@ pub const MiniEventLoop = struct {
             }
 
             store.* = JSC.WebCore.Blob.Store{
-                .ref_count = 2,
+                .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
                     .file = JSC.WebCore.Blob.FileStore{
@@ -1949,7 +1949,7 @@ pub const MiniEventLoop = struct {
             }
 
             store.* = JSC.WebCore.Blob.Store{
-                .ref_count = 2,
+                .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
                     .file = JSC.WebCore.Blob.FileStore{

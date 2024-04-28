@@ -2019,9 +2019,10 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
     if (buf == nullptr) {
         if (writtenPtr != nullptr) {
             if (view.is8Bit()) {
-                *writtenPtr = Bun__encoding__byteLengthLatin1(view.characters8(), length, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+
+                *writtenPtr = Bun__encoding__byteLengthLatin1(view.span8().data(), length, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
             } else {
-                *writtenPtr = Bun__encoding__byteLengthUTF16(view.characters16(), length, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+                *writtenPtr = Bun__encoding__byteLengthUTF16(view.span16().data(), length, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
             }
         }
 
@@ -2041,9 +2042,9 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
 
     size_t written;
     if (view.is8Bit()) {
-        written = Bun__encoding__writeLatin1(view.characters8(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+        written = Bun__encoding__writeLatin1(view.span8().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
     } else {
-        written = Bun__encoding__writeUTF16(view.characters16(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+        written = Bun__encoding__writeUTF16(view.span16().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
     }
 
     if (writtenPtr != nullptr) {

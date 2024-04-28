@@ -318,22 +318,25 @@ pub const String = extern struct {
     }
 
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
+        const bytes, _ = try this.toOwnedSliceReturningAllASCII(allocator);
+        return bytes;
+    }
+
+    pub fn toOwnedSliceReturningAllASCII(this: String, allocator: std.mem.Allocator) !struct { []u8, bool } {
         switch (this.tag) {
-            .ZigString => return try this.value.ZigString.toOwnedSlice(allocator),
+            .ZigString => return .{ try this.value.ZigString.toOwnedSlice(allocator), true },
             .WTFStringImpl => {
                 var utf8_slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
-
                 if (utf8_slice.allocator.get()) |alloc| {
                     if (!isWTFAllocator(alloc)) {
-                        return @constCast(utf8_slice.slice());
+                        return .{ @constCast(utf8_slice.slice()), false };
                     }
                 }
 
-                return @constCast((try utf8_slice.clone(allocator)).slice());
+                return .{ @constCast((try utf8_slice.clone(allocator)).slice()), true };
             },
-            .StaticZigString => return try this.value.StaticZigString.toOwnedSlice(allocator),
-            .Empty => return &[_]u8{},
-            else => unreachable,
+            .StaticZigString => return .{ try this.value.StaticZigString.toOwnedSlice(allocator), false },
+            else => return .{ &[_]u8{}, false },
         }
     }
 

@@ -14,6 +14,7 @@ interface CustomMatchersForTest {
   _toAllowOverridingExistingMatcher(): any;
   _toCustomA(): any;
   _toCustomB(): any;
+  [""](value: any): any;
 
   _toThrowErrorMatchingSnapshot(): any; // TODO: remove when implemented
   _toHaveMessageThatThrows(a: any): any;

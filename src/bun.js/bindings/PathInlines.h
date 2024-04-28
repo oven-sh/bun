@@ -20,7 +20,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         auto len = input.length();
         if (len < 1)
             return false;
-        auto bytes = input.characters8();
+        const auto bytes = input.span8().data();
         if (bytes[0] == '/' || bytes[0] == '\\')
             return true;
         if (len < 2)
@@ -32,7 +32,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         auto len = input.length();
         if (len < 1)
             return false;
-        auto bytes = input.characters16();
+        const auto bytes = input.span16().data();
         if (bytes[0] == '/' || bytes[0] == '\\')
             return true;
         if (len < 2)

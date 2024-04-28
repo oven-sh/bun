@@ -2961,8 +2961,13 @@ void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlob
 void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
+    JSValue target = JSValue::decode(JSValue2);
+
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
     ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
+    ASSERT(!target.isEmpty());
+    ASSERT_WITH_MESSAGE(arg0 != target, "Promise cannot be resoled to itself");
+
     // Note: the Promise can be another promise. Since we go through the generic promise resolve codepath.
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }

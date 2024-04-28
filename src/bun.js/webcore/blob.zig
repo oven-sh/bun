@@ -1146,6 +1146,7 @@ pub const Blob = struct {
                 return .zero;
             };
         };
+        defer source_blob.detach();
 
         const destination_store = destination_blob.store;
         if (destination_store) |store| {
@@ -3962,14 +3963,10 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.StringObject,
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
-                    var sliced = top_value.toSlice(global, bun.default_allocator);
-                    const is_all_ascii = !sliced.isAllocated();
-                    if (!sliced.isAllocated() and sliced.len > 0) {
-                        sliced.ptr = @as([*]const u8, @ptrCast((try bun.default_allocator.dupe(u8, sliced.slice())).ptr));
-                        sliced.allocator = NullableAllocator.init(bun.default_allocator);
-                    }
-
-                    return Blob.initWithAllASCII(@constCast(sliced.slice()), bun.default_allocator, global, is_all_ascii);
+                    var str = top_value.toBunString(global);
+                    defer str.deref();
+                    const bytes, const ascii = try str.toOwnedSliceReturningAllASCII(bun.default_allocator);
+                    return Blob.initWithAllASCII(bytes, bun.default_allocator, global, ascii);
                 },
 
                 JSC.JSValue.JSType.ArrayBuffer,

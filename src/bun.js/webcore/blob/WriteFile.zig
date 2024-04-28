@@ -711,7 +711,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 if (new_promise.asAnyPromise()) |_promise| {
                     switch (_promise.status(globalThis.vm())) {
                         .Pending => {
-                            promise.resolve(
+                            _promise.resolve(
                                 globalThis,
                                 new_promise,
                             );

@@ -171,5 +171,13 @@ jobs:
           color: "#FF0000"
           title: "Bun v${{ inputs.version }} release artifacts uploaded"
       - name: "Upload Artifacts"
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} ${{ inputs.clobber && '--clobber' || '' }} bun-releases/*
+          # Unzip one level deep each artifact
+          cd bun-releases
+          for f in *.zip; do
+            unzip -o $f
+          done
+          cd ..
+          gh release upload ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} ${{ inputs.clobber && '--clobber' || '' }} bun-releases/*.zip

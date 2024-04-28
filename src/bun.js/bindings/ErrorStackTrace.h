@@ -60,8 +60,6 @@ private:
     JSC::CodeBlock* m_codeBlock;
     JSC::BytecodeIndex m_bytecodeIndex;
 
-    bool m_isNativeCalleeFrame { false };
-
     // Lazy-initialized
     WTF::String m_sourceURL;
     WTF::String m_functionName;
@@ -92,8 +90,6 @@ public:
     JSC::JSString* sourceURL();
     JSC::JSString* functionName();
     JSC::JSString* typeName();
-
-    bool isNativeCalleeFrame() const { return m_isNativeCalleeFrame; }
 
     bool hasBytecodeIndex() const { return (m_bytecodeIndex.offset() != UINT_MAX) && !m_isWasmFrame; }
     JSC::BytecodeIndex bytecodeIndex() const

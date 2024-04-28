@@ -1485,7 +1485,7 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
             const auto nameSpan = value.span8();
             memcpy(&buf[i], nameSpan.data(), nameSpan.size());
         } else {
-            StringImpl::copyCharacters(&buf[i], name.span16());
+            StringImpl::copyCharacters(&buf[i], value.span16());
         }
 
         i += value.length();

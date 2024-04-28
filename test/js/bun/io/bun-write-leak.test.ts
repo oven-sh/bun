@@ -10,10 +10,10 @@ test(
   async () => {
     const dir = tempDirWithFiles("bun-write-leak-fixture", {
       "bun-write-leak-fixture.js": await Bun.file(path.join(import.meta.dir, "bun-write-leak-fixture.js")).text(),
-      "out": "",
+      "out.bin": "here",
     });
 
-    const dest = path.join(dir, "out");
+    const dest = path.join(dir, "out.bin");
     expect([path.join(dir, "bun-write-leak-fixture.js"), dest]).toRun();
   },
   30 * 1000,

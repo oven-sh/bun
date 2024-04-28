@@ -1583,7 +1583,7 @@ pub const Blob = struct {
         data: Data,
 
         mime_type: MimeType = MimeType.none,
-        ref_count: u32 = 0,
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
         is_all_ascii: ?bool = null,
         allocator: std.mem.Allocator,
 
@@ -1602,8 +1602,8 @@ pub const Blob = struct {
         };
 
         pub fn ref(this: *Store) void {
-            assert(this.ref_count > 0);
-            this.ref_count += 1;
+            const old = this.ref_count.fetchAdd(1, .Monotonic);
+            assert(old > 0);
         }
 
         pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
@@ -1634,7 +1634,7 @@ pub const Blob = struct {
                     ),
                 },
                 .allocator = allocator,
-                .ref_count = 1,
+                .ref_count = std.atomic.Value(u32).init(1),
             });
             return store;
         }
@@ -1645,7 +1645,7 @@ pub const Blob = struct {
                     .bytes = ByteStore.init(bytes, allocator),
                 },
                 .allocator = allocator,
-                .ref_count = 1,
+                .ref_count = std.atomic.Value(u32).init(1),
             });
             return store;
         }
@@ -1658,9 +1658,9 @@ pub const Blob = struct {
         }
 
         pub fn deref(this: *Blob.Store) void {
-            assert(this.ref_count >= 1);
-            this.ref_count -= 1;
-            if (this.ref_count == 0) {
+            const old = this.ref_count.fetchSub(1, .Monotonic);
+            assert(old >= 1);
+            if (old == 1) {
                 this.deinit();
             }
         }
@@ -3507,7 +3507,7 @@ pub const Blob = struct {
                                     .bytes = result,
                                 },
                                 .allocator = bun.default_allocator,
-                                .ref_count = 1,
+                                .ref_count = std.atomic.Value(u32).init(1),
                             },
                         );
                         var blob = initWithStore(store, globalThis);

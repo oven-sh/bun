@@ -394,15 +394,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths, (JSC::JSGlobalObject * gl
     return JSValue::encode(array);
   }
 
-  JSString* dirname = nullptr;
+  JSValue dirname;
   if (parent.filename) {
-    String str = parent.filename->value(globalObject);
-    if (str.endsWith(PLATFORM_SEP_s)) {
-      str = str.substring(0, str.length() - 1);
-    } else if (str.contains(PLATFORM_SEP)) {
-      str = str.substring(0, str.reverseFind(PLATFORM_SEP));
-    }
-    dirname = jsString(vm, str);
+    EncodedJSValue encodedFilename = JSValue::encode(parent.filename);
+#if OS(WINDOWS)
+    dirname = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
+#else
+    dirname = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
+#endif
   } else {
     dirname = jsString(vm, String("."_s));
   }

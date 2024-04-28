@@ -489,7 +489,8 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     String sourceString = callframe->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
 
-    String filenameString = callframe->argument(1).toWTFString(globalObject);
+    JSValue filenameValue = callframe->argument(1);
+    String filenameString = filenameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
 
     String wrappedString = makeString(
@@ -505,16 +506,14 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
         WTF::TextPosition(),
         JSC::SourceProviderSourceType::Program);
 
-    auto index = filenameString.reverseFind(PLATFORM_SEP, filenameString.length());
-    // filenameString is coming from js, any separator could be used
-    if (index == WTF::notFound)
-        index = filenameString.reverseFind(NOT_PLATFORM_SEP, filenameString.length());
-    String dirnameString;
-    if (index != WTF::notFound) {
-        dirnameString = filenameString.substring(0, index);
-    } else {
-        dirnameString = "/"_s;
-    }
+    EncodedJSValue encodedFilename = JSValue::encode(filenameValue);
+#if OS(WINDOWS)
+    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
+#else
+    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
+#endif
+
+    String dirnameString = dirnameValue.toWTFString(globalObject);
 
     WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(

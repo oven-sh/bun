@@ -1584,7 +1584,7 @@ pub const Blob = struct {
         data: Data,
 
         mime_type: MimeType = MimeType.none,
-        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
         is_all_ascii: ?bool = null,
         allocator: std.mem.Allocator,
 

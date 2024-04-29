@@ -4977,7 +4977,7 @@ pub const ExpectMatcherContext = struct {
             return .zero;
         }
         const args = arguments.slice();
-        return JSValue.jsBoolean(args[0].deepEquals(args[1], globalObject));
+        return JSValue.jsBoolean(args[0].jestDeepEquals(args[1], globalObject));
     }
 };
 

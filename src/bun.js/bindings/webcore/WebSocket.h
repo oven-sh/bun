@@ -179,27 +179,17 @@ private:
     explicit WebSocket(ScriptExecutionContext&);
     explicit WebSocket(ScriptExecutionContext&, const String& url);
 
-    void dispatchErrorEventIfNeeded();
-
-    // void contextDestroyed() final;
-    // void suspend(ReasonForSuspension) final;
-    // void resume() final;
-    // void stop() final;
-    // const char* activeDOMObjectName() const final;
-
     EventTargetInterface eventTargetInterface() const final;
 
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason);
+    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
 
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
-
-    void failAsynchronously();
 
     enum class BinaryType { Blob,
         ArrayBuffer,

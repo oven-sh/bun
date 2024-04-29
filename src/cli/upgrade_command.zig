@@ -213,17 +213,17 @@ pub const UpgradeCommand = struct {
 
         if (env_loader.map.get("GITHUB_TOKEN") orelse env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
-                headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "Access-TokenBearer {s}", .{access_token});
+                headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     allocator,
                     Headers.Kv{
                         .name = Api.StringPointer{
-                            .offset = accept.value.length + accept.value.offset,
-                            .length = @as(u32, @intCast("Access-Token".len)),
+                            .offset = accept.value.offset + accept.value.length,
+                            .length = @as(u32, @intCast("Authorization".len)),
                         },
                         .value = Api.StringPointer{
-                            .offset = @as(u32, @intCast(accept.value.length + accept.value.offset + "Access-Token".len)),
-                            .length = @as(u32, @intCast(access_token.len)),
+                            .offset = @as(u32, @intCast(accept.value.offset + accept.value.length + "Authorization".len)),
+                            .length = @as(u32, @intCast("Bearer ".len + access_token.len)),
                         },
                     },
                 );

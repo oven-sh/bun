@@ -34,3 +34,8 @@ export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bind
   openTempDirWithoutSharingDelete: () => void;
   closeTempDirHandle: () => void;
 };
+
+export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
+  "CallSite.cpp",
+  "createNativeFrameForTesting",
+);

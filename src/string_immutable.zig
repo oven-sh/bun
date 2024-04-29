@@ -5808,15 +5808,16 @@ pub const visible = struct {
         var len: usize = 0;
         while (bun.strings.firstNonASCII(bytes)) |i| {
             len += asciiFn(bytes[0..i]);
+            const this_chunk = bytes[i..];
+            const byte = this_chunk[0];
 
-            const byte = bytes[i];
             const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
-            const cp_bytes: [4]u8 = switch (skip) {
+            const cp_bytes: [4]u8 = switch (@min(@as(usize, skip), this_chunk.len)) {
                 inline 1, 2, 3, 4 => |cp_len| .{
                     byte,
-                    if (comptime cp_len > 1) bytes[1] else 0,
-                    if (comptime cp_len > 2) bytes[2] else 0,
-                    if (comptime cp_len > 3) bytes[3] else 0,
+                    if (comptime cp_len > 1) this_chunk[1] else 0,
+                    if (comptime cp_len > 2) this_chunk[2] else 0,
+                    if (comptime cp_len > 3) this_chunk[3] else 0,
                 },
                 else => unreachable,
             };

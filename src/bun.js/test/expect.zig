@@ -4042,7 +4042,7 @@ pub const Expect = struct {
         const matchers_to_register = args[0];
         {
             var iter = JSC.JSPropertyIterator(.{
-                .skip_empty_name = true,
+                .skip_empty_name = false,
                 .include_value = true,
             }).init(globalObject, matchers_to_register);
             defer iter.deinit();
@@ -4977,7 +4977,7 @@ pub const ExpectMatcherContext = struct {
             return .zero;
         }
         const args = arguments.slice();
-        return JSValue.jsBoolean(args[0].deepEquals(args[1], globalObject));
+        return JSValue.jsBoolean(args[0].jestDeepEquals(args[1], globalObject));
     }
 };
 

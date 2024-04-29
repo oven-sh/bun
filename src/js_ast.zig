@@ -7039,7 +7039,7 @@ pub const Macro = struct {
         var loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
         if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
-            vm.runErrorHandler(loaded_result.result(vm.global.vm()), null);
+            vm.onError(vm.global, loaded_result.result(vm.global.vm()));
             vm.disableMacroMode();
             return error.MacroLoadError;
         }
@@ -7150,7 +7150,7 @@ pub const Macro = struct {
             ) MacroError!Expr {
                 switch (comptime tag) {
                     .Error => {
-                        this.macro.vm.runErrorHandler(value, null);
+                        this.macro.vm.onError(this.global, value);
                         return this.caller;
                     },
                     .Undefined => if (this.is_top_level)
@@ -7177,7 +7177,7 @@ pub const Macro = struct {
                                 blob_ = resp.*;
                                 blob_.?.allocator = null;
                             } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
-                                this.macro.vm.runErrorHandler(value, null);
+                                this.macro.vm.onError(this.global, value);
                                 return error.MacroFailed;
                             }
                         }
@@ -7353,7 +7353,7 @@ pub const Macro = struct {
                         }
 
                         if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
-                            this.macro.vm.runErrorHandler(promise_result, null);
+                            this.macro.vm.onError(this.global, promise_result);
                             return error.MacroFailed;
                         }
                         this.is_top_level = false;

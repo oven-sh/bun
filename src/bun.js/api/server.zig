@@ -3819,14 +3819,15 @@ const Corker = struct {
 pub const ServerWebSocket = struct {
     handler: *WebSocketServer.Handler,
     this_value: JSValue = .zero,
-    websocket: uws.AnyWebSocket = undefined,
+    _raw_websocket_do_not_use_directly: *uws.RawWebSocket = undefined,
     flags: Flags = .{},
 
     const Flags = packed struct(u8) {
+        ssl: bool = false,
         closed: bool = false,
         opened: bool = false,
         binary_type: JSC.BinaryType = .Buffer,
-        _unused: u2 = 0,
+        _unused: u1 = 0,
     };
 
     pub usingnamespace JSC.Codegen.JSServerWebSocket;
@@ -3834,11 +3835,20 @@ pub const ServerWebSocket = struct {
 
     const log = Output.scoped(.WebSocketServer, false);
 
+    inline fn websocket(this: *const ServerWebSocket) uws.AnyWebSocket {
+        return if (this.flags.ssl) .{
+            .ssl = @ptrCast(this._raw_websocket_do_not_use_directly),
+        } else .{
+            .tcp = @ptrCast(this._raw_websocket_do_not_use_directly),
+        };
+    }
+
     pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
         log("OnOpen", .{});
 
-        this.websocket = ws;
+        this._raw_websocket_do_not_use_directly = ws.raw();
         this.flags.closed = false;
+        this.flags.ssl = ws == .ssl;
 
         // the this value is initially set to whatever the user passed in
         const value_to_cache = this.this_value;
@@ -3880,7 +3890,7 @@ pub const ServerWebSocket = struct {
                 // we un-gracefully close the connection if there was an exception
                 // we don't want any event handlers to fire after this for anything other than error()
                 // https://github.com/oven-sh/bun/issues/1480
-                this.websocket.close();
+                this.websocket().close();
                 handler.active_connections -|= 1;
                 this_value.unprotect();
             }
@@ -4000,7 +4010,7 @@ pub const ServerWebSocket = struct {
             const loop = vm.eventLoop();
             loop.enter();
             defer loop.exit();
-            this.websocket.cork(&corker, Corker.run);
+            this.websocket().cork(&corker, Corker.run);
             const result = corker.result;
 
             if (result.toError()) |err_value| {
@@ -4184,7 +4194,7 @@ pub const ServerWebSocket = struct {
             const buffer = array_buffer.slice();
 
             const result = if (!publish_to_self)
-                this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
+                this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
             else
                 uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
 
@@ -4202,7 +4212,7 @@ pub const ServerWebSocket = struct {
             const buffer = string_slice.slice();
 
             const result = if (!publish_to_self)
-                this.websocket.publish(topic_slice.slice(), buffer, .text, compress)
+                this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
             else
                 uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
 
@@ -4263,7 +4273,7 @@ pub const ServerWebSocket = struct {
         const buffer = string_slice.slice();
 
         const result = if (!publish_to_self)
-            this.websocket.publish(topic_slice.slice(), buffer, .text, compress)
+            this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
 
@@ -4324,7 +4334,7 @@ pub const ServerWebSocket = struct {
         const buffer = array_buffer.slice();
 
         const result = if (!publish_to_self)
-            this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
+            this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
 
@@ -4364,7 +4374,7 @@ pub const ServerWebSocket = struct {
         }
 
         const result = if (!publish_to_self)
-            this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
+            this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
 
@@ -4406,7 +4416,7 @@ pub const ServerWebSocket = struct {
             return JSC.JSValue.jsNumber(0);
         }
         const result = if (!publish_to_self)
-            this.websocket.publish(topic_slice.slice(), buffer, .text, compress)
+            this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
 
@@ -4443,7 +4453,7 @@ pub const ServerWebSocket = struct {
             .this_value = this.this_value,
             .callback = callback,
         };
-        this.websocket.cork(&corker, Corker.run);
+        this.websocket().cork(&corker, Corker.run);
 
         const result = corker.result;
 
@@ -4487,7 +4497,7 @@ pub const ServerWebSocket = struct {
         }
 
         if (message_value.asArrayBuffer(globalThis)) |buffer| {
-            switch (this.websocket.send(buffer.slice(), .binary, compress, true)) {
+            switch (this.websocket().send(buffer.slice(), .binary, compress, true)) {
                 .backpressure => {
                     log("send() backpressure ({d} bytes)", .{buffer.len});
                     return JSValue.jsNumber(-1);
@@ -4508,7 +4518,7 @@ pub const ServerWebSocket = struct {
             defer string_slice.deinit();
 
             const buffer = string_slice.slice();
-            switch (this.websocket.send(buffer, .text, compress, true)) {
+            switch (this.websocket().send(buffer, .text, compress, true)) {
                 .backpressure => {
                     log("send() backpressure ({d} bytes string)", .{buffer.len});
                     return JSValue.jsNumber(-1);
@@ -4559,7 +4569,7 @@ pub const ServerWebSocket = struct {
         defer string_slice.deinit();
 
         const buffer = string_slice.slice();
-        switch (this.websocket.send(buffer, .text, compress, true)) {
+        switch (this.websocket().send(buffer, .text, compress, true)) {
             .backpressure => {
                 log("sendText() backpressure ({d} bytes string)", .{buffer.len});
                 return JSValue.jsNumber(-1);
@@ -4590,7 +4600,7 @@ pub const ServerWebSocket = struct {
         defer string_slice.deinit();
 
         const buffer = string_slice.slice();
-        switch (this.websocket.send(buffer, .text, compress, true)) {
+        switch (this.websocket().send(buffer, .text, compress, true)) {
             .backpressure => {
                 log("sendText() backpressure ({d} bytes string)", .{buffer.len});
                 return JSValue.jsNumber(-1);
@@ -4634,7 +4644,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         };
 
-        switch (this.websocket.send(buffer.slice(), .binary, compress, true)) {
+        switch (this.websocket().send(buffer.slice(), .binary, compress, true)) {
             .backpressure => {
                 log("sendBinary() backpressure ({d} bytes)", .{buffer.len});
                 return JSValue.jsNumber(-1);
@@ -4663,7 +4673,7 @@ pub const ServerWebSocket = struct {
 
         const buffer = array_buffer.slice();
 
-        switch (this.websocket.send(buffer, .binary, compress, true)) {
+        switch (this.websocket().send(buffer, .binary, compress, true)) {
             .backpressure => {
                 log("sendBinary() backpressure ({d} bytes)", .{buffer.len});
                 return JSValue.jsNumber(-1);
@@ -4713,7 +4723,7 @@ pub const ServerWebSocket = struct {
             if (value.asArrayBuffer(globalThis)) |data| {
                 const buffer = data.slice();
 
-                switch (this.websocket.send(buffer, opcode, false, true)) {
+                switch (this.websocket().send(buffer, opcode, false, true)) {
                     .backpressure => {
                         log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
                         return JSValue.jsNumber(-1);
@@ -4732,7 +4742,7 @@ pub const ServerWebSocket = struct {
                 defer string_value.deinit();
                 const buffer = string_value.slice();
 
-                switch (this.websocket.send(buffer, opcode, false, true)) {
+                switch (this.websocket().send(buffer, opcode, false, true)) {
                     .backpressure => {
                         log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
                         return JSValue.jsNumber(-1);
@@ -4752,7 +4762,7 @@ pub const ServerWebSocket = struct {
             }
         }
 
-        switch (this.websocket.send(&.{}, opcode, false, true)) {
+        switch (this.websocket().send(&.{}, opcode, false, true)) {
             .backpressure => {
                 log("{s}() backpressure ({d} bytes)", .{ name, 0 });
                 return JSValue.jsNumber(-1);
@@ -4839,7 +4849,7 @@ pub const ServerWebSocket = struct {
         defer message_value.deinit();
 
         this.flags.closed = true;
-        this.websocket.end(code, message_value.slice());
+        this.websocket().end(code, message_value.slice());
         return .undefined;
     }
 
@@ -4859,7 +4869,7 @@ pub const ServerWebSocket = struct {
 
         this.flags.closed = true;
         this.this_value.unprotect();
-        this.websocket.close();
+        this.websocket().close();
 
         return .undefined;
     }
@@ -4910,7 +4920,7 @@ pub const ServerWebSocket = struct {
             return JSValue.jsNumber(0);
         }
 
-        return JSValue.jsNumber(this.websocket.getBufferedAmount());
+        return JSValue.jsNumber(this.websocket().getBufferedAmount());
     }
     pub fn subscribe(
         this: *ServerWebSocket,
@@ -4935,7 +4945,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        return JSValue.jsBoolean(this.websocket.subscribe(topic.slice()));
+        return JSValue.jsBoolean(this.websocket().subscribe(topic.slice()));
     }
     pub fn unsubscribe(
         this: *ServerWebSocket,
@@ -4960,7 +4970,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        return JSValue.jsBoolean(this.websocket.unsubscribe(topic.slice()));
+        return JSValue.jsBoolean(this.websocket().unsubscribe(topic.slice()));
     }
     pub fn isSubscribed(
         this: *ServerWebSocket,
@@ -4985,7 +4995,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        return JSValue.jsBoolean(this.websocket.isSubscribed(topic.slice()));
+        return JSValue.jsBoolean(this.websocket().isSubscribed(topic.slice()));
     }
 
     pub fn getRemoteAddress(
@@ -4999,7 +5009,7 @@ pub const ServerWebSocket = struct {
         var buf: [64]u8 = [_]u8{0} ** 64;
         var text_buf: [512]u8 = undefined;
 
-        const address_bytes = this.websocket.getRemoteAddress(&buf);
+        const address_bytes = this.websocket().getRemoteAddress(&buf);
         const address: std.net.Address = switch (address_bytes.len) {
             4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
             16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),

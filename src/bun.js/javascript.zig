@@ -476,11 +476,19 @@ pub const ImportWatcher = union(enum) {
         dir_fd: StoredFileDescriptorType,
         package_json: ?*PackageJSON,
         comptime copy_file_path: bool,
-    ) !void {
-        switch (this) {
-            inline .hot, .watch => |wacher| try wacher.addFile(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path),
-            else => {},
-        }
+    ) bun.JSC.Maybe(void) {
+        return switch (this) {
+            inline .hot, .watch => |watcher| watcher.addFile(
+                fd,
+                file_path,
+                hash,
+                loader,
+                dir_fd,
+                package_json,
+                copy_file_path,
+            ),
+            .none => .{ .result = {} },
+        };
     }
 };
 
@@ -1845,7 +1853,7 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: bun.String,
         source: bun.String,
-        query_string: *ZigString,
+        query_string: ?*ZigString,
         is_esm: bool,
     ) void {
         resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false);
@@ -1856,7 +1864,7 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: bun.String,
         source: bun.String,
-        query_string: *ZigString,
+        query_string: ?*ZigString,
         is_esm: bool,
     ) void {
         resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
@@ -1867,7 +1875,7 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: bun.String,
         source: bun.String,
-        query_string: *ZigString,
+        query_string: ?*ZigString,
         is_esm: bool,
     ) void {
         resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
@@ -3552,7 +3560,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             // - Directories outside the root directory
             // - Directories inside node_modules
             if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
-                watch.addDirectory(dir_fd, file_path, GenericWatcher.getHash(file_path), false) catch {};
+                _ = watch.addDirectory(dir_fd, file_path, GenericWatcher.getHash(file_path), false);
             }
         }
 
@@ -3566,9 +3574,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub fn onError(
             _: *@This(),
-            err: anyerror,
+            err: bun.sys.Error,
         ) void {
-            Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
+            Output.err(@as(bun.C.E, @enumFromInt(err.errno)), "Watcher crashed", .{});
         }
 
         pub fn getContext(this: *@This()) *@This().Watcher {

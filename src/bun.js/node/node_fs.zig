@@ -2574,34 +2574,28 @@ pub const Arguments = struct {
                 if (current.isNumber() or current.isBigInt()) {
                     args.offset = current.to(u52);
 
-                    if (arguments.remaining.len < 2) {
-                        JSC.throwInvalidArguments(
-                            "length and position are required",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-
+                    if (arguments.remaining.len < 1) {
+                        JSC.throwInvalidArguments("length is required", .{}, ctx, exception);
                         return null;
                     }
-                    if (arguments.remaining[0].isNumber() or arguments.remaining[0].isBigInt())
-                        args.length = arguments.remaining[0].to(u52);
 
+                    const arg_length = arguments.next().?;
+                    arguments.eat();
+
+                    if (arg_length.isNumber() or arg_length.isBigInt()) {
+                        args.length = arg_length.to(u52);
+                    }
                     if (args.length == 0) {
-                        JSC.throwInvalidArguments(
-                            "length must be greater than 0",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-
+                        JSC.throwInvalidArguments("length must be greater than 0", .{}, ctx, exception);
                         return null;
                     }
 
-                    if (arguments.remaining[1].isNumber() or arguments.remaining[1].isBigInt())
-                        args.position = @as(ReadPosition, @intCast(arguments.remaining[1].to(i52)));
-
-                    arguments.remaining = arguments.remaining[2..];
+                    if (arguments.next()) |arg_position| {
+                        arguments.eat();
+                        if (arg_position.isNumber() or arg_position.isBigInt()) {
+                            args.position = @as(ReadPosition, @intCast(arg_position.to(i52)));
+                        }
+                    }
                 } else if (current.isObject()) {
                     if (current.getTruthy(ctx.ptr(), "offset")) |num| {
                         if (num.isNumber() or num.isBigInt()) {
@@ -5448,26 +5442,24 @@ pub const NodeFS = struct {
 
         const path = args.path.sliceZ(inbuf);
 
-        const len = switch (Syscall.readlink(path, &outbuf)) {
-            .err => |err| return .{
-                .err = err.withPath(args.path.slice()),
-            },
-            .result => |len| len,
+        const link_path = switch (Syscall.readlink(path, &outbuf)) {
+            .err => |err| return .{ .err = err.withPath(args.path.slice()) },
+            .result => |result| result,
         };
 
         return .{
             .result = switch (args.encoding) {
                 .buffer => .{
-                    .buffer = Buffer.fromString(outbuf[0..len], bun.default_allocator) catch unreachable,
+                    .buffer = Buffer.fromString(link_path, bun.default_allocator) catch unreachable,
                 },
                 else => if (args.path == .slice_with_underlying_string and
-                    strings.eqlLong(args.path.slice_with_underlying_string.slice(), outbuf[0..len], true))
+                    strings.eqlLong(args.path.slice_with_underlying_string.slice(), link_path, true))
                     .{
                         .string = args.path.slice_with_underlying_string.dupeRef(),
                     }
                 else
                     .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(outbuf[0..len]) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(link_path) },
                     },
             },
         };
@@ -5919,18 +5911,7 @@ pub const NodeFS = struct {
     }
 
     pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
-        const watcher = args.createFSWatcher() catch |err| {
-            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
-            defer bun.default_allocator.free(buf);
-            args.global_this.throwValue((JSC.SystemError{
-                .message = bun.String.init(buf),
-                .code = bun.String.init(@errorName(err)),
-                .syscall = bun.String.static("watch"),
-                .path = bun.String.init(args.path.slice()),
-            }).toErrorInstance(args.global_this));
-            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
-        };
-        return Maybe(Return.Watch){ .result = watcher };
+        return args.createFSWatcher();
     }
 
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {

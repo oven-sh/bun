@@ -1044,6 +1044,19 @@ describe("readSync", () => {
     }
     closeSync(fd);
   });
+
+  it("works with offset + length passed but not position", () => {
+    const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+    const four = new Uint8Array(4);
+    {
+      const count = readSync(fd, four, 0, 4);
+      const u32 = new Uint32Array(four.buffer)[0];
+      expect(u32).toBe(firstFourBytes);
+      expect(count).toBe(4);
+    }
+    closeSync(fd);
+  });
+
   it("works without position set", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
     const four = new Uint8Array(4);
@@ -2997,4 +3010,12 @@ it("fs.close with one arg works", () => {
   const filepath = join(tmpdir(), `file-${Math.random().toString(32).slice(2)}.txt`);
   const fd = fs.openSync(filepath, "w+");
   fs.close(fd);
+});
+
+it("existsSync should never throw ENAMETOOLONG", () => {
+  expect(existsSync(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
+});
+
+it("promises exists should never throw ENAMETOOLONG", async () => {
+  expect(await _promises.exists(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
 });

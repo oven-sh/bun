@@ -1373,6 +1373,25 @@ extern "C" void* ${typeName}__fromJS(JSC::EncodedJSValue value) {
   return object->wrapped();
 }
 
+extern "C" void* ${typeName}__fromJSDirect(JSC::EncodedJSValue value) {
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  ASSERT(decodedValue.isCell());
+
+  JSC::JSCell* cell = decodedValue.asCell();
+  ${className(typeName)}* object = JSC::jsDynamicCast<${className(typeName)}*>(cell);
+
+  if (!object)
+      return nullptr;
+
+  Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(object->globalObject());
+
+  if (UNLIKELY(globalObject == nullptr || cell->structureID() != globalObject->${className(typeName)}Structure()->id())) { 
+    return nullptr;
+  }
+
+  return object->wrapped();
+}
+
 extern "C" bool ${typeName}__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr) {
   ${className(typeName)}* object = JSC::jsDynamicCast<${className(typeName)}*>(JSValue::decode(value));
   if (!object)
@@ -1718,6 +1737,15 @@ pub const ${className(typeName)} = struct {
         return ${symbolName(typeName, "fromJS")}(value);
     }
 
+    /// Return the pointer to the wrapped object only if it is a direct instance of the type.
+    /// If the object does not match the type, return null.
+    /// If the object is a subclass of the type or has mutated the structure, return null.
+    /// Note: this may return null for direct instances of the type if the user adds properties to the object.
+    pub fn fromJSDirect(value: JSC.JSValue) ?*${typeName} {
+        JSC.markBinding(@src());
+        return ${symbolName(typeName, "fromJSDirect")}(value);
+    }
+
     ${externs}
 
     ${
@@ -1763,6 +1791,7 @@ pub const ${className(typeName)} = struct {
     }
 
     extern fn ${symbolName(typeName, "fromJS")}(JSC.JSValue) ?*${typeName};
+    extern fn ${symbolName(typeName, "fromJSDirect")}(JSC.JSValue) ?*${typeName};
     extern fn ${symbolName(typeName, "getConstructor")}(*JSC.JSGlobalObject) JSC.JSValue;
 
     extern fn ${symbolName(typeName, "create")}(globalObject: *JSC.JSGlobalObject, ptr: ?*${typeName}) JSC.JSValue;

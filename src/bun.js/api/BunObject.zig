@@ -21,6 +21,7 @@ pub const BunObject = struct {
     pub const inflateSync = JSC.wrapStaticMethod(JSZlib, "inflateSync", true);
     pub const jest = @import("../test/jest.zig").Jest.call;
     pub const listen = JSC.wrapStaticMethod(JSC.API.Listener, "listen", false);
+    pub const udpSocket = JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false);
     pub const mmap = Bun.mmapFile;
     pub const nanoseconds = Bun.nanoseconds;
     pub const openInEditor = Bun.openInEditor;
@@ -134,6 +135,7 @@ pub const BunObject = struct {
         @export(BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
         @export(BunObject.jest, .{ .name = callbackName("jest") });
         @export(BunObject.listen, .{ .name = callbackName("listen") });
+        @export(BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(BunObject.mmap, .{ .name = callbackName("mmap") });
         @export(BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
         @export(BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
@@ -1338,6 +1340,7 @@ pub const Crypto = struct {
             // @"RSA-SHA512",
             // @"ecdsa-with-SHA1",
             blake2b256,
+            blake2b512,
             md4,
             md5,
             ripemd160,
@@ -1346,7 +1349,12 @@ pub const Crypto = struct {
             sha256,
             sha384,
             sha512,
+            @"sha512-224",
             @"sha512-256",
+            @"sha3-224",
+            @"sha3-256",
+            @"sha3-384",
+            @"sha3-512",
 
             pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
                 var all = std.EnumArray(Algorithm, ZigString).initUndefined();
@@ -1359,6 +1367,7 @@ pub const Crypto = struct {
 
             pub const map = bun.ComptimeStringMap(Algorithm, .{
                 .{ "blake2b256", .blake2b256 },
+                .{ "blake2b512", .blake2b512 },
                 .{ "ripemd160", .ripemd160 },
                 .{ "rmd160", .ripemd160 },
                 .{ "md4", .md4 },
@@ -1374,11 +1383,19 @@ pub const Crypto = struct {
                 .{ "sha-256", .sha256 },
                 .{ "sha-384", .sha384 },
                 .{ "sha-512", .sha512 },
+                .{ "sha-512/224", .@"sha512-224" },
+                .{ "sha-512_224", .@"sha512-224" },
+                .{ "sha-512224", .@"sha512-224" },
+                .{ "sha512-224", .@"sha512-224" },
                 .{ "sha-512/256", .@"sha512-256" },
                 .{ "sha-512_256", .@"sha512-256" },
                 .{ "sha-512256", .@"sha512-256" },
                 .{ "sha512-256", .@"sha512-256" },
                 .{ "sha384", .sha384 },
+                .{ "sha3-224", .@"sha3-224" },
+                .{ "sha3-256", .@"sha3-256" },
+                .{ "sha3-384", .@"sha3-384" },
+                .{ "sha3-512", .@"sha3-512" },
                 // .{ "md5-sha1", .@"MD5-SHA1" },
                 // .{ "dsa-sha", .@"DSA-SHA" },
                 // .{ "dsa-sha1", .@"DSA-SHA1" },
@@ -1460,11 +1477,9 @@ pub const Crypto = struct {
 
         pub fn byNameAndEngine(engine: *BoringSSL.ENGINE, name: []const u8) ?EVP {
             if (Algorithm.map.getWithEql(name, strings.eqlCaseInsensitiveASCIIIgnoreLength)) |algorithm| {
-                if (algorithm == .blake2b256) {
-                    return EVP.init(algorithm, BoringSSL.EVP_blake2b256(), engine);
-                }
-
                 switch (algorithm) {
+                    .blake2b256 => return EVP.init(algorithm, BoringSSL.EVP_blake2b256(), engine),
+                    .blake2b512 => return EVP.init(algorithm, BoringSSL.EVP_blake2b512(), engine),
                     .md4 => return EVP.init(algorithm, BoringSSL.EVP_md4(), engine),
                     .md5 => return EVP.init(algorithm, BoringSSL.EVP_md5(), engine),
                     .sha1 => return EVP.init(algorithm, BoringSSL.EVP_sha1(), engine),
@@ -1472,6 +1487,7 @@ pub const Crypto = struct {
                     .sha256 => return EVP.init(algorithm, BoringSSL.EVP_sha256(), engine),
                     .sha384 => return EVP.init(algorithm, BoringSSL.EVP_sha384(), engine),
                     .sha512 => return EVP.init(algorithm, BoringSSL.EVP_sha512(), engine),
+                    .@"sha512-224" => return EVP.init(algorithm, BoringSSL.EVP_sha512_224(), engine),
                     .@"sha512-256" => return EVP.init(algorithm, BoringSSL.EVP_sha512_256(), engine),
                     else => {
                         if (BoringSSL.EVP_get_digestbyname(@tagName(algorithm))) |md|
@@ -2304,15 +2320,18 @@ pub const Crypto = struct {
         }
     };
 
-    pub const CryptoHasher = struct {
-        evp: EVP = undefined,
+    pub const CryptoHasher = union(enum) {
+        evp: EVP,
+        zig: CryptoHasherZig,
 
         const Digest = EVP.Digest;
 
         pub usingnamespace JSC.Codegen.JSCryptoHasher;
+        usingnamespace bun.New(@This());
 
         pub const digest = JSC.wrapInstanceMethod(CryptoHasher, "digest_", false);
         pub const hash = JSC.wrapStaticMethod(CryptoHasher, "hash_", false);
+
         pub fn getByteLength(
             this: *CryptoHasher,
             _: *JSC.JSGlobalObject,
@@ -2324,7 +2343,9 @@ pub const Crypto = struct {
             this: *CryptoHasher,
             globalObject: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            return ZigString.fromUTF8(bun.asByteSlice(@tagName(this.evp.algorithm))).toValueGC(globalObject);
+            return switch (this.*) {
+                inline else => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toValueGC(globalObject),
+            };
         }
 
         pub fn getAlgorithms(
@@ -2407,7 +2428,7 @@ pub const Crypto = struct {
             input: JSC.Node.BlobOrStringOrBuffer,
             output: ?JSC.Node.StringOrBuffer,
         ) JSC.JSValue {
-            var evp = EVP.byName(algorithm, globalThis) orelse {
+            var evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.hashByName(globalThis, algorithm, input, output) orelse {
                 globalThis.throwInvalidArguments("Unsupported algorithm \"{any}\"", .{algorithm});
                 return .zero;
             };
@@ -2453,13 +2474,13 @@ pub const Crypto = struct {
                 return null;
             }
 
-            const evp = EVP.byName(algorithm, globalThis) orelse {
+            var this: CryptoHasher = undefined;
+            const evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.constructor(algorithm) orelse {
                 globalThis.throwInvalidArguments("Unsupported algorithm {any}", .{algorithm});
                 return null;
             };
-            var this = bun.default_allocator.create(CryptoHasher) catch return null;
-            this.evp = evp;
-            return this;
+            this = .{ .evp = evp };
+            return CryptoHasher.new(this);
         }
 
         pub fn getter(
@@ -2484,6 +2505,14 @@ pub const Crypto = struct {
                 return .zero;
             }
 
+            switch (this.*) {
+                .evp => {},
+                .zig => |*inner| {
+                    inner.update(buffer.slice());
+                    return thisValue;
+                },
+            }
+
             this.evp.update(buffer.slice());
             const err = BoringSSL.ERR_get_error();
             if (err != 0) {
@@ -2501,13 +2530,20 @@ pub const Crypto = struct {
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            const new = bun.default_allocator.create(CryptoHasher) catch @panic("Out of memory");
-            new.evp = this.evp.copy(globalObject.bunVM().rareData().boringEngine()) catch @panic("Out of memory");
-            return new.toJS(globalObject);
+            var new: CryptoHasher = undefined;
+            switch (this.*) {
+                .evp => {
+                    new = .{ .evp = this.evp.copy(globalObject.bunVM().rareData().boringEngine()) catch @panic("Out of memory") };
+                },
+                .zig => |*inner| {
+                    new = .{ .zig = inner.copy() };
+                },
+            }
+            return CryptoHasher.new(new).toJS(globalObject);
         }
 
         pub fn digest_(
-            this: *@This(),
+            this: *CryptoHasher,
             globalThis: *JSGlobalObject,
             output: ?JSC.Node.StringOrBuffer,
         ) JSC.JSValue {
@@ -2563,16 +2599,157 @@ pub const Crypto = struct {
 
             const output_digest_slice: []u8 = &output_digest_buf;
 
+            switch (this.*) {
+                .evp => {},
+                .zig => |*inner| {
+                    inner.final(output_digest_slice);
+                    return encoding.encodeWithMaxSize(globalThis, BoringSSL.EVP_MAX_MD_SIZE, output_digest_slice[0..inner.digest_length]);
+                },
+            }
+
             const out = this.evp.final(globalThis.bunVM().rareData().boringEngine(), output_digest_slice);
 
             return encoding.encodeWithMaxSize(globalThis, BoringSSL.EVP_MAX_MD_SIZE, out);
         }
 
         pub fn finalize(this: *CryptoHasher) callconv(.C) void {
-            // https://github.com/oven-sh/bun/issues/3250
-            this.evp.deinit();
+            switch (this.*) {
+                .evp => {
+                    // https://github.com/oven-sh/bun/issues/3250
+                    this.evp.deinit();
+                },
+                .zig => |*inner| {
+                    inner.deinit();
+                },
+            }
+            this.destroy();
+        }
+    };
 
-            bun.default_allocator.destroy(this);
+    const CryptoHasherZig = struct {
+        algorithm: EVP.Algorithm,
+        state: *anyopaque,
+        digest_length: u8,
+
+        const algo_map = [_]struct { string, type }{
+            .{ "sha3-224", std.crypto.hash.sha3.Sha3_224 },
+            .{ "sha3-256", std.crypto.hash.sha3.Sha3_256 },
+            .{ "sha3-384", std.crypto.hash.sha3.Sha3_384 },
+            .{ "sha3-512", std.crypto.hash.sha3.Sha3_512 },
+        };
+
+        pub fn hashByName(
+            globalThis: *JSGlobalObject,
+            algorithm: ZigString,
+            input: JSC.Node.BlobOrStringOrBuffer,
+            output: ?JSC.Node.StringOrBuffer,
+        ) ?JSC.JSValue {
+            inline for (algo_map) |item| {
+                if (bun.strings.eqlComptime(algorithm.slice(), item[0])) {
+                    return hashByNameInner(globalThis, item[1], input, output);
+                }
+            }
+            return null;
+        }
+
+        fn hashByNameInner(globalThis: *JSGlobalObject, comptime Algorithm: type, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.Node.StringOrBuffer) JSC.JSValue {
+            if (output) |string_or_buffer| {
+                switch (string_or_buffer) {
+                    inline else => |*str| {
+                        defer str.deinit();
+                        globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
+                        return JSC.JSValue.zero;
+                    },
+                    .buffer => |buffer| {
+                        return hashByNameInnerToBytes(globalThis, Algorithm, input, buffer.buffer);
+                    },
+                }
+            }
+            return hashByNameInnerToBytes(globalThis, Algorithm, input, null);
+        }
+
+        fn hashByNameInnerToBytes(globalThis: *JSGlobalObject, comptime Algorithm: type, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.ArrayBuffer) JSC.JSValue {
+            defer input.deinit();
+
+            if (input == .blob and input.blob.isBunFile()) {
+                globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                return .zero;
+            }
+
+            var h = Algorithm.init(.{});
+            const digest_length_comptime = Algorithm.digest_length;
+
+            if (output) |output_buf| {
+                if (output_buf.byteSlice().len < digest_length_comptime) {
+                    globalThis.throwInvalidArguments("TypedArray must be at least {d} bytes", .{digest_length_comptime});
+                    return JSC.JSValue.zero;
+                }
+            }
+
+            h.update(input.slice());
+
+            if (output) |output_buf| {
+                h.final(output_buf.slice()[0..digest_length_comptime]);
+                return output_buf.value;
+            } else {
+                var out: [Algorithm.digest_length]u8 = undefined;
+                h.final(&out);
+                // Clone to GC-managed memory
+                return JSC.ArrayBuffer.create(globalThis, &out, .Buffer);
+            }
+        }
+
+        fn constructor(algorithm: ZigString) callconv(.C) ?*CryptoHasher {
+            inline for (algo_map) |item| {
+                if (bun.strings.eqlComptime(algorithm.slice(), item[0])) {
+                    return CryptoHasher.new(.{ .zig = .{
+                        .algorithm = @field(EVP.Algorithm, item[0]),
+                        .state = bun.new(item[1], .{}),
+                        .digest_length = item[1].digest_length,
+                    } });
+                }
+            }
+            return null;
+        }
+
+        fn update(self: *CryptoHasherZig, bytes: []const u8) void {
+            inline for (algo_map) |item| {
+                if (self.algorithm == @field(EVP.Algorithm, item[0])) {
+                    return item[1].update(@ptrCast(@alignCast(self.state)), bytes);
+                }
+            }
+            @panic("unreachable");
+        }
+
+        fn copy(self: *const CryptoHasherZig) CryptoHasherZig {
+            inline for (algo_map) |item| {
+                if (self.algorithm == @field(EVP.Algorithm, item[0])) {
+                    return .{
+                        .algorithm = self.algorithm,
+                        .state = bun.dupe(item[1], @ptrCast(@alignCast(self.state))),
+                        .digest_length = self.digest_length,
+                    };
+                }
+            }
+            @panic("unreachable");
+        }
+
+        fn final(self: *CryptoHasherZig, output_digest_slice: []u8) void {
+            inline for (algo_map) |item| {
+                if (self.algorithm == @field(EVP.Algorithm, item[0])) {
+                    return item[1].final(@ptrCast(@alignCast(self.state)), @ptrCast(output_digest_slice));
+                }
+            }
+            @panic("unreachable");
+        }
+
+        fn deinit(self: *CryptoHasherZig) void {
+            inline for (algo_map) |item| {
+                if (self.algorithm == @field(EVP.Algorithm, item[0])) {
+                    return bun.destroy(@as(*item[1], @ptrCast(@alignCast(self.state))));
+                }
+            }
+            @panic("unreachable");
         }
     };
 
@@ -2792,13 +2969,13 @@ pub const Crypto = struct {
         };
     }
 
-    pub const SHA1 = StaticCryptoHasher(Hashers.SHA1, "SHA1");
-    pub const MD5 = StaticCryptoHasher(Hashers.MD5, "MD5");
     pub const MD4 = StaticCryptoHasher(Hashers.MD4, "MD4");
+    pub const MD5 = StaticCryptoHasher(Hashers.MD5, "MD5");
+    pub const SHA1 = StaticCryptoHasher(Hashers.SHA1, "SHA1");
     pub const SHA224 = StaticCryptoHasher(Hashers.SHA224, "SHA224");
-    pub const SHA512 = StaticCryptoHasher(Hashers.SHA512, "SHA512");
-    pub const SHA384 = StaticCryptoHasher(Hashers.SHA384, "SHA384");
     pub const SHA256 = StaticCryptoHasher(Hashers.SHA256, "SHA256");
+    pub const SHA384 = StaticCryptoHasher(Hashers.SHA384, "SHA384");
+    pub const SHA512 = StaticCryptoHasher(Hashers.SHA512, "SHA512");
     pub const SHA512_256 = StaticCryptoHasher(Hashers.SHA512_256, "SHA512_256");
 };
 

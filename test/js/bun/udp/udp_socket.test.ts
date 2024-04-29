@@ -28,7 +28,7 @@ describe("udpSocket()", () => {
   });
 
   test("can create a socket with given port", async () => {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 30; i++) {
       const port = randomPort();
       try {
         const socket = await udpSocket({ port });

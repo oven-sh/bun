@@ -2091,8 +2091,6 @@ pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
-extern "c" fn CommandLineToArgvW([*:0]u16, *c_int) ?[*][*:0]u16;
-
 pub fn initArgv(allocator: std.mem.Allocator) !void {
     if (comptime !Environment.isWindows) {
         argv = try std.process.argsAlloc(allocator);
@@ -2111,7 +2109,11 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         // so this may only need to be a temporary workaround.
         const cmdline_ptr = std.os.windows.kernel32.GetCommandLineW();
         var length: c_int = 0;
-        const argvu16_ptr = CommandLineToArgvW(cmdline_ptr, &length) orelse {
+
+        // As per the documentation:
+        // > The lifetime of the returned value is managed by the system,
+        //   applications should not free or modify this value.
+        const argvu16_ptr = windows.CommandLineToArgvW(cmdline_ptr, &length) orelse {
             switch (sys.getErrno({})) {
                 // may be returned if can't alloc enough space for the str
                 .NOMEM => return error.OutOfMemory,
@@ -2121,14 +2123,25 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
                 else => return error.Unknown,
             }
         };
+
         const argvu16 = argvu16_ptr[0..@intCast(length)];
         var out_argv = try allocator.alloc([:0]u8, @intCast(length));
+        var string_builder = StringBuilder{};
+
+        for (argvu16) |argraw| {
+            const arg = std.mem.span(argraw);
+            string_builder.count16Z(arg);
+        }
+
+        try string_builder.allocate(allocator);
+
         for (argvu16, 0..) |argraw, i| {
             const arg = std.mem.span(argraw);
-            // Invalid surrogates are not allowed in the command line string so
-            // WTF-8 is not necessary
-            out_argv[i] = try strings.toUTF8AllocZ(allocator, arg);
+            // Command line is expected to be valid UTF-16le so this never
+            // fails and it's okay to unwrap pointer
+            out_argv[i] = string_builder.append16(arg).?;
         }
+
         argv = out_argv;
     }
 }

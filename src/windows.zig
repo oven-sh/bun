@@ -94,7 +94,7 @@ pub extern "kernel32" fn SetFileValidData(
 pub extern fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
-) [*]win32.LPWSTR;
+) callconv(windows.WINAPI) [*]win32.LPWSTR;
 
 pub extern fn GetFileType(
     hFile: win32.HANDLE,

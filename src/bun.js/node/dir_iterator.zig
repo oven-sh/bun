@@ -218,7 +218,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         var io: w.IO_STATUS_BLOCK = undefined;
                         if (self.first) {
                             // > Any bytes inserted for alignment SHOULD be set to zero, and the receiver MUST ignore them
-                            @memset(self.buf, 0);
+                            @memset(&self.buf, 0);
                         }
 
                         const rc = w.ntdll.NtQueryDirectoryFile(

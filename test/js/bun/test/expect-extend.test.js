@@ -24,6 +24,9 @@ expect.extend({
 
     return { message, pass: 42 };
   },
+  [""](actual, expected) {
+    return { pass: actual === expected };
+  },
   _toBeDivisibleBy(actual, expected) {
     const pass = typeof actual === "number" && actual % expected === 0;
     const message = pass
@@ -116,6 +119,10 @@ it("is ok if there is no message specified", () => {
   });
 
   expect(() => expect(true)._toFailWithoutMessage())._toThrowErrorMatchingSnapshot();
+});
+
+it("works with empty matcher name", () => {
+  expect(1)[""](1);
 });
 
 it("exposes an equality function to custom matchers", () => {

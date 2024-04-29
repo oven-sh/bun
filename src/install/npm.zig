@@ -657,13 +657,21 @@ pub const PackageManifest = struct {
             }
         }
 
-        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir) !void {
-            var tmpfile = try tmpdir.createFileZ(tmp_path, .{
-                .truncate = true,
-            });
-            defer tmpfile.close();
-            const writer = tmpfile.writer();
-            try Serializer.write(this, @TypeOf(writer), writer);
+        fn writeFile(
+            this: *const PackageManifest,
+            tmpdir: anytype,
+            tmp_path: [:0]const u8,
+            cache_dir: anytype,
+            out_path: [:0]const u8,
+        ) !void {
+            var tmpfile = try bun.sys.File.openat(tmpdir, tmp_path, std.os.O.CREAT | std.os.O.TRUNC | std.os.O.WRONLY, 0).unwrap();
+            {
+                errdefer tmpfile.close();
+                const writer = tmpfile.writer();
+                try Serializer.write(this, @TypeOf(writer), writer);
+            }
+
+            try tmpfile.closeAndMoveAt(tmpdir, tmp_path, cache_dir, out_path);
         }
 
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
@@ -678,9 +686,8 @@ pub const PackageManifest = struct {
             try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
-            try writeFile(this, tmp_path, tmpdir);
             const out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
-            try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
+            try writeFile(this, tmpdir, tmp_path, cache_dir, out_path);
         }
 
         pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
@@ -688,23 +695,11 @@ pub const PackageManifest = struct {
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
             const file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
-            var cache_file = cache_dir.openFileZ(
-                file_path,
-                .{ .mode = .read_only },
-            ) catch return null;
             var timer: std.time.Timer = undefined;
             if (PackageManager.verbose_install) {
                 timer = std.time.Timer.start() catch @panic("timer fail");
             }
-            defer cache_file.close();
-            const bytes = try cache_file.readToEndAllocOptions(
-                allocator,
-                std.math.maxInt(u32),
-                cache_file.getEndPos() catch null,
-                @alignOf(u8),
-                null,
-            );
-
+            const bytes = bun.sys.File.readFrom(cache_dir, file_path, allocator).unwrap() catch return null;
             errdefer allocator.free(bytes);
             if (bytes.len < header_bytes.len) return null;
             const result = try readAll(bytes);

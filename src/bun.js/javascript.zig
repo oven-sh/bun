@@ -351,7 +351,7 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     // This JSGlobalObject might not be the main script execution context
     // See the crash in https://github.com/oven-sh/bun/issues/9778
     const jsc_vm = JSC.VirtualMachine.get();
-    jsc_vm.onUnhandledError(globalObject, value);
+    jsc_vm.onError(globalObject, value);
     return JSC.JSValue.jsUndefined();
 }
 
@@ -379,7 +379,7 @@ pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.
     if (result == .zero)
         return;
 
-    jsc_vm.onUnhandledError(global, result);
+    jsc_vm.onError(global, result);
     jsc_vm.autoGarbageCollect();
 }
 
@@ -825,7 +825,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn onUnhandledError(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+    pub fn onError(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         this.unhandled_error_counter += 1;
         this.onUnhandledRejection(this, globalObject, value);
     }
@@ -2614,7 +2614,7 @@ pub const VirtualMachine = struct {
 
     pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
         var jsc_vm = globalObject.bunVM();
-        jsc_vm.onUnhandledError(globalObject, exception.value());
+        jsc_vm.onError(globalObject, exception.value());
         return JSC.JSValue.jsUndefined();
     }
 

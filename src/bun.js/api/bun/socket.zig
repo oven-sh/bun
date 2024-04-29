@@ -236,14 +236,14 @@ const Handlers = struct {
         const onError = this.onError;
         if (onError == .zero) {
             if (err.len > 0)
-                this.vm.onUnhandledError(this.globalObject, err[0]);
+                this.vm.onError(this.globalObject, err[0]);
 
             return false;
         }
 
         const result = onError.callWithThis(this.globalObject, thisValue, err);
         if (result.isAnyError()) {
-            this.vm.onUnhandledError(this.globalObject, result);
+            this.vm.onError(this.globalObject, result);
         }
 
         return true;

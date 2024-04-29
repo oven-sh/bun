@@ -140,6 +140,7 @@ const ErrorCode = enum(i32) {
     unsupported_control_frame,
     unexpected_opcode,
     invalid_utf8,
+    tls_handshake_failed,
 };
 
 pub export fn Bun__defaultRejectUnauthorized(global: *JSC.JSGlobalObject) callconv(.C) bool {
@@ -232,6 +233,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         websocket_protocol: u64 = 0,
         hostname: [:0]const u8 = "",
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
+        state: State = .initializing,
+
+        const State = enum { initializing, reading, failed };
 
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
 
@@ -258,6 +262,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             );
         }
 
+        /// On error, this returns null.
+        /// Returning null signals to the parent function that the connection failed.
         pub fn connect(
             global: *JSC.JSGlobalObject,
             socket_ctx: *anyopaque,
@@ -286,10 +292,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const vm = global.bunVM();
 
             var client = HTTPClient.new(.{
-                .tcp = undefined,
+                .tcp = null,
                 .outgoing_websocket = websocket,
                 .input_body_buf = body,
                 .websocket_protocol = client_protocol_hash,
+                .state = .initializing,
             });
 
             var host_ = host.toSlice(bun.default_allocator);
@@ -310,6 +317,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 client,
                 "tcp",
             )) |out| {
+                // I don't think this case gets reached.
+                if (out.state == .failed) {
+                    client.clearData();
+                    client.destroy();
+                    return null;
+                }
                 bun.Analytics.Features.WebSocket += 1;
 
                 if (comptime ssl) {
@@ -319,9 +332,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
 
                 out.tcp.?.timeout(120);
+                out.state = .reading;
                 return out;
             } else |_| {
-                // TODO: handle error better than just returning null
                 client.clearData();
                 client.destroy();
             }
@@ -394,7 +407,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 reject_unauthorized = ws.rejectUnauthorized();
             }
             if (ssl_error.error_no != 0 and (reject_unauthorized or !authorized)) {
-                this.fail(ErrorCode.failed_to_connect);
+                this.fail(ErrorCode.tls_handshake_failed);
                 return;
             }
 
@@ -404,7 +417,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
                         if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.fail(ErrorCode.failed_to_connect);
+                            this.fail(ErrorCode.tls_handshake_failed);
                         }
                     }
                 }
@@ -630,10 +643,19 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         ) void {
             this.terminate(ErrorCode.timeout);
         }
-        pub fn handleConnectError(this: *HTTPClient, _: Socket, _: c_int) void {
+
+        // In theory, this could be called immediately
+        // In that case, we set `state` to `failed` and return, expecting the parent to call `destroy`.
+        pub fn handleConnectError(this: *HTTPClient, socket: Socket, _: c_int) void {
             this.tcp = null;
-            this.terminate(ErrorCode.failed_to_connect);
-            this.destroy();
+            _ = uws.us_socket_close_connecting(comptime @as(c_int, @intFromBool(ssl)), socket.socket);
+
+            if (this.state == .reading) {
+                this.terminate(ErrorCode.failed_to_connect);
+                this.destroy();
+            } else {
+                this.state = .failed;
+            }
         }
 
         pub const Export = shim.exportFunctions(.{

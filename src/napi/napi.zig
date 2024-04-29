@@ -1352,7 +1352,7 @@ pub const ThreadSafeFunction = struct {
                 }
                 const err = js_function.call(this.env, &.{});
                 if (err.isAnyError()) {
-                    this.env.bunVM().onUnhandledError(this.env, err);
+                    this.env.bunVM().onError(this.env, err);
                 }
             },
             .c => |cb| {

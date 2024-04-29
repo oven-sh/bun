@@ -4844,42 +4844,6 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
 }
 
-extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
-    JSC::JSGlobalObject* lexicalGlobalObject,
-    JSC__JSValue encodedFunctionValue,
-    JSC__JSValue encodedThisValue,
-    unsigned depth,
-    unsigned max_depth,
-    bool colors)
-{
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSValue functionToCall = JSValue::decode(encodedFunctionValue);
-    JSValue thisValue = JSValue::decode(encodedThisValue);
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSFunction* inspectFn = globalObject->utilInspectFunction();
-    JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
-
-    JSObject* options = JSC::constructEmptyObject(globalObject);
-    options->putDirect(vm, Identifier::fromString(vm, "stylize"_s), stylizeFn);
-    options->putDirect(vm, Identifier::fromString(vm, "depth"_s), jsNumber(max_depth));
-    options->putDirect(vm, Identifier::fromString(vm, "colors"_s), jsBoolean(colors));
-
-    auto callData = JSC::getCallData(functionToCall);
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(depth));
-    arguments.append(options);
-    arguments.append(inspectFn);
-
-    auto inspectRet = JSC::call(globalObject, functionToCall, callData, thisValue, arguments);
-    if (auto exe = scope.exception()) {
-        scope.clearException();
-        return JSValue::encode(exe);
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
-}
-
 JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);

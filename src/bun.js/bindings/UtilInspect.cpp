@@ -3,10 +3,6 @@
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/JSValue.h"
-#include "JavaScriptCore/Identifier.h"
-#include "JavaScriptCore/Structure.h"
-
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ZigGlobalObject.h"

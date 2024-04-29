@@ -1061,11 +1061,26 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         if(USE_LTO)
             # -emit-llvm seems to not be supported or under a different name on Windows.
             list(APPEND LTO_FLAG "-flto=full")
-            list(APPEND LTO_LINK_FLAG "/LTCG")
+            list(APPEND LTO_LINK_FLAG "/LTCG /OPT:REF /OPT:ICF /OPT:ICF=10")
         endif()
 
-        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG:FULL)
-        target_link_options(${bun} PUBLIC ${LTO_LINK_FLAG} /DEBUG:FULL)
+        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG:FULL /Gw /Gy /GF /GL /GA)
+        target_link_options(${bun} PUBLIC /DEBUG:FULL ${LTO_LINK_FLAG}
+            /OPT:REF
+            /OPT:ICF
+            /OPT:ICF=10
+            /delayload:ole32.dll
+            /delayload:WINMM.dll
+            /delayload:dbghelp.dll
+            /delayload:MSVCP140.dll
+            /delayload:VCRUNTIME140_1.dll
+
+            # libuv loads these two immediately, but for some reason it seems to still be slightly faster to delayload them
+            /delayload:WS2_32.dll
+            /delayload:WSOCK32.dll
+            /delayload:ADVAPI32.dll
+            /delayload:IPHLPAPI.dll
+        )
     endif()
 endif()
 
@@ -1099,7 +1114,7 @@ if(WIN32)
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
-    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
+    target_compile_options(${bun} PUBLIC "/GR-")
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000")
 else()
     target_compile_options(${bun} PUBLIC
@@ -1413,6 +1428,7 @@ else()
         userenv
         dbghelp
         wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
+        delayimp.lib
     )
 endif()
 

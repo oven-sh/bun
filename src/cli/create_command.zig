@@ -1851,7 +1851,7 @@ pub const Example = struct {
         var header_entries: Headers.Entries = .{};
         var headers_buf: string = "";
 
-        if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
+        if (env_loader.map.get("GITHUB_TOKEN") orelse env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
                 headers_buf = try std.fmt.allocPrint(ctx.allocator, "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(

@@ -4182,8 +4182,8 @@ pub const Expect = struct {
                 .Pending => unreachable,
                 .Fulfilled => {},
                 .Rejected => {
-                    // TODO throw the actual rejection error
-                    globalObject.bunVM().runErrorHandler(result, null);
+                    // TODO: rewrite this code to use .then() instead of blocking the event loop
+                    JSC.VirtualMachine.get().runErrorHandler(result, null);
                     globalObject.throw("Matcher `{s}` returned a promise that rejected", .{matcher_name});
                     return false;
                 },
@@ -4319,7 +4319,9 @@ pub const Expect = struct {
         for (0..args_count) |i| matcher_args.appendAssumeCapacity(args_ptr[i]);
 
         // call the matcher, which will throw a js exception when failed
-        _ = executeCustomMatcher(globalObject, matcher_name, matcher_fn, matcher_args.items, expect.flags, false);
+        if (!executeCustomMatcher(globalObject, matcher_name, matcher_fn, matcher_args.items, expect.flags, false) or globalObject.hasException()) {
+            return .zero;
+        }
 
         return thisValue;
     }

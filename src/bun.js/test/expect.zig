@@ -4183,7 +4183,7 @@ pub const Expect = struct {
                 .Fulfilled => {},
                 .Rejected => {
                     // TODO throw the actual rejection error
-                    globalObject.bunVM().runErrorHandler(result, null);
+                    JSC.VirtualMachine.get().onError(globalObject, result);
                     globalObject.throw("Matcher `{s}` returned a promise that rejected", .{matcher_name});
                     return false;
                 },

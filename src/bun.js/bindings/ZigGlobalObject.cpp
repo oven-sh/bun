@@ -145,6 +145,7 @@
 #include "webcrypto/JSSubtleCrypto.h"
 #include "ZigGeneratedClasses.h"
 #include "ZigSourceProvider.h"
+#include "UtilInspect.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -1493,7 +1494,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
         LChar* ptr;
         unsigned length = encodedString.length();
         auto dest = WTF::String::createUninitialized(length, ptr);
-        WTF::StringImpl::copyCharacters(ptr, { encodedString.characters16(), length });
+        WTF::StringImpl::copyCharacters(ptr, encodedString.span16());
         encodedString = WTFMove(dest);
     }
 
@@ -1501,7 +1502,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     RELEASE_AND_RETURN(
         throwScope,
         Bun__encoding__toString(
-            encodedString.characters8(),
+            encodedString.span8().data(),
             length,
             globalObject,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
@@ -2568,14 +2569,19 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(jsCast<JSFunction*>(nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s))));
         });
 
+    m_utilInspectOptionsStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createUtilInspectOptionsStructure(init.vm, init.owner));
+        });
+
     m_utilInspectStylizeColorFunction.initLater(
         [](const Initializer<JSFunction>& init) {
+            JSC::MarkedArgumentBuffer args;
+            args.append(jsCast<Zig::GlobalObject*>(init.owner)->utilInspectFunction());
+
             auto scope = DECLARE_THROW_SCOPE(init.vm);
             JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
             // RETURN_IF_EXCEPTION(scope, {});
-
-            JSC::MarkedArgumentBuffer args;
-            args.append(jsCast<Zig::GlobalObject*>(init.owner)->utilInspectFunction());
 
             JSC::CallData callData = JSC::getCallData(getStylize);
 
@@ -3421,6 +3427,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_subtleCryptoObject.visit(visitor);
     thisObject->m_testMatcherUtilsObject.visit(visitor);
     thisObject->m_utilInspectFunction.visit(visitor);
+    thisObject->m_utilInspectOptionsStructure.visit(visitor);
     thisObject->m_utilInspectStylizeColorFunction.visit(visitor);
     thisObject->m_utilInspectStylizeNoColorFunction.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);

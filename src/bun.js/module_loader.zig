@@ -1655,6 +1655,7 @@ pub const ModuleLoader = struct {
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
+                    .keep_json_and_toml_as_one_statement = true,
                     .set_breakpoint_on_first_line = is_main and
                         jsc_vm.debugger != null and
                         jsc_vm.debugger.?.set_breakpoint_on_first_line and
@@ -1775,6 +1776,17 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
+                    };
+                }
+
+                if (loader == .json or loader == .toml) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .specifier = input_specifier,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .hash = 0,
+                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch @panic("Unexpected JS error"),
+                        .tag = .exports_object,
                     };
                 }
 
@@ -2969,4 +2981,9 @@ export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun
     const result = ModuleLoader.resolveEmbeddedFile(vm, input_path.slice(), "node") orelse return false;
     in_out_str.* = bun.String.createUTF8(result);
     return true;
+}
+
+export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
+    const str = data[0..len];
+    return HardcodedModule.Map.get(str) != null;
 }

@@ -2098,12 +2098,29 @@ pub const JSPromise = extern struct {
             this.swap().reject(globalThis, val);
         }
 
+        /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
+        pub fn rejectTask(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.enter();
+            defer loop.exit();
+
+            this.reject(globalThis, val);
+        }
+
         pub fn rejectOnNextTick(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
             this.swap().rejectOnNextTick(globalThis, val);
         }
 
         pub fn resolve(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
             this.swap().resolve(globalThis, val);
+        }
+
+        /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
+        pub fn resolveTask(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.enter();
+            defer loop.exit();
+            this.resolve(globalThis, val);
         }
 
         pub fn resolveOnNextTick(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
@@ -5905,12 +5922,16 @@ pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSV
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
-pub const JSArray = struct {
+pub const JSArray = opaque {
     // TODO(@paperdave): this can throw
     extern fn JSArray__constructArray(*JSGlobalObject, [*]const JSValue, usize) JSValue;
 
     pub fn create(global: *JSGlobalObject, items: []const JSValue) JSValue {
         return JSArray__constructArray(global, items.ptr, items.len);
+    }
+
+    pub fn iterator(array: *JSArray, global: *JSGlobalObject) JSArrayIterator {
+        return JSValue.fromCell(array).arrayIterator(global);
     }
 };
 

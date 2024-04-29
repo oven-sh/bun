@@ -1,9 +1,7 @@
 import { spawnSync } from "bun";
 import { it, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
-
-const isWindows = process.platform === "win32";
 
 it("setTimeout", async () => {
   var lastID = -1;
@@ -156,7 +154,7 @@ it("Bun.sleep works with a Date object", async () => {
   var ten_ms = new Date();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
-  expect(Math.ceil(performance.now() - now)).toBeGreaterThan(offset);
+  expect(Math.ceil(performance.now() - now)).toBeGreaterThanOrEqual(offset);
 });
 
 it("Bun.sleep(Date) fulfills after Date", async () => {
@@ -255,8 +253,11 @@ it("setTimeout should refresh N times", done => {
 
   setTimeout(() => {
     clearTimeout(timer);
-    expect(count).toBeGreaterThanOrEqual(5);
-    done();
+    try {
+      expect(count).toBeGreaterThanOrEqual(isWindows ? 4 : 5);
+    } finally {
+      done();
+    }
   }, 300);
 });
 

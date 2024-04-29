@@ -381,45 +381,54 @@ it("should call close and exit before process exits", async () => {
   expect(data).toContain("exithHandler called");
 });
 
-it("it accepts stdio passthrough", async () => {
-  const package_dir = tmpdirSync("bun-node-child_process");
+it(
+  "it accepts stdio passthrough",
+  async () => {
+    const package_dir = tmpdirSync("bun-node-child_process");
 
-  await fs.promises.writeFile(
-    path.join(package_dir, "package.json"),
-    JSON.stringify({
-      "name": "npm-run-all-test",
-      "version": "1.0.0",
-      "type": "module",
-      "scripts": {
-        "all": "run-p echo-hello echo-world",
-        "echo-hello": "echo hello",
-        "echo-world": "echo world",
-      },
-      "devDependencies": {
-        "npm-run-all": "^4",
-      },
-    }),
-  );
+    await fs.promises.writeFile(
+      path.join(package_dir, "package.json"),
+      JSON.stringify({
+        "name": "npm-run-all-test",
+        "version": "1.0.0",
+        "type": "module",
+        "scripts": {
+          "all": "run-p echo-hello echo-world",
+          "echo-hello": "echo hello",
+          "echo-world": "echo world",
+        },
+        "devDependencies": {
+          "npm-run-all": "^4",
+        },
+      }),
+    );
 
-  let { stdout, stderr, exited } = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdio: ["ignore", "ignore", "ignore"],
-    env: bunEnv,
-  });
-  expect(await exited).toBe(0);
+    let { stdout, stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdio: ["ignore", "ignore", "ignore"],
+      env: bunEnv,
+    });
+    expect(await exited).toBe(0);
 
-  ({ stdout, stderr, exited } = Bun.spawn({
-    cmd: [bunExe(), "--bun", "run", "all"],
-    cwd: package_dir,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: bunEnv,
-  }));
+    ({ stdout, stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "--bun", "run", "all"],
+      cwd: package_dir,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: bunEnv,
+    }));
 
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
-  expect(err.split("\n").map(x => x.replaceAll("[bun shell] ", ""))).toEqual(["$ run-p echo-hello echo-world", "$ echo hello", "$ echo world", ""]);
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
-  expect(out.split("\n")).toEqual(["hello", "world", ""]);
-}, { timeout: 20000 });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err.split("\n").map(x => x.replaceAll("[bun shell] ", ""))).toEqual([
+      "$ run-p echo-hello echo-world",
+      "$ echo hello",
+      "$ echo world",
+      "",
+    ]);
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.split("\n")).toEqual(["hello", "world", ""]);
+  },
+  { timeout: 20000 },
+);

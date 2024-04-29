@@ -185,6 +185,8 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
         },
         .windows => struct {
             const FILE_DIRECTORY_INFORMATION = std.os.windows.FILE_DIRECTORY_INFORMATION;
+            // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
+            // this may not always be the case (e.g. due to faulty VM/Sandboxing tools)
             const FILE_DIRECTORY_INFORMATION_PTR = *align(2) FILE_DIRECTORY_INFORMATION;
             dir: Dir,
 

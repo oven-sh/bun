@@ -2017,7 +2017,9 @@ pub const Formatter = struct {
                     &is_exception,
                 );
                 if (is_exception) {
-                    JSC.VirtualMachine.get().onError(this.globalThis, result);
+                    // Previously, this printed [native code]
+                    // TODO: in the future, should this throw when in Bun.inspect?
+                    writer.print("[custom formatter threw an exception]", .{});
                     return;
                 }
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.

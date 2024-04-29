@@ -2,14 +2,13 @@ import { describe, it, expect } from "bun:test";
 
 describe("Bun.inspect", () => {
   it("reports error instead of [native code]", () => {
-    // This works because expect(()=> {}).toThrow creates an error handling scope
-    expect(() =>
+    expect(
       Bun.inspect({
         [Symbol.for("nodejs.util.inspect.custom")]() {
           throw new Error("custom inspect");
         },
       }),
-    ).toThrow("custom inspect");
+    ).toBe("[custom formatter threw an exception]");
   });
 
   it("depth < 0 throws", () => {

@@ -548,9 +548,6 @@ pub const Channel = opaque {
         var host_buf: [1024]u8 = undefined;
         var port_buf: [52]u8 = undefined;
         const host_ptr: ?[*:0]const u8 = brk: {
-            if (!(host.len > 0 and !bun.strings.eqlComptime(host, "0.0.0.0") and !bun.strings.eqlComptime(host, "::0"))) {
-                break :brk null;
-            }
             const len = @min(host.len, host_buf.len - 1);
             @memcpy(host_buf[0..len], host[0..len]);
             host_buf[len] = 0;

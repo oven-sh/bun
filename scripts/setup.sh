@@ -19,8 +19,8 @@ LLVM_VERSION=16
 
 # this compiler detection could be better
 # it is copy pasted from ./env.sh
-CC=${CC:-$(which clang-17 || which clang || which cc)}
-CXX=${CXX:-$(which clang++-17 || which clang++ || which c++)}
+CC=${CC:-$(which clang-16 || which clang || which cc)}
+CXX=${CXX:-$(which clang++-16 || which clang++ || which c++)}
 
 test -n "$CC" || fail "missing LLVM $LLVM_VERSION (could not find clang)"
 test -n "$CXX" || fail "missing LLVM $LLVM_VERSION (could not find clang++)"

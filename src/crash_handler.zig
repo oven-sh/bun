@@ -766,7 +766,7 @@ fn waitForOtherThreadToFinishPanicking() void {
     }
 }
 
-/// Each platform is encoded is a single character. It is placed right after the
+/// Each platform is encoded as a single character. It is placed right after the
 /// slash after the version, so someone just reading the trace string can tell
 /// what platform it came from. L, M, and W are for Linux, macOS, and Windows,
 /// with capital letters indicating aarch64, lowercase indicating x86_64.

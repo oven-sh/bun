@@ -145,7 +145,11 @@ pub const UDPSocketConfig = struct {
         const port: u16 = brk: {
             if (options.getTruthy(globalThis, "port")) |value| {
                 const number = value.coerceToInt32(globalThis);
-                break :brk if (number < 1 or number > 0xffff) 0 else @intCast(number);
+                if (number < 0 or number > 0xffff) {
+                    globalThis.throwInvalidArguments("Expected \"port\" to be an integer between 0 and 65535", .{});
+                    return null;
+                }
+                break :brk @intCast(number);
             } else {
                 break :brk 0;
             }

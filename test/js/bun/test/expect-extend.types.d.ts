@@ -8,6 +8,7 @@ interface CustomMatchersForTest {
   _toBeDivisibleBy(value: number): any;
   _toBeSymbol(value: Symbol): any;
   _toBeWithinRange(floor: number, ceiling: number): any;
+  _toCustomEqual(value: any): any;
   _shouldNotError(): any;
   _toFailWithoutMessage(): any;
   _toBeOne(): any;

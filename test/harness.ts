@@ -265,7 +265,7 @@ export function fakeNodeRun(dir: string, file: string | string[], env?: Record<s
 }
 
 export function randomPort(): number {
-  return 1024 + Math.floor(Math.random() * 65535);
+  return 1024 + Math.floor(Math.random() * (65535 - 1024));
 }
 
 expect.extend({

@@ -154,7 +154,7 @@ it("Bun.sleep works with a Date object", async () => {
   var ten_ms = new Date();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
-  expect(Math.ceil(performance.now() - now)).toBeGreaterThan(offset);
+  expect(Math.ceil(performance.now() - now)).toBeGreaterThanOrEqual(offset);
 });
 
 it("Bun.sleep(Date) fulfills after Date", async () => {

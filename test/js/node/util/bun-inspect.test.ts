@@ -1,6 +1,17 @@
 import { describe, it, expect } from "bun:test";
 
 describe("Bun.inspect", () => {
+  it("reports error instead of [native code]", () => {
+    // This works because expect(()=> {}).toThrow creates an error handling scope
+    expect(() =>
+      Bun.inspect({
+        [Symbol.for("nodejs.util.inspect.custom")]() {
+          throw new Error("custom inspect");
+        },
+      }),
+    ).toThrow("custom inspect");
+  });
+
   it("depth < 0 throws", () => {
     expect(() => Bun.inspect({}, { depth: -1 })).toThrow();
     expect(() => Bun.inspect({}, { depth: -13210 })).toThrow();

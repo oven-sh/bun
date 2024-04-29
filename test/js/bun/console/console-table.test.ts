@@ -96,6 +96,16 @@ describe("console.table", () => {
       },
     ],
     [
+      "properties - interesting character",
+      {
+        args: () => [
+          {
+            a: "_字",
+          },
+        ],
+      },
+    ],
+    [
       "values - array",
       {
         args: () => [

@@ -3816,37 +3816,45 @@ const Corker = struct {
     }
 };
 
+// Let's keep this 3 pointers wide or less.
 pub const ServerWebSocket = struct {
     handler: *WebSocketServer.Handler,
     this_value: JSValue = .zero,
-    _raw_websocket_do_not_use_directly: *uws.RawWebSocket = undefined,
     flags: Flags = .{},
 
-    const Flags = packed struct(u8) {
+    // We pack the per-socket data into this struct below
+    const Flags = packed struct(u64) {
         ssl: bool = false,
         closed: bool = false,
         opened: bool = false,
         binary_type: JSC.BinaryType = .Buffer,
-        _unused: u1 = 0,
+        packed_websocket_ptr: u57 = 0,
+
+        inline fn websocket(this: Flags) uws.AnyWebSocket {
+            // Ensure those other bits are zeroed out
+            const that = Flags{ .packed_websocket_ptr = this.packed_websocket_ptr };
+
+            return if (this.ssl) .{
+                .ssl = @ptrFromInt(@as(usize, that.packed_websocket_ptr)),
+            } else .{
+                .tcp = @ptrFromInt(@as(usize, that.packed_websocket_ptr)),
+            };
+        }
     };
+
+    inline fn websocket(this: *const ServerWebSocket) uws.AnyWebSocket {
+        return this.flags.websocket();
+    }
 
     pub usingnamespace JSC.Codegen.JSServerWebSocket;
     pub usingnamespace bun.New(ServerWebSocket);
 
     const log = Output.scoped(.WebSocketServer, false);
 
-    inline fn websocket(this: *const ServerWebSocket) uws.AnyWebSocket {
-        return if (this.flags.ssl) .{
-            .ssl = @ptrCast(this._raw_websocket_do_not_use_directly),
-        } else .{
-            .tcp = @ptrCast(this._raw_websocket_do_not_use_directly),
-        };
-    }
-
     pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
         log("OnOpen", .{});
 
-        this._raw_websocket_do_not_use_directly = ws.raw();
+        this.flags.packed_websocket_ptr = @truncate(@intFromPtr(ws.raw()));
         this.flags.closed = false;
         this.flags.ssl = ws == .ssl;
 

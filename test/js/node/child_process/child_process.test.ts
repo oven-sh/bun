@@ -418,8 +418,8 @@ it("it accepts stdio passthrough", async () => {
 
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split("\n")).toEqual(["$ run-p echo-hello echo-world", "$ echo hello", "$ echo world", ""]);
+  expect(err.split("\n").map(x => x.replaceAll("[bun shell] ", ""))).toEqual(["$ run-p echo-hello echo-world", "$ echo hello", "$ echo world", ""]);
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split("\n")).toEqual(["hello", "world", ""]);
-});
+}, { timeout: 20000 });

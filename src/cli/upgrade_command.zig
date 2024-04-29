@@ -211,7 +211,7 @@ pub const UpgradeCommand = struct {
             ),
         );
 
-        if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
+        if (env_loader.map.get("GITHUB_TOKEN") orelse env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
                 headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "Access-TokenBearer {s}", .{access_token});
                 try header_entries.append(

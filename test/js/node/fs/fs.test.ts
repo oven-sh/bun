@@ -3019,3 +3019,14 @@ it("existsSync should never throw ENAMETOOLONG", () => {
 it("promises exists should never throw ENAMETOOLONG", async () => {
   expect(await _promises.exists(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
 });
+
+it("promises.fdatasync with a bad fd should include that in the error thrown", async () => {
+  try {
+    await _promises.fdatasync(500);
+  } catch (e) {
+    expect(typeof e.fd).toBe("number");
+    expect(e.fd).toBe(500);
+    return;
+  }
+  expect.unreachable();
+});

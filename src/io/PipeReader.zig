@@ -396,9 +396,6 @@ pub fn WindowsPipeReader(
                     }
                     // we got some data lets get the current iov
                     const len: usize = @intCast(nread_int);
-                    if (this.source == null) {
-                        bun.Output.panic("oh uh {}, {d}", .{ fd, nread_int });
-                    }
                     const source = bun.releaseNonNull(this.source);
                     switch (source) {
                         .file => |file| {
@@ -418,7 +415,7 @@ pub fn WindowsPipeReader(
                             var buf = file.iov.slice();
                             return this.onRead(.{ .result = len }, buf[0..len], .progress);
                         },
-                        else => bun.unexpectedTag(source),
+                        else => |t| bun.unexpectedTag(t),
                     }
                 },
             }

@@ -155,6 +155,10 @@ pub const OS = struct {
                     has_model_name = true;
                 }
             }
+            if (!has_model_name) {
+                const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toValue(globalThis));
+            }
         } else |_| {
             // Initialize model name to "unknown"
             var it = values.arrayIterator(globalThis);

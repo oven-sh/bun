@@ -19,11 +19,14 @@ const testDir = tempDirWithFiles("watch", {
 describe("fs.watchFile", () => {
   test("zeroed stats if does not exist", async () => {
     let entries: any = [];
+    let { promise, resolve } = Promise.withResolvers<void>();
     fs.watchFile(path.join(testDir, "does-not-exist"), (curr, prev) => {
       entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
     });
 
-    await Bun.sleep(35);
+    await promise;
 
     fs.unwatchFile(path.join(testDir, "does-not-exist"));
 
@@ -34,16 +37,19 @@ describe("fs.watchFile", () => {
     expect(entries[0][1].mtimeMs).toBe(0);
   });
   test("it watches a file", async () => {
+    let { promise, resolve } = Promise.withResolvers<void>();
     let entries: any = [];
     fs.watchFile(path.join(testDir, "watch.txt"), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
     });
     let increment = 0;
     const interval = repeat(() => {
       increment++;
       fs.writeFileSync(path.join(testDir, "watch.txt"), "hello" + increment);
     });
-    await Bun.sleep(300);
+    await promise;
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, "watch.txt"));
@@ -56,8 +62,11 @@ describe("fs.watchFile", () => {
   });
   test("unicode file name", async () => {
     let entries: any = [];
+    let { promise, resolve } = Promise.withResolvers<void>();
     fs.watchFile(path.join(testDir, encodingFileName), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
     });
 
     let increment = 0;
@@ -65,7 +74,7 @@ describe("fs.watchFile", () => {
       increment++;
       fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
     });
-    await Bun.sleep(300);
+    await promise;
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));
@@ -79,8 +88,11 @@ describe("fs.watchFile", () => {
 
   test("bigint stats", async () => {
     let entries: any = [];
+    let { promise, resolve } = Promise.withResolvers<void>();
     fs.watchFile(path.join(testDir, encodingFileName), { interval: 50, bigint: true }, (curr, prev) => {
       entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
     });
 
     let increment = 0;
@@ -88,7 +100,7 @@ describe("fs.watchFile", () => {
       increment++;
       fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
     });
-    await Bun.sleep(300);
+    await promise;
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));

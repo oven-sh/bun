@@ -137,8 +137,7 @@ export function createTestBuilder(path: string) {
     ensureTempDir(dir?: string): this {
       if (dir !== undefined) {
         this.tempdir = dir;
-        if (this.promise.type === 'ok') 
-          this.promise.val.cwd(this.tempdir);
+        if (this.promise.type === "ok") this.promise.val.cwd(this.tempdir);
       } else {
         this.getTempDir();
       }

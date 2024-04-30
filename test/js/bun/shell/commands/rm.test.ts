@@ -24,9 +24,9 @@ const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 describe("bunshell rm", () => {
   let node_modules_dir: string = TestBuilder.tmpdir();
   beforeAll(async () => {
-    console.log('Installing node_modules...')
+    console.log("Installing node_modules...");
     await $`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}`.cwd(node_modules_dir).throws(true);
-  })
+  });
 
   TestBuilder.command`rm -rf node_modules/`
     .ensureTempDir(node_modules_dir)

@@ -504,6 +504,12 @@ pub const AsyncReaddirRecursiveTask = struct {
                     is_root,
                 )) {
                     .err => |err| {
+                        // readdir() should never fail with 'ELOOP: Too many levels of symbolic links'
+                        if (err.getErrno() == .LOOP) {
+                            this.writeResults(ResultType, &entries);
+                            return;
+                        }
+
                         for (entries.items) |*item| {
                             switch (ResultType) {
                                 bun.String => item.deref(),

@@ -539,6 +539,22 @@ it("test timeouts when expected", () => {
   expect(err).not.toContain("unreachable code");
 });
 
+test("jest.setTimeout will change default timeout", () => {
+  const path = join(tmp, "jest-setTimeout-test.test.js");
+  copyFileSync(join(import.meta.dir, "setTimeout-test-fixture.js"), path);
+  const { stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: dirname(path),
+  });
+
+  const err = stderr!.toString();
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+});
+
 it("expect().toEqual() on objects with property indices doesn't print undefined", () => {
   const path = join(tmp, "test-fixture-diff-indexed-properties.test.js");
   copyFileSync(join(import.meta.dir, "test-fixture-diff-indexed-properties.js"), path);

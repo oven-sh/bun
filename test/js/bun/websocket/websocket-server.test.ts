@@ -308,6 +308,18 @@ describe("ServerWebSocket", () => {
       30_000,
     );
   });
+
+  test("send/sendText/sendBinary error on invalid arguments", done => ({
+    open(ws) {
+      // @ts-expect-error
+      expect(() => ws.send("hello", "world")).toThrow("send expects compress to be a boolean");
+      // @ts-expect-error
+      expect(() => ws.sendText("hello", "world")).toThrow("sendText expects compress to be a boolean");
+      // @ts-expect-error
+      expect(() => ws.sendBinary(Buffer.from("hello"), "world")).toThrow("sendBinary expects compress to be a boolean");
+      done();
+    },
+  }));
   describe("sendBinary()", () => {
     for (const { label, message, bytes } of buffers) {
       test(label, done => ({
@@ -374,6 +386,23 @@ describe("ServerWebSocket", () => {
       }));
     }
   });
+
+  test("publish/publishText/publishBinary error on invalid arguments", done => ({
+    async open(ws) {
+      // @ts-expect-error
+      expect(() => ws.publish("hello", Buffer.from("hi"), "invalid")).toThrow(
+        "publish expects compress to be a boolean",
+      );
+      // @ts-expect-error
+      expect(() => ws.publishText("hello", "hi", "invalid")).toThrow("publishText expects compress to be a boolean");
+      // @ts-expect-error
+      expect(() => ws.publishBinary("hello", Buffer.from("hi"), "invalid")).toThrow(
+        "publishBinary expects compress to be a boolean",
+      );
+      done();
+    },
+  }));
+
   describe("publishBinary()", () => {
     for (const { label, message, bytes } of buffers) {
       test(label, (done, connect) => ({

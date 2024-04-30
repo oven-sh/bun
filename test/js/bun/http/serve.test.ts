@@ -1482,27 +1482,45 @@ if (process.platform === "linux")
     }).toThrow("permission denied 0.0.0.0:1003");
   });
 
-it("should error properly with invalid requestCert or rejectUnauthorized", async () => {
-  expect(() => {
-    Bun.serve({
-      port: 0,
-      fetch(req) {
-        return new Response("hi");
-      },
-      tls: {
-        requestCert: "invalid",
-      },
-    });
-  }).toThrow("Expected requestCert to be a boolean");
-  expect(() => {
-    Bun.serve({
-      port: 0,
-      fetch(req) {
-        return new Response("hi");
-      },
-      tls: {
-        rejectUnauthorized: "invalid",
-      },
-    });
-  }).toThrow("Expected rejectUnauthorized to be a boolean");
+describe("should error with invalid options", async () => {
+  it("requestCert", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("hi");
+        },
+        tls: {
+          requestCert: "invalid",
+        },
+      });
+    }).toThrow("Expected requestCert to be a boolean");
+  });
+  it("rejectUnauthorized", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("hi");
+        },
+        tls: {
+          rejectUnauthorized: "invalid",
+        },
+      });
+    }).toThrow("Expected rejectUnauthorized to be a boolean");
+  });
+  it("lowMemoryMode", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("hi");
+        },
+        tls: {
+          rejectUnauthorized: true,
+          lowMemoryMode: "invalid",
+        },
+      });
+    }).toThrow("Expected lowMemoryMode to be a boolean");
+  });
 });

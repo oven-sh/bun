@@ -1,5 +1,5 @@
 // Hardcoded module "node:perf_hooks"
-const { warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 
 var {
   Performance,

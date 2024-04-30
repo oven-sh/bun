@@ -1481,3 +1481,28 @@ if (process.platform === "linux")
       });
     }).toThrow("permission denied 0.0.0.0:1003");
   });
+
+it("should error properly with invalid requestCert or rejectUnauthorized", async () => {
+  expect(() => {
+    Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("hi");
+      },
+      tls: {
+        requestCert: "invalid",
+      },
+    });
+  }).toThrow("Expected requestCert to be a boolean");
+  expect(() => {
+    Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("hi");
+      },
+      tls: {
+        rejectUnauthorized: "invalid",
+      },
+    });
+  }).toThrow("Expected rejectUnauthorized to be a boolean");
+});

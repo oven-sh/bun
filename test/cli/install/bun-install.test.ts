@@ -1003,7 +1003,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
   expect(await file(join(package_dir, "foo.txt")).text()).toBe("foo!");
   expect(await file(join(package_dir, "bar", "bar.txt")).text()).toBe("bar!");
   await access(join(package_dir, "bun.lockb"));
-}, 1000000000000);
+});
 
 it("should handle life-cycle scripts during re-installation", async () => {
   const urls: string[] = [];

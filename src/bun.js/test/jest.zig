@@ -582,7 +582,8 @@ pub const TestScope = struct {
     task: ?*TestRunnerTask = null,
     tag: Tag = .pass,
     snapshot_count: usize = 0,
-    timeout_millis: u32 = 0,
+    timeout_millis: ?u32 = null, // null if the test does not set a timeout
+    actual_timeout_millis: u32 = 0, // actual timeout used
     retry_count: u32 = 0, // retry, on fail
     repeat_count: u32 = 0, // retry, on pass or fail
 
@@ -700,8 +701,11 @@ pub const TestScope = struct {
             task.started_at = timer.started;
         }
 
+        const timeout = this.timeout_millis orelse Jest.runner.?.default_timeout_ms;
+        this.actual_timeout_millis = timeout;
+
         Jest.runner.?.setTimeout(
-            this.timeout_millis,
+            this.actual_timeout_millis,
             task.test_id,
         );
 
@@ -1453,7 +1457,10 @@ pub const TestRunnerTask = struct {
         describe.tests.items[test_id] = test_;
 
         if (comptime from == .timeout) {
-            const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
+            const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{
+                bun.fmt.quote(test_.label),
+                test_.actual_timeout_millis,
+            });
             this.globalThis.bunVM().onError(this.globalThis, err);
         }
 
@@ -1590,7 +1597,7 @@ inline fn createScope(
         }
     }
 
-    var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
+    var timeout_ms: ?u32 = null;
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
@@ -1846,7 +1853,7 @@ fn eachBind(
         return .zero;
     }
 
-    var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
+    var timeout_ms: ?u32 = null;
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {

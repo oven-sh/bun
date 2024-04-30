@@ -560,13 +560,25 @@ pub const ServerConfig = struct {
             }
 
             if (obj.getTruthy(global, "requestCert")) |request_cert| {
-                result.request_cert = if (request_cert.asBoolean()) 1 else 0;
-                any = true;
+                if (request_cert.isBoolean()) {
+                    result.request_cert = if (request_cert.asBoolean()) 1 else 0;
+                    any = true;
+                } else {
+                    global.throw("Expected requestCert to be a boolean", .{});
+                    result.deinit();
+                    return null;
+                }
             }
 
             if (obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
-                result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
-                any = true;
+                if (reject_unauthorized.isBoolean()) {
+                    result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
+                    any = true;
+                } else {
+                    global.throw("Expected rejectUnauthorized to be a boolean", .{});
+                    result.deinit();
+                    return null;
+                }
             }
 
             if (obj.getTruthy(global, "ciphers")) |ssl_ciphers| {

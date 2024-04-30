@@ -670,12 +670,10 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
 
 pub fn shouldLogPid() ?c_int {
     if (debug_scoped_add_pid == .unknown) {
-        // debug_scoped_add_pid = if (bun.getenvZ("BUN_DEBUG_ADD_PID")) |val|
-        //     if (bun.strings.eqlComptime(val, "1")) .{ .yes = getpid() } else .no
-        // else
-        //     .no;
-
-        debug_scoped_add_pid = .{ .yes = getpid() };
+        debug_scoped_add_pid = if (bun.getenvZ("BUN_DEBUG_ADD_PID")) |val|
+            if (bun.strings.eqlComptime(val, "1")) .{ .yes = getpid() } else .no
+        else
+            .no;
     }
 
     return switch (debug_scoped_add_pid) {

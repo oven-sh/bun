@@ -66,6 +66,7 @@ else if (Environment.isWindows)
 else
     std.os.fd_t;
 
+pub const FD = FileDescriptor;
 pub const FileDescriptor = enum(FileDescriptorInt) {
     /// Zero is used in old filesystem code to indicate "no file descriptor"
     /// This is problematic because on POSIX, this is ambiguous with stdin being 0.

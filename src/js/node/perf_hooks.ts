@@ -1,5 +1,5 @@
 // Hardcoded module "node:perf_hooks"
-const { throwNotImplemented } = require("internal/shared");
+const { warnNotImplementedOnce } = require("internal/shared");
 
 var {
   Performance,
@@ -80,11 +80,105 @@ function createPerformanceNodeTiming() {
 }
 
 function eventLoopUtilization(utilization1, utilization2) {
+  warnNotImplementedOnce("perf_hooks.eventLoopUtilization");
   return {
     idle: 0,
     active: 0,
     utilization: 0,
   };
+}
+
+// https://nodejs.org/api/perf_hooks.html#class-histogram
+// https://github.com/nodejs/node/blob/5976985a58a8635b8f1272519020c817f4ccdd1b/src/histogram.h#L25
+class Histogram {
+  count: number;
+  countBigInt: bigint;
+  exceeds: number;
+  exceedsBigInt: bigint;
+  max: number;
+  maxBigInt: bigint;
+  mean: number;
+  min: number;
+  minBigInt: bigint;
+  percentiles: Map<number, number>;
+  percentilesBigInt: Map<number, bigint>;
+  stddev: number;
+
+  constructor() {
+    this.count = 0;
+    this.countBigInt = 0n;
+    this.exceeds = 0;
+    this.exceedsBigInt = 0n;
+    this.max = 0;
+    this.maxBigInt = 0n;
+    this.mean = 0;
+    this.min = 0;
+    this.minBigInt = 0n;
+    this.percentiles = new Map();
+    this.percentilesBigInt = new Map();
+    this.stddev = 0;
+  }
+
+  percentile(p: number) {
+    return 0;
+  }
+
+  percentileBigInt(p: number) {
+    return 0n;
+  }
+
+  reset() {
+    this.percentiles.clear();
+    this.percentilesBigInt.clear();
+  }
+}
+
+class IntervalHistogram extends Histogram {
+  #enabled: boolean = false;
+
+  enable() {
+    const wasEnabled = this.#enabled;
+    if (!wasEnabled) {
+      this.#enabled = true;
+    }
+    return wasEnabled;
+  }
+
+  disable() {
+    const wasEnabled = this.#enabled;
+    if (wasEnabled) {
+      this.#enabled = false;
+    }
+    return wasEnabled;
+  }
+}
+
+class RecordableHistogram extends Histogram {
+  constructor(options?: unknown) {
+    super();
+  }
+
+  add(other: RecordableHistogram) {
+    // TODO
+  }
+
+  record(value: number | bigint) {
+    // TODO
+  }
+
+  recordDelta() {
+    // TODO
+  }
+}
+
+function createHistogram(options) {
+  warnNotImplementedOnce("perf_hooks.createHistogram");
+  return new RecordableHistogram(options);
+}
+
+function monitorEventLoopDelay() {
+  warnNotImplementedOnce("perf_hooks.monitorEventLoopDelay");
+  return new IntervalHistogram();
 }
 
 // PerformanceEntry is not a valid constructor, so we have to fake it.
@@ -155,11 +249,7 @@ export default {
   PerformanceObserver,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
-  monitorEventLoopDelay() {
-    throwNotImplemented("perf_hooks.monitorEventLoopDelay");
-  },
-  createHistogram() {
-    throwNotImplemented("perf_hooks.createHistogram");
-  },
   PerformanceResourceTiming,
+  monitorEventLoopDelay,
+  createHistogram,
 };

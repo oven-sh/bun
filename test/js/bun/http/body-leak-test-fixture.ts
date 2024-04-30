@@ -3,6 +3,7 @@ const server = Bun.serve({
   async fetch(req: Request) {
     if (req.url.endsWith("/report")) {
       Bun.gc(true);
+      await Bun.sleep(10);
       return new Response(JSON.stringify(process.memoryUsage.rss()), {
         headers: {
           "Content-Type": "application/json",

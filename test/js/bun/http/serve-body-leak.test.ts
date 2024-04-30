@@ -95,7 +95,9 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
       memory_examples.push(report);
     }
   }
+
   // wait for the last memory usage to be stable
+  await Bun.sleep(100);
   const end_memory = await getMemoryUsage();
   if (end_memory > peak_memory) {
     peak_memory = end_memory;
@@ -119,7 +121,6 @@ for (const test_info of [
     testName,
     async () => {
       const report = await calculateMemoryLeak(fn);
-      console.log(report);
 
       // peak memory is too high
       expect(report.peak_memory > report.start_memory * 2).toBe(false);

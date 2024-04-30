@@ -1803,7 +1803,7 @@ pub const fs_t = extern struct {
             if ((this.flags & UV_FS_CLEANEDUP) != 0) {
                 return;
             }
-            @panic("uv_fs_t was not cleaned up. it is expected to call .deinit() on the fs_t here.");
+            @panic("uv_fs_t was not cleaned up. this is either a double-use of fs_t or a missing .deinit() call");
         }
     }
 

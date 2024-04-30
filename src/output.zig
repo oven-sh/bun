@@ -526,6 +526,9 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 /// Text automatically buffers
 pub fn debug(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isRelease) return;
+    if (shouldLogPid()) |pid| {
+        print("[{d}] ", .{pid});
+    }
     prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
@@ -553,7 +556,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
     }
 }
 
-var debug_scoped_add_pid: enum { yes, no, unknown } = .unknown;
+var debug_scoped_add_pid: union(enum) { yes: c_int, no, unknown } = .unknown;
 
 /// Debug-only logs which should not appear in release mode
 /// To enable a specific log at runtime, set the environment variable
@@ -633,22 +636,12 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
 
             switch (Output.enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
                 inline else => |colors| {
-                    const should_add_pid = switch (debug_scoped_add_pid) {
-                        .yes, .no => |t| t == .yes,
-                        .unknown => brk: {
-                            debug_scoped_add_pid = if (bun.getenvZ("BUN_DEBUG_ADD_PID")) |val|
-                                if (bun.strings.eqlComptime(val, "1")) .yes else .no
-                            else
-                                .no;
-                            break :brk debug_scoped_add_pid == .yes;
-                        },
-                    };
                     out.print(comptime prettyFmt("<r><d>", colors), .{}) catch {
                         really_disable = true;
                         return;
                     };
-                    if (should_add_pid) {
-                        out.print("[{d}] ", .{getpid()}) catch {
+                    if (shouldLogPid()) |pid| {
+                        out.print("[{d}] ", .{pid}) catch {
                             really_disable = true;
                             return;
                         };
@@ -673,6 +666,23 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
 
 pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
     return Scoped(tag, disabled).log;
+}
+
+pub fn shouldLogPid() ?c_int {
+    if (debug_scoped_add_pid == .unknown) {
+        // debug_scoped_add_pid = if (bun.getenvZ("BUN_DEBUG_ADD_PID")) |val|
+        //     if (bun.strings.eqlComptime(val, "1")) .{ .yes = getpid() } else .no
+        // else
+        //     .no;
+
+        debug_scoped_add_pid = .{ .yes = getpid() };
+    }
+
+    return switch (debug_scoped_add_pid) {
+        .yes => |pid| pid,
+        .no => null,
+        .unknown => unreachable,
+    };
 }
 
 // Valid "colors":

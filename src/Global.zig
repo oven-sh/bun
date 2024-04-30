@@ -99,6 +99,13 @@ pub fn exit(code: u8) noreturn {
 }
 
 pub fn exitWide(code: u32) noreturn {
+    if (bun.crash_handler.panicking.load(.SeqCst) != 0) {
+        // We are in a panic, so let that thread handle the exit
+        // Sleep forever without hammering the CPU
+        var futex = std.atomic.Value(u32).init(0);
+        while (true) std.Thread.Futex.wait(&futex, 0);
+        comptime unreachable;
+    }
     if (comptime Environment.isMac) {
         std.c.exit(@bitCast(code));
     }

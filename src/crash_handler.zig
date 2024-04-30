@@ -41,7 +41,7 @@ var has_printed_message = false;
 
 /// Non-zero whenever the program triggered a panic.
 /// The counter is incremented/decremented atomically.
-var panicking = std.atomic.Value(u8).init(0);
+pub var panicking = std.atomic.Value(u8).init(0);
 
 // Locked to avoid interleaving panic messages from multiple threads.
 var panic_mutex = std.Thread.Mutex{};
@@ -149,6 +149,10 @@ pub fn crashHandler(
                 if (reason != .out_of_memory or debug_trace) {
                     if (Output.enable_ansi_colors) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.os.abort();
+                    }
+
+                    if (bun.Output.shouldLogPid()) |pid| {
+                        writer.print("process {d} ", .{pid}) catch std.os.abort();
                     }
 
                     writer.writeAll("panic") catch std.os.abort();

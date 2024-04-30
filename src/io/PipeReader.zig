@@ -403,15 +403,16 @@ pub fn WindowsPipeReader(
                     switch (source) {
                         .file => |file| {
                             defer if (!this.flags.is_paused) {
-                                source.setData(this);
+                                file.fs.assertCleanedUp();
                                 const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                                 file.iov = uv.uv_buf_t.init(buf);
-                                bun.Output.debug("continue reading({}, {d}) = {}", .{ fd, buf.len, this.flags.is_paused });
+                                bun.Output.debug("continue reading(0x{X}, {}, {d}) = {}", .{ @intFromPtr(this), fd, buf.len, this.flags.is_paused });
                                 if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFileRead).toError(.write)) |err| {
                                     this.flags.is_paused = true;
                                     // we should inform the error if we are unable to keep reading
                                     this.onRead(.{ .err = err }, "", .progress);
                                 }
+                                file.fs.data = this;
                             };
 
                             var buf = file.iov.slice();
@@ -435,10 +436,11 @@ pub fn WindowsPipeReader(
                     source.setData(this);
                     const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                     file.iov = uv.uv_buf_t.init(buf);
-                    bun.Output.debug("startReading({}, {d}) = {}", .{ bun.toFD(file.file), buf.len, this.flags.is_paused });
+                    bun.Output.debug("startReading(0x{X}, {}, {d}) = {}", .{ @intFromPtr(this), bun.toFD(file.file), buf.len, this.flags.is_paused });
                     if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFileRead).toError(.write)) |err| {
                         return .{ .err = err };
                     }
+                    file.fs.data = this;
                 },
                 else => {
                     if (uv.uv_read_start(source.toStream(), &onStreamAlloc, @ptrCast(&onStreamRead)).toError(.open)) |err| {

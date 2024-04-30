@@ -272,7 +272,7 @@ pub const WebWorker = struct {
         };
 
         if (promise.status(vm.global.vm()) == .Rejected) {
-            vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
+            vm.onError(vm.global, promise.result(vm.global.vm()));
 
             vm.exit_handler.exit_code = 1;
             this.exitAndDeinit();

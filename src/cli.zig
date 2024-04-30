@@ -418,12 +418,12 @@ pub const Arguments = struct {
         }
 
         var cwd: []u8 = undefined;
-        if (args.option("--cwd")) |cwd_| {
+        if (args.option("--cwd")) |cwd_arg| {
             cwd = brk: {
                 var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_);
+                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
                 bun.sys.chdir(out).unwrap() catch |err| {
-                    Output.prettyErrorln("{}\n", .{err});
+                    Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
                     Global.exit(1);
                 };
                 break :brk try allocator.dupe(u8, out);
@@ -2206,7 +2206,7 @@ pub const Command = struct {
                         \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\
                         \\<b>Environment variables:<r>
-                        \\  <cyan>GITHUB_ACCESS_TOKEN<r>      <d>Supply a token to download code from GitHub with a higher rate limit<r>
+                        \\  <cyan>GITHUB_TOKEN<r>             <d>Supply a token to download code from GitHub with a higher rate limit<r>
                         \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default "api.github.com".<r>
                         \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
                     ;

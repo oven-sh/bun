@@ -900,17 +900,7 @@ pub export fn napi_is_date(_: napi_env, value: napi_value, is_date: *bool) napi_
     is_date.* = value.jsTypeLoose() == .JSDate;
     return .ok;
 }
-pub export fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64) napi_status {
-    log("napi_get_date_value", .{});
-    const getTimeFunction = value.get(env, "getTime") orelse {
-        return .date_expected;
-    };
-
-    result.* = JSValue.c(
-        JSC.C.JSObjectCallAsFunction(env.ref(), getTimeFunction.asObjectRef(), value.asObjectRef(), 0, null, TODO_EXCEPTION),
-    ).asNumber();
-    return .ok;
-}
+pub extern fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64) napi_status;
 pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *Ref) napi_status;
 pub export fn napi_create_bigint_int64(env: napi_env, value: i64, result: *napi_value) napi_status {
     log("napi_create_bigint_int64", .{});
@@ -1362,7 +1352,7 @@ pub const ThreadSafeFunction = struct {
                 }
                 const err = js_function.call(this.env, &.{});
                 if (err.isAnyError()) {
-                    this.env.bunVM().onUnhandledError(this.env, err);
+                    this.env.bunVM().onError(this.env, err);
                 }
             },
             .c => |cb| {

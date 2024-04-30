@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.5")
-set(WEBKIT_TAG 2ce7bb4314c516d9c7ba12be3581f6a986013781)
+set(Bun_VERSION "1.1.7")
+set(WEBKIT_TAG f0fbde91399d504266064d8845628bf29a9e834d)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -107,7 +107,7 @@ endif()
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
 #
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-set(LLVM_VERSION 17)
+set(LLVM_VERSION 16)
 
 macro(BUN_FIND_LLVM)
     find_program(
@@ -1119,7 +1119,6 @@ if(APPLE)
     target_link_options(${bun} PUBLIC "-dead_strip")
     target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
     target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
-    target_link_options(${bun} PUBLIC "-ld64") # fixes macOS x64 linking issue
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
 

@@ -995,6 +995,13 @@ pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) ![]u8 {
     return try toUTF8AllocWithType(allocator, []const u16, js);
 }
 
+pub fn toUTF8AllocZ(allocator: std.mem.Allocator, js: []const u16) ![:0]u8 {
+    var list = std.ArrayList(u8).init(allocator);
+    try toUTF8AppendToList(&list, js);
+    try list.append(0);
+    return list.items[0 .. list.items.len - 1 :0];
+}
+
 pub inline fn appendUTF8MachineWordToUTF16MachineWord(output: *[@sizeOf(usize) / 2]u16, input: *const [@sizeOf(usize) / 2]u8) void {
     output[0 .. @sizeOf(usize) / 2].* = @as(
         [4]u16,
@@ -1857,6 +1864,19 @@ pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.
 
     const list = try std.ArrayList(u8).initCapacity(allocator, latin1.len);
     return try allocateLatin1IntoUTF8WithList(list, 0, []const u8, latin1);
+}
+
+pub fn toUTF8FromLatin1Z(allocator: std.mem.Allocator, latin1: []const u8) !?std.ArrayList(u8) {
+    if (bun.JSC.is_bindgen)
+        unreachable;
+
+    if (isAllASCII(latin1))
+        return null;
+
+    const list = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 1);
+    var list1 = try allocateLatin1IntoUTF8WithList(list, 0, []const u8, latin1);
+    try list1.append(0);
+    return list1;
 }
 
 pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
@@ -5788,15 +5808,16 @@ pub const visible = struct {
         var len: usize = 0;
         while (bun.strings.firstNonASCII(bytes)) |i| {
             len += asciiFn(bytes[0..i]);
+            const this_chunk = bytes[i..];
+            const byte = this_chunk[0];
 
-            const byte = bytes[i];
             const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
-            const cp_bytes: [4]u8 = switch (skip) {
+            const cp_bytes: [4]u8 = switch (@min(@as(usize, skip), this_chunk.len)) {
                 inline 1, 2, 3, 4 => |cp_len| .{
                     byte,
-                    if (comptime cp_len > 1) bytes[1] else 0,
-                    if (comptime cp_len > 2) bytes[2] else 0,
-                    if (comptime cp_len > 3) bytes[3] else 0,
+                    if (comptime cp_len > 1) this_chunk[1] else 0,
+                    if (comptime cp_len > 2) this_chunk[2] else 0,
+                    if (comptime cp_len > 3) this_chunk[3] else 0,
                 },
                 else => unreachable,
             };

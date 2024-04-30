@@ -21,6 +21,7 @@ pub const BunObject = struct {
     pub const inflateSync = JSC.wrapStaticMethod(JSZlib, "inflateSync", true);
     pub const jest = @import("../test/jest.zig").Jest.call;
     pub const listen = JSC.wrapStaticMethod(JSC.API.Listener, "listen", false);
+    pub const udpSocket = JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false);
     pub const mmap = Bun.mmapFile;
     pub const nanoseconds = Bun.nanoseconds;
     pub const openInEditor = Bun.openInEditor;
@@ -134,6 +135,7 @@ pub const BunObject = struct {
         @export(BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
         @export(BunObject.jest, .{ .name = callbackName("jest") });
         @export(BunObject.listen, .{ .name = callbackName("listen") });
+        @export(BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(BunObject.mmap, .{ .name = callbackName("mmap") });
         @export(BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
         @export(BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
@@ -3683,7 +3685,7 @@ pub const Timer = struct {
             }
 
             var this = args.ptr[1].asPtr(CallbackJob);
-            globalThis.bunVM().onUnhandledError(globalThis, args.ptr[0]);
+            globalThis.bunVM().onError(globalThis, args.ptr[0]);
             this.deinit();
             return JSValue.jsUndefined();
         }
@@ -3785,7 +3787,7 @@ pub const Timer = struct {
             }
 
             if (result.isAnyError()) {
-                vm.onUnhandledError(globalThis, result);
+                vm.onError(globalThis, result);
                 this.deinit();
                 return;
             }
@@ -3794,7 +3796,7 @@ pub const Timer = struct {
                 switch (promise.status(globalThis.vm())) {
                     .Rejected => {
                         this.deinit();
-                        vm.onUnhandledError(globalThis, promise.result(globalThis.vm()));
+                        vm.onError(globalThis, promise.result(globalThis.vm()));
                     },
                     .Fulfilled => {
                         this.deinit();
@@ -5263,7 +5265,7 @@ pub const EnvironmentVariables = struct {
 };
 
 export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void {
-    JSC.VirtualMachine.runErrorHandlerWithDedupe(globalObject.bunVM(), err, null);
+    JSC.VirtualMachine.get().onError(globalObject, err);
 }
 
 comptime {

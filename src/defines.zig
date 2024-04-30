@@ -62,6 +62,7 @@ pub const DefineData = struct {
             .value = b.value,
             .can_be_removed_if_unused = a.can_be_removed_if_unused,
             .call_can_be_unwrapped_if_unused = a.call_can_be_unwrapped_if_unused,
+            .original_name = b.original_name,
         };
     }
 

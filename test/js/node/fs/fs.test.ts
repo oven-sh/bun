@@ -8,6 +8,7 @@ import fs, {
   existsSync,
   mkdirSync,
   openSync,
+  readdir,
   readdirSync,
   readFile,
   readFileSync,
@@ -3018,4 +3019,13 @@ it("existsSync should never throw ENAMETOOLONG", () => {
 
 it("promises exists should never throw ENAMETOOLONG", async () => {
   expect(await _promises.exists(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
+});
+
+it("readdirSync should not crash on symlink loops", () => {
+  expect(readdirSync(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true }).length).toBe(166);
+});
+
+it("readdir should not crash on symlink loops", async () => {
+  // prettier-ignore
+  expect((await promisify(readdir)(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true })).length).toBe(166);
 });

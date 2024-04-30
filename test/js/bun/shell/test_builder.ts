@@ -134,8 +134,14 @@ export function createTestBuilder(path: string) {
      * - All FS functions on the `TestBuilder` will use this temp directory.
      * @returns
      */
-    ensureTempDir(): this {
-      this.getTempDir();
+    ensureTempDir(dir?: string): this {
+      if (dir !== undefined) {
+        this.tempdir = dir;
+        if (this.promise.type === 'ok') 
+          this.promise.val.cwd(this.tempdir);
+      } else {
+        this.getTempDir();
+      }
       return this;
     }
 

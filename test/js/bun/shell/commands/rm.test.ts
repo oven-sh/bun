@@ -22,10 +22,15 @@ const BUN = process.argv0;
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 
 describe("bunshell rm", () => {
-  TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`
-    .ensureTempDir()
+  let node_modules_dir: string = TestBuilder.tmpdir();
+  beforeAll(async () => {
+    console.log('Installing node_modules...')
+    await $`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}`.cwd(node_modules_dir).throws(true);
+  })
+
+  TestBuilder.command`rm -rf node_modules/`
+    .ensureTempDir(node_modules_dir)
     .doesNotExist("node_modules")
-    .timeout(10 * 1000)
     .runAsTest("node_modules");
 
   test("force", async () => {

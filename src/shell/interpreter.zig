@@ -9935,6 +9935,8 @@ pub const Interpreter = struct {
                 this.state = .done;
                 if (this.bltn.stdout.needsIO()) {
                     this.bltn.stdout.enqueue(this, this.buf.items);
+                } else {
+                    this.bltn.done(0);
                 }
                 return Maybe(void).success;
             }
@@ -9990,6 +9992,8 @@ pub const Interpreter = struct {
                 this.state = .done;
                 if (this.bltn.stdout.needsIO()) {
                     this.bltn.stdout.enqueue(this, this.buf.items);
+                } else {
+                    this.bltn.done(0);
                 }
                 return Maybe(void).success;
             }
@@ -10056,6 +10060,8 @@ pub const Interpreter = struct {
                 this.state = .done;
                 if (this.bltn.stdout.needsIO()) {
                     this.bltn.stdout.enqueue(this, this.buf.items);
+                } else {
+                    this.bltn.done(0);
                 }
                 return Maybe(void).success;
             }

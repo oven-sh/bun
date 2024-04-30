@@ -29,11 +29,15 @@ async function getMemoryUsage(): Promise<number> {
 }
 
 async function warmup() {
-  for (let i = 0; i < 1_000; i++) {
-    await fetch(url, {
-      method: "POST",
-      body: payload,
-    });
+  const batch = new Array(100);
+  for (let i = 0; i < 100; i++) {
+    for (let j = 0; j < 100; j++) {
+      batch[j] = fetch(url, {
+        method: "POST",
+        body: payload,
+      });
+    }
+    await Promise.all(batch);
   }
 }
 
@@ -76,10 +80,14 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
   const start_memory = await getMemoryUsage();
   const memory_examples: Array<number> = [];
   let peak_memory = start_memory;
-  for (let i = 0; i < 1_000; i++) {
-    await fn();
+  const batch = new Array(100);
+  for (let i = 0; i < 100; i++) {
+    for (let j = 0; j < 100; j++) {
+      batch[j] = fn();
+    }
+    await Promise.all(batch);
     // garbage collect and check memory usage every 1000 requests
-    if (i > 0 && i % 100 === 0) {
+    if (i > 0 && i % 10 === 0) {
       const report = await getMemoryUsage();
       if (report > peak_memory) {
         peak_memory = report;

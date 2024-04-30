@@ -315,7 +315,7 @@ pub const Jest = struct {
         else
             .{ TestScope, DescribeScope };
 
-        const module = JSC.JSValue.createEmptyObject(globalObject, 13);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 14);
 
         const test_fn = JSC.NewFunction(globalObject, ZigString.static("test"), 2, ThisTestScope.call, false);
         module.put(
@@ -422,6 +422,12 @@ pub const Jest = struct {
             module.put(globalObject, ZigString.static(name), function);
             function.ensureStillAlive();
         }
+
+        module.put(
+            globalObject,
+            ZigString.static("setTimeout"),
+            JSC.NewFunction(globalObject, ZigString.static("setTimeout"), 1, jsSetTimeout, false),
+        );
 
         module.put(
             globalObject,
@@ -533,6 +539,25 @@ pub const Jest = struct {
         scope.push();
 
         return Bun__Jest__testModuleObject(globalObject);
+    }
+
+    fn jsSetTimeout(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(1).slice();
+        if (arguments.len < 1) {
+            globalObject.throw("Bun.jest.setTimeout() expects a number (milliseconds)", .{});
+            return .zero;
+        }
+
+        const timeout_value = arguments[0];
+        if (!timeout_value.isNumber()) {
+            globalObject.throwInvalidArgumentType("setTimeout", "timeout", "number");
+            return .zero;
+        }
+
+        const timeout_ms: u32 = @intCast(@max(timeout_value.coerce(i32, globalObject), 0));
+
+        Jest.runner.?.default_timeout_ms = timeout_ms;
+        return .undefined;
     }
 
     comptime {

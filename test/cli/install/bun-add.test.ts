@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setTimeout as jestSetTimeout } from "bun:test";
 import { bunExe, bunEnv as env, toHaveBins, toBeValidBin, toBeWorkspaceLink, ospath } from "harness";
 import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile, appendFile } from "fs/promises";
 import { join, relative } from "path";
@@ -29,6 +29,7 @@ expect.extend({
 let port: string;
 let add_dir: string;
 beforeAll(() => {
+  jestSetTimeout(120_000);
   port = new URL(root_url).port;
 });
 

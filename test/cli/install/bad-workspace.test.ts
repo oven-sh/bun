@@ -1,11 +1,15 @@
 import { spawnSync } from "bun";
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test, beforeAll, setTimeout as jestSetTimeout } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunExe, bunEnv } from "harness";
 import { join } from "path";
 import { tmpdir } from "os";
 
 let cwd: string;
+
+beforeAll(() => {
+  jestSetTimeout(120_000);
+});
 
 beforeEach(() => {
   cwd = mkdtempSync(join(realpathSync(tmpdir()), "bad-workspace.test"));

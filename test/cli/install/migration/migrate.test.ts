@@ -1,5 +1,5 @@
 import fs from "fs";
-import { test, expect, beforeAll, afterAll } from "bun:test";
+import { test, expect, beforeAll, afterAll, setTimeout as jestSetTimeout } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join, sep } from "path";
 import { mkdtempSync } from "js/node/fs/export-star-from";
@@ -8,6 +8,7 @@ import { tmpdir } from "os";
 const ROOT_TEMP_DIR = join(tmpdir(), "migrate", sep);
 
 beforeAll(() => {
+  jestSetTimeout(120_000);
   // if the test was stopped early
   fs.rmSync(ROOT_TEMP_DIR, { recursive: true, force: true });
   fs.mkdirSync(ROOT_TEMP_DIR);

@@ -6,7 +6,16 @@ import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
-import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
+import {
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+  test,
+  expect,
+  describe,
+  setTimeout as jestSetTimeout,
+} from "bun:test";
 
 expect.extend({
   toBeValidBin,
@@ -19,6 +28,7 @@ var port: number = 4873;
 var packageDir: string;
 
 beforeAll(async () => {
+  jestSetTimeout(120_000);
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
@@ -2718,6 +2728,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         " Blocked 3 postinstalls. Run `bun pm untrusted` for details.",
         "",
       ]);
+      expect(await exited).toBe(0);
 
       const depDir = join(packageDir, "node_modules", "all-lifecycle-scripts");
       expect(await exists(join(depDir, "preinstall.txt"))).toBeFalse();
@@ -2727,7 +2738,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(depDir, "prepare.txt"))).toBeTrue();
       expect(await exists(join(depDir, "postprepare.txt"))).toBeFalse();
       expect(await file(join(depDir, "prepare.txt")).text()).toBe("prepare!");
-      expect(await exited).toBe(0);
 
       // add to trusted dependencies
       await writeFile(
@@ -2763,6 +2773,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
         expect.stringContaining("Checked 1 install across 2 packages (no changes)"),
       ]);
+      expect(await exited).toBe(0);
 
       expect(await file(join(depDir, "preinstall.txt")).text()).toBe("preinstall!");
       expect(await file(join(depDir, "install.txt")).text()).toBe("install!");

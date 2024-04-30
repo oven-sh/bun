@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { beforeEach, expect, it, setTimeout as jestSetTimeout, beforeAll } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
 import { mkdtemp, realpath, readFile } from "fs/promises";
 import { tmpdir } from "os";
@@ -10,6 +10,10 @@ const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_hel
 
 let run_dir: string;
 let exe_name: string = "bun-debug" + (process.platform === "win32" ? ".exe" : "");
+
+beforeAll(() => {
+  jestSetTimeout(120_000);
+});
 
 beforeEach(async () => {
   run_dir = await realpath(

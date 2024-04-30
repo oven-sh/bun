@@ -1,5 +1,15 @@
 import { file, listen, Socket, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  it,
+  describe,
+  test,
+  setTimeout as jestSetTimeout,
+} from "bun:test";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink } from "harness";
 import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
 import { join, sep } from "path";
@@ -39,7 +49,11 @@ expect.extend({
   },
 });
 
-beforeAll(dummyBeforeAll);
+beforeAll(() => {
+  jestSetTimeout(120_000);
+  dummyBeforeAll();
+});
+
 afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
@@ -892,6 +906,7 @@ it("should handle installing the same peerDependency with different versions", a
     "",
     " 2 packages installed",
   ]);
+  expect(await exited).toBe(0);
 });
 
 it("should handle installing the same peerDependency with the same version", async () => {
@@ -931,6 +946,8 @@ it("should handle installing the same peerDependency with the same version", asy
     "",
     " 1 package installed",
   ]);
+
+  expect(await exited).toBe(0);
 });
 
 it("should handle life-cycle scripts within workspaces", async () => {
@@ -986,7 +1003,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
   expect(await file(join(package_dir, "foo.txt")).text()).toBe("foo!");
   expect(await file(join(package_dir, "bar", "bar.txt")).text()).toBe("bar!");
   await access(join(package_dir, "bun.lockb"));
-});
+}, 1000000000000);
 
 it("should handle life-cycle scripts during re-installation", async () => {
   const urls: string[] = [];

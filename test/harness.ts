@@ -17,15 +17,14 @@ export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
   GITHUB_ACTIONS: "false",
-  BUN_DEBUG_ADD_PID: "1",
-  // BUN_DEBUG_QUIET_LOGS: "1",
+  BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
   FORCE_COLOR: undefined,
   TZ: "Etc/UTC",
   CI: "1",
-  // BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
-  // BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-  // BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
+  BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
 };
 
 if (isWindows) {

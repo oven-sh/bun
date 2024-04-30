@@ -449,6 +449,16 @@ pub const LineColumnOffset = struct {
             var iter = strings.CodepointIterator.initOffset(input, i);
             var cursor = strings.CodepointIterator.Cursor{ .i = @as(u32, @truncate(iter.i)) };
             _ = iter.next(&cursor);
+
+            // Given a null byte, cursor.width becomes 0
+            // This can lead to integer overflow, crashes, or hangs.
+            // https://github.com/oven-sh/bun/issues/10624
+            if (cursor.width == 0) {
+                columns += 1;
+                offset = i + 1;
+                continue;
+            }
+
             offset = i + cursor.width;
 
             switch (cursor.c) {

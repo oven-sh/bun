@@ -396,8 +396,7 @@ pub fn WindowsPipeReader(
                     }
                     // we got some data lets get the current iov
                     const len: usize = @intCast(nread_int);
-                    const source = bun.releaseNonNull(this.source);
-                    switch (source) {
+                    switch (bun.releaseNonNull(this.source)) {
                         .file => |file| {
                             defer if (!this.flags.is_paused) {
                                 file.fs.assertCleanedUp();

@@ -293,37 +293,79 @@ The `Bun.serve` server can handle roughly 2.5x more requests per second than Nod
 ```ts
 interface Bun {
   serve(options: {
-    fetch: (req: Request, server: Server) => Response | Promise<Response>;
-    hostname?: string;
-    port?: number;
     development?: boolean;
-    error?: (error: Error) => Response | Promise<Response>;
-    tls?: {
-      key?:
-        | string
-        | TypedArray
-        | BunFile
-        | Array<string | TypedArray | BunFile>;
-      cert?:
-        | string
-        | TypedArray
-        | BunFile
-        | Array<string | TypedArray | BunFile>;
-      ca?: string | TypedArray | BunFile | Array<string | TypedArray | BunFile>;
-      passphrase?: string;
-      dhParamsFile?: string;
-    };
+    error?: (request: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
+    fetch(request: Request, server: Server): Response | Promise<Response>;
+    hostname?: string;
+    id?: string | null;
     maxRequestBodySize?: number;
-    lowMemoryMode?: boolean;
+    port?: string | number;
+    reusePort?: boolean;
+    tls?: TLSOptions | Array<TLSOptions>;
+    unix: string;
+    websocket: WebSocketHandler<WebSocketDataType>;
   }): Server;
 }
 
+interface TLSOptions {
+  ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+  cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+  dhParamsFile?: string;
+  key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+  lowMemoryMode?: boolean;
+  passphrase?: string;
+  secureOptions?: number | undefined;
+  serverName?: string;
+}
+
+interface WebSocketHandler<T = undefined> {
+  backpressureLimit?: number;
+  close?(ws: ServerWebSocket<T>, code: number, reason: string): void | Promise<void>;
+  closeOnBackpressureLimit?: boolean;
+  drain?(ws: ServerWebSocket<T>): void | Promise<void>;
+  idleTimeout?: number;
+  maxPayloadLength?: number;
+  message(ws: ServerWebSocket<T>, message: string | Buffer): void | Promise<void>;
+  open?(ws: ServerWebSocket<T>): void | Promise<void>;
+  perMessageDeflate?:
+    | boolean
+    | {
+        compress?: WebSocketCompressor | boolean;
+        decompress?: WebSocketCompressor | boolean;
+      };
+  ping?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
+  pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
+  publishToSelf?: boolean;
+  sendPings?: boolean;
+}
+
 interface Server {
-  development: boolean;
-  hostname: string;
-  port: number;
-  pendingRequests: number;
-  stop(): void;
+  fetch(request: Request | string): Response | Promise<Response>;
+  publish(
+    compress?: boolean,
+    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    topic: string,
+  ): ServerWebSocketSendStatus;
+  ref(): void;
+  reload(options: Serve): void;
+  requestIP(request: Request): SocketAddress | null;
+  stop(closeActiveConnections?: boolean): void;
+  unref(): void;
+  upgrade<T = undefined>(
+    options?: {
+      data?: T;
+      headers?: Bun.HeadersInit;
+    },
+    request: Request,
+  ): boolean;
+
+  readonly development: boolean;
+  readonly hostname: string;
+  readonly id: string;
+  readonly pendingRequests: number;
+  readonly pendingWebSockets: number;
+  readonly port: number;
+  readonly url: URL;
 }
 ```
 

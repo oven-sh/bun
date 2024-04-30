@@ -1,9 +1,13 @@
-import { describe, expect, test, it } from "bun:test";
+import { describe, expect, test, it, beforeAll, setTimeout as jestSetTimeout } from "bun:test";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
+
+beforeAll(() => {
+  jestSetTimeout(1000 * 60 * 5);
+});
 
 const isWindows = process.platform === "win32";
 

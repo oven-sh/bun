@@ -58,6 +58,7 @@ registry = "http://localhost:${port}/"
     "",
     expect.stringContaining("1 package installed"),
   ]);
+  expect(await exited).toBe(0);
 
   const temp_bin_dir = join(packageDir, "temp");
   mkdirSync(temp_bin_dir);

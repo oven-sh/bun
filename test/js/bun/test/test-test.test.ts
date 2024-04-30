@@ -526,7 +526,7 @@ it("test.todo doesnt cause exit code 1", () => {
 it("test timeouts when expected", () => {
   const path = join(tmp, "test-timeout.test.js");
   copyFileSync(join(import.meta.dir, "timeout-test-fixture.js"), path);
-  const { stdout, stderr, exited } = spawnSync({
+  const { stderr } = spawnSync({
     cmd: [bunExe(), "test", path],
     stdout: "pipe",
     stderr: "pipe",

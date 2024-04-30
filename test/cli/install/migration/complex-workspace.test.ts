@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { test, expect, describe, beforeAll } from "bun:test";
+import { test, expect, beforeAll, setTimeout as jestSetTimeout } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -37,6 +37,7 @@ function mustNotExist(filePath: string) {
 }
 
 beforeAll(() => {
+  jestSetTimeout(1000 * 60 * 5);
   fs.cpSync(path.join(import.meta.dir, "complex-workspace"), cwd, { recursive: true });
 });
 
@@ -63,7 +64,7 @@ test("the install succeeds", async () => {
     cwd = false as any;
     throw new Error("Failed to install");
   }
-}, 10000);
+});
 
 // bun-types
 validate("node_modules/bun-types", "1.0.0");

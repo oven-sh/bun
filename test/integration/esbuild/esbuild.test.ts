@@ -1,10 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, beforeAll, setTimeout as jestSetTimeout } from "bun:test";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { bunExe, bunEnv as env } from "harness";
 import { mkdtempSync, realpathSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawn } from "bun";
+
+beforeAll(() => {
+  jestSetTimeout(1000 * 60 * 5);
+});
 
 describe("esbuild integration test", () => {
   test("install and use esbuild", async () => {

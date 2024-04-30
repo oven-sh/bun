@@ -3033,10 +3033,18 @@ it("promises.fdatasync with a bad fd should include that in the error thrown", a
 });
 
 it("readdirSync should not crash on symlink loops", () => {
-  expect(readdirSync(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true }).length).toBe(166);
+  // prettier-ignore
+  expect(readdirSync(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true }).length).toBe(symlink_fixture_depth());
 });
 
 it("readdir should not crash on symlink loops", async () => {
   // prettier-ignore
-  expect((await promisify(readdir)(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true })).length).toBe(166);
+  expect((await promisify(readdir)(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true })).length).toBe(symlink_fixture_depth());
 });
+
+function symlink_fixture_depth() {
+  if (process.platform === "darwin") return 166;
+  if (process.platform === "linux") return 206;
+  if (process.platform === "win32") return 6;
+  throw new Error(`test unimplemented for '${process.platform}'`);
+}

@@ -42,6 +42,16 @@ pub fn deinit(this: *StringBuilder, allocator: Allocator) void {
     allocator.free(this.ptr.?[0..this.cap]);
 }
 
+pub fn count16(this: *StringBuilder, slice: []const u16) void {
+    const result = bun.simdutf.length.utf8.from.utf16.le(slice);
+    this.cap += result;
+}
+
+pub fn count16Z(this: *StringBuilder, slice: [:0]const u16) void {
+    const result = bun.simdutf.length.utf8.from.utf16.le(slice);
+    this.cap += result + 1;
+}
+
 pub fn append16(this: *StringBuilder, slice: []const u16) ?[:0]u8 {
     var buf = this.writable();
     const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(slice, buf);

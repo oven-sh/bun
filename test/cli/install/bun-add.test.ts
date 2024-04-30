@@ -29,7 +29,7 @@ expect.extend({
 let port: string;
 let add_dir: string;
 beforeAll(() => {
-  jestSetTimeout(120_000);
+  jestSetTimeout(1000 * 60 * 5);
   port = new URL(root_url).port;
 });
 

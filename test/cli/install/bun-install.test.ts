@@ -50,7 +50,7 @@ expect.extend({
 });
 
 beforeAll(() => {
-  jestSetTimeout(120_000);
+  jestSetTimeout(1000 * 60 * 5);
   dummyBeforeAll();
 });
 

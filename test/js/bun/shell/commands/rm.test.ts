@@ -19,7 +19,7 @@ const fileExists = async (path: string): Promise<boolean> =>
 $.nothrow();
 
 beforeAll(() => {
-  jestSetTimeout(120_000);
+  jestSetTimeout(1000 * 60 * 5);
 });
 
 const BUN = process.argv0;

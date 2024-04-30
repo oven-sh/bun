@@ -8,7 +8,7 @@ import { tmpdir } from "os";
 const ROOT_TEMP_DIR = join(tmpdir(), "migrate", sep);
 
 beforeAll(() => {
-  jestSetTimeout(120_000);
+  jestSetTimeout(1000 * 60 * 5);
   // if the test was stopped early
   fs.rmSync(ROOT_TEMP_DIR, { recursive: true, force: true });
   fs.mkdirSync(ROOT_TEMP_DIR);

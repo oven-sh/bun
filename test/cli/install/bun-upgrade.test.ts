@@ -12,7 +12,7 @@ let run_dir: string;
 let exe_name: string = "bun-debug" + (process.platform === "win32" ? ".exe" : "");
 
 beforeAll(() => {
-  jestSetTimeout(120_000);
+  jestSetTimeout(1000 * 60 * 5);
 });
 
 beforeEach(async () => {

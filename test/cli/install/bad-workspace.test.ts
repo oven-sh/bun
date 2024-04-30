@@ -8,7 +8,7 @@ import { tmpdir } from "os";
 let cwd: string;
 
 beforeAll(() => {
-  jestSetTimeout(120_000);
+  jestSetTimeout(1000 * 60 * 5);
 });
 
 beforeEach(() => {

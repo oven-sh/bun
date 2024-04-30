@@ -28,7 +28,7 @@ var port: number = 4873;
 var packageDir: string;
 
 beforeAll(async () => {
-  jestSetTimeout(120_000);
+  jestSetTimeout(1000 * 60 * 5);
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],

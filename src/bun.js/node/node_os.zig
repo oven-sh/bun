@@ -135,19 +135,29 @@ pub const OS = struct {
             const key_model_name = "model name\t: ";
 
             var cpu_index: u32 = 0;
+            var has_model_name = true;
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
                 if (strings.hasPrefixComptime(line, key_processor)) {
+                    if (!has_model_name) {
+                        const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                        cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toValue(globalThis));
+                    }
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
                     cpu_index = try std.fmt.parseInt(u32, digits, 10);
                     if (cpu_index >= num_cpus) return error.too_may_cpus;
+                    has_model_name = false;
                 } else if (strings.hasPrefixComptime(line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
                     const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
                     cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(model_name).withEncoding().toValueGC(globalThis));
+                    has_model_name = true;
                 }
-                //TODO: special handling for ARM64 (no model name)?
+            }
+            if (!has_model_name) {
+                const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toValue(globalThis));
             }
         } else |_| {
             // Initialize model name to "unknown"

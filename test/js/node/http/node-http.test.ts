@@ -1902,5 +1902,5 @@ it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to connect to stripe", 
   out = await new Response(stdout).text();
   expect(out).toBeEmpty();
   err = await new Response(stderr).text();
-  expect(err).toContain(`error: No such charge: 'ch_3LmjSR2eZvKYlo2C1cPZxlbL'\n`);
+  expect(err).toContain(`error: No such charge: '${charge_id}'\n`);
 });

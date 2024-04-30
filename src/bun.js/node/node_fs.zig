@@ -4192,8 +4192,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             return Syscall.fdatasync(args.fd);
         }
-        return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd.int()), .fdatasync) orelse
-            Maybe(Return.Fdatasync).success;
+        return Maybe(Return.Fdatasync).errnoSysFd(system.fdatasync(args.fd.int()), .fdatasync, args.fd) orelse Maybe(Return.Fdatasync).success;
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime _: Flavor) Maybe(Return.Fstat) {

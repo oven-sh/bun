@@ -24,6 +24,17 @@ jobs:
   test:
     name: Tests
     runs-on: ${{ inputs.runs-on }}
+
+    services:
+      verdaccio:
+        image: verdaccio/verdaccio:5
+        ports:
+          - 4873:4873
+
+    strategy:
+      matrix:
+        node-version: [20]
+
     steps:
       - if: ${{ runner.os == 'Windows' }}
         name: Setup Git
@@ -70,7 +81,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
       - name: Install Dependencies
         timeout-minutes: 5
         run: |
@@ -96,6 +107,7 @@ jobs:
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
           TEST_INFO_STRIPE: ${{ secrets.TEST_INFO_STRIPE }}
           SHELLOPTS: igncr
+          VERDACCIO_PORT: 4873
         run: |
           node packages/bun-internal-test/src/runner.node.mjs $(which bun)
       - if: ${{ always() }}

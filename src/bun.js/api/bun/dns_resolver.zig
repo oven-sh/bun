@@ -1129,7 +1129,7 @@ pub const DNSLookup = struct {
     pub fn onComplete(this: *DNSLookup, result: *c_ares.AddrInfo) void {
         log("onComplete", .{});
 
-        const array = result.toJSArray(this.globalThis.allocator(), this.globalThis);
+        const array = result.toJSArray(this.globalThis);
         this.onCompleteWithArray(array);
     }
 
@@ -1296,7 +1296,7 @@ pub const DNSResolver = struct {
 
         var pending: ?*DNSLookup = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSArray(this.vm.allocator, prev_global);
+        var array = addr.toJSArray(prev_global);
         defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onCompleteWithArray(array);
@@ -1308,7 +1308,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             const new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSArray(this.vm.allocator, new_global);
+                array = addr.toJSArray(new_global);
                 prev_global = new_global;
             }
             pending = value.next;

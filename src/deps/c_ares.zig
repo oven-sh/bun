@@ -369,11 +369,8 @@ pub const AddrInfo = extern struct {
 
     pub fn toJSArray(
         addr_info: *AddrInfo,
-        parent_allocator: std.mem.Allocator,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = bun.ArenaAllocator.init(stack.get());
         var node = addr_info.node.?;
         const array = JSC.JSValue.createEmptyArray(
             globalThis,
@@ -381,9 +378,6 @@ pub const AddrInfo = extern struct {
         );
 
         {
-            defer arena.deinit();
-
-            const allocator = arena.allocator();
             var j: u32 = 0;
             var current: ?*AddrInfo_node = addr_info.node;
             while (current) |this_node| : (current = this_node.next) {
@@ -400,7 +394,6 @@ pub const AddrInfo = extern struct {
                             .ttl = this_node.ttl,
                         },
                         globalThis,
-                        allocator,
                     ),
                 );
                 j += 1;

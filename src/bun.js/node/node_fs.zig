@@ -504,6 +504,12 @@ pub const AsyncReaddirRecursiveTask = struct {
                     is_root,
                 )) {
                     .err => |err| {
+                        // readdir() should never fail with 'ELOOP: Too many levels of symbolic links'
+                        if (err.getErrno() == .LOOP) {
+                            this.writeResults(ResultType, &entries);
+                            return;
+                        }
+
                         for (entries.items) |*item| {
                             switch (ResultType) {
                                 bun.String => item.deref(),
@@ -4967,6 +4973,8 @@ pub const NodeFS = struct {
                         // This is different than what Node does, at the time of writing.
                         // Node doesn't gracefully handle errors like these. It fails the entire operation.
                         .NOENT, .NOTDIR, .PERM => continue,
+                        // readdir() should never fail with 'ELOOP: Too many levels of symbolic links'
+                        .LOOP => continue,
                         else => {
                             const path_parts = [_]string{ args.path.slice(), basename };
                             return .{

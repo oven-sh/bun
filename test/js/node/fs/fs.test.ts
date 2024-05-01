@@ -2202,7 +2202,7 @@ describe("fs/promises", () => {
     const [bun, subprocess] = await Promise.all([
       (async function () {
         console.time("readdir(path, {recursive: true})");
-        const files = await promises.readdir(full, { recursive: true });
+        const files = readdirSync(full, { recursive: true });
         files.sort();
         console.timeEnd("readdir(path, {recursive: true})");
         return files;
@@ -3040,6 +3040,11 @@ it("readdirSync should not crash on symlink loops", () => {
 it("readdir should not crash on symlink loops", async () => {
   // prettier-ignore
   expect((await promisify(readdir)(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true })).length).toBe(symlink_fixture_depth());
+});
+
+it("promises.readdir should not crash on symlink loops", async () => {
+  // prettier-ignore
+  expect((await _promises.readdir(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true })).length).toBe(symlink_fixture_depth());
 });
 
 function symlink_fixture_depth() {

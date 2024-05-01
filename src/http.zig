@@ -1280,14 +1280,13 @@ const Decompressor = union(enum) {
                 },
                 .brotli => {
                     this.* = .{
-                        .brotli = try Brotli.BrotliReaderArrayList.initWithOptions(
+                        .brotli = try Brotli.BrotliReaderArrayList.newWithOptions(
                             buffer,
                             &body_out_str.list,
                             body_out_str.allocator,
                             .{},
                         ),
                     };
-
                     return;
                 },
                 else => @panic("Invalid encoding. This code should not be reachable"),

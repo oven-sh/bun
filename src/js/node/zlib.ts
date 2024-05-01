@@ -1,4 +1,25 @@
 // Hardcoded module "node:zlib"
+
+function brotliCompress(buffer, opts, callback) {
+  if (typeof opts === "function") {
+    callback = opts;
+    opts = {};
+  }
+  const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
+  const encoder = createBrotliEncoder(opts, {}, callback);
+  encoder.encode(buffer, undefined, true);
+}
+
+function brotliDecompress(buffer, opts, callback) {
+  if (typeof opts === "function") {
+    callback = opts;
+    opts = {};
+  }
+  const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
+  const decoder = createBrotliDecoder(opts, {}, callback);
+  decoder.decode(buffer, undefined, true);
+}
+
 // TODO: **use a native binding from Bun for this!!**
 // This is a very slow module!
 // It should really be fixed. It will show up in benchmarking. It also loads
@@ -4072,9 +4093,7 @@ var require_lib = __commonJS({
     for (const method of [
       "BrotliCompress",
       "BrotliDecompress",
-      "brotliCompress",
       "brotliCompressSync",
-      "brotliDecompress",
       "brotliDecompressSync",
       "createBrotliCompress",
       "createBrotliDecompress",
@@ -4083,6 +4102,8 @@ var require_lib = __commonJS({
         throw new Error(`zlib.${method} is not implemented`);
       };
     }
+    exports.brotliCompress = brotliCompress;
+    exports.brotliDecompress = brotliDecompress;
 
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [];

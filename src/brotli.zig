@@ -1,7 +1,11 @@
 const bun = @import("root").bun;
 const std = @import("std");
-const c = @import("./deps/brotli_decoder.zig");
+const c = struct {
+    pub usingnamespace @import("./deps/brotli_decoder.zig");
+    pub usingnamespace @import("./deps/brotli_encoder.zig");
+};
 const BrotliDecoder = c.BrotliDecoder;
+const BrotliEncoder = c.BrotliEncoder;
 
 const mimalloc = bun.Mimalloc;
 
@@ -15,7 +19,7 @@ const BrotliAllocator = struct {
         return mimalloc.mi_malloc(len) orelse unreachable;
     }
 
-    pub fn free(_: ?*anyopaque, data: *anyopaque) callconv(.C) void {
+    pub fn free(_: ?*anyopaque, data: ?*anyopaque) callconv(.C) void {
         if (comptime bun.is_heap_breakdown_enabled) {
             const zone = bun.HeapBreakdown.malloc_zone_t.get(BrotliAllocator);
             zone.malloc_zone_free(data);
@@ -26,7 +30,7 @@ const BrotliAllocator = struct {
     }
 };
 
-pub const Options = struct {
+pub const DecoderOptions = struct {
     pub const Params = std.enums.EnumFieldStruct(c.BrotliDecoderParameter, bool, false);
 
     params: Params = Params{
@@ -54,7 +58,11 @@ pub const BrotliReaderArrayList = struct {
 
     pub usingnamespace bun.New(BrotliReaderArrayList);
 
-    pub fn initWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: Options) !*BrotliReaderArrayList {
+    pub fn newWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: DecoderOptions) !*BrotliReaderArrayList {
+        return BrotliReaderArrayList.new(try initWithOptions(input, list, allocator, options));
+    }
+
+    pub fn initWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: DecoderOptions) !BrotliReaderArrayList {
         if (!BrotliDecoder.initializeBrotli()) {
             return error.BrotliFailedToLoad;
         }
@@ -67,15 +75,13 @@ pub const BrotliReaderArrayList = struct {
 
         bun.assert(list.items.ptr != input.ptr);
 
-        return BrotliReaderArrayList.new(
-            .{
-                .input = input,
-                .list_ptr = list,
-                .list = list.*,
-                .list_allocator = allocator,
-                .brotli = brotli,
-            },
-        );
+        return .{
+            .input = input,
+            .list_ptr = list,
+            .list = list.*,
+            .list_allocator = allocator,
+            .brotli = brotli,
+        };
     }
 
     pub fn end(this: *BrotliReaderArrayList) void {
@@ -83,9 +89,7 @@ pub const BrotliReaderArrayList = struct {
     }
 
     pub fn readAll(this: *BrotliReaderArrayList, is_done: bool) !void {
-        defer {
-            this.list_ptr.* = this.list;
-        }
+        defer this.list_ptr.* = this.list;
 
         if (this.state == .End or this.state == .Error) {
             return;
@@ -164,5 +168,96 @@ pub const BrotliReaderArrayList = struct {
     pub fn deinit(this: *BrotliReaderArrayList) void {
         this.brotli.destroyInstance();
         this.destroy();
+    }
+};
+
+pub const BrotliCompressionStream = struct {
+    pub const State = enum {
+        Inflating,
+        End,
+        Error,
+    };
+
+    brotli: *BrotliEncoder,
+    state: State = State.Inflating,
+    total_out: usize = 0,
+    total_in: usize = 0,
+
+    pub fn init() !BrotliCompressionStream {
+        const instance = BrotliEncoder.createInstance(&BrotliAllocator.alloc, &BrotliAllocator.free, null) orelse return error.BrotliFailedToCreateInstance;
+
+        return BrotliCompressionStream{
+            .brotli = instance,
+        };
+    }
+
+    pub fn writeChunk(this: *BrotliCompressionStream, input: []const u8, last: bool) ![]const u8 {
+        const result = this.brotli.compressStream(if (last) BrotliEncoder.Operation.finish else .process, input);
+
+        if (!result.success) {
+            this.state = .Error;
+            return error.BrotliCompressionError;
+        }
+
+        return result.output;
+    }
+
+    pub fn write(this: *BrotliCompressionStream, input: []const u8, last: bool) ![]const u8 {
+        if (this.state == .End or this.state == .Error) {
+            return "";
+        }
+
+        return this.writeChunk(input, last);
+    }
+
+    pub fn end(this: *BrotliCompressionStream) ![]const u8 {
+        defer this.state = .End;
+
+        return try this.write("", true);
+    }
+
+    pub fn deinit(this: *BrotliCompressionStream) void {
+        this.brotli.destroyInstance();
+    }
+
+    fn NewWriter(comptime InputWriter: type) type {
+        return struct {
+            compressor: *BrotliCompressionStream,
+            input_writer: InputWriter,
+
+            const Self = @This();
+            pub const WriteError = error{BrotliCompressionError} || InputWriter.Error;
+            pub const Writer = std.io.Writer(@This(), WriteError, Self.write);
+
+            pub fn init(compressor: *BrotliCompressionStream, input_writer: InputWriter) Self {
+                return Self{
+                    .compressor = compressor,
+                    .input_writer = input_writer,
+                };
+            }
+
+            pub fn write(self: Self, to_compress: []const u8) WriteError!usize {
+                const decompressed = try self.compressor.write(to_compress, false);
+                try self.input_writer.writeAll(decompressed);
+                return to_compress.len;
+            }
+
+            pub fn end(self: Self) !usize {
+                const decompressed = try self.compressor.end();
+                try self.input_writer.writeAll(decompressed);
+            }
+
+            pub fn writer(self: Self) Writer {
+                return Writer{ .context = self };
+            }
+        };
+    }
+
+    pub fn writerContext(this: *BrotliCompressionStream, writable: anytype) NewWriter(@TypeOf(writable)) {
+        return NewWriter(@TypeOf(writable)).init(this, writable);
+    }
+
+    pub fn writer(this: *BrotliCompressionStream, writable: anytype) NewWriter(@TypeOf(writable)).Writer {
+        return this.writerContext(writable).writer();
     }
 };

@@ -149,5 +149,6 @@ test.skipIf(puppeteer_unsupported)(
     // @ts-expect-error
     timeout = undefined;
   },
-  30000,
+  // debug builds are slow
+  Bun.version.endsWith("-debug") ? Infinity : 30000,
 );

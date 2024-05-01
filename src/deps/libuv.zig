@@ -1777,6 +1777,11 @@ pub const fs_t = extern struct {
     pub inline fn deinit(this: *fs_t) void {
         this.assertInitialized();
         uv_fs_req_cleanup(this);
+        if (bun.Environment.isDebug) {
+            const flags = this.flags;
+            this.* = undefined;
+            this.flags = flags;
+        }
         this.assertCleanedUp();
     }
 
@@ -1798,7 +1803,7 @@ pub const fs_t = extern struct {
             if ((this.flags & UV_FS_CLEANEDUP) != 0) {
                 return;
             }
-            @panic("uv_fs_t was not cleaned up. it is expected to call .deinit() on the fs_t here.");
+            @panic("uv_fs_t was not cleaned up. this is either a double-use of fs_t or a missing .deinit() call");
         }
     }
 

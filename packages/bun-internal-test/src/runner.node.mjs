@@ -502,7 +502,8 @@ if (failing_tests.length) {
       .replace(/^::(group|endgroup|error|warning|set-output|add-matcher|remove-matcher).*$/gm, "");
 
     if (failing_output.length > 1024 * 64) {
-      failing_output = failing_output.slice(0, 1024 * 64) + `\n\n[truncated output (length: ${failing_output.length})]`;
+      failing_output =
+        failing_output.slice(0, 1024 * 64) + `\n\n[truncated output (length: ${failing_output.length})]\n`;
     }
 
     report += failing_output;

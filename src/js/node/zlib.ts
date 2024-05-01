@@ -1,11 +1,13 @@
 // Hardcoded module "node:zlib"
 
+const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
+const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
+
 function brotliCompress(buffer, opts, callback) {
   if (typeof opts === "function") {
     callback = opts;
     opts = {};
   }
-  const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
   const encoder = createBrotliEncoder(opts, {}, callback);
   encoder.encode(buffer, undefined, true);
 }
@@ -15,7 +17,6 @@ function brotliDecompress(buffer, opts, callback) {
     callback = opts;
     opts = {};
   }
-  const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
   const decoder = createBrotliDecoder(opts, {}, callback);
   decoder.decode(buffer, undefined, true);
 }

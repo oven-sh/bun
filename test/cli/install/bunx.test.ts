@@ -310,3 +310,70 @@ it("should work for github repository with committish", async () => {
   expect(out.trim()).toContain("hello bun!");
   expect(exited).toBe(0);
 });
+
+it.each(["--version", "-v"])("should print the version using %s and exit", async flag => {
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", flag],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.trim()).toContain(Bun.version);
+  expect(exited).toBe(0);
+});
+
+it("should print the revision and exit", async () => {
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", "--revision"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.trim()).toContain(Bun.version);
+  expect(out.trim()).toContain(Bun.revision.slice(0, 7));
+  expect(exited).toBe(0);
+});
+
+it("should pass --version to the package if specified", async () => {
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", "esbuild", "--version"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(out.trim()).not.toContain(Bun.version);
+  expect(exited).toBe(0);
+});

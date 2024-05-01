@@ -1938,8 +1938,8 @@ it("destroy should end download", async () => {
     await promise;
     // should stop the download
     req.destroy();
-    await Bun.sleep(100);
-    expect(chunks).toBeLessThan(10);
+    await Bun.sleep(200);
+    expect(chunks).toBeLessThanOrEqual(3);
   } finally {
     server.stop(true);
   }

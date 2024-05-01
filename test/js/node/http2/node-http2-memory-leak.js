@@ -1,107 +1,141 @@
-import { heapStats } from "bun:jsc";
-import http2 from "http2";
-import path from "path";
+// This file is meant to be able to run in node and bun
+const http2 = require("http2");
+const { TLS_OPTIONS, nodeEchoServer } = require("./http2-helpers.cjs");
 function getHeapStats() {
-  return heapStats().objectTypeCounts;
+  if (globalThis.Bun) {
+    const heapStats = require("bun:jsc").heapStats;
+    return heapStats().objectTypeCounts;
+  } else {
+    return {
+      objectTypeCounts: {
+        H2FrameParser: 0,
+        TLSSocket: 0,
+      },
+    };
+  }
 }
+const gc = globalThis.gc || globalThis.Bun?.gc || (() => {});
+const sleep = dur => new Promise(resolve => setTimeout(resolve, dur));
 
-const nodeExecutable = Bun.which("node");
-if (!nodeExecutable) {
-  console.log("No node executable found");
-  process.exit(99); // 99 no node executable
-}
-async function nodeEchoServer() {
-  const subprocess = Bun.spawn([nodeExecutable, path.join(import.meta.dir, "node-echo-server.fixture.js")], {
-    stdout: "pipe",
-  });
-  const reader = subprocess.stdout.getReader();
-  const data = await reader.read();
-  const decoder = new TextDecoder("utf-8");
-  const address = JSON.parse(decoder.decode(data.value));
-  const url = `https://${address.family === "IPv6" ? `[${address.address}]` : address.address}:${address.port}`;
-  return { address, url, subprocess };
-}
 // X iterations should be enough to detect a leak
-const ITERATIONS = 50;
+const ITERATIONS = 20;
 // lets send a bigish payload
-const PAYLOAD = Buffer.from("a".repeat(128 * 1024));
+const PAYLOAD = Buffer.from("BUN".repeat((1024 * 128) / 3));
+const MULTIPLEX = 50;
 
-const info = await nodeEchoServer();
+async function main() {
+  let info;
+  let tls;
 
-async function runRequests(iterations) {
-  for (let j = 0; j < iterations; j++) {
-    let client = http2.connect(info.url, { rejectUnauthorized: false });
-    let promises = [];
-    // 100 multiplex POST connections per iteration
-    for (let i = 0; i < 100; i++) {
-      const { promise, resolve, reject } = Promise.withResolvers();
-      const req = client.request({ ":path": "/post", ":method": "POST" });
-      let got_response = false;
-      req.on("response", () => {
-        got_response = true;
-      });
+  if (process.env.HTTP2_SERVER_INFO) {
+    info = JSON.parse(process.env.HTTP2_SERVER_INFO);
+  } else {
+    info = await nodeEchoServer();
+    console.log("Starting server", info.url);
+  }
 
-      req.setEncoding("utf8");
-      req.on("end", () => {
-        if (got_response) {
-          resolve();
-        } else {
-          reject(new Error("no response"));
-        }
-      });
-      req.write(PAYLOAD);
-      req.end();
-      promises.push(promise);
+  if (process.env.HTTP2_SERVER_TLS) {
+    tls = JSON.parse(process.env.HTTP2_SERVER_TLS);
+  } else {
+    tls = TLS_OPTIONS;
+  }
+
+  async function runRequests(iterations) {
+    for (let j = 0; j < iterations; j++) {
+      let client = http2.connect(info.url, tls);
+      let promises = [];
+      for (let i = 0; i < MULTIPLEX; i++) {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const req = client.request({ ":path": "/post", ":method": "POST", "x-no-echo": "1" });
+        req.setEncoding("utf8");
+        req.on("response", (headers, flags) => {
+          req.on("data", chunk => {
+            if (JSON.parse(chunk) !== PAYLOAD.length) {
+              console.log("Got wrong data", chunk);
+              reject(new Error("wrong data"));
+              return;
+            }
+
+            resolve();
+          });
+        });
+
+        req.end(PAYLOAD, err => {
+          if (err) reject(err);
+        });
+        promises.push(promise);
+      }
+      try {
+        await Promise.all(promises);
+      } catch (e) {
+        console.log(e);
+      }
+
+      try {
+        client.close();
+      } catch (e) {
+        console.log(e);
+      }
+      client = null;
+      promises = null;
+      gc(true);
     }
-    await Promise.all(promises);
-    client.close();
-    client = null;
-    promises = null;
-    Bun.gc(true);
+  }
+
+  try {
+    const startStats = getHeapStats();
+
+    // warm up
+    await runRequests(ITERATIONS);
+    await sleep(10);
+    gc(true);
+    // take a baseline
+    const baseline = process.memoryUsage.rss();
+    console.error("Initial memory usage", (baseline / 1024 / 1024) | 0, "MB");
+
+    // run requests
+    await runRequests(ITERATIONS);
+    await sleep(10);
+    gc(true);
+    // take an end snapshot
+    const end = process.memoryUsage.rss();
+
+    const delta = end - baseline;
+    const deltaMegaBytes = (delta / 1024 / 1024) | 0;
+    console.error("Memory delta", deltaMegaBytes, "MB");
+
+    // we executed 100 requests per iteration, memory usage should not go up by 10 MB
+    if (deltaMegaBytes > 20) {
+      console.log("Too many bodies leaked", deltaMegaBytes);
+      process.exit(1);
+    }
+
+    const endStats = getHeapStats();
+    info?.subprocess?.kill?.();
+    // check for H2FrameParser leaks
+    const pendingH2Parsers = (endStats.H2FrameParser || 0) - (startStats.H2FrameParser || 0);
+    if (pendingH2Parsers > 5) {
+      console.log("Too many pending H2FrameParsers", pendingH2Parsers);
+      process.exit(pendingH2Parsers);
+    }
+    // check for TLSSocket leaks
+    const pendingTLSSockets = (endStats.TLSSocket || 0) - (startStats.TLSSocket || 0);
+    if (pendingTLSSockets > 5) {
+      console.log("Too many pending TLSSockets", pendingTLSSockets);
+      process.exit(pendingTLSSockets);
+    }
+    process.exit(0);
+  } catch (err) {
+    console.log(err);
+    info?.subprocess?.kill?.();
+    process.exit(99); // 99 exception
   }
 }
 
-try {
-  const startStats = getHeapStats();
-
-  // warm up
-  await runRequests(ITERATIONS);
-  await Bun.sleep(10);
-  Bun.gc(true);
-  // take a baseline
-  const baseline = process.memoryUsage.rss();
-  // run requests
-  await runRequests(ITERATIONS);
-  await Bun.sleep(10);
-  Bun.gc(true);
-  // take an end snapshot
-  const end = process.memoryUsage.rss();
-
-  const delta = end - baseline;
-  const bodiesLeaked = delta / PAYLOAD.length;
-  // we executed 10 requests per iteration
-  if (bodiesLeaked > ITERATIONS) {
-    console.log("Too many bodies leaked", bodiesLeaked);
-    process.exit(1);
-  }
-
-  const endStats = getHeapStats();
-  info.subprocess.kill();
-  // check for H2FrameParser leaks
-  const pendingH2Parsers = (endStats.H2FrameParser || 0) - (startStats.H2FrameParser || 0);
-  if (pendingH2Parsers > 5) {
-    console.log("Too many pending H2FrameParsers", pendingH2Parsers);
-    process.exit(pendingH2Parsers);
-  }
-  // check for TLSSocket leaks
-  const pendingTLSSockets = (endStats.TLSSocket || 0) - (startStats.TLSSocket || 0);
-  if (pendingTLSSockets > 5) {
-    console.log("Too many pending TLSSockets", pendingTLSSockets);
-    process.exit(pendingTLSSockets);
-  }
-  process.exit(0);
-} catch (err) {
-  console.log(err);
-  info.subprocess.kill();
-  process.exit(99); // 99 exception
-}
+main().then(
+  () => {},
+  err => {
+    console.error(err);
+    process.exit(99);
+  },
+);

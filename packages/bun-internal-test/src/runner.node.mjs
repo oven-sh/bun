@@ -538,6 +538,13 @@ function mabeCapitalize(str) {
 }
 
 console.log("-> test-report.md, test-report.json");
+function linkify(text, url) {
+  if (url?.startsWith?.("https://")) {
+    return `[${text}](${url})`;
+  }
+
+  return text;
+}
 
 if (ci) {
   if (failing_tests.length > 0) {
@@ -546,8 +553,11 @@ if (ci) {
   action.setOutput("failing_tests", failingTestDisplay);
   action.setOutput("failing_tests_count", failing_tests.length);
   if (failing_tests.length) {
+    const { env } = process;
     const tag = process.env.BUN_TAG || "unknown";
-    let comment = `## ${emojiTag(tag)}${failing_tests.length} failing tests ${tag
+    const url = `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
+
+    let comment = `## ${linkify(`${emojiTag(tag)}${failing_tests.length} failing tests`, url)} ${tag
       .split("-")
       .map(mabeCapitalize)
       .join(" ")}

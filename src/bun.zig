@@ -226,20 +226,6 @@ pub inline fn cast(comptime To: type, value: anytype) To {
     return @ptrCast(@alignCast(value));
 }
 
-extern fn strlen(ptr: [*c]const u8) usize;
-
-pub fn indexOfSentinel(comptime Elem: type, comptime sentinel: Elem, ptr: [*:sentinel]const Elem) usize {
-    if (Elem == u8 and sentinel == 0) {
-        return strlen(ptr);
-    } else {
-        var i: usize = 0;
-        while (ptr[i] != sentinel) {
-            i += 1;
-        }
-        return i;
-    }
-}
-
 pub fn len(value: anytype) usize {
     return switch (@typeInfo(@TypeOf(value))) {
         .Array => |info| info.len,
@@ -260,11 +246,11 @@ pub fn len(value: anytype) usize {
                     @compileError("length of pointer with no sentinel");
                 const sentinel = @as(*align(1) const info.child, @ptrCast(sentinel_ptr)).*;
 
-                return indexOfSentinel(info.child, sentinel, value);
+                return std.mem.indexOfSentinel(info.child, sentinel, value);
             },
             .C => {
                 assert(value != null);
-                return indexOfSentinel(info.child, 0, value);
+                return std.mem.indexOfSentinel(info.child, 0, value);
             },
             .Slice => value.len,
         },
@@ -1318,7 +1304,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
                     if (array_info.sentinel) |sentinel_ptr| {
                         const sentinel = @as(*align(1) const array_info.child, @ptrCast(sentinel_ptr)).*;
                         if (sentinel == end) {
-                            return indexOfSentinel(array_info.child, end, ptr);
+                            return std.mem.indexOfSentinel(array_info.child, end, ptr);
                         }
                     }
                     return std.mem.indexOfScalar(array_info.child, ptr, end) orelse array_info.len;
@@ -1336,13 +1322,13 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
             },
             .C => {
                 assert(ptr != null);
-                return indexOfSentinel(ptr_info.child, end, ptr);
+                return std.mem.indexOfSentinel(ptr_info.child, end, ptr);
             },
             .Slice => {
                 if (ptr_info.sentinel) |sentinel_ptr| {
                     const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
                     if (sentinel == end) {
-                        return indexOfSentinel(ptr_info.child, sentinel, ptr);
+                        return std.mem.indexOfSentinel(ptr_info.child, sentinel, ptr);
                     }
                 }
                 return std.mem.indexOfScalar(ptr_info.child, ptr, end) orelse ptr.len;
@@ -2092,7 +2078,58 @@ pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
 pub fn initArgv(allocator: std.mem.Allocator) !void {
-    argv = try std.process.argsAlloc(allocator);
+    if (comptime !Environment.isWindows) {
+        argv = try std.process.argsAlloc(allocator);
+    } else {
+        // Zig's implementation of `std.process.argsAlloc()`on Windows platforms
+        // is not reliable, specifically the way it splits the command line string.
+        //
+        // For example, an arg like "foo\nbar" will be
+        // erroneously split into two arguments: "foo" and "bar".
+        //
+        // To work around this, we can simply call the Windows API functions
+        // that do this for us.
+        //
+        // Updates in Zig v0.12 related to Windows cmd line parsing may fix this,
+        // see (here: https://ziglang.org/download/0.12.0/release-notes.html#Windows-Command-Line-Argument-Parsing),
+        // so this may only need to be a temporary workaround.
+        const cmdline_ptr = std.os.windows.kernel32.GetCommandLineW();
+        var length: c_int = 0;
+
+        // As per the documentation:
+        // > The lifetime of the returned value is managed by the system,
+        //   applications should not free or modify this value.
+        const argvu16_ptr = windows.CommandLineToArgvW(cmdline_ptr, &length) orelse {
+            switch (sys.getErrno({})) {
+                // may be returned if can't alloc enough space for the str
+                .NOMEM => return error.OutOfMemory,
+                // may be returned if it's invalid
+                .INVAL => return error.InvalidArgument,
+                // TODO: anything else?
+                else => return error.Unknown,
+            }
+        };
+
+        const argvu16 = argvu16_ptr[0..@intCast(length)];
+        var out_argv = try allocator.alloc([:0]u8, @intCast(length));
+        var string_builder = StringBuilder{};
+
+        for (argvu16) |argraw| {
+            const arg = std.mem.span(argraw);
+            string_builder.count16Z(arg);
+        }
+
+        try string_builder.allocate(allocator);
+
+        for (argvu16, 0..) |argraw, i| {
+            const arg = std.mem.span(argraw);
+            // Command line is expected to be valid UTF-16le so this never
+            // fails and it's okay to unwrap pointer
+            out_argv[i] = string_builder.append16(arg).?;
+        }
+
+        argv = out_argv;
+    }
 }
 
 pub const posix = struct {
@@ -3155,3 +3192,5 @@ pub inline fn unsafeAssert(condition: bool) void {
         unreachable;
     }
 }
+
+pub const dns = @import("./dns.zig");

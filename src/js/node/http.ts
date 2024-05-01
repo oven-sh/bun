@@ -933,11 +933,6 @@ const headersSymbol = Symbol("headers");
 const finishedSymbol = Symbol("finished");
 const timeoutTimerSymbol = Symbol("timeoutTimer");
 const fakeSocketSymbol = Symbol("fakeSocket");
-
-function finishOutgoingMessage() {
-  // If we have a in-flight request, we need to abort it
-  this[kAbortController]?.abort();
-}
 function OutgoingMessage(options) {
   Writable.$call(this, options);
   this.headersSent = false;
@@ -945,7 +940,6 @@ function OutgoingMessage(options) {
   this[finishedSymbol] = false;
   this[kEndCalled] = false;
   this[kAbortController] = null;
-  this.on("finish", finishOutgoingMessage);
 }
 
 Object.setPrototypeOf((OutgoingMessage.prototype = {}), Writable.prototype);
@@ -1098,7 +1092,6 @@ function emitCloseNT(self) {
     self.destroyed = true;
     self._closed = true;
     self.emit("close");
-    self[kAbortController]?.abort();
   }
 }
 
@@ -1508,7 +1501,6 @@ class ClientRequest extends OutgoingMessage {
           this.emit("error", err);
         })
         .finally(() => {
-          this[kAbortController] = null;
           this.#fetchRequest = null;
           this[kClearTimeout]();
           emitCloseNT(this);

@@ -133,8 +133,10 @@ pub const BuildCommand = struct {
                 return;
             }
 
-            this_bundler.options.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
-            this_bundler.resolver.opts.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
+            const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
+
+            this_bundler.options.public_path = base_public_path;
+            this_bundler.resolver.opts.public_path = base_public_path;
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
@@ -414,7 +416,7 @@ pub const BuildCommand = struct {
 
                         Output.pretty(" <green>compile<r>  <b><blue>{s}{s}<r>", .{
                             outfile,
-                            if (Environment.isWindows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
+                            if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
                         });
 
                         if (is_cross_compile) {

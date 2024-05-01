@@ -158,7 +158,19 @@ pub fn moveFileZSlow(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_di
 
 pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
     if (comptime Environment.isWindows) {
-        @panic("TODO windows");
+        var buf0: bun.WPathBuffer = undefined;
+        var buf1: bun.WPathBuffer = undefined;
+
+        const dest = try bun.sys.normalizePathWindows(u8, to_dir, destination, &buf0).unwrap();
+        const src_len = bun.windows.GetFinalPathNameByHandleW(in_handle.cast(), &buf1, buf1.len, 0);
+        if (src_len == 0) {
+            return error.EBUSY;
+        } else if (src_len >= buf1.len) {
+            return error.ENAMETOOLONG;
+        }
+        const src = buf1[0..src_len :0];
+        try bun.copyFile(src, dest);
+        return;
     }
 
     const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle.cast()) else void{};

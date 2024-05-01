@@ -31,10 +31,14 @@ pub const StandaloneModuleGraph = struct {
         .windows => "B:\\~BUN\\",
     };
 
-    pub const base_public_path = switch (Environment.os) {
-        else => "/$bunfs/",
-        .windows => "B:/~BUN/",
-    };
+    pub const base_public_path = targetBasePublicPath(Environment.os, "");
+
+    pub fn targetBasePublicPath(target: Environment.OperatingSystem, comptime suffix: [:0]const u8) [:0]const u8 {
+        return switch (target) {
+            .windows => "B:/~BUN/" ++ suffix,
+            else => "/$bunfs/" ++ suffix,
+        };
+    }
 
     pub fn isBunStandaloneFilePath(str: []const u8) bool {
         return bun.strings.hasPrefixComptime(str, base_path) or

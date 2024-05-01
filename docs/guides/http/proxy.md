@@ -2,7 +2,7 @@
 name: Send HTTP requests through a proxy with fetch()
 ---
 
-In Bun, `fetch` supports sending requests through an HTTP or HTTPS proxy. This is useful on corporate networks or you need to ensure a request is sent through a specific IP address.
+In Bun, `fetch` supports sending requests through an HTTP or HTTPS proxy. This is useful on corporate networks or when you need to ensure a request is sent through a specific IP address.
 
 ```ts
 await fetch("https://example.com", {

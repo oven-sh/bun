@@ -935,6 +935,7 @@ const timeoutTimerSymbol = Symbol("timeoutTimer");
 const fakeSocketSymbol = Symbol("fakeSocket");
 
 function finishOutgoingMessage() {
+  // If we have a in-flight request, we need to abort it
   this[kAbortController]?.abort();
 }
 function OutgoingMessage(options) {

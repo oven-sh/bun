@@ -1225,11 +1225,6 @@ pub const DescribeScope = struct {
             }
         }
 
-        // Reset for the next test file
-        if (Jest.runner) |test_runner| {
-            test_runner.default_timeout_override = null;
-        }
-
         this.pending_tests.deinit(getAllocator(globalThis));
         this.tests.clearAndFree(getAllocator(globalThis));
     }

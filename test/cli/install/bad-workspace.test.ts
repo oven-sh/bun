@@ -17,7 +17,7 @@ test("bad workspace path", () => {
     JSON.stringify(
       {
         name: "hey",
-        workspaces: ["i-dont-exist", "**/i-have-a-2-stars-and-i-dont-exist", "*/i-have-a-star-and-i-dont-exist"],
+        workspaces: ["i-dont-exist"],
       },
       null,
       2,
@@ -33,8 +33,6 @@ test("bad workspace path", () => {
   const text = stderr!.toString();
 
   expect(text).toContain('Workspace not found "i-dont-exist"');
-  expect(text).toContain("multi level globs");
-  expect(text).toContain("glob star * in the middle of a path");
 
   expect(exitCode).toBe(1);
 });

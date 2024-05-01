@@ -2401,7 +2401,7 @@ pub const Interpreter = struct {
 
                 var iter = GlobWalker.Iterator{ .walker = this.walker };
                 defer iter.deinit();
-                switch (iter.init() catch |e| OOM(e)) {
+                switch (iter.init() catch bun.outOfMemory()) {
                     .err => |err| return .{ .err = err },
                     else => {},
                 }

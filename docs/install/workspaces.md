@@ -38,7 +38,7 @@ In the root `package.json`, the `"workspaces"` key is used to indicate which sub
 ```
 
 {% callout %}
-**Glob support** — Bun supports simple `<directory>/*` globs in `"workspaces"`. Full glob syntax (e.g. `**` and `?`) is not yet supported.
+**Glob support** — Bun supports full glob syntax in `"workspaces"` (see [here](/docs/api/glob#supported-glob-patterns) for a comprehensive list of supported syntax), _except_ for exclusions (e.g. `!**/excluded/**`), which are not implemented yet.
 {% /callout %}
 
 Each workspace has it's own `package.json` When referencing other packages in the monorepo, use `"workspace:*"` as the version field in your `package.json`.

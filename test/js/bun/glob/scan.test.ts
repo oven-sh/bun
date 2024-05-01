@@ -536,6 +536,60 @@ test("glob.scan('.')", async () => {
   expect(entries).toContain("README.md");
 });
 
+describe("literal fast path", async () => {
+  let tempdir = "";
+  beforeAll(() => {
+    tempdir = tempDirWithFiles("glob-scan-literal-fast-path", {
+      "packages": {
+        "a": {
+          "package.json": "hi",
+          "foo": "bar",
+        },
+        "b": {
+          "package.json": "hi",
+          "foo": "bar",
+        },
+        "c": {
+          "package.json": "hi",
+          "foo": "bar",
+        },
+        "foo": "bar",
+      },
+      "foo": "bar",
+    });
+  });
+
+  test("works", async () => {
+    const glob = new Glob("packages/*/package.json");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
+    expect(entries.sort()).toEqual(
+      [
+        `packages${path.sep}a${path.sep}package.json`,
+        `packages${path.sep}b${path.sep}package.json`,
+        `packages${path.sep}c${path.sep}package.json`,
+      ].sort(),
+    );
+  });
+
+  test("works 2", async () => {
+    const glob = new Glob("packages/*/foo");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
+    expect(entries.sort()).toEqual(
+      [
+        `packages${path.sep}a${path.sep}foo`,
+        `packages${path.sep}b${path.sep}foo`,
+        `packages${path.sep}c${path.sep}foo`,
+      ].sort(),
+    );
+  });
+
+  test("works3", async () => {
+    const glob = new Glob("packages/foo");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
+    expect(entries.sort()).toEqual([`packages${path.sep}foo`].sort());
+  });
+});
+
 function makeTmpdir(): string {
   const tmp = os.tmpdir();
   return fs.mkdtempSync(path.join(tmp, "test_builder"));

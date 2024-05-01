@@ -1904,3 +1904,43 @@ it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to connect to stripe", 
   err = await new Response(stderr).text();
   expect(err).toContain(`error: No such charge: '${charge_id}'\n`);
 });
+
+it("destroy should end download", async () => {
+  // just simulate some file that will take forever to download
+  const payload = Buffer.from("X".repeat(16 * 1024));
+
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      let running = true;
+      req.signal.onabort = () => (running = false);
+      return new Response(async function* () {
+        while (running) {
+          yield payload;
+          await Bun.sleep(10);
+        }
+      });
+    },
+  });
+
+  try {
+    let chunks = 0;
+
+    const { promise, resolve } = Promise.withResolvers();
+    const req = request(server.url, res => {
+      res.on("data", () => {
+        process.nextTick(resolve);
+        chunks++;
+      });
+    });
+    req.end();
+    // wait for the first chunk
+    await promise;
+    // should stop the download
+    req.destroy();
+    await Bun.sleep(100);
+    expect(chunks).toBeLessThan(10);
+  } finally {
+    server.stop(true);
+  }
+});

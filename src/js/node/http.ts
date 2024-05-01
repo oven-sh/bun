@@ -1089,7 +1089,6 @@ Object.defineProperty(OutgoingMessage.prototype, "finished", {
 
 function emitCloseNT(self) {
   if (!self._closed) {
-    self.destroyed = true;
     self._closed = true;
     self.emit("close");
   }
@@ -1430,6 +1429,15 @@ class ClientRequest extends OutgoingMessage {
       return;
     }
     this.#bodyChunks.push(...chunks);
+    callback();
+  }
+  _destroy(err, callback) {
+    this.destroyed = true;
+    // If request is destroyed we abort the current response
+    this[kAbortController]?.abort();
+    if (err) {
+      this.emit("error", err);
+    }
     callback();
   }
 

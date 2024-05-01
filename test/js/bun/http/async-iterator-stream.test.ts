@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, afterAll, mock } from "bun:test";
+import { spawn } from "bun";
 import { bunExe, bunEnv } from "harness";
-import path from "path";
 
 describe("Streaming body via", () => {
   test("async generator function", async () => {
@@ -29,26 +29,31 @@ describe("Streaming body via", () => {
   });
 
   test("async generator function throws an error but continues to send the headers", async () => {
-    const server = Bun.serve({
-      port: 0,
+    let subprocess;
 
-      async fetch(req) {
-        return new Response(
-          async function* () {
-            throw new Error("Oops");
-          },
-          {
-            headers: {
-              "X-Hey": "123",
-            },
-          },
-        );
-      },
+    afterAll(() => {
+      subprocess?.kill();
     });
 
-    const res = await fetch(server.url);
-    expect(res.headers.get("X-Hey")).toBe("123");
-    server.stop(true);
+    const onMessage = mock(async url => {
+      const response = await fetch(url);
+      expect(response.headers.get("X-Hey")).toBe("123");
+      subprocess?.kill();
+    });
+
+    subprocess = spawn({
+      cwd: import.meta.dirname,
+      cmd: [bunExe(), "async-iterator-throws.fixture.js"],
+      env: bunEnv,
+      ipc: onMessage,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
+    expect(exitCode).toBeInteger();
+    expect(stderr).toContain("error: Oops");
+    expect(onMessage).toHaveBeenCalledTimes(1);
   });
 
   test("async generator aborted doesn't crash", async () => {

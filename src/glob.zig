@@ -379,7 +379,10 @@ pub fn GlobWalker_(
 
                     was_absolute = true;
 
-                    const path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
+                    var path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
+                    if (std.mem.eql(u8, path_without_special_syntax, "")) {
+                        path_without_special_syntax = "/";
+                    }
                     const component_idx = this.walker.basename_excluding_special_syntax_component_idx + 1;
 
                     // This means we got a pattern without any special glob syntax, for example:
@@ -404,6 +407,11 @@ pub fn GlobWalker_(
                         return Maybe(void).success;
                     }
 
+                    // The above if branch is executed when:
+                    // `end_byte_of_basename_excluding_special_syntax == pattern.len`
+                    //
+                    // So if we see that `end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len` we
+                    // miscalculated the values
                     bun.assert(this.walker.end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len);
 
                     break :brk WorkItem.new(
@@ -917,7 +925,7 @@ pub fn GlobWalker_(
                 .error_on_broken_symlinks = error_on_broken_symlinks,
                 .only_files = only_files,
                 .basename_excluding_special_syntax_component_idx = 0,
-                .end_byte_of_basename_excluding_special_syntax = @intCast(pattern.len),
+                .end_byte_of_basename_excluding_special_syntax = 0,
             };
 
             try GlobWalker.buildPatternComponents(
@@ -1440,7 +1448,7 @@ pub fn GlobWalker_(
                                 end_byte,
                                 has_relative_patterns,
                             )) |component| {
-                                saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                                saw_special = if (!saw_special) component.syntax_hint.isSpecialSyntax() else saw_special;
                                 if (!saw_special) {
                                     basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
                                     end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
@@ -1475,7 +1483,7 @@ pub fn GlobWalker_(
                             end_byte,
                             has_relative_patterns,
                         )) |component| {
-                            saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                            saw_special = if (!saw_special) component.syntax_hint.isSpecialSyntax() else saw_special;
                             if (!saw_special) {
                                 basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
                                 end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
@@ -1508,7 +1516,7 @@ pub fn GlobWalker_(
                 @intCast(pattern.len),
                 has_relative_patterns,
             )) |component| {
-                saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                saw_special = if (!saw_special) component.syntax_hint.isSpecialSyntax() else saw_special;
                 if (!saw_special) {
                     basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
                     end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;

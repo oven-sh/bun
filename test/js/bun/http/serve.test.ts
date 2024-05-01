@@ -1484,3 +1484,32 @@ describe("should error with invalid options", async () => {
     }).toThrow("Expected lowMemoryMode to be a boolean");
   });
 });
+it("should resolve pending promise if requested ended with pending read", async () => {
+  let error: Error;
+  function shouldError(e: Error) {
+    error = e;
+  }
+  let is_done = false;
+  function shouldMarkDone(result: { done: boolean; value: any }) {
+    is_done = result.done;
+  }
+  await runTest(
+    {
+      fetch(req) {
+        // @ts-ignore
+        req.body?.getReader().read().catch(shouldError).then(shouldMarkDone);
+        return new Response("OK");
+      },
+    },
+    async server => {
+      const response = await fetch(server.url.origin, {
+        method: "POST",
+        body: "1".repeat(64 * 1024),
+      });
+      const text = await response.text();
+      expect(text).toContain("OK");
+      expect(is_done).toBe(true);
+      expect(error).toBeUndefined();
+    },
+  );
+});

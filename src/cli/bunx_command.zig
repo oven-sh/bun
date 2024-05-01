@@ -9,7 +9,8 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const Command = @import("../cli.zig").Command;
+const cli = @import("../cli.zig");
+const Command = cli.Command;
 const Run = @import("./run_command.zig").RunCommand;
 
 const debug = Output.scoped(.bunx, false);
@@ -220,6 +221,8 @@ pub const BunxCommand = struct {
         var maybe_package_name: ?string = null;
         var verbose_install = false;
         var silent_install = false;
+        var has_version = false;
+        var has_revision = false;
         {
             var found_subcommand_name = false;
 
@@ -230,7 +233,11 @@ pub const BunxCommand = struct {
                 }
 
                 if (positional.len > 0 and positional[0] == '-') {
-                    if (strings.eqlComptime(positional, "--verbose")) {
+                    if (strings.eqlComptime(positional, "--version") or strings.eqlComptime(positional, "-v")) {
+                        has_version = true;
+                    } else if (strings.eqlComptime(positional, "--revision")) {
+                        has_revision = true;
+                    } else if (strings.eqlComptime(positional, "--verbose")) {
                         verbose_install = true;
                     } else if (strings.eqlComptime(positional, "--silent")) {
                         silent_install = true;
@@ -249,7 +256,13 @@ pub const BunxCommand = struct {
 
         // check if package_name_for_update_request is empty string or " "
         if (maybe_package_name == null or maybe_package_name.?.len == 0) {
-            exitWithUsage();
+            if (has_revision) {
+                cli.printRevisionAndExit();
+            } else if (has_version) {
+                cli.printVersionAndExit();
+            } else {
+                exitWithUsage();
+            }
         }
 
         const package_name = maybe_package_name.?;

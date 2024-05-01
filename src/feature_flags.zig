@@ -91,10 +91,9 @@ pub const disable_lolhtml = false;
 /// "localhost" fails to connect.
 pub const hardcode_localhost_to_127_0_0_1 = false;
 
-/// React doesn't do anything with jsxs
-/// If the "jsxs" import is development, "jsxs" isn't supported
-/// But it's very easy to end up importing it accidentally, causing an error at runtime
-/// so we just disable it
+/// React will issue warnings in development if there are multiple children
+/// without keys and "jsxs" is not used.
+/// https://github.com/oven-sh/bun/issues/10733
 pub const support_jsxs_in_jsx_transform = true;
 
 pub const use_simdutf = bun.Environment.isNative and !bun.JSC.is_bindgen;

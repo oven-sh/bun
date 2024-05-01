@@ -390,7 +390,7 @@ pub const AddrInfo = extern struct {
                 array.putIndex(
                     globalThis,
                     j,
-                    bun.JSC.DNS.GetAddrInfo.Result.toJS(
+                    GetAddrInfo.Result.toJS(
                         &.{
                             .address = switch (this_node.family) {
                                 std.os.AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.os.sockaddr.in, this_node.addr.?).* } },
@@ -1602,3 +1602,4 @@ comptime {
         _ = Bun__canonicalizeIP;
     }
 }
+const GetAddrInfo = bun.dns.GetAddrInfo;

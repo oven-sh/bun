@@ -176,7 +176,7 @@ pub const Subprocess = struct {
             };
         }
     };
-    process: *Process = undefined,
+    process: *Process,
     stdin: Writable,
     stdout: Readable,
     stderr: Readable,
@@ -208,6 +208,7 @@ pub const Subprocess = struct {
         is_sync: bool = false,
         killed: bool = false,
         has_stdin_destructor_called: bool = false,
+        finalized: bool = false,
     };
 
     pub const SignalCode = bun.SignalCode;
@@ -672,7 +673,13 @@ pub const Subprocess = struct {
         this.flags.has_stdin_destructor_called = true;
         this.weak_file_sink_stdin_ptr = null;
 
-        this.updateHasPendingActivity();
+        if (this.flags.finalized) {
+            // if the process has already been garbage collected, we can free the memory now
+            bun.default_allocator.destroy(this);
+        } else {
+            // otherwise update the pending activity flag
+            this.updateHasPendingActivity();
+        }
     }
 
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
@@ -1514,7 +1521,12 @@ pub const Subprocess = struct {
 
         this.process.detach();
         this.process.deref();
-        bun.default_allocator.destroy(this);
+
+        this.flags.finalized = true;
+        if (this.weak_file_sink_stdin_ptr == null) {
+            // if no file sink exists we can free immediately
+            bun.default_allocator.destroy(this);
+        }
     }
 
     pub fn getExited(

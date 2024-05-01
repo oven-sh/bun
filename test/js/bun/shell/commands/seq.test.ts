@@ -80,3 +80,17 @@ describe("seq", async () => {
     .stderr("seq: needs negative decrement\n")
     .runAsTest("needs negative decrement");
 });
+
+describe("seq without stdout", async () => {
+  TestBuilder.command`echo $(seq 0 5)`
+    .exitCode(0)
+    .stdout("0 1 2 3 4 5\n")
+    .stderr("")
+    .runAsTest("works basic up without stdout");
+
+  TestBuilder.command`echo $(seq 5 0)`
+    .exitCode(0)
+    .stdout("5 4 3 2 1 0\n")
+    .stderr("")
+    .runAsTest("works basic down without stdout");
+});

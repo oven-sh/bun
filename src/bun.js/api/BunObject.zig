@@ -826,7 +826,7 @@ pub fn getMain(
             }
 
             const fd = bun.sys.openatA(
-                if (comptime Environment.isWindows) bun.invalid_fd else bun.toFD(std.fs.cwd().fd),
+                if (comptime Environment.isWindows) bun.invalid_fd else bun.FD.cwd(),
                 vm.main,
 
                 // Open with the minimum permissions necessary for resolving the file path.

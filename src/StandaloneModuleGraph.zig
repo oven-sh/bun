@@ -563,7 +563,7 @@ pub const StandaloneModuleGraph = struct {
 
         bun.C.moveFileZWithHandle(
             fd,
-            bun.toFD(std.fs.cwd().fd),
+            bun.FD.cwd(),
             bun.sliceTo(&(try std.os.toPosixPath(temp_location)), 0),
             bun.toFD(root_dir.fd),
             bun.sliceTo(&(try std.os.toPosixPath(std.fs.path.basename(outfile))), 0),

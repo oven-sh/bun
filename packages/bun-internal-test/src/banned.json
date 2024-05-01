@@ -8,5 +8,6 @@
   "std.mem.indexOfAny": "Use bun.strings.indexAny or bun.strings.indexAnyComptime",
   "undefined != ": "This is by definition Undefined Behavior.",
   "undefined == ": "This is by definition Undefined Behavior.",
+  "bun.toFD(std.fs.cwd().fd)": "Use bun.FD.cwd()",
   "": ""
 }

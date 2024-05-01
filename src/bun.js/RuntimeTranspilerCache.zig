@@ -548,10 +548,10 @@ pub const RuntimeTranspilerCache = struct {
                 break :brk try bun.toLibUVOwnedFD(dir.fd);
             }
 
-            break :brk bun.toFD(std.fs.cwd().fd);
+            break :brk bun.FD.cwd();
         };
         defer {
-            if (cache_dir_fd != bun.toFD(std.fs.cwd().fd)) _ = bun.sys.close(cache_dir_fd);
+            if (cache_dir_fd != bun.FD.cwd()) _ = bun.sys.close(cache_dir_fd);
         }
 
         try Entry.save(

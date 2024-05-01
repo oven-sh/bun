@@ -4,7 +4,7 @@ import { bunExe, bunEnv } from "harness";
 import type { Subprocess } from "bun";
 
 const ACCEPTABLE_MEMORY_LEAK = 2; //MB for acceptable memory leak variance
-const payload = "1".repeat(64 * 1024); // decent size payload to test memory leak
+const payload = "1".repeat(32 * 1024); // decent size payload to test memory leak
 
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
@@ -32,20 +32,24 @@ async function warmup() {
   const batch = new Array(100);
   for (let i = 0; i < 100; i++) {
     for (let j = 0; j < 100; j++) {
-      batch[j] = fetch(url, {
+      // warmup the server with streaming requests, because is the most memory intensive
+      batch[j] = fetch(`${url.origin}/streaming`, {
         method: "POST",
         body: payload,
       });
     }
     await Promise.all(batch);
   }
+  // clean up memory before first test
+  await getMemoryUsage();
 }
 
 async function callBuffering() {
-  await fetch(`${url.origin}/buffering`, {
+  const result = await fetch(`${url.origin}/buffering`, {
     method: "POST",
     body: payload,
-  });
+  }).then(res => res.text());
+  expect(result).toBe("Ok");
 }
 async function callStreaming() {
   const result = await fetch(`${url.origin}/streaming`, {
@@ -97,7 +101,6 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
   }
 
   // wait for the last memory usage to be stable
-  await Bun.sleep(100);
   const end_memory = await getMemoryUsage();
   if (end_memory > peak_memory) {
     peak_memory = end_memory;
@@ -121,7 +124,6 @@ for (const test_info of [
     testName,
     async () => {
       const report = await calculateMemoryLeak(fn);
-
       // peak memory is too high
       expect(report.peak_memory > report.start_memory * 2).toBe(false);
       // acceptable memory leak

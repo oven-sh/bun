@@ -226,20 +226,6 @@ pub inline fn cast(comptime To: type, value: anytype) To {
     return @ptrCast(@alignCast(value));
 }
 
-extern fn strlen(ptr: [*c]const u8) usize;
-
-pub fn indexOfSentinel(comptime Elem: type, comptime sentinel: Elem, ptr: [*:sentinel]const Elem) usize {
-    if (Elem == u8 and sentinel == 0) {
-        return strlen(ptr);
-    } else {
-        var i: usize = 0;
-        while (ptr[i] != sentinel) {
-            i += 1;
-        }
-        return i;
-    }
-}
-
 pub fn len(value: anytype) usize {
     return switch (@typeInfo(@TypeOf(value))) {
         .Array => |info| info.len,
@@ -260,11 +246,11 @@ pub fn len(value: anytype) usize {
                     @compileError("length of pointer with no sentinel");
                 const sentinel = @as(*align(1) const info.child, @ptrCast(sentinel_ptr)).*;
 
-                return indexOfSentinel(info.child, sentinel, value);
+                return std.mem.indexOfSentinel(info.child, sentinel, value);
             },
             .C => {
                 assert(value != null);
-                return indexOfSentinel(info.child, 0, value);
+                return std.mem.indexOfSentinel(info.child, 0, value);
             },
             .Slice => value.len,
         },
@@ -1336,7 +1322,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
                     if (array_info.sentinel) |sentinel_ptr| {
                         const sentinel = @as(*align(1) const array_info.child, @ptrCast(sentinel_ptr)).*;
                         if (sentinel == end) {
-                            return indexOfSentinel(array_info.child, end, ptr);
+                            return std.mem.indexOfSentinel(array_info.child, end, ptr);
                         }
                     }
                     return std.mem.indexOfScalar(array_info.child, ptr, end) orelse array_info.len;
@@ -1354,13 +1340,13 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
             },
             .C => {
                 assert(ptr != null);
-                return indexOfSentinel(ptr_info.child, end, ptr);
+                return std.mem.indexOfSentinel(ptr_info.child, end, ptr);
             },
             .Slice => {
                 if (ptr_info.sentinel) |sentinel_ptr| {
                     const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
                     if (sentinel == end) {
-                        return indexOfSentinel(ptr_info.child, sentinel, ptr);
+                        return std.mem.indexOfSentinel(ptr_info.child, sentinel, ptr);
                     }
                 }
                 return std.mem.indexOfScalar(ptr_info.child, ptr, end) orelse ptr.len;
@@ -3224,3 +3210,5 @@ pub inline fn unsafeAssert(condition: bool) void {
         unreachable;
     }
 }
+
+pub const dns = @import("./dns.zig");

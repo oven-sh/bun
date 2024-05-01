@@ -296,7 +296,7 @@ class Agent extends EventEmitter {
   }
 
   getName(options = kEmptyObject) {
-    let name = `${this.protocol}:${options.host || "localhost"}:`;
+    let name = `http:${options.host || "localhost"}:`;
     if (options.port) name += options.port;
     name += ":";
     if (options.localAddress) name += options.localAddress;

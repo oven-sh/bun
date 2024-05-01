@@ -560,14 +560,30 @@ pub const Tree = struct {
             if (comptime as_defined) {
                 if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
                     if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
-                        return hoisted; // 2
+                        return hoisted; // 1
                     }
 
                     return dependency_loop; // 3
                 }
             }
 
-            if (mismatch and !dependency.behavior.isPeer()) {
+            if (mismatch) {
+                if (dependency.behavior.isPeer()) {
+                    if (dependency.version.tag == .npm) {
+                        const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
+                        if (resolution.tag == .npm and dependency.version.value.npm.version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
+                            return hoisted; // 1
+                        }
+                    }
+
+                    // Root dependencies are manually chosen by the user. Allow them
+                    // to hoist other peers even if they don't satisfy the version
+                    if (PackageManager.instance.isRootDependency(dep_id)) {
+                        // TODO: warning about peer dependency version mismatch
+                        return hoisted; // 1
+                    }
+                }
+
                 if (as_defined and !dep.behavior.isPeer()) {
                     builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
                         builder.packageName(package_id),
@@ -956,8 +972,10 @@ const Cloner = struct {
             );
         }
 
-        if (this.lockfile.buffers.dependencies.items.len > 0)
+        if (this.lockfile.buffers.dependencies.items.len > 0) {
+            PackageManager.instance.root_dependency_list = this.lockfile.packages.items(.dependencies)[0];
             try this.hoist(this.lockfile);
+        }
 
         // capacity is used for calculating byte size
         // so we need to make sure it's exact

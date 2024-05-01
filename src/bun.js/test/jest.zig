@@ -80,7 +80,9 @@ pub const TestRunner = struct {
 
     snapshots: Snapshots,
 
-    default_timeout_ms: u32 = 0,
+    default_timeout_ms: u32,
+    default_timeout_override: ?u32 = null,
+
     test_timeout_timer: ?*bun.uws.Timer = null,
     last_test_timeout_timer_duration: u32 = 0,
     active_test_for_timeout: ?TestRunner.Test.ID = null,
@@ -556,7 +558,10 @@ pub const Jest = struct {
 
         const timeout_ms: u32 = @intCast(@max(timeout_value.coerce(i32, globalObject), 0));
 
-        Jest.runner.?.default_timeout_ms = timeout_ms;
+        if (Jest.runner) |test_runner| {
+            test_runner.default_timeout_override = timeout_ms;
+        }
+
         return .undefined;
     }
 
@@ -582,8 +587,14 @@ pub const TestScope = struct {
     task: ?*TestRunnerTask = null,
     tag: Tag = .pass,
     snapshot_count: usize = 0,
-    timeout_millis: ?u32 = null, // null if the test does not set a timeout
-    actual_timeout_millis: u32 = 0, // actual timeout used
+
+    // null if the test does not set a timeout
+    timeout_millis: ?u32 = null,
+
+    // Need this because the default timeout used for the test might
+    // be different from the default when it times out.
+    actual_timeout_millis: u32 = 0,
+
     retry_count: u32 = 0, // retry, on fail
     repeat_count: u32 = 0, // retry, on pass or fail
 
@@ -701,8 +712,9 @@ pub const TestScope = struct {
             task.started_at = timer.started;
         }
 
-        const timeout = this.timeout_millis orelse Jest.runner.?.default_timeout_ms;
-        this.actual_timeout_millis = timeout;
+        this.actual_timeout_millis = this.timeout_millis orelse
+            Jest.runner.?.default_timeout_override orelse
+            Jest.runner.?.default_timeout_ms;
 
         Jest.runner.?.setTimeout(
             this.actual_timeout_millis,
@@ -1213,6 +1225,11 @@ pub const DescribeScope = struct {
             }
         }
 
+        // Reset for the next test file
+        if (Jest.runner) |test_runner| {
+            test_runner.default_timeout_override = null;
+        }
+
         this.pending_tests.deinit(getAllocator(globalThis));
         this.tests.clearAndFree(getAllocator(globalThis));
     }
@@ -1365,6 +1382,10 @@ pub const TestRunnerTask = struct {
         this.sync_state = .pending;
 
         var result = TestScope.run(&test_, this);
+
+        if (this.describe.tests.items.len > test_id) {
+            this.describe.tests.items[test_id].actual_timeout_millis = test_.actual_timeout_millis;
+        }
 
         // rejected promises should fail the test
         if (result != .fail)

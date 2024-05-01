@@ -1040,8 +1040,6 @@ pub const TestCommand = struct {
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary.files += 1;
 
-            reporter.jest.default_timeout_ms = reporter.jest.test_options.default_timeout_ms;
-
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
                     vm.onError(vm.global, promise.result(vm.global.vm()));

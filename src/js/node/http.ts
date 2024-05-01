@@ -296,7 +296,7 @@ class Agent extends EventEmitter {
   }
 
   getName(options = kEmptyObject) {
-    let name = `http:${options.host || "localhost"}:`;
+    let name = `${this.protocol}:${options.host || "localhost"}:`;
     if (options.port) name += options.port;
     name += ":";
     if (options.localAddress) name += options.localAddress;
@@ -933,6 +933,10 @@ const headersSymbol = Symbol("headers");
 const finishedSymbol = Symbol("finished");
 const timeoutTimerSymbol = Symbol("timeoutTimer");
 const fakeSocketSymbol = Symbol("fakeSocket");
+
+function finishOutgoingMessage() {
+  this[kAbortController]?.abort();
+}
 function OutgoingMessage(options) {
   Writable.$call(this, options);
   this.headersSent = false;
@@ -940,6 +944,7 @@ function OutgoingMessage(options) {
   this[finishedSymbol] = false;
   this[kEndCalled] = false;
   this[kAbortController] = null;
+  this.on("finish", finishOutgoingMessage);
 }
 
 Object.setPrototypeOf((OutgoingMessage.prototype = {}), Writable.prototype);
@@ -1092,6 +1097,7 @@ function emitCloseNT(self) {
     self.destroyed = true;
     self._closed = true;
     self.emit("close");
+    self[kAbortController]?.abort();
   }
 }
 
@@ -1501,6 +1507,7 @@ class ClientRequest extends OutgoingMessage {
           this.emit("error", err);
         })
         .finally(() => {
+          this[kAbortController] = null;
           this.#fetchRequest = null;
           this[kClearTimeout]();
           emitCloseNT(this);
@@ -1519,7 +1526,7 @@ class ClientRequest extends OutgoingMessage {
 
   abort() {
     if (this.aborted) return;
-    this[kAbortController]!.abort();
+    this[kAbortController]?.abort();
     // TODO: Close stream if body streaming
   }
 

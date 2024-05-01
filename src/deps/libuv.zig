@@ -1633,6 +1633,10 @@ pub const struct_uv_getaddrinfo_s = extern struct {
     addrinfow: ?*anyopaque,
     addrinfo: ?*addrinfo,
     retcode: ReturnCode,
+
+    pub fn deinit(this: *uv_getaddrinfo_t) void {
+        uv_freeaddrinfo(this);
+    }
 };
 const struct_unnamed_439 = extern struct {
     overlapped: OVERLAPPED,

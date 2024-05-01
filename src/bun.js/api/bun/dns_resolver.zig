@@ -1310,6 +1310,7 @@ pub const GetAddrInfoRequest = struct {
 
         var head = this.head;
         head.processGetAddrInfoNative(uv_info.retcode.int(), uv_info.addrinfo);
+        uv_info.deinit();
         head.globalThis.allocator().destroy(this);
     }
 };

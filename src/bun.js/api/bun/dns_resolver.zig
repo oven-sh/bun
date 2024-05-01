@@ -18,7 +18,7 @@ const Async = bun.Async;
 const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 const IANA_DNS_PORT = 53;
-
+const String = bun.String;
 const LibInfo = struct {
     // static int32_t (*getaddrinfo_async_start)(mach_port_t*,
     //                                           const char*,
@@ -259,39 +259,38 @@ const LibUVBackend = struct {
 };
 
 pub fn addressToString(
-    allocator: std.mem.Allocator,
-    address: std.net.Address,
-) JSC.ZigString {
-    const str: []const u8 = brk: {
-        switch (address.any.family) {
-            std.os.AF.INET => {
-                var self = address.in;
-                const bytes = @as(*const [4]u8, @ptrCast(&self.sa.addr));
-                break :brk std.fmt.allocPrint(allocator, "{}.{}.{}.{}", .{
-                    bytes[0],
-                    bytes[1],
-                    bytes[2],
-                    bytes[3],
-                }) catch unreachable;
-            },
-            std.os.AF.INET6 => {
-                var out = std.fmt.allocPrint(allocator, "{any}", .{address}) catch unreachable;
-                // TODO: this is a hack, fix it
-                // This removes [.*]:port
-                //              ^  ^^^^^^
-                break :brk out[1 .. out.len - 1 - std.fmt.count("{d}", .{address.in6.getPort()}) - 1];
-            },
-            std.os.AF.UNIX => {
-                if (comptime std.net.has_unix_sockets) {
-                    break :brk std.mem.sliceTo(&address.un.path, 0);
-                }
-                break :brk "";
-            },
-            else => break :brk "",
-        }
-    };
+    address: *const std.net.Address,
+) !bun.String {
+    switch (address.any.family) {
+        std.os.AF.INET => {
+            var self = address.in;
+            const bytes = @as(*const [4]u8, @ptrCast(&self.sa.addr));
+            return String.createFormat("{}.{}.{}.{}", .{
+                bytes[0],
+                bytes[1],
+                bytes[2],
+                bytes[3],
+            });
+        },
+        std.os.AF.INET6 => {
+            var stack = std.heap.stackFallback(512, default_allocator);
+            const allocator = stack.get();
+            var out = try std.fmt.allocPrint(allocator, "{any}", .{address.*});
+            defer allocator.free(out);
+            // TODO: this is a hack, fix it
+            // This removes [.*]:port
+            //              ^  ^^^^^^
+            return String.createLatin1(out[1 .. out.len - 1 - std.fmt.count("{d}", .{address.in6.getPort()}) - 1]);
+        },
+        std.os.AF.UNIX => {
+            if (comptime std.net.has_unix_sockets) {
+                return String.createLatin1(&address.un.path);
+            }
 
-    return JSC.ZigString.init(str);
+            return String.empty;
+        },
+        else => return String.empty,
+    }
 }
 
 pub fn normalizeDNSName(name: []const u8, backend: *GetAddrInfo.Backend) []const u8 {
@@ -312,11 +311,15 @@ pub fn normalizeDNSName(name: []const u8, backend: *GetAddrInfo.Backend) []const
 }
 
 pub fn addressToJS(
-    allocator: std.mem.Allocator,
-    address: std.net.Address,
+    address: *const std.net.Address,
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
-    return addressToString(allocator, address).toValueGC(globalThis);
+    const str = addressToString(address) catch {
+        globalThis.throwOutOfMemory();
+        return .zero;
+    };
+    defer str.deref();
+    return str.toJS(globalThis);
 }
 
 fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {
@@ -329,21 +332,15 @@ fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {
 }
 
 pub fn addrInfoToJSArray(
-    parent_allocator: std.mem.Allocator,
     addr_info: *std.c.addrinfo,
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
-    var stack = std.heap.stackFallback(2048, parent_allocator);
-    var arena = bun.ArenaAllocator.init(stack.get());
     const array = JSC.JSValue.createEmptyArray(
         globalThis,
         addrInfoCount(addr_info),
     );
 
     {
-        defer arena.deinit();
-
-        const allocator = arena.allocator();
         var j: u32 = 0;
         var current: ?*std.c.addrinfo = addr_info;
         while (current) |this_node| : (current = current.?.next) {
@@ -353,7 +350,6 @@ pub fn addrInfoToJSArray(
                 bun.JSC.DNS.GetAddrInfo.Result.toJS(
                     &(bun.JSC.DNS.GetAddrInfo.Result.fromAddrInfo(this_node) orelse continue),
                     globalThis,
-                    allocator,
                 ),
             );
             j += 1;
@@ -487,11 +483,13 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                const str = value.toBunString(globalObject);
-                if (str.isEmpty())
-                    return .unspecified;
+                return map.fromJS(globalObject, value) orelse {
+                    if (value.toString(globalObject).length() == 0) {
+                        return .unspecified;
+                    }
 
-                return str.inMap(map) orelse return error.InvalidFamily;
+                    return error.InvalidFamily;
+                };
             }
 
             return error.InvalidFamily;
@@ -541,11 +539,12 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                const str = value.getZigString(globalObject);
-                if (str.len == 0)
-                    return .unspecified;
+                return map.fromJS(globalObject, value) orelse {
+                    if (value.toString(globalObject).length() == 0)
+                        return .unspecified;
 
-                return map.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidSocketType;
+                    return error.InvalidSocketType;
+                };
             }
 
             return error.InvalidSocketType;
@@ -576,11 +575,13 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                const str = value.getZigString(globalObject);
-                if (str.len == 0)
-                    return .unspecified;
+                return map.fromJS(globalObject, value) orelse {
+                    const str = value.toString(globalObject);
+                    if (str.length() == 0)
+                        return .unspecified;
 
-                return map.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidProtocol;
+                    return error.InvalidProtocol;
+                };
             }
 
             return error.InvalidProtocol;
@@ -620,11 +621,13 @@ pub const GetAddrInfo = struct {
                 return default;
 
             if (value.isString()) {
-                const str = value.getZigString(globalObject);
-                if (str.len == 0)
-                    return default;
+                return label.fromJS(globalObject, value) orelse {
+                    if (value.toString(globalObject).length() == 0) {
+                        return default;
+                    }
 
-                return label.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidBackend;
+                    return error.InvalidBackend;
+                };
             }
 
             return error.InvalidBackend;
@@ -641,17 +644,15 @@ pub const GetAddrInfo = struct {
             addrinfo: ?*std.c.addrinfo,
             list: List,
 
-            pub fn toJS(this: Any, globalThis: *JSC.JSGlobalObject) ?JSC.JSValue {
-                return switch (this) {
-                    .addrinfo => |addrinfo| addrInfoToJSArray(globalThis.allocator(), addrinfo orelse return null, globalThis),
+            pub fn toJS(this: *const Any, globalThis: *JSC.JSGlobalObject) ?JSC.JSValue {
+                return switch (this.*) {
+                    .addrinfo => |addrinfo| addrInfoToJSArray(addrinfo orelse return null, globalThis),
                     .list => |list| brk: {
-                        var stack = std.heap.stackFallback(2048, globalThis.allocator());
-                        var arena = bun.ArenaAllocator.init(stack.get());
                         const array = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
                         var i: u32 = 0;
                         const items: []const Result = list.items;
                         for (items) |item| {
-                            array.putIndex(globalThis, i, item.toJS(globalThis, arena.allocator()));
+                            array.putIndex(globalThis, i, item.toJS(globalThis));
                             i += 1;
                         }
                         break :brk array;
@@ -659,16 +660,16 @@ pub const GetAddrInfo = struct {
                 };
             }
 
-            pub fn deinit(this: Any) void {
-                switch (this) {
+            pub fn deinit(this: *const Any) void {
+                switch (this.*) {
                     .addrinfo => |addrinfo| {
                         if (addrinfo) |a| {
                             std.c.freeaddrinfo(a);
                         }
                     },
-                    .list => |list| {
-                        var list_ = list;
-                        list_.deinit();
+                    .list => |list_| {
+                        var list = list_;
+                        list.clearAndFree();
                     },
                 }
             }
@@ -693,9 +694,9 @@ pub const GetAddrInfo = struct {
             };
         }
 
-        pub fn toJS(this: *const Result, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSValue {
+        pub fn toJS(this: *const Result, globalThis: *JSC.JSGlobalObject) JSValue {
             const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-            obj.put(globalThis, JSC.ZigString.static("address"), addressToJS(allocator, this.address, globalThis));
+            obj.put(globalThis, JSC.ZigString.static("address"), addressToJS(&this.address, globalThis));
             obj.put(globalThis, JSC.ZigString.static("family"), switch (this.address.any.family) {
                 std.os.AF.INET => JSValue.jsNumber(4),
                 std.os.AF.INET6 => JSValue.jsNumber(6),
@@ -1153,7 +1154,7 @@ pub const GetAddrInfoRequest = struct {
 
         if (this.resolver_for_caching) |resolver| {
             if (this.cache.pending_cache) {
-                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, status, .{ .addrinfo = addr_info });
+                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, status, &.{ .addrinfo = addr_info });
                 return;
             }
         }
@@ -1256,13 +1257,13 @@ pub const GetAddrInfoRequest = struct {
                     // }
 
                     if (this.cache.pending_cache) {
-                        resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, 0, any);
+                        resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, 0, &any);
                         return;
                     }
                 }
                 var head = this.head;
                 bun.default_allocator.destroy(this);
-                head.onCompleteNative(any);
+                head.onCompleteNative(&any);
             },
             .err => |err| {
                 getAddrInfoAsyncCallback(err, null, this);
@@ -1299,13 +1300,10 @@ pub const GetAddrInfoRequest = struct {
         log("onLibUVComplete: status={d}", .{uv_info.retcode.int()});
         const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         bun.assert(uv_info == &this.backend.libc.uv);
-        if (this.backend == .libinfo) {
-            if (this.backend.libinfo.file_poll) |poll| poll.deinit();
-        }
 
         if (this.resolver_for_caching) |resolver| {
             if (this.cache.pending_cache) {
-                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, uv_info.retcode.int(), .{ .addrinfo = uv_info.addrinfo });
+                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, uv_info.retcode.int(), &.{ .addrinfo = uv_info.addrinfo });
                 return;
             }
         }
@@ -1491,7 +1489,7 @@ pub const DNSLookup = struct {
         return this;
     }
 
-    pub fn onCompleteNative(this: *DNSLookup, result: GetAddrInfo.Result.Any) void {
+    pub fn onCompleteNative(this: *DNSLookup, result: *const GetAddrInfo.Result.Any) void {
         log("onCompleteNative", .{});
         const array = result.toJS(this.globalThis).?;
         this.onCompleteWithArray(array);
@@ -1520,7 +1518,7 @@ pub const DNSLookup = struct {
             promise.rejectTask(globalThis, error_value);
             return;
         }
-        onCompleteNative(this, .{ .addrinfo = result });
+        onCompleteNative(this, &.{ .addrinfo = result });
     }
 
     pub fn processGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.AddrInfo) void {
@@ -1559,7 +1557,7 @@ pub const DNSLookup = struct {
     pub fn onComplete(this: *DNSLookup, result: *c_ares.AddrInfo) void {
         log("onComplete", .{});
 
-        const array = result.toJSArray(this.globalThis.allocator(), this.globalThis);
+        const array = result.toJSArray(this.globalThis);
         this.onCompleteWithArray(array);
     }
 
@@ -1726,7 +1724,7 @@ pub const DNSResolver = struct {
 
         var pending: ?*DNSLookup = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSArray(this.vm.allocator, prev_global);
+        var array = addr.toJSArray(prev_global);
         defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onCompleteWithArray(array);
@@ -1738,7 +1736,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             const new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSArray(this.vm.allocator, new_global);
+                array = addr.toJSArray(new_global);
                 prev_global = new_global;
             }
             pending = value.next;
@@ -1751,7 +1749,7 @@ pub const DNSResolver = struct {
         }
     }
 
-    pub fn drainPendingHostNative(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: i32, result: GetAddrInfo.Result.Any) void {
+    pub fn drainPendingHostNative(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: i32, result: *const GetAddrInfo.Result.Any) void {
         log("drainPendingHostNative", .{});
         const key = this.getKey(index, "pending_host_cache_native", GetAddrInfoRequest);
 

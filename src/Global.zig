@@ -98,7 +98,17 @@ pub fn exit(code: u8) noreturn {
     exitWide(@as(u32, code));
 }
 
+var is_exiting = std.atomic.Value(bool).init(false);
+export fn bun_is_exiting() c_int {
+    return @intFromBool(isExiting());
+}
+pub fn isExiting() bool {
+    return is_exiting.load(.Monotonic);
+}
+
 pub fn exitWide(code: u32) noreturn {
+    is_exiting.store(true, .Monotonic);
+
     if (comptime Environment.isMac) {
         std.c.exit(@bitCast(code));
     }

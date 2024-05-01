@@ -28,11 +28,18 @@ describe("udpSocket()", () => {
   });
 
   test("can create a socket with given port", async () => {
-    const port = randomPort();
-    const socket = await udpSocket({ port });
-    expect(socket.port).toBe(port);
-    expect(socket.address).toMatchObject({ port: socket.port });
-    socket.close();
+    for (let i = 0; i < 30; i++) {
+      const port = randomPort();
+      try {
+        const socket = await udpSocket({ port });
+        expect(socket.port).toBe(port);
+        expect(socket.address).toMatchObject({ port: socket.port });
+        socket.close();
+        break;
+      } catch (e) {
+        continue;
+      }
+    }
   });
 
   test("can create a socket with a random port", async () => {

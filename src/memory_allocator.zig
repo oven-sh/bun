@@ -15,7 +15,8 @@ fn mimalloc_free(
     // mi_free_size internally just asserts the size
     // so it's faster if we don't pass that value through
     // but its good to have that assertion
-    if (comptime Environment.allow_assert) {
+    // let's only enable it in debug mode
+    if (comptime Environment.isDebug) {
         assert(mimalloc.mi_is_in_heap_region(buf.ptr));
         if (mimalloc.canUseAlignedAlloc(buf.len, buf_align))
             mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align)
@@ -37,7 +38,7 @@ const c = struct {
         }
     }.malloc_wrapped;
     pub inline fn free(ptr: anytype) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.isDebug) {
             assert(mimalloc.mi_is_in_heap_region(ptr));
         }
 
@@ -64,10 +65,12 @@ const CAllocator = struct {
         else
             mimalloc.mi_malloc(len);
 
-        if (comptime Environment.allow_assert) {
-            const usable = mimalloc.mi_malloc_usable_size(ptr);
-            if (usable < len) {
-                std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+        if (comptime Environment.isDebug) {
+            if (ptr != null) {
+                const usable = mimalloc.mi_malloc_usable_size(ptr);
+                if (usable < len and ptr != null) {
+                    std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+                }
             }
         }
 
@@ -125,10 +128,12 @@ const ZAllocator = struct {
         else
             mimalloc.mi_zalloc(len);
 
-        if (comptime Environment.allow_assert) {
-            const usable = mimalloc.mi_malloc_usable_size(ptr);
-            if (usable < len) {
-                std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+        if (comptime Environment.isDebug) {
+            if (ptr != null) {
+                const usable = mimalloc.mi_malloc_usable_size(ptr);
+                if (usable < len) {
+                    std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+                }
             }
         }
 

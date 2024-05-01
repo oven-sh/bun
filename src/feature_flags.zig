@@ -95,7 +95,7 @@ pub const hardcode_localhost_to_127_0_0_1 = false;
 /// If the "jsxs" import is development, "jsxs" isn't supported
 /// But it's very easy to end up importing it accidentally, causing an error at runtime
 /// so we just disable it
-pub const support_jsxs_in_jsx_transform = false;
+pub const support_jsxs_in_jsx_transform = true;
 
 pub const use_simdutf = bun.Environment.isNative and !bun.JSC.is_bindgen;
 

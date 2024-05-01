@@ -3192,3 +3192,5 @@ pub inline fn unsafeAssert(condition: bool) void {
         unreachable;
     }
 }
+
+pub const dns = @import("./dns.zig");

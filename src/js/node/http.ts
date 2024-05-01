@@ -1434,7 +1434,7 @@ class ClientRequest extends OutgoingMessage {
   _destroy(err, callback) {
     this.destroyed = true;
     // If request is destroyed we abort the current response
-    this[kAbortController]?.abort();
+    this[kAbortController]?.abort?.();
     if (err) {
       this.emit("error", err);
     }
@@ -1527,7 +1527,7 @@ class ClientRequest extends OutgoingMessage {
 
   abort() {
     if (this.aborted) return;
-    this[kAbortController]?.abort();
+    this[kAbortController]?.abort?.();
     // TODO: Close stream if body streaming
   }
 

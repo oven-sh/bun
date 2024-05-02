@@ -1294,6 +1294,8 @@ for (const [key, blob] of build.outputs) {
             const lines = stderr!
               .toUnixString()
               .split("\n")
+              // remove `Bun v1.0.0...` line
+              .slice(0, -2)
               .filter(Boolean)
               .map(x => x.trim())
               .reverse();

@@ -181,6 +181,9 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 #endif
     object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("9"_s))), 0);
 
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "icu"_s), JSValue(JSC::jsString(vm, makeString(U_ICU_VERSION))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "unicode"_s), JSValue(JSC::jsString(vm, makeString(U_UNICODE_VERSION))), 0);
+
     object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s),
         JSC::JSValue(JSC::jsString(vm, makeAtomString("115"))));
 

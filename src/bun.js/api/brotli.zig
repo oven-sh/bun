@@ -199,9 +199,7 @@ pub const BrotliEncoder = struct {
                 if (is_last and any) {
                     var output = &this.encoder.output;
                     this.encoder.output_lock.lock();
-                    defer {
-                        this.encoder.output_lock.unlock();
-                    }
+                    defer this.encoder.output_lock.unlock();
 
                     output.appendSlice(bun.default_allocator, this.encoder.stream.end() catch {
                         _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);

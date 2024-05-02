@@ -356,7 +356,7 @@ pub const BrotliDecoder = struct {
             .globalThis = globalThis,
             .stream = undefined, // &this.output needs to be a stable pointer
         });
-        this.stream = brotli.BrotliReaderArrayList.initWithOptions("", bun.new(std.ArrayListUnmanaged(u8), .{}), bun.default_allocator, .{}) catch {
+        this.stream = brotli.BrotliReaderArrayList.initWithOptions("", &this.output, bun.default_allocator, .{}) catch {
             globalThis.throw("Failed to create BrotliDecoder", .{});
             return .zero;
         };
@@ -526,19 +526,6 @@ pub const BrotliDecoder = struct {
 
                     if (this.decoder.pending_decode_job_count.fetchSub(1, .Monotonic) == 0)
                         break;
-                }
-
-                if (is_last and any) {
-                    var output = &this.decoder.output;
-                    this.decoder.output_lock.lock();
-                    defer this.decoder.output_lock.unlock();
-
-                    output.appendSlice(bun.default_allocator, this.decoder.stream.list.items) catch {
-                        _ = this.decoder.pending_decode_job_count.fetchSub(1, .Monotonic);
-                        this.decoder.write_failed = true;
-                        return;
-                    };
-                    // this.decoder.stream.end();
                 }
             }
 

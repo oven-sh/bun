@@ -285,7 +285,7 @@ pub const Run = struct {
 
                     if (run.any_unhandled) {
                         Output.prettyErrorln(
-                            "\n<r><d>{s}<r>",
+                            "<r>\n<d>{s}<r>",
                             .{Global.unhandled_error_bun_version_string},
                         );
                     }
@@ -316,7 +316,7 @@ pub const Run = struct {
                 vm.onExit();
                 if (run.any_unhandled) {
                     Output.prettyErrorln(
-                        "\n<r><d>{s}<r>",
+                        "<r>\n<d>{s}<r>",
                         .{Global.unhandled_error_bun_version_string},
                     );
                 }
@@ -418,7 +418,7 @@ pub const Run = struct {
             this.vm.exit_handler.exit_code = 1;
 
             Output.prettyErrorln(
-                "\n<r><d>{s}<r>",
+                "<r>\n<d>{s}<r>",
                 .{Global.unhandled_error_bun_version_string},
             );
         }

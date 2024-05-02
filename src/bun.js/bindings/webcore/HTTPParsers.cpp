@@ -340,7 +340,7 @@ static String trimInputSample(CharType* p, size_t length)
 
 std::optional<WallTime> parseHTTPDate(const String& value)
 {
-    double dateInMillisecondsSinceEpoch = parseDateFromNullTerminatedCharacters(value.utf8().data());
+    double dateInMillisecondsSinceEpoch = parseDate(value.utf8().span());
     if (!std::isfinite(dateInMillisecondsSinceEpoch))
         return std::nullopt;
     // This assumes system_clock epoch equals Unix epoch which is true for all implementations but unspecified.

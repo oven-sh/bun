@@ -660,7 +660,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
     RELEASE_AND_RETURN(throwScope, obj);
 }
 
-bool JSFetchHeadersOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSFetchHeadersOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);

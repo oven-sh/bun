@@ -56,6 +56,7 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
 protected:
     JSReadableStreamSink(JSC::Structure*, JSDOMGlobalObject&, Ref<ReadableStreamSink>&&);
 
@@ -64,7 +65,7 @@ protected:
 
 class JSReadableStreamSinkOwner final : public JSC::WeakHandleOwner {
 public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, const char**) final;
+    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 

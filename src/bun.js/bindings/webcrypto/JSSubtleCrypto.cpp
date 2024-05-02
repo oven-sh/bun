@@ -613,14 +613,14 @@ void JSSubtleCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSSubtleCryptoOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, const char** reason)
+bool JSSubtleCryptoOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     auto* jsSubtleCrypto = jsCast<JSSubtleCrypto*>(handle.slot()->asCell());
     ScriptExecutionContext* owner = WTF::getPtr(jsSubtleCrypto->wrapped().scriptExecutionContext());
     if (!owner)
         return false;
     if (UNLIKELY(reason))
-        *reason = "Reachable from ScriptExecutionContext";
+        *reason = "Reachable from ScriptExecutionContext"_s;
     return visitor.containsOpaqueRoot(context);
 }
 

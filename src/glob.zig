@@ -288,7 +288,7 @@ pub fn GlobWalker_(
 ) type {
     const is_ignored: *const fn ([]const u8) bool = if (comptime ignore_filter_fn) |func| func else dummyFilterFalse;
 
-    const count_fds = Accessor.count_fds and bun.Environment.allow_assert;
+    const count_fds = Accessor.count_fds and bun.Environment.isDebug;
 
     const stdJoin = comptime if (!sentinel) std.fs.path.join else std.fs.path.joinZ;
     const bunJoin = comptime if (!sentinel) ResolvePath.join else ResolvePath.joinZ;
@@ -383,7 +383,7 @@ pub fn GlobWalker_(
                     var starting_component_idx = this.walker.basename_excluding_special_syntax_component_idx;
 
                     if (std.mem.eql(u8, path_without_special_syntax, "")) {
-                        path_without_special_syntax = "/";
+                        path_without_special_syntax = if (!bun.Environment.isWindows) "/" else ResolvePath.windowsFilesystemRoot(this.walker.cwd);
                     } else {
                         // Skip the components associated with the literal path
                         starting_component_idx += 1;
@@ -456,6 +456,9 @@ pub fn GlobWalker_(
             }
 
             pub fn deinit(this: *Iterator) void {
+                defer {
+                    bun.debugAssert(this.fds_open == 0);
+                }
                 this.closeCwdFd();
                 switch (this.iter_state) {
                     .directory => |dir| {
@@ -473,9 +476,7 @@ pub fn GlobWalker_(
                 }
 
                 if (comptime count_fds) {
-                    if (bun.Environment.allow_assert) {
-                        bun.assert(this.fds_open == 0);
-                    }
+                    bun.debugAssert(this.fds_open == 0);
                 }
             }
 
@@ -495,7 +496,7 @@ pub fn GlobWalker_(
                 if (comptime count_fds) {
                     this.fds_open += 1;
                     // If this is over 2 then this means that there is a bug in the iterator code
-                    bun.assert(this.fds_open <= 2);
+                    bun.debugAssert(this.fds_open <= 2);
                 }
             }
 

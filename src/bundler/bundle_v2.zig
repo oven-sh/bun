@@ -4205,7 +4205,6 @@ const LinkerContext = struct {
                     chunk.template.data = this.resolver.opts.entry_naming;
             } else {
                 chunk.template = PathTemplate.chunk;
-                std.debug.print("cnhufna: {s}\n", .{this.resolver.opts.chunk_naming});
                 if (this.resolver.opts.chunk_naming.len > 0)
                     chunk.template.data = this.resolver.opts.chunk_naming;
             }

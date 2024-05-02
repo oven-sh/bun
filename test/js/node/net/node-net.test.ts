@@ -254,7 +254,8 @@ describe("net.Socket read", () => {
         }, socket_domain),
       );
 
-      it("should support onread callback", 
+      it(
+        "should support onread callback",
         runWithServer((server, drain, done) => {
           var data = "";
           const options = {
@@ -264,13 +265,13 @@ describe("net.Socket read", () => {
               buffer: Buffer.alloc(4096),
               callback: (size, buf) => {
                 data += buf.slice(0, size).toString("utf8");
-              }
-            }
+              },
+            },
           };
           const socket = createConnection(options, () => {
-              expect(socket).toBeDefined();
-              expect(socket.connecting).toBe(false);
-            })
+            expect(socket).toBeDefined();
+            expect(socket.connecting).toBe(false);
+          })
             .on("end", () => {
               try {
                 expect(data).toBe(message);

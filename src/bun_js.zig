@@ -282,6 +282,13 @@ pub const Run = struct {
                 } else {
                     vm.exit_handler.exit_code = 1;
                     vm.onExit();
+
+                    if (run.any_unhandled) {
+                        Output.prettyErrorln(
+                            "\n<r><d>{s}<r>",
+                            .{Global.unhandled_error_bun_version_string},
+                        );
+                    }
                     Global.exit(1);
                 }
             }
@@ -307,6 +314,12 @@ pub const Run = struct {
             } else {
                 vm.exit_handler.exit_code = 1;
                 vm.onExit();
+                if (run.any_unhandled) {
+                    Output.prettyErrorln(
+                        "\n<r><d>{s}<r>",
+                        .{Global.unhandled_error_bun_version_string},
+                    );
+                }
                 Global.exit(1);
             }
         }
@@ -403,6 +416,11 @@ pub const Run = struct {
         vm.global.handleRejectedPromises();
         if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
             this.vm.exit_handler.exit_code = 1;
+
+            Output.prettyErrorln(
+                "\n<r><d>{s}<r>",
+                .{Global.unhandled_error_bun_version_string},
+            );
         }
         const exit_code = this.vm.exit_handler.exit_code;
 

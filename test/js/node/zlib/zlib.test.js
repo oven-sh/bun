@@ -52,10 +52,9 @@ describe("zlib.gunzip", () => {
 describe("zlib.brotli", () => {
   it("returns stub", () => {
     for (const method of [
+      // prettier-ignore
       "BrotliCompress",
       "BrotliDecompress",
-      "brotliCompressSync",
-      "brotliDecompressSync",
       "createBrotliCompress",
       "createBrotliDecompress",
     ]) {
@@ -92,6 +91,16 @@ describe("zlib.brotli", () => {
 
   it("brotliDecompress", async () => {
     const roundtrip = await util.promisify(zlib.brotliDecompress)(compressedBuffer);
+    expect(roundtrip.toString()).toEqual(inputString);
+  });
+
+  it("brotliCompressSync", () => {
+    const compressed = zlib.brotliCompressSync(inputString);
+    expect(compressed.toString()).toEqual(compressedBuffer.toString());
+  });
+
+  it("brotliDecompressSync", () => {
+    const roundtrip = zlib.brotliDecompressSync(compressedBuffer);
     expect(roundtrip.toString()).toEqual(inputString);
   });
 });

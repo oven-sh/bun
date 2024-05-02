@@ -8,6 +8,7 @@ function brotliCompress(buffer, opts, callback) {
     callback = opts;
     opts = {};
   }
+  if (typeof callback !== "function") throw new TypeError("BrotliEncoder callback is not callable");
   const encoder = createBrotliEncoder(opts, {}, callback);
   encoder.encode(buffer, undefined, true);
 }
@@ -17,8 +18,19 @@ function brotliDecompress(buffer, opts, callback) {
     callback = opts;
     opts = {};
   }
+  if (typeof callback !== "function") throw new TypeError("BrotliDecoder callback is not callable");
   const decoder = createBrotliDecoder(opts, {}, callback);
   decoder.decode(buffer, undefined, true);
+}
+
+function brotliCompressSync(buffer, opts) {
+  const encoder = createBrotliEncoder(opts, {}, null);
+  return encoder.encodeSync(buffer, undefined, true);
+}
+
+function brotliDecompressSync(buffer, opts) {
+  const decoder = createBrotliDecoder(opts, {}, null);
+  return decoder.decodeSync(buffer, undefined, true);
 }
 
 // TODO: **use a native binding from Bun for this!!**
@@ -4092,10 +4104,9 @@ var require_lib = __commonJS({
 
     // not implemented, stubs
     for (const method of [
+      // prettier-ignore
       "BrotliCompress",
       "BrotliDecompress",
-      "brotliCompressSync",
-      "brotliDecompressSync",
       "createBrotliCompress",
       "createBrotliDecompress",
     ]) {
@@ -4105,6 +4116,8 @@ var require_lib = __commonJS({
     }
     exports.brotliCompress = brotliCompress;
     exports.brotliDecompress = brotliDecompress;
+    exports.brotliCompressSync = brotliCompressSync;
+    exports.brotliDecompressSync = brotliDecompressSync;
 
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [];

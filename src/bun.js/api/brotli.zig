@@ -55,11 +55,6 @@ pub const BrotliEncoder = struct {
 
         const callback = arguments[2];
 
-        if (!callback.isCallable(globalThis.vm())) {
-            globalThis.throwInvalidArguments("BrotliEncoder callback is not callable", .{});
-            return .zero;
-        }
-
         var this: *BrotliEncoder = BrotliEncoder.new(.{
             .globalThis = globalThis,
             .stream = brotli.BrotliCompressionStream.init() catch {
@@ -139,6 +134,7 @@ pub const BrotliEncoder = struct {
     const EncodeJob = struct {
         task: JSC.WorkPoolTask = .{ .callback = &runTask },
         encoder: *BrotliEncoder,
+        is_async: bool,
 
         pub usingnamespace bun.New(@This());
 
@@ -213,7 +209,7 @@ pub const BrotliEncoder = struct {
                 }
             }
 
-            if (any) {
+            if (this.is_async and any) {
                 var vm = this.encoder.globalThis.bunVMConcurrently();
                 this.encoder.ref();
                 this.encoder.poll_ref.refConcurrently(vm);
@@ -255,6 +251,7 @@ pub const BrotliEncoder = struct {
 
         var task = EncodeJob.new(.{
             .encoder = this,
+            .is_async = true,
         });
 
         {
@@ -270,11 +267,42 @@ pub const BrotliEncoder = struct {
     }
 
     pub fn encodeSync(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        _ = this;
-        _ = globalThis;
-        _ = callframe;
+        const arguments = callframe.arguments(3);
 
-        return .zero;
+        if (arguments.len < 2) {
+            globalThis.throwNotEnoughArguments("BrotliEncoder.encode", 2, arguments.len);
+            return .zero;
+        }
+
+        if (this.has_called_end) {
+            globalThis.throw("BrotliEncoder.encode called after BrotliEncoder.end", .{});
+            return .zero;
+        }
+
+        const input = callframe.argument(0);
+        const optional_encoding = callframe.argument(1);
+        const is_last = callframe.argument(2).toBoolean();
+
+        const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
+            globalThis.throwInvalidArgumentType("BrotliEncoder.encode", "input", "Blob, String, or Buffer");
+            return .zero;
+        };
+
+        _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
+        bun.assert(is_last);
+        this.has_called_end = true;
+
+        var task = EncodeJob.new(.{ .encoder = this, .is_async = false });
+
+        {
+            this.input_lock.lock();
+            defer this.input_lock.unlock();
+
+            this.input.writeItem(input_to_queue) catch unreachable;
+        }
+        this.ref();
+        task.run();
+        return this.collectOutputValue() orelse .undefined;
     }
 
     pub fn end(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -344,11 +372,6 @@ pub const BrotliDecoder = struct {
         }
 
         const callback = arguments[2];
-
-        if (!callback.isCallable(globalThis.vm())) {
-            globalThis.throwInvalidArguments("BrotliDecoder callback is not callable", .{});
-            return .zero;
-        }
 
         var this: *BrotliDecoder = BrotliDecoder.new(.{
             .globalThis = globalThis,
@@ -443,6 +466,7 @@ pub const BrotliDecoder = struct {
 
         var task = DecodeJob.new(.{
             .decoder = this,
+            .is_async = true,
         });
 
         {
@@ -458,11 +482,45 @@ pub const BrotliDecoder = struct {
     }
 
     pub fn decodeSync(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        _ = this;
-        _ = globalThis;
-        _ = callframe;
+        const arguments = callframe.arguments(3);
 
-        return .zero;
+        if (arguments.len < 2) {
+            globalThis.throwNotEnoughArguments("BrotliEncoder.decode", 2, arguments.len);
+            return .zero;
+        }
+
+        if (this.has_called_end) {
+            globalThis.throw("BrotliEncoder.decode called after BrotliEncoder.end", .{});
+            return .zero;
+        }
+
+        const input = callframe.argument(0);
+        const optional_encoding = callframe.argument(1);
+        const is_last = callframe.argument(2).toBoolean();
+
+        const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
+            globalThis.throwInvalidArgumentType("BrotliEncoder.decode", "input", "Blob, String, or Buffer");
+            return .zero;
+        };
+
+        _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
+        if (is_last)
+            this.has_called_end = true;
+
+        var task = DecodeJob.new(.{
+            .decoder = this,
+            .is_async = false,
+        });
+
+        {
+            this.input_lock.lock();
+            defer this.input_lock.unlock();
+
+            this.input.writeItem(input_to_queue) catch unreachable;
+        }
+        this.ref();
+        task.run();
+        return this.collectOutputValue() orelse .undefined;
     }
 
     // We can only run one decode job at a time
@@ -472,6 +530,7 @@ pub const BrotliDecoder = struct {
     const DecodeJob = struct {
         task: JSC.WorkPoolTask = .{ .callback = &runTask },
         decoder: *BrotliDecoder,
+        is_async: bool,
 
         pub usingnamespace bun.New(@This());
 
@@ -527,7 +586,7 @@ pub const BrotliDecoder = struct {
                 }
             }
 
-            if (any) {
+            if (this.is_async and any) {
                 var vm = this.decoder.globalThis.bunVMConcurrently();
                 this.decoder.ref();
                 this.decoder.poll_ref.refConcurrently(vm);

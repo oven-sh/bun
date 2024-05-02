@@ -308,6 +308,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 
         error.InvalidArgument,
         error.@"Invalid Bunfig",
+        error.InstallFailed,
         => if (!show_trace) Global.exit(1),
 
         error.SyntaxError => {

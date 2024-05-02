@@ -289,7 +289,7 @@ $ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
 
 ### libarchive
 
-If you see an error when compiling `libarchive`, run this:
+If you see an error on macOS when compiling `libarchive`, run:
 
 ```bash
 $ brew install pkg-config

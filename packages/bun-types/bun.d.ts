@@ -4781,8 +4781,7 @@ declare module "bun" {
    * @param config Used to provide arguments for parsing and to configure the parser.
    * @return The parsed command line arguments
    */
-  const parseArgs: typeof import("util").parseArgs;
-
+  
   interface GlobScanOptions {
     /**
      * The root directory to start matching from. Defaults to `process.cwd()`

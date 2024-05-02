@@ -375,7 +375,7 @@ const Socket = (function (InternalSocket) {
         this.#onreadCallback = onread.callback;
       }
       if (onread) {
-        console.log('using onread');
+        console.log("using onread");
       }
 
       if (signal) {

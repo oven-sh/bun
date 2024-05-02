@@ -516,6 +516,9 @@ pub fn ensureNonBlocking(fd: anytype) void {
 }
 
 pub fn isNonBlocking(fd: anytype) bool {
+    if (Environment.isWindows) {
+        @compileError("isNonBlocking() is not supported on Windows");
+    }
     return (std.os.fcntl(fd, std.os.F.GETFL, 0) catch 0 & std.os.O.NONBLOCK) == std.os.O.NONBLOCK;
 }
 

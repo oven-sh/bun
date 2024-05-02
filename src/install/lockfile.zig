@@ -3799,10 +3799,6 @@ pub const Package = extern struct {
         }
 
         pub fn insert(self: *WorkspaceMap, key: string, value: Entry) !void {
-            if (comptime Environment.allow_assert) {
-                assert(!strings.containsChar(key, std.fs.path.sep_windows));
-            }
-
             if (comptime Environment.isDebug) {
                 if (!bun.sys.exists(key)) {
                     Output.debugWarn("WorkspaceMap.insert: key {s} does not exist", .{key});

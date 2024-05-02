@@ -11651,7 +11651,11 @@ const ContentHasher = struct {
 // this is just being nice
 fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
     if (prefix.len == 0) {
-        return .{ "./", bun.strings.removeLeadingDotSlash(suffix) };
+        const suffix_no_slash = bun.strings.removeLeadingDotSlash(suffix);
+        return .{
+            if (strings.hasPrefixComptime(suffix_no_slash, "../")) "" else "./",
+            suffix_no_slash,
+        };
     }
 
     // There are a few cases here we want to handle:

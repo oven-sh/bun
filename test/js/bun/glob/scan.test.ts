@@ -586,6 +586,12 @@ describe("absolute path pattern", async () => {
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
     expect(entries.sort()).toEqual(files.slice(0, 3).sort());
   });
+
+  test("non-special path as first component", async () => {
+    const glob = new Glob("/**lol");
+    const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
+    expect(entries).toEqual([]);
+  });
 });
 
 describe("glob.scan wildcard fast path", async () => {

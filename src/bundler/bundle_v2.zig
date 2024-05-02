@@ -4165,7 +4165,7 @@ const LinkerContext = struct {
 
         const chunks: []Chunk = js_chunks.values();
 
-        var entry_point_chunk_indices: []u32 = this.graph.files.items(.entry_point_chunk_index);
+        const entry_point_chunk_indices: []u32 = this.graph.files.items(.entry_point_chunk_index);
         // Map from the entry point file to this chunk. We will need this later if
         // a file contains a dynamic import to this entry point, since we'll need
         // to look up the path for this chunk to use with the import.
@@ -4187,6 +4187,8 @@ const LinkerContext = struct {
             this.unique_key_buf = "";
         }
 
+        const kinds = this.graph.files.items(.entry_point_kind);
+        const output_paths = this.graph.entry_points.items(.output_path);
         for (chunks, 0..) |*chunk, chunk_id| {
             // Assign a unique key to each chunk. This key encodes the index directly so
             // we can easily recover it later without needing to look it up in a map. The
@@ -4196,7 +4198,7 @@ const LinkerContext = struct {
                 this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{any}", .{bun.fmt.hexIntLower(unique_key)})];
 
             if (chunk.entry_point.is_entry_point and
-                this.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index] == .user_specified)
+                kinds[chunk.entry_point.source_index] == .user_specified)
             {
                 chunk.template = PathTemplate.file;
                 if (this.resolver.opts.entry_naming.len > 0)
@@ -4208,7 +4210,7 @@ const LinkerContext = struct {
                     chunk.template.data = this.resolver.opts.chunk_naming;
             }
 
-            const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
+            const pathname = Fs.PathName.init(output_paths[chunk.entry_point.entry_point_id].slice());
             chunk.template.placeholder.name = pathname.base;
             chunk.template.placeholder.ext = "js";
 
@@ -9071,11 +9073,13 @@ const LinkerContext = struct {
                 const writer = msg.writer();
                 try writer.print("Multiple files share the same output path\n", .{});
 
+                const kinds = c.graph.files.items(.entry_point_kind);
+
                 for (duplicates_map.keys(), duplicates_map.values()) |key, dup| {
                     try writer.print("  {s}:\n", .{key});
                     for (dup.sources.items) |chunk| {
                         if (chunk.entry_point.is_entry_point) {
-                            if (c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index] == .user_specified) {
+                            if (kinds[chunk.entry_point.source_index] == .user_specified) {
                                 entry_naming = chunk.template.data;
                             } else {
                                 chunk_naming = chunk.template.data;

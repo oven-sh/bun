@@ -721,8 +721,11 @@ pub fn encodeVLQ(value: i32) VLQ {
 
     var vlq: u32 = if (value >= 0)
         @as(u32, @bitCast(value << 1))
+    else if (value != std.math.minInt(i32))
+        @as(u32, @bitCast((-value << 1) | 1))
     else
-        @as(u32, @bitCast((-value << 1) | 1));
+        // `-value` will overflow if it's a signed minInt(T)
+        return .{ .bytes = .{ 104, 103, 103, 103, 103, 103, 69, 0 }, .len = 7 };
 
     // source mappings are limited to i32
     comptime var i: usize = 0;

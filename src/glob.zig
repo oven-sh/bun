@@ -380,43 +380,48 @@ pub fn GlobWalker_(
                     was_absolute = true;
 
                     var path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
+                    var starting_component_idx = this.walker.basename_excluding_special_syntax_component_idx;
+
                     if (std.mem.eql(u8, path_without_special_syntax, "")) {
                         path_without_special_syntax = "/";
-                    }
-                    const component_idx = this.walker.basename_excluding_special_syntax_component_idx + 1;
+                    } else {
+                        // Skip the components associated with the literal path
+                        starting_component_idx += 1;
 
-                    // This means we got a pattern without any special glob syntax, for example:
-                    // `/Users/zackradisic/foo/bar`
-                    // In that case we don't need to do any walking and can just open up the FS entry
-                    if (component_idx >= this.walker.patternComponents.items.len) {
-                        const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
-                        const fd = switch (try Accessor.open(path)) {
-                            .err => |e| {
-                                if (e.getErrno() == bun.C.E.NOTDIR) {
-                                    // TODO check symlink
-                                    this.iter_state = .{ .root_matched = path };
-                                    return Maybe(void).success;
-                                }
-                                const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
-                                return .{ .err = e.withPath(errpath) };
-                            },
-                            .result => |fd| fd,
-                        };
-                        _ = Accessor.close(fd);
-                        this.iter_state = .{ .root_matched = path };
-                        return Maybe(void).success;
-                    }
+                        // This means we got a pattern without any special glob syntax, for example:
+                        // `/Users/zackradisic/foo/bar`
+                        //
+                        // In that case we don't need to do any walking and can just open up the FS entry
+                        if (starting_component_idx >= this.walker.patternComponents.items.len) {
+                            const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
+                            const fd = switch (try Accessor.open(path)) {
+                                .err => |e| {
+                                    if (e.getErrno() == bun.C.E.NOTDIR) {
+                                        // TODO check symlink
+                                        this.iter_state = .{ .root_matched = path };
+                                        return Maybe(void).success;
+                                    }
+                                    const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
+                                    return .{ .err = e.withPath(errpath) };
+                                },
+                                .result => |fd| fd,
+                            };
+                            _ = Accessor.close(fd);
+                            this.iter_state = .{ .root_matched = path };
+                            return Maybe(void).success;
+                        }
 
-                    // The above if branch is executed when:
-                    // `end_byte_of_basename_excluding_special_syntax == pattern.len`
-                    //
-                    // So if we see that `end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len` we
-                    // miscalculated the values
-                    bun.assert(this.walker.end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len);
+                        // In the above branch, if `starting_compoennt_dix >= pattern_components.len` then
+                        // it should also mean that `end_byte_of_basename_excluding_special_syntax >= pattern.len`
+                        //
+                        // So if we see that `end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len` we
+                        // miscalculated the values
+                        bun.assert(this.walker.end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len);
+                    }
 
                     break :brk WorkItem.new(
                         path_without_special_syntax,
-                        component_idx,
+                        starting_component_idx,
                         .directory,
                     );
                 };
@@ -425,7 +430,6 @@ pub fn GlobWalker_(
                 const root_path = root_work_item.path;
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
-                // const root_path_z = path_buf[0..root_path.len :0];
                 const cwd_fd = switch (try Accessor.open(path_buf[0..root_path.len :0])) {
                     .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
                     .result => |fd| fd,

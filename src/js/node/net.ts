@@ -375,7 +375,7 @@ const Socket = (function (InternalSocket) {
             try {
               onread.callback(buffer.length, buffer);
             } catch (e) {
-              self.emit('error', e);
+              self.emit("error", e);
             }
           },
         };

@@ -118,6 +118,7 @@ pub const BrotliEncoder = struct {
 
         const result = this.callback_value.get().?.call(this.globalThis, &.{
             if (this.write_failed)
+                // TODO: propagate error from brotli
                 this.globalThis.createErrorInstance("BrotliError", .{})
             else
                 JSC.JSValue.null,
@@ -420,6 +421,7 @@ pub const BrotliDecoder = struct {
 
         const result = this.callback_value.get().?.call(this.globalThis, &.{
             if (this.write_failed)
+                // TODO: propagate error from brotli
                 this.globalThis.createErrorInstance("BrotliError", .{})
             else
                 JSC.JSValue.null,

@@ -77,7 +77,6 @@ pub const BrotliEncoder = struct {
     pub fn deinit(this: *BrotliEncoder) void {
         this.callback_value.deinit();
         this.drainFreelist();
-        this.output.deinit(bun.default_allocator);
         this.stream.deinit();
         this.input.deinit();
     }
@@ -100,10 +99,12 @@ pub const BrotliEncoder = struct {
             return null;
 
         if (this.output.items.len > 16 * 1024) {
-            defer this.output.clearRetainingCapacity();
+            defer this.output.items = "";
+            defer this.output.deinit(bun.default_allocator);
             return JSC.JSValue.createBuffer(this.globalThis, this.output.items, bun.default_allocator);
         } else {
-            defer this.output.clearRetainingCapacity();
+            defer this.output.items = "";
+            defer this.output.deinit(bun.default_allocator);
             return JSC.ArrayBuffer.createBuffer(this.globalThis, this.output.items);
         }
     }

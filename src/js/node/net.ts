@@ -369,7 +369,7 @@ const Socket = (function (InternalSocket) {
         }
         // when the onread option is specified we use a different handlers object
         this.#handlers = {
-          ... Socket.#Handlers,
+          ...Socket.#Handlers,
           data({ data: self }, buffer) {
             if (!self) return;
             try {

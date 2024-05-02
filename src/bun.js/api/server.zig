@@ -1846,10 +1846,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (this.request_body) |body| {
                 ctxLog("finalizeWithoutDeinit: request_body != null", .{});
+                // Case 1:
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 // the promise is pending
-                if (body.value == .Locked and body.value.Locked.hasPendingPromise()) {
+                // Case 2:
+                // User ignored the body and the connection was aborted or ended
+                // Case 3:
+                // Stream was not consumed and the connection was aborted or ended
+                if (body.value == .Locked) {
                     body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                 }
             }

@@ -35,7 +35,7 @@ it("should support net.isIPv6()", () => {
 describe("net.Socket read", () => {
   var unix_servers = 0;
   for (let [message, label] of [
-    // ["Hello World!".repeat(1024), "long message"],
+    ["Hello World!".repeat(1024), "long message"],
     ["Hello!", "short message"],
   ]) {
     describe(label, () => {

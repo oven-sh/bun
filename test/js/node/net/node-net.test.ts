@@ -253,6 +253,35 @@ describe("net.Socket read", () => {
             .on("error", done);
         }, socket_domain),
       );
+
+      it("should support onread callback", 
+        runWithServer((server, drain, done) => {
+          var data = "";
+          const options = {
+            host: server.hostname,
+            port: server.port,
+            onread: {
+              buffer: Buffer.alloc(4096),
+              callback: (size, buf) => {
+                data += buf.slice(0, size).toString("utf8");
+              }
+            }
+          };
+          const socket = createConnection(options, () => {
+              expect(socket).toBeDefined();
+              expect(socket.connecting).toBe(false);
+            })
+            .on("end", () => {
+              try {
+                expect(data).toBe(message);
+                done();
+              } catch (e) {
+                done(e);
+              }
+            })
+            .on("error", done);
+        }),
+      );
     });
   }
 });

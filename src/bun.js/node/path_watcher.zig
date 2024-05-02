@@ -92,7 +92,7 @@ pub const PathWatcherManager = struct {
         switch (switch (Environment.os) {
             else => bun.sys.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0),
             // windows bun.sys.open does not pass iterable=true,
-            .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, .{ .iterable = true, .read_only = true }),
+            .windows => bun.sys.openDirAtWindowsA(bun.FD.cwd(), path, .{ .iterable = true, .read_only = true }),
         }) {
             .err => |e| {
                 if (e.errno == @intFromEnum(bun.C.E.NOTDIR)) {

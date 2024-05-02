@@ -423,18 +423,18 @@ void JSMessagePort::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     auto* jsMessagePort = jsCast<JSMessagePort*>(handle.slot()->asCell());
     auto& wrapped = jsMessagePort->wrapped();
     if (wrapped.hasPendingActivity()) {
         if (UNLIKELY(reason))
-            *reason = "ActiveDOMObject with pending activity";
+            *reason = "ActiveDOMObject with pending activity"_s;
         return true;
     }
     MessagePort* owner = &jsMessagePort->wrapped();
     if (UNLIKELY(reason))
-        *reason = "Reachable from MessagePort";
+        *reason = "Reachable from MessagePort"_s;
 
     return visitor.containsOpaqueRoot(owner);
 }

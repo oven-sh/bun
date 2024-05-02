@@ -79,6 +79,7 @@ pub const BrotliEncoder = struct {
         this.drainFreelist();
         this.stream.deinit();
         this.input.deinit();
+        this.destroy();
     }
 
     fn drainFreelist(this: *BrotliEncoder) void {
@@ -357,6 +358,7 @@ pub const BrotliDecoder = struct {
         this.output.deinit(bun.default_allocator);
         this.stream.brotli.destroyInstance();
         this.input.deinit();
+        this.destroy();
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*BrotliDecoder {

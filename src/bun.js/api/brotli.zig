@@ -97,34 +97,34 @@ pub const BrotliEncoder = struct {
         this.freelist.discard(to_free.len);
     }
 
+    fn collectOutputValue(this: *BrotliEncoder) ?JSC.JSValue {
+        this.output_lock.lock();
+        defer this.output_lock.unlock();
+
+        if (this.output.items.len == 0)
+            return null;
+
+        if (this.output.items.len > 16 * 1024) {
+            defer this.output.clearRetainingCapacity();
+            return JSC.JSValue.createBuffer(this.globalThis, this.output.items, bun.default_allocator);
+        } else {
+            defer this.output.clearRetainingCapacity();
+            return JSC.ArrayBuffer.createBuffer(this.globalThis, this.output.items);
+        }
+    }
+
     pub fn runFromJSThread(this: *BrotliEncoder) void {
         this.poll_ref.unref(this.globalThis.bunVM());
 
         defer this.deref();
         this.drainFreelist();
 
-        const value = brk: {
-            this.output_lock.lock();
-            defer this.output_lock.unlock();
-
-            if (this.output.items.len == 0)
-                return;
-
-            if (this.output.items.len > 16 * 1024) {
-                defer this.output.items = &.{};
-                break :brk JSC.JSValue.createBuffer(this.globalThis, this.output.items, bun.default_allocator);
-            } else {
-                defer this.output.clearRetainingCapacity();
-                break :brk JSC.ArrayBuffer.createBuffer(this.globalThis, this.output.items);
-            }
-        };
-
         const result = this.callback_value.get().?.call(this.globalThis, &.{
             if (this.write_failed)
                 this.globalThis.createErrorInstance("BrotliError", .{})
             else
                 JSC.JSValue.null,
-            value,
+            this.collectOutputValue() orelse return,
         });
 
         if (result.toError()) |err| {
@@ -372,34 +372,34 @@ pub const BrotliDecoder = struct {
         this.deref();
     }
 
+    fn collectOutputValue(this: *BrotliDecoder) ?JSC.JSValue {
+        this.output_lock.lock();
+        defer this.output_lock.unlock();
+
+        if (this.output.items.len == 0)
+            return null;
+
+        if (this.output.items.len > 16 * 1024) {
+            defer this.output.clearRetainingCapacity();
+            return JSC.JSValue.createBuffer(this.globalThis, this.output.items, bun.default_allocator);
+        } else {
+            defer this.output.clearRetainingCapacity();
+            return JSC.ArrayBuffer.createBuffer(this.globalThis, this.output.items);
+        }
+    }
+
     pub fn runFromJSThread(this: *BrotliDecoder) void {
         this.poll_ref.unref(this.globalThis.bunVM());
 
         defer this.deref();
         this.drainFreelist();
 
-        const value = brk: {
-            this.output_lock.lock();
-            defer this.output_lock.unlock();
-
-            if (this.output.items.len == 0)
-                return;
-
-            if (this.output.items.len > 16 * 1024) {
-                defer this.output.items = &.{};
-                break :brk JSC.JSValue.createBuffer(this.globalThis, this.output.items, bun.default_allocator);
-            } else {
-                defer this.output.clearRetainingCapacity();
-                break :brk JSC.ArrayBuffer.createBuffer(this.globalThis, this.output.items);
-            }
-        };
-
         const result = this.callback_value.get().?.call(this.globalThis, &.{
             if (this.write_failed)
                 this.globalThis.createErrorInstance("BrotliError", .{})
             else
                 JSC.JSValue.null,
-            value,
+            this.collectOutputValue() orelse return,
         });
 
         if (result.toError()) |err| {

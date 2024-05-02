@@ -290,8 +290,8 @@ pub const BrotliEncoder = struct {
         };
 
         _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
-        bun.assert(is_last);
-        this.has_called_end = true;
+        if (is_last)
+            this.has_called_end = true;
 
         var task = EncodeJob.new(.{ .encoder = this, .is_async = false });
 

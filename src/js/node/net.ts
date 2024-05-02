@@ -100,6 +100,11 @@ const Socket = (function (InternalSocket) {
       data({ data: self }, buffer) {
         if (!self) return;
 
+        if (self.#onreadCallback) {
+          self.#onreadCallback(buffer.length, buffer);
+          return;
+        }
+
         self.bytesRead += buffer.length;
         const queue = self.#readQueue;
 
@@ -342,9 +347,10 @@ const Socket = (function (InternalSocket) {
     pauseOnConnect = false;
     #upgraded;
     #unrefOnConnected = false;
+    #onreadCallback = null;
 
     constructor(options) {
-      const { socket, signal, write, read, allowHalfOpen = false, ...opts } = options || {};
+      const { socket, signal, write, read, allowHalfOpen = false, onread = null, ...opts } = options || {};
       super({
         ...opts,
         allowHalfOpen,
@@ -358,6 +364,18 @@ const Socket = (function (InternalSocket) {
       this.#upgraded = null;
       if (socket instanceof Socket) {
         this.#socket = socket;
+      }
+      if (onread) {
+        if (typeof onread !== "object") {
+          throw new TypeError("onread must be an object");
+        }
+        if (typeof onread.callback !== "function") {
+          throw new TypeError("onread.callback must be a function");
+        }
+        this.#onreadCallback = onread.callback;
+      }
+      if (onread) {
+        console.log('using onread');
       }
 
       if (signal) {

@@ -9,13 +9,18 @@ $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 
 if ($env:VSINSTALLDIR -eq $null) {
   Write-Host "Loading Visual Studio environment, this may take a second..."
-  $vsDir = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Directory
+  $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+  if (!(Test-Path $vswhere)) {
+      throw "Visual Studio installer directory not found."
+  }
+  $vsDir = (& $vswhere -latest -property installationPath)
   if ($vsDir -eq $null) {
       throw "Visual Studio directory not found."
   } 
-  Push-Location $vsDir.FullName
+  Push-Location $vsDir
   try {
-    . (Join-Path -Path $vsDir.FullName -ChildPath "Common7\Tools\Launch-VsDevShell.ps1") -Arch amd64 -HostArch amd64
+    $launchps = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
+    . $launchps -Arch amd64 -HostArch amd64
   } finally { Pop-Location }
 }
 
@@ -28,7 +33,7 @@ $BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $S
 $BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }
 $BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { $BUN_DEPS_DIR }
 
-$CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-WmiObject -Class Win32_Processor).NumberOfCores }
+$CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-CimInstance -Class Win32_Processor).NumberOfCores }
 
 $CC = "clang-cl"
 $CXX = "clang-cl"

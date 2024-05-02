@@ -1293,7 +1293,6 @@ for (const [key, blob] of build.outputs) {
             let error;
             const lines = stderr!
               .toUnixString()
-              .replace(/Bun v.*?\)$/gm, "")
               .split("\n")
               // remove `Bun v1.0.0...` line
               .slice(0, -2)

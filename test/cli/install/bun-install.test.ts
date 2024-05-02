@@ -1,5 +1,4 @@
 import { file, listen, Socket, spawn } from "bun";
-<<<<<<< HEAD
 import {
   afterAll,
   afterEach,

@@ -1,5 +1,5 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterEach, describe, it, expect, afterAll } from "bun:test";
+import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 import { bunExe, bunEnv, dumpStats } from "harness";
@@ -300,97 +300,64 @@ it("request.url should be based on the Host header", async () => {
 describe("streaming", () => {
   describe("error handler", () => {
     it("throw on pull renders headers, does not call error handler", async () => {
-      var pass = true;
-      await runTest(
-        {
-          error(e) {
-            pass = false;
-            return new Response("FAIL!", { status: 555 });
-          },
-          fetch(req) {
-            return new Response(
-              new ReadableStream({
-                pull(controller) {
-                  throw new Error("TestPassed");
-                },
-                cancel(reason) {},
-              }),
-              {
-                status: 402,
-                headers: {
-                  "I-AM": "A-TEAPOT",
-                },
-              },
-            );
-          },
-        },
-        async server => {
-          const response = await fetch(server.url.origin);
-          expect(response.status).toBe(402);
-          expect(response.headers.get("I-AM")).toBe("A-TEAPOT");
-          expect(await response.text()).toBe("");
-          expect(pass).toBe(true);
-        },
-      );
+      let subprocess;
+
+      afterAll(() => {
+        subprocess?.kill();
+      });
+
+      const onMessage = mock(async url => {
+        const response = await fetch(url);
+        expect(response.status).toBe(402);
+        expect(response.headers.get("X-Hey")).toBe("123");
+        expect(response.text()).resolves.toBe("");
+        subprocess.kill();
+      });
+
+      subprocess = Bun.spawn({
+        cwd: import.meta.dirname,
+        cmd: [bunExe(), "readable-stream-throws.fixture.js"],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+        ipc: onMessage,
+      });
+
+      let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
+      expect(exitCode).toBeInteger();
+      expect(stderr).toContain("error: Oops");
+      expect(onMessage).toHaveBeenCalled();
     });
 
-    describe("throw on pull after writing should not call the error handler", () => {
-      async function execute(options: ResponseInit) {
-        var pass = true;
-        await runTest(
-          {
-            error(e) {
-              pass = false;
-              return new Response("FAIL", { status: 555 });
-            },
-            fetch(req) {
-              const stream = new ReadableStream({
-                async pull(controller) {
-                  controller.enqueue("PASS");
-                  controller.close();
-                  throw new Error("FAIL");
-                },
-              });
-              const r = new Response(stream, options);
-              return r;
-            },
-          },
-          async server => {
-            const response = await fetch(server.url.origin);
-            // connection terminated
-            expect(await response.text()).toBe("");
-            expect(response.status).toBe(options.status ?? 200);
-            expect(pass).toBe(true);
-          },
-        );
-      }
+    it("throw on pull after writing should not call the error handler", async () => {
+      let subprocess;
 
-      it("with headers", async () => {
-        await execute({
-          headers: {
-            "X-A": "123",
-          },
-        });
+      afterAll(() => {
+        subprocess?.kill();
       });
 
-      it("with headers and status", async () => {
-        await execute({
-          status: 204,
-          headers: {
-            "X-A": "123",
-          },
-        });
+      const onMessage = mock(async href => {
+        const url = new URL("write", href);
+        const response = await fetch(url);
+        expect(response.status).toBe(402);
+        expect(response.headers.get("X-Hey")).toBe("123");
+        expect(response.text()).resolves.toBe("");
+        subprocess.kill();
       });
 
-      it("with status", async () => {
-        await execute({
-          status: 204,
-        });
+      subprocess = Bun.spawn({
+        cwd: import.meta.dirname,
+        cmd: [bunExe(), "readable-stream-throws.fixture.js"],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+        ipc: onMessage,
       });
 
-      it("with empty object", async () => {
-        await execute({});
-      });
+      let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
+      expect(exitCode).toBeInteger();
+      expect(stderr).toContain("error: Oops");
+      expect(onMessage).toHaveBeenCalled();
     });
   });
 
@@ -1419,55 +1386,48 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
 });
 
 it("should support promise returned from error", async () => {
-  const server = Bun.serve({
-    port: 0,
-    fetch(req) {
-      throw new Error(req.url);
-    },
-    async error(e) {
-      if (e.message.endsWith("/async-fulfilled")) {
-        return new Response("OK");
-      }
+  const { promise, resolve } = Promise.withResolvers<string>();
 
-      if (e.message.endsWith("/async-rejected")) {
-        throw new Error("");
-      }
-
-      if (e.message.endsWith("/async-rejected-pending")) {
-        await Bun.sleep(100);
-        throw new Error("");
-      }
-
-      if (e.message.endsWith("/async-pending")) {
-        await Bun.sleep(100);
-        return new Response("OK");
-      }
+  const subprocess = Bun.spawn({
+    cwd: import.meta.dirname,
+    cmd: [bunExe(), "bun-serve.fixture.js"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+    ipc(message) {
+      resolve(message);
     },
   });
 
+  afterAll(() => {
+    subprocess.kill();
+  });
+
+  const url = new URL(await promise);
+
   {
-    const resp = await fetch(`${server.url.origin}/async-fulfilled`);
+    const resp = await fetch(new URL("async-fulfilled", url));
     expect(resp.status).toBe(200);
-    expect(await resp.text()).toBe("OK");
+    expect(resp.text()).resolves.toBe("Async fulfilled");
   }
 
   {
-    const resp = await fetch(`${server.url.origin}/async-pending`);
-    expect(resp.status).toBe(200);
-    expect(await resp.text()).toBe("OK");
-  }
-
-  {
-    const resp = await fetch(`${server.url.origin}/async-rejected`);
+    const resp = await fetch(new URL("async-rejected", url));
     expect(resp.status).toBe(500);
   }
 
   {
-    const resp = await fetch(`${server.url.origin}/async-rejected-pending`);
+    const resp = await fetch(new URL("async-pending", url));
+    expect(resp.status).toBe(200);
+    expect(resp.text()).resolves.toBe("Async pending");
+  }
+
+  {
+    const resp = await fetch(new URL("async-rejected-pending", url));
     expect(resp.status).toBe(500);
   }
 
-  server.stop(true);
+  subprocess.kill();
 });
 
 if (process.platform === "linux")
@@ -1523,4 +1483,33 @@ describe("should error with invalid options", async () => {
       });
     }).toThrow("Expected lowMemoryMode to be a boolean");
   });
+});
+it("should resolve pending promise if requested ended with pending read", async () => {
+  let error: Error;
+  function shouldError(e: Error) {
+    error = e;
+  }
+  let is_done = false;
+  function shouldMarkDone(result: { done: boolean; value: any }) {
+    is_done = result.done;
+  }
+  await runTest(
+    {
+      fetch(req) {
+        // @ts-ignore
+        req.body?.getReader().read().catch(shouldError).then(shouldMarkDone);
+        return new Response("OK");
+      },
+    },
+    async server => {
+      const response = await fetch(server.url.origin, {
+        method: "POST",
+        body: "1".repeat(64 * 1024),
+      });
+      const text = await response.text();
+      expect(text).toContain("OK");
+      expect(is_done).toBe(true);
+      expect(error).toBeUndefined();
+    },
+  );
 });

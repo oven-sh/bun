@@ -11,7 +11,7 @@ fn ConcurrentByteProcessor(comptime Processor: type) type {
 }
 
 pub const BrotliEncoder = struct {
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBrotliEncoder;
 
     stream: brotli.BrotliCompressionStream,
@@ -71,7 +71,7 @@ pub const BrotliEncoder = struct {
     }
 
     pub fn finalize(this: *BrotliEncoder) callconv(.C) void {
-        this.deref();
+        this.deinit();
     }
 
     pub fn deinit(this: *BrotliEncoder) void {
@@ -113,7 +113,7 @@ pub const BrotliEncoder = struct {
     pub fn runFromJSThread(this: *BrotliEncoder) void {
         this.poll_ref.unref(this.globalThis.bunVM());
 
-        defer this.deref();
+        defer _ = this.has_pending_activity.fetchSub(1, .Monotonic);
         this.drainFreelist();
 
         const result = this.callback_value.get().?.call(this.globalThis, &.{
@@ -144,7 +144,7 @@ pub const BrotliEncoder = struct {
         pub fn run(this: *EncodeJob) void {
             defer {
                 _ = this.encoder.has_pending_activity.fetchSub(1, .Monotonic);
-                this.encoder.deref();
+                // _ = this.encoder.has_pending_activity.fetchSub(1, .Monotonic);
                 this.destroy();
             }
 
@@ -214,7 +214,7 @@ pub const BrotliEncoder = struct {
 
             if (this.is_async and any) {
                 var vm = this.encoder.globalThis.bunVMConcurrently();
-                this.encoder.ref();
+                _ = this.encoder.has_pending_activity.fetchAdd(1, .Monotonic);
                 this.encoder.poll_ref.refConcurrently(vm);
                 vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.encoder)));
             }
@@ -263,7 +263,7 @@ pub const BrotliEncoder = struct {
 
             this.input.writeItem(input_to_queue) catch unreachable;
         }
-        this.ref();
+        // _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
         JSC.WorkPool.schedule(&task.task);
 
         return .undefined;
@@ -303,7 +303,7 @@ pub const BrotliEncoder = struct {
 
             this.input.writeItem(input_to_queue) catch unreachable;
         }
-        this.ref();
+        // _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
         task.run();
         return this.collectOutputValue() orelse .undefined;
     }
@@ -326,7 +326,7 @@ pub const BrotliEncoder = struct {
 };
 
 pub const BrotliDecoder = struct {
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBrotliDecoder;
 
     globalThis: *JSC.JSGlobalObject,
@@ -394,7 +394,7 @@ pub const BrotliDecoder = struct {
     }
 
     pub fn finalize(this: *BrotliDecoder) callconv(.C) void {
-        this.deref();
+        this.deinit();
     }
 
     fn collectOutputValue(this: *BrotliDecoder) ?JSC.JSValue {
@@ -416,7 +416,7 @@ pub const BrotliDecoder = struct {
     pub fn runFromJSThread(this: *BrotliDecoder) void {
         this.poll_ref.unref(this.globalThis.bunVM());
 
-        defer this.deref();
+        defer _ = this.has_pending_activity.fetchSub(1, .Monotonic);
         this.drainFreelist();
 
         const result = this.callback_value.get().?.call(this.globalThis, &.{
@@ -480,7 +480,7 @@ pub const BrotliDecoder = struct {
 
             this.input.writeItem(input_to_queue) catch unreachable;
         }
-        this.ref();
+        // _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
         JSC.WorkPool.schedule(&task.task);
 
         return .undefined;
@@ -523,7 +523,7 @@ pub const BrotliDecoder = struct {
 
             this.input.writeItem(input_to_queue) catch unreachable;
         }
-        this.ref();
+        // _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
         task.run();
         return this.collectOutputValue() orelse .undefined;
     }
@@ -547,7 +547,7 @@ pub const BrotliDecoder = struct {
         pub fn run(this: *DecodeJob) void {
             defer {
                 _ = this.decoder.has_pending_activity.fetchSub(1, .Monotonic);
-                this.decoder.deref();
+                // _ = this.decoder.has_pending_activity.fetchSub(1, .Monotonic);
                 this.destroy();
             }
 
@@ -593,7 +593,7 @@ pub const BrotliDecoder = struct {
 
             if (this.is_async and any) {
                 var vm = this.decoder.globalThis.bunVMConcurrently();
-                this.decoder.ref();
+                _ = this.decoder.has_pending_activity.fetchAdd(1, .Monotonic);
                 this.decoder.poll_ref.refConcurrently(vm);
                 vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.decoder)));
             }

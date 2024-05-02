@@ -1,6 +1,6 @@
 import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { connect, isIP, isIPv4, isIPv6, Socket, createConnection } from "net";
+import { connect, isIP, isIPv4, isIPv6, Socket, createConnection, Server } from "net";
 import { realpathSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -353,6 +353,37 @@ describe("net.Socket write", () => {
       }
       socket.end();
     }),
+  );
+
+  it(
+    "should allow reconnecting after end()",
+    async () => {
+      const server = new Server(socket => socket.end());
+      const port = await new Promise(resolve => {
+        server.once("listening", () => resolve(server.address().port));
+        server.listen();
+      })
+
+      const socket = new Socket()
+      socket.on('data', data => console.log(data.toString()));
+      socket.on('error', err => console.error(err));
+
+      async function run() {
+          return new Promise((resolve, reject) => {
+              socket.once('connect', (...args) => {
+                  socket.write('script\n', (err) => {
+                      if (err) return reject(err)
+                      socket.end(() => setTimeout(resolve, 3))
+                  })
+              })
+              socket.connect(port, '127.0.0.1')
+          })
+      }
+
+      for (let i = 0; i < 10; i++) {
+          await run()
+      }
+    }
   );
 });
 

@@ -5632,34 +5632,37 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     if (this.listener) |listener| {
                         port = @intCast(listener.getLocalPort());
                     }
+                    var hostname = this.getCachedHostname().asUTF8();
+                    if (hostname == null) {
+                        if (tcp.hostname) |name| {
+                            hostname = bun.sliceTo(name, 0);
+                        } else {
+                            hostname = "::";
+                        }
+                    }
                     break :blk bun.fmt.URLFormatter{
                         .proto = if (comptime ssl_enabled_) .https else .http,
-                        .hostname = if (tcp.hostname) |hostname| bun.sliceTo(@constCast(hostname), 0) else null,
+                        .hostname = hostname,
                         .port = port,
                     };
                 },
             };
 
-            const buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch @panic("Out of memory");
+            const buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch bun.outOfMemory();
             defer default_allocator.free(buf);
 
             var value = bun.String.createUTF8(buf);
             return value.toJSDOMURL(globalThis);
         }
 
-        pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
-            switch (this.config.address) {
-                .unix => return .undefined,
-                else => {},
-            }
-
+        fn getCachedHostname(this: *ThisServer) bun.String {
             if (this.cached_hostname.isEmpty()) {
                 if (this.listener) |listener| {
-                    var buf: [1024]u8 = [_]u8{0} ** 1024;
-                    var len: i32 = 1024;
-                    listener.socket().remoteAddress(&buf, &len);
-                    if (len > 0) {
-                        this.cached_hostname = bun.String.createUTF8(buf[0..@as(usize, @intCast(len))]);
+                    const size = 1024;
+                    var buf: [size]u8 = [_]u8{0} ** size;
+                    var is_ipv6: bool = false;
+                    if (listener.socket().localAddressText(&buf, &is_ipv6)) |_addr| {
+                        this.cached_hostname = bun.String.createUTF8(_addr);
                     }
                 }
 
@@ -5676,8 +5679,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     }
                 }
             }
+            return this.cached_hostname;
+        }
 
-            return this.cached_hostname.toJS(globalThis);
+        pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+            switch (this.config.address) {
+                .unix => return .undefined,
+                else => {},
+            }
+
+            return this.getCachedHostname().toJS(globalThis);
         }
 
         pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {

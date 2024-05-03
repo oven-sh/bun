@@ -1513,3 +1513,11 @@ it("should resolve pending promise if requested ended with pending read", async 
     },
   );
 });
+
+it("should report :: as hostname when no host is specified", () => {
+  let server = Bun.serve({
+    async fetch(req) {}
+  })
+  expect(server.hostname).toBe("::");
+  expect(server.url.href).toMatch("http://[::]:");
+});

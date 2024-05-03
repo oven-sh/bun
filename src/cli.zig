@@ -733,15 +733,15 @@ pub const Arguments = struct {
             }
 
             if (args.option("--entry-naming")) |entry_naming| {
-                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", entry_naming });
+                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(entry_naming) });
             }
 
             if (args.option("--chunk-naming")) |chunk_naming| {
-                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", chunk_naming });
+                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(chunk_naming) });
             }
 
             if (args.option("--asset-naming")) |asset_naming| {
-                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", asset_naming });
+                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
             if (comptime FeatureFlags.react_server_components) {

@@ -53,9 +53,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: latest
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@c7b6cdd3adba8f8b96984640ff172c37c93f73ee
+        with:
+          version: ${{ inputs.zig-version }}
       - name: Install Dependencies
         run: |
           bun install

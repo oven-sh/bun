@@ -488,7 +488,7 @@ pub fn GlobWalker_(
                                 .result => |fd| fd,
                             };
                             _ = Accessor.close(fd);
-                            this.iter_state = .{ .root_matched = path };
+                            this.iter_state = .{ .matched = path };
                             return Maybe(void).success;
                         }
 

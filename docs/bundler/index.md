@@ -792,7 +792,7 @@ The names and locations of the generated files can be customized with the `namin
 - `[name]` - The name of the entrypoint file, without the extension.
 - `[ext]` - The extension of the generated bundle.
 - `[hash]` - A hash of the bundle contents.
-- `[dir]` - The relative path from the build root to the parent directory of the file.
+- `[dir]` - The relative path from the project root to the parent directory of the source file.
 
 For example:
 

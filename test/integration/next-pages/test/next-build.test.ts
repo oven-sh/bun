@@ -1,18 +1,18 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "../../../harness";
-import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, promises as fs, mkdirSync } from "fs";
+import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, promises as fs } from "fs";
 import { tmpdir } from "os";
-import { join, resolve } from "path";
+import { join } from "path";
 import { cp } from "fs/promises";
 
 const root = join(import.meta.dir, "../");
-const testRoot = resolve("/bun-test");
 
 async function tempDirToBuildIn() {
-  const dir = mkdtempSync(join(testRoot, "bun-next-build-"));
+  const dir = mkdtempSync(join(tmpdir(), "bun-next-build-"));
   const copy = [
     ".eslintrc.json",
     "bun.lockb",
+    "next.config.js",
     "next.config.js",
     "package.json",
     "postcss.config.js",
@@ -34,8 +34,6 @@ async function tempDirToBuildIn() {
   if ((await install.exited) !== 0) {
     throw new Error("Failed to install dependencies");
   }
-
-  console.log("dir:", dir);
 
   return dir;
 }
@@ -82,10 +80,7 @@ function normalizeOutput(stdout: string) {
 }
 
 test("next build works", async () => {
-  rmSync(testRoot, { recursive: true, force: true });
-  mkdirSync(testRoot, { recursive: true });
   rmSync(join(root, ".next"), { recursive: true, force: true });
-
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
   const bunDir = await tempDirToBuildIn();

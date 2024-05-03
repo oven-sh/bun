@@ -1499,7 +1499,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
             JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
 
-            stack.split('\n', [&](WTF::StringView line) {
+            stack.split('\n', [&](const WTF::StringView& line) {
                 stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
             });
 

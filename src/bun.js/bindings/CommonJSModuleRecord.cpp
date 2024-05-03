@@ -872,7 +872,7 @@ void populateESMExports(
 }
 
 void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
-    JSC::Identifier moduleKey,
+    const JSC::Identifier& moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
@@ -1081,7 +1081,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(
             [](JSC::JSGlobalObject* lexicalGlobalObject,
-                JSC::Identifier moduleKey,
+                const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
                 auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);

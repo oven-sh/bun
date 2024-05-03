@@ -79,6 +79,8 @@ pub fn isCI() bool {
 
 /// This answers, "What parts of bun are people actually using?"
 pub const Features = struct {
+    /// Set right before JSC::initialize is called
+    pub var jsc: usize = 0;
     pub var @"Bun.stderr": usize = 0;
     pub var @"Bun.stdin": usize = 0;
     pub var @"Bun.stdout": usize = 0;
@@ -88,6 +90,7 @@ pub const Features = struct {
     pub var dotenv: usize = 0;
     pub var external: usize = 0;
     pub var extracted_packages: usize = 0;
+    /// Incremented for each call to `fetch`
     pub var fetch: usize = 0;
     pub var filesystem_router: usize = 0;
     pub var git_dependencies: usize = 0;
@@ -171,6 +174,30 @@ pub const Features = struct {
     };
 };
 
+pub fn validateFeatureName(name: []const u8) void {
+    if (name.len > 64) @compileError("Invalid feature name: " ++ name);
+    for (name) |char| {
+        switch (char) {
+            'a'...'z', 'A'...'Z', '0'...'9', '_', '.', ':', '-' => {},
+            else => @compileError("Invalid feature name: " ++ name),
+        }
+    }
+}
+
+pub const packed_features_list = brk: {
+    const decls = std.meta.declarations(Features);
+    var names: [decls.len][]const u8 = undefined;
+    var i = 0;
+    for (decls) |decl| {
+        if (@TypeOf(@field(Features, decl.name)) == usize) {
+            validateFeatureName(decl.name);
+            names[i] = decl.name;
+            i += 1;
+        }
+    }
+    break :brk names[0..i];
+};
+
 pub const PackedFeatures = @Type(.{
     .Struct = .{
         .layout = .Packed,
@@ -213,19 +240,6 @@ pub fn packedFeatures() PackedFeatures {
     }
     return bits;
 }
-
-pub const packed_features_list = brk: {
-    const decls = std.meta.declarations(Features);
-    var names: [decls.len][]const u8 = undefined;
-    var i = 0;
-    for (decls) |decl| {
-        if (@TypeOf(@field(Features, decl.name)) == usize) {
-            names[i] = decl.name;
-            i += 1;
-        }
-    }
-    break :brk names[0..i];
-};
 
 pub const EventName = enum(u8) {
     bundle_success,

@@ -200,7 +200,7 @@ Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sq
 
 ### `.run()`
 
-Use `.run()` to run a query and get back `undefined`. This is useful for queries schema-modifying queries (e.g. `CREATE TABLE`) or bulk write operations.
+Use `.run()` to run a query and get back `undefined`. This is useful for schema-modifying queries (e.g. `CREATE TABLE`) or bulk write operations.
 
 ```ts
 const query = db.query(`create table foo;`);

@@ -4326,6 +4326,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                 iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
                     ASSERT(except->stack.frames_len < frame_count);
                     auto& current = except->stack.frames_ptr[except->stack.frames_len];
+                    current = {};
 
                     String functionName = frame.functionName.toString();
                     String sourceURL = frame.sourceURL.toString();

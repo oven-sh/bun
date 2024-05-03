@@ -317,7 +317,7 @@ option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
 
-option(BUN_TIDY_ONLY "Only run clang-tidy" OFF);
+option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
 
 if(NOT ZIG_LIB_DIR)
     cmake_path(SET ZIG_LIB_DIR NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/zig/lib")

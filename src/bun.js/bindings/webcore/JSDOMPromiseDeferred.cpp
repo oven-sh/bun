@@ -286,6 +286,7 @@ void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&& promise, const void* d
 
 bool DeferredPromise::handleTerminationExceptionIfNeeded(CatchScope& scope, JSDOMGlobalObject& lexicalGlobalObject)
 {
+    auto* exception = scope.exception();
     VM& vm = scope.vm();
 
     return !!exception && vm.isTerminationException(exception);

@@ -65,12 +65,6 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     default: {
-<<<<<<< HEAD
-
-||||||| ef0e96a2b
-        JSValue thisValue = callFrame->thisValue();
-=======
->>>>>>> main
         JSC::JSValue moduleName = callFrame->argument(0);
 
         auto doIt = [&](const WTF::String& fromStr) -> JSC::EncodedJSValue {

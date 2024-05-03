@@ -1587,7 +1587,7 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
 
     auto error = JSC::createRangeError(globalObject, messageValue.toWTFString(globalObject));
     if (codeValue) {
-        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), codeValue, 0);
+        error->putDirect(globalObject->vm(), WebCore::builtinNames(globalObject->vm()).codePublicName(), codeValue, 0);
     }
     *result = reinterpret_cast<napi_value>(error);
     return napi_ok;
@@ -1683,7 +1683,7 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     callFrame->setThisValue(subclass);
 
     MarkedArgumentBufferWithSize<12> args;
-    size_t argc = count + 1;
+    size_t argc = callFrame->argumentCount() + 1;
     args.fill(vm, argc, [&](auto* slot) {
         memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callFrame), sizeof(JSC::JSValue) * argc);
     });

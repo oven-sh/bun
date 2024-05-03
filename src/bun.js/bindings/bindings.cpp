@@ -2951,13 +2951,6 @@ JSC__JSPromise* JSC__JSPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__
     return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
 }
 
-void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
-    bJSC__ThrowScope arg2)
-{
-    JSC::ThrowScope* scope = static_cast<JSC::ThrowScope*>(static_cast<void*>(&arg2));
-
-    arg0->rejectWithCaughtException(arg1, *scope);
-}
 void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
@@ -3113,14 +3106,6 @@ JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObj
         JSC::JSInternalPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
 }
 
-void JSC__JSInternalPromise__rejectWithCaughtException(JSC__JSInternalPromise* arg0,
-    JSC__JSGlobalObject* arg1,
-    bJSC__ThrowScope arg2)
-{
-    JSC::ThrowScope* scope = static_cast<JSC::ThrowScope*>(static_cast<void*>(&arg2));
-
-    arg0->rejectWithCaughtException(arg1, *scope);
-}
 void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
@@ -3203,12 +3188,7 @@ double JSC__JSValue__asNumber(JSC__JSValue JSValue0)
     auto value = JSC::JSValue::decode(JSValue0);
     return value.asNumber();
 };
-bJSC__JSObject JSC__JSValue__asObject(JSC__JSValue JSValue0)
-{
-    auto value = JSC::JSValue::decode(JSValue0);
-    auto obj = JSC::asObject(value);
-    return cast<bJSC__JSObject>(&obj);
-};
+
 JSC__JSString* JSC__JSValue__asString(JSC__JSValue JSValue0)
 {
     auto value = JSC::JSValue::decode(JSValue0);

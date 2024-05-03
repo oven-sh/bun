@@ -23,27 +23,6 @@ class GlobalObject;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
 
-template<class To, class From> To cast(From v)
-{
-    return *static_cast<To*>(static_cast<void*>(v));
-}
-
-template<class To, class From> To ccast(From v)
-{
-    return *static_cast<const To*>(static_cast<const void*>(v));
-}
-
-static const JSC::ArgList makeArgs(JSC__JSValue* v, size_t count)
-{
-    JSC::MarkedArgumentBuffer args = JSC::MarkedArgumentBuffer();
-    args.ensureCapacity(count);
-    for (size_t i = 0; i < count; ++i) {
-        args.append(JSC::JSValue::decode(v[i]));
-    }
-
-    return JSC::ArgList(args);
-}
-
 namespace Zig {
 
 // 8 bit byte

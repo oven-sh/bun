@@ -50,6 +50,14 @@ else
 
 pub const os_name = Environment.os.nameString();
 
+// Bun v1.0.0 (Linux x64 baseline)
+// Bun v1.0.0-debug (Linux x64)
+// Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
+pub const unhandled_error_bun_version_string = "Bun v" ++
+    (if (Environment.is_canary) package_json_version_with_revision else package_json_version) ++
+    " (" ++ Environment.os.displayString() ++ " " ++ arch_name ++
+    (if (Environment.baseline) " baseline)" else ")");
+
 pub const arch_name = if (Environment.isX64)
     "x64"
 else if (Environment.isX86)

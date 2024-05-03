@@ -2954,9 +2954,9 @@ JSC__JSPromise* JSC__JSPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__
 void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     bJSC__ThrowScope arg2)
 {
-    Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>(arg2);
+    JSC::ThrowScope* scope = static_cast<JSC::ThrowScope*>(static_cast<void*>(&arg2));
 
-    arg0->rejectWithCaughtException(arg1, *wrapped.cpp);
+    arg0->rejectWithCaughtException(arg1, *scope);
 }
 void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
@@ -3117,9 +3117,9 @@ void JSC__JSInternalPromise__rejectWithCaughtException(JSC__JSInternalPromise* a
     JSC__JSGlobalObject* arg1,
     bJSC__ThrowScope arg2)
 {
-    Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>(arg2);
+    JSC::ThrowScope* scope = static_cast<JSC::ThrowScope*>(static_cast<void*>(&arg2));
 
-    arg0->rejectWithCaughtException(arg1, *wrapped.cpp);
+    arg0->rejectWithCaughtException(arg1, *scope);
 }
 void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)

@@ -180,4 +180,4 @@ jobs:
             unzip -o $f
           done
           cd ..
-          gh release upload --repo=${{ github.repository }} {{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} ${{ inputs.clobber && '--clobber' || '' }} bun-releases/*.zip
+          gh release upload --repo=${{ github.repository }} ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} ${{ inputs.clobber && '--clobber' || '' }} bun-releases/*.zip

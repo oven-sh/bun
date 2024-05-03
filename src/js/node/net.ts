@@ -619,6 +619,11 @@ const Socket = (function (InternalSocket) {
       } catch (error) {
         process.nextTick(emitErrorAndCloseNextTick, this, error);
       }
+      // reset the underlying writable object when establishing a new connection
+      // this is a function on `Duplex`, originally defined on `Writable`
+      // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
+      // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
+      this._undestroy();
       return this;
     }
 

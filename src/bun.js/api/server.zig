@@ -4136,7 +4136,7 @@ pub const ServerWebSocket = struct {
         const was_closed = this.isClosed();
         this.flags.closed = true;
         defer {
-            if (!was_closed) {
+            if (was_closed) {
                 handler.active_connections -|= 1;
             }
         }
